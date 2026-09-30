@@ -227,6 +227,12 @@ const AMEND_FIELDS = [
 /** Public-save parity fields carried by the command are validated up front so a
  * malformed command fails before any write or embedder call. */
 function validateCommandFields(command: JudgmentCommand): void {
+  // A replacement is a stated act: without its own reason the supersedes link would carry the
+  // whole record's reasoning instead.
+  for (const replacement of command.replaces ?? []) {
+    requireText(replacement.id, 'replaces id');
+    requireText(replacement.reason, 'replaces reason');
+  }
   if (
     command.confidence !== undefined &&
     (!Number.isFinite(command.confidence) || command.confidence < 0 || command.confidence > 1)

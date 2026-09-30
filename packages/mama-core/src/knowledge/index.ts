@@ -1,4 +1,10 @@
-import { appendLink, findLink, type LinkCommand, type LinkReceipt } from './links.js';
+import {
+  appendLink,
+  findLink,
+  type LinkCommand,
+  type LinkReceipt,
+  type StoredLink,
+} from './links.js';
 import type { DatabaseInstance } from '../db-manager.js';
 import {
   createJudgmentWriter,
@@ -55,7 +61,14 @@ export {
   listTwinEdgesForRefs,
   mapTwinEdgeRow,
 } from './judgments.js';
-export { appendLink, findLink, linkEdgeId, type LinkCommand, type LinkReceipt } from './links.js';
+export {
+  appendLink,
+  findLink,
+  linkEdgeId,
+  type LinkCommand,
+  type LinkReceipt,
+  type StoredLink,
+} from './links.js';
 export {
   assertTwinRefsVisible,
   channelGrantClause,
@@ -179,7 +192,7 @@ export interface Knowledge {
    */
   appendLink(command: LinkCommand, access: JudgmentAccess): LinkReceipt;
   /** The link this principal already wrote under a command id, if any. */
-  findLink(commandId: string, access: JudgmentAccess): LinkReceipt | null;
+  findLink(commandId: string, access: JudgmentAccess): StoredLink | null;
 }
 
 export function createKnowledge(options: KnowledgeOptions): Knowledge {

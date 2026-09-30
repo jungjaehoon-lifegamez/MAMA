@@ -313,7 +313,8 @@ class MAMAServer {
 
 Triggers: "이거 안됐어", "this worked", days later when issues discovered.
 outcome: 'success', 'failed', 'partial' (case-insensitive).
-After failure → save a NEW decision and explicitly reference any relationship in its reasoning.`,
+After failure → save a NEW decision with replaces [{id, reason}] naming the one it replaces (or
+links for a decision it builds on or debates); the reasoning text is not parsed.`,
         inputSchema: {
           type: 'object',
           properties: {

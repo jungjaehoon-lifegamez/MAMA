@@ -479,7 +479,16 @@ async function saveInternal(
             }),
           }
         : {}),
-      ...(replaces?.length ? { replaces } : {}),
+      ...(replaces?.length
+        ? {
+            replaces: replaces.map((replacement) => {
+              if (typeof replacement.reason !== 'string' || replacement.reason.trim() === '') {
+                throw new Error('mama.save() each replaced decision needs a reason');
+              }
+              return { id: replacement.id, reason: replacement.reason.trim() };
+            }),
+          }
+        : {}),
     },
     {
       userInvolvement: _userInvolvement,

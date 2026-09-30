@@ -220,6 +220,16 @@ describe('mama.save: named links and replacements', () => {
         links: [{ id: base.id, relation: 'supersedes', reason: 'x' }],
       })
     ).rejects.toThrow(/goes in replaces/);
+    await expect(
+      api.save({
+        type: 'user_decision',
+        topic: 'same_scope_reasonless',
+        decision: 'x',
+        reasoning: 'r',
+        scopes,
+        replaces: [{ id: base.id }],
+      })
+    ).rejects.toThrow(/needs a reason/);
 
     await api.updateOutcome(base.id, { outcome: 'SUCCESS' });
     await api.updateOutcome(base.id, { outcome: 'FAILED', failure_reason: 'rolled back' });

@@ -197,7 +197,15 @@ describe('work.link and work.list view links', () => {
       access
     );
 
-    expect(await link(input, 'op-retry')).toMatchObject({ edgeId: first.edgeId, replayed: true });
+    expect(await link(input, 'op-retry')).toMatchObject({
+      edgeId: first.edgeId,
+      replayed: true,
+      from: { commitmentId: current.commitmentId },
+      to: { kind: 'memory' },
+    });
+    await expect(link({ ...input, reason: 'another statement' }, 'op-retry')).rejects.toThrow(
+      /already bound to another link/
+    );
     const view = (await runWorkListView(
       { view: 'links', ids: [current.commitmentId, earlier.commitmentId] },
       { knowledge, access, timeZone: 'UTC' }

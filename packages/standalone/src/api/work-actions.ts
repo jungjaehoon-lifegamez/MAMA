@@ -1646,10 +1646,39 @@ export function workLinkRegistration(ports: WorkPorts): ActionRegistration {
           );
       }
       // A retried call finds its link before the heads are read again: the item may have been
-      // revised since, and the retry must still return the same link.
+      // revised since, and the retry must still return the same link. What the link states is
+      // compared on what does not move with the head.
       const commandId = operationId(context, 'work.link');
       const earlier = ports.knowledge.findLink(commandId, context.access);
-      if (earlier) return earlier;
+      if (earlier) {
+        const isRevisionOf = (ref: { kind: string; id: string }, commitmentId: string) =>
+          ref.kind === 'memory' &&
+          (
+            ports.knowledge.readWork({ commitmentId, history: 'all' }, context.access).items[0]
+              ?.history ?? []
+          ).some((revision) => revision.recordRef.id === ref.id);
+        const sameTarget =
+          body.to.kind === 'work'
+            ? isRevisionOf(earlier.to, body.to.id)
+            : earlier.to.kind === body.to.kind && earlier.to.id === body.to.id;
+        if (
+          earlier.relation !== body.relation ||
+          earlier.reason !== body.reason.trim() ||
+          !isRevisionOf(earlier.from, body.from) ||
+          !sameTarget
+        )
+          throw new JudgmentError(
+            'COMMAND_CONFLICT',
+            'The command id is already bound to another link'
+          );
+        return {
+          edgeId: earlier.edgeId,
+          createdAt: earlier.createdAt,
+          replayed: true,
+          from: { commitmentId: body.from, recordRef: earlier.from },
+          to: earlier.to,
+        };
+      }
       const from = headRecord(ports, body.from, context.access);
       const to =
         body.to.kind === 'work'

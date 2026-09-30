@@ -103,4 +103,27 @@ describe('knowledge/judgments: amendments keep what they replaced', () => {
     ]);
     expect(replaced[0].values.status).not.toBe('superseded');
   });
+
+  it('refuses a replacement without its own reason', async () => {
+    const adapter = getAdapter();
+    const earlier = await appendJudgment(
+      { commandId: 'reasonless-old', topic: 'p', summary: 'Old', recordKind: 'judgment' },
+      access,
+      { adapter }
+    );
+    await expect(
+      appendJudgment(
+        {
+          commandId: 'reasonless-new',
+          topic: 'p',
+          summary: 'New',
+          reasoning: 'the whole reasoning must not become the link reason',
+          recordKind: 'judgment',
+          replaces: [{ id: earlier.recordId, reason: ' ' }],
+        },
+        access,
+        { adapter }
+      )
+    ).rejects.toThrow(/replaces reason must be nonblank/);
+  });
 });

@@ -149,7 +149,7 @@ Structure your reasoning with these layers for maximum value:
       reasoning: {
         type: 'string',
         description:
-          'Why this decision was made. This is REQUIRED - never leave empty. Explain the context, alternatives considered, and rationale. IMPORTANT: Use English for better semantic search and relationship detection (e.g., use "instead of", "contrary to", "replaces" for conflicting decisions). Max 5000 characters.',
+          'Why this decision was made. This is REQUIRED - never leave empty. Explain the context, alternatives considered, and rationale. Use English for better semantic search. Relations are not read from this text: name them in links or replaces. Max 5000 characters.',
       },
       confidence: {
         type: 'number',

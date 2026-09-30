@@ -42,6 +42,14 @@ export interface LinkReceipt {
   replayed: boolean;
 }
 
+/** A stored link, found by the command id that wrote it. */
+export interface StoredLink extends LinkReceipt {
+  from: TwinRef;
+  to: TwinRef;
+  relation: string;
+  reason: string | null;
+}
+
 const TARGET_KINDS = new Set<TwinRef['kind']>(['memory', 'registry', 'observation', 'edge']);
 const EVIDENCE_KINDS = new Set<TwinRef['kind']>(['memory', 'observation']);
 /**
@@ -112,15 +120,26 @@ function assertReachable(
   }
 }
 
-/** The link a principal already wrote under this command id, if any: a retry finds it here. */
+/**
+ * The link a principal already wrote under this command id, if any: a retry finds it here, with
+ * what it states, so the caller can tell a retry from another link under the same id.
+ */
 export function findLink(
   adapter: Pick<DatabaseAdapter, 'prepare'>,
   commandId: string,
   access: JudgmentAccess
-): LinkReceipt | null {
+): StoredLink | null {
   const existing = getTwinEdge(adapter as never, linkEdgeId(access.principalId, commandId));
   return existing
-    ? { edgeId: existing.edge_id, createdAt: existing.created_at, replayed: true }
+    ? {
+        edgeId: existing.edge_id,
+        createdAt: existing.created_at,
+        replayed: true,
+        from: existing.subject_ref,
+        to: existing.object_ref,
+        relation: existing.edge_type,
+        reason: existing.reason_text,
+      }
     : null;
 }
 
