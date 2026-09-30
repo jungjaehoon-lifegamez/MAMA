@@ -94,18 +94,68 @@ describe('plugin dependencies in CLAUDE_PLUGIN_DATA', () => {
     expect(fs.existsSync(path.join(dataDir, 'install.lock'))).toBe(false);
   });
 
-  it('leaves an install in progress alone, and takes over a lock left by a killed hook', () => {
+  /** A lock as another session leaves it: a folder holding its owner's pid. */
+  function lockBy(dataDir, pid) {
+    const lock = path.join(dataDir, 'install.lock');
+    fs.mkdirSync(lock, { recursive: true });
+    fs.writeFileSync(path.join(lock, 'owner'), `${pid} other`);
+    return lock;
+  }
+  const LIVE = 4242;
+  const DEAD = 4343;
+  const isAlive = (pid) => pid !== DEAD;
+
+  it('leaves an install in progress alone, and takes over a lock whose owner died', () => {
     const { root, dataDir } = marketplaceCopy();
-    fs.mkdirSync(path.join(dataDir, 'install.lock'), { recursive: true });
+    const lock = lockBy(dataDir, LIVE);
     const npm = fakeNpm();
-    expect(() => ensurePluginDependencies({ root, dataDir, install: npm.install })).toThrow(
-      /another session is installing/
-    );
+    expect(() =>
+      ensurePluginDependencies({ root, dataDir, install: npm.install, isAlive })
+    ).toThrow(/another session is installing/);
     expect(npm.calls).toHaveLength(0);
-    const later = () => Date.now() + 10 * 60 * 1000;
-    expect(ensurePluginDependencies({ root, dataDir, install: npm.install, now: later })).toBe(
+    fs.rmSync(lock, { recursive: true });
+    lockBy(dataDir, DEAD);
+    expect(ensurePluginDependencies({ root, dataDir, install: npm.install, isAlive })).toBe(
       'installed'
     );
+    expect(fs.existsSync(lock)).toBe(false);
+    expect(fs.readdirSync(dataDir).filter((name) => name.includes('lock'))).toEqual([]);
+  });
+
+  it('gives back a live lock another session took over first', () => {
+    const { root, dataDir } = marketplaceCopy();
+    const lock = lockBy(dataDir, DEAD);
+    const npm = fakeNpm();
+    // Both sessions saw the dead owner; the other one recovered first and holds a live lock.
+    const otherRecoversFirst = () => {
+      fs.rmSync(lock, { recursive: true });
+      lockBy(dataDir, LIVE);
+    };
+    expect(() =>
+      ensurePluginDependencies({
+        root,
+        dataDir,
+        install: npm.install,
+        isAlive,
+        beforeTakeover: otherRecoversFirst,
+      })
+    ).toThrow(/another session is installing/);
+    expect(npm.calls).toHaveLength(0);
+    expect(fs.readFileSync(path.join(lock, 'owner'), 'utf8')).toBe(`${LIVE} other`);
+  });
+
+  it('removes only its own lock', () => {
+    const { root, dataDir } = marketplaceCopy();
+    const lock = path.join(dataDir, 'install.lock');
+    const npm = fakeNpm();
+    // While this session installs, its lock is replaced by another session's.
+    const replacedWhileInstalling = (dir) => {
+      fs.rmSync(lock, { recursive: true });
+      lockBy(dataDir, LIVE);
+      npm.install(dir);
+    };
+    ensurePluginDependencies({ root, dataDir, install: replacedWhileInstalling, isAlive });
+    expect(fs.readFileSync(path.join(lock, 'owner'), 'utf8')).toBe(`${LIVE} other`);
   });
 
   it('installs nothing for a checkout whose own node_modules has mama-core', () => {

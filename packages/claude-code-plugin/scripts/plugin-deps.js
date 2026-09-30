@@ -15,14 +15,14 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { randomUUID } = require('crypto');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const CORE_PACKAGE = ['@jungjaehoon', 'mama-core'];
 const MARKER = 'installed-dependencies.json';
 const LOCK = 'install.lock';
-// A SessionStart hook killed at its timeout (plugin.json) leaves its lock behind; a lock older
-// than that timeout belongs to no running install.
-const STALE_LOCK_MS = 180_000;
+const BUSY =
+  'another session is installing the plugin dependencies; they are ready from the next session';
 
 function hasCore(nodeModules) {
   return fs.existsSync(path.join(nodeModules, ...CORE_PACKAGE, 'package.json'));
@@ -78,6 +78,86 @@ function runNpmInstall(dir) {
   }
 }
 
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+}
+
+// A directory rename onto an existing, non-empty directory fails with one of these.
+const TARGET_EXISTS = ['EEXIST', 'ENOTEMPTY', 'EPERM'];
+
+/**
+ * Take the install lock: a folder holding its owner's pid and a token. Two npm installs in one
+ * folder corrupt it, and sessions can start together. The lock is prepared under a unique name
+ * with its owner written, then renamed into place, so no session sees a lock without an owner.
+ * A lock whose owner process is gone was left by a hook killed at its timeout; it is renamed
+ * aside and removed, unless what was renamed is another session's live lock (both saw the same
+ * dead owner and that session took over first), which is put back. Returns the token.
+ */
+function acquireLock(dataDir, { isAlive, beforeTakeover }) {
+  const lock = path.join(dataDir, LOCK);
+  const token = `${process.pid} ${randomUUID()}`;
+  const claim = () => {
+    const prepared = path.join(dataDir, `${LOCK}.${randomUUID()}`);
+    fs.mkdirSync(prepared);
+    fs.writeFileSync(path.join(prepared, 'owner'), token);
+    try {
+      fs.renameSync(prepared, lock);
+      return true;
+    } catch (error) {
+      fs.rmSync(prepared, { recursive: true, force: true });
+      if (TARGET_EXISTS.includes(error.code)) {
+        return false;
+      }
+      throw error;
+    }
+  };
+  if (claim()) {
+    return token;
+  }
+  const staleOwner = readText(path.join(lock, 'owner'));
+  if (staleOwner === null || isAlive(Number(staleOwner.split(' ')[0]))) {
+    throw new Error(BUSY);
+  }
+  beforeTakeover();
+  const aside = path.join(dataDir, `${LOCK}.stale.${randomUUID()}`);
+  try {
+    fs.renameSync(lock, aside);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      throw new Error(BUSY);
+    }
+    throw error;
+  }
+  if (readText(path.join(aside, 'owner')) !== staleOwner) {
+    try {
+      fs.renameSync(aside, lock);
+    } catch (error) {
+      // A newer lock took the place; the renamed lock's owner goes on without its folder.
+      if (!TARGET_EXISTS.includes(error.code)) {
+        throw error;
+      }
+    }
+    throw new Error(BUSY);
+  }
+  fs.rmSync(aside, { recursive: true, force: true });
+  if (claim()) {
+    return token;
+  }
+  throw new Error(BUSY);
+}
+
+function releaseLock(dataDir, token) {
+  const lock = path.join(dataDir, LOCK);
+  if (readText(path.join(lock, 'owner')) === token) {
+    fs.rmSync(lock, { recursive: true, force: true });
+  }
+}
+
 /**
  * Make mama-core loadable for this session's hooks. Returns 'local' when the plugin's own
  * node_modules has it, 'ready' when the data directory holds the current dependencies, and
@@ -88,7 +168,8 @@ function ensurePluginDependencies({
   root = PLUGIN_ROOT,
   dataDir = process.env.CLAUDE_PLUGIN_DATA,
   install = runNpmInstall,
-  now = Date.now,
+  isAlive = processAlive,
+  beforeTakeover = () => {},
 } = {}) {
   if (hasLocalCore(root)) {
     return 'local';
@@ -99,27 +180,17 @@ function ensurePluginDependencies({
   fs.mkdirSync(dataDir, { recursive: true });
   const manifest = dependencyManifest(root);
   const marker = path.join(dataDir, MARKER);
-  if (readText(marker) === manifest && hasCore(path.join(dataDir, 'node_modules'))) {
+  const ready = () => readText(marker) === manifest && hasCore(path.join(dataDir, 'node_modules'));
+  if (ready()) {
     return 'ready';
   }
 
-  // Two npm installs in one folder corrupt it, and sessions can start together.
-  const lock = path.join(dataDir, LOCK);
+  const token = acquireLock(dataDir, { isAlive, beforeTakeover });
   try {
-    fs.mkdirSync(lock);
-  } catch (error) {
-    if (error.code !== 'EEXIST') {
-      throw error;
+    // A session that held the lock before this one may have just finished.
+    if (ready()) {
+      return 'ready';
     }
-    if (now() - fs.statSync(lock).mtimeMs < STALE_LOCK_MS) {
-      throw new Error(
-        'another session is installing the plugin dependencies; they are ready from the next session'
-      );
-    }
-    fs.rmSync(lock, { recursive: true, force: true });
-    fs.mkdirSync(lock);
-  }
-  try {
     // The marker is written only after npm succeeds, so a stopped install is retried.
     fs.rmSync(marker, { force: true });
     fs.writeFileSync(path.join(dataDir, 'package.json'), manifest);
@@ -127,7 +198,7 @@ function ensurePluginDependencies({
     fs.writeFileSync(marker, manifest);
     return 'installed';
   } finally {
-    fs.rmSync(lock, { recursive: true, force: true });
+    releaseLock(dataDir, token);
   }
 }
 
