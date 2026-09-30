@@ -45,7 +45,7 @@ import type {
   WorkGraphQuery,
   WorkReference,
 } from '../memory/judgment-types.js';
-import { TWIN_EDGE_TYPES } from '../knowledge/twin-edge-types.js';
+import { TWIN_EDGE_TYPES, TWIN_REF_KINDS } from '../knowledge/twin-edge-types.js';
 import type {
   TwinEdgeRecord,
   TwinEdgeType,
@@ -1717,7 +1717,28 @@ function hydrateNode(
   return hydrateRecordNode(adapter, ref);
 }
 
-function pageEdgeAttrs(edge: TwinEdgeRecord, correctedBy?: readonly EdgeCorrection[]): JsonValue {
+/**
+ * A link's evidence as twin refs. Entries without a kind are the link entries ({id, reason}) an
+ * earlier version copied into a record's own edges; they repeat the edge's target and reason.
+ */
+function evidenceRefsOf(edge: TwinEdgeRecord): TwinRef[] {
+  return Array.isArray(edge.evidence_refs)
+    ? (edge.evidence_refs as Array<Partial<TwinRef>>).filter(
+        (ref): ref is TwinRef =>
+          typeof ref?.id === 'string' && (TWIN_REF_KINDS as readonly string[]).includes(ref.kind!)
+      )
+    : [];
+}
+
+function pageEdgeAttrs(
+  edge: TwinEdgeRecord,
+  visibleEvidence: ReadonlySet<string>,
+  correctedBy?: readonly EdgeCorrection[]
+): JsonValue {
+  // Both ends being visible does not make the evidence visible: a hidden record is not named.
+  const evidence = evidenceRefsOf(edge).filter((ref) =>
+    visibleEvidence.has(`${ref.kind}\0${ref.id}`)
+  );
   return {
     ...(correctedBy?.length ? { corrected_by: correctedBy as unknown as JsonValue } : {}),
     edge_type: edge.edge_type,
@@ -1728,7 +1749,7 @@ function pageEdgeAttrs(edge: TwinEdgeRecord, correctedBy?: readonly EdgeCorrecti
     model_run_id: edge.model_run_id,
     reason_classification: edge.reason_classification,
     reason_text: edge.reason_text,
-    evidence_refs: (edge.evidence_refs ?? null) as JsonValue,
+    evidence_refs: (evidence.length > 0 ? evidence : null) as JsonValue,
     created_at: edge.created_at,
     content_hash: edge.content_hash.toString('hex'),
   } as JsonValue;
@@ -2233,6 +2254,11 @@ export function queryGraph(
     ctx.visibility,
     asOf
   );
+  const visibleEvidence = visibleTwinRefKeysRecursive(
+    adapter,
+    collectedEdges.flatMap(evidenceRefsOf),
+    { ...ctx.visibility, asOfMs: asOf }
+  );
   const pageEdges: WorkGraphPage['edges'] = collectedEdges.map((edge) => {
     const fromProjection = projections.get(projectionKey(edge.edge_id, 'from'));
     const toProjection = projections.get(projectionKey(edge.edge_id, 'to'));
@@ -2243,7 +2269,7 @@ export function queryGraph(
       to: edge.object_ref,
       resolvedFrom: fromProjection?.current_ref ?? edge.subject_ref,
       resolvedTo: toProjection?.current_ref ?? edge.object_ref,
-      attrs: pageEdgeAttrs(edge, corrections.get(edge.edge_id)),
+      attrs: pageEdgeAttrs(edge, visibleEvidence, corrections.get(edge.edge_id)),
     };
   });
 

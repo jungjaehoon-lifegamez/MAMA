@@ -1661,9 +1661,14 @@ export function workLinkRegistration(ports: WorkPorts): ActionRegistration {
           body.to.kind === 'work'
             ? isRevisionOf(earlier.to, body.to.id)
             : earlier.to.kind === body.to.kind && earlier.to.id === body.to.id;
+        // Evidence is compared as core's content hash compares it: the same refs in the same order.
+        const sameEvidence =
+          JSON.stringify(earlier.evidenceRefs.map((ref) => `${ref.kind}:${ref.id}`)) ===
+          JSON.stringify((body.evidenceRefs ?? []).map((id) => `observation:${id}`));
         if (
           earlier.relation !== body.relation ||
           earlier.reason !== body.reason.trim() ||
+          !sameEvidence ||
           !isRevisionOf(earlier.from, body.from) ||
           !sameTarget
         )

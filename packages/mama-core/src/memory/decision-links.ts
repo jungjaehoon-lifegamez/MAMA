@@ -35,23 +35,31 @@ export function appendDecisionLink(
     ? { kind: 'edge' as const, id: input.to }
     : { kind: 'memory' as const, id: input.to };
   const scopes = new Map<string, MemoryScopeRef>();
-  // A correction reads the corrected link, so both of its ends must be admitted too.
-  const ends =
-    to.kind === 'edge'
-      ? ((adapter
-          .prepare(
-            `SELECT subject_kind, subject_id, object_kind, object_id FROM twin_edges WHERE edge_id = ?`
-          )
-          .get(to.id) as
-          | { subject_kind: string; subject_id: string; object_kind: string; object_id: string }
-          | undefined) ?? null)
-      : null;
-  const memoryEnds = [
-    input.from,
-    ...(to.kind === 'memory' ? [to.id] : []),
-    ...(ends?.subject_kind === 'memory' ? [ends.subject_id] : []),
-    ...(ends?.object_kind === 'memory' ? [ends.object_id] : []),
-  ];
+  const memoryEnds = [input.from, ...(to.kind === 'memory' ? [to.id] : [])];
+  // A correction reads the corrected link, so its ends must be admitted too, down the chain when
+  // it corrects a correction. A link names only an edge that already exists, so the chain ends.
+  const endsOf = adapter.prepare(
+    `SELECT subject_kind, subject_id, object_kind, object_id FROM twin_edges WHERE edge_id = ?`
+  );
+  let edgeIds = to.kind === 'edge' ? [to.id] : [];
+  while (edgeIds.length > 0) {
+    const next: string[] = [];
+    for (const edgeId of edgeIds) {
+      const ends = endsOf.get(edgeId) as
+        | { subject_kind: string; subject_id: string; object_kind: string; object_id: string }
+        | undefined;
+      // An unknown edge is refused by appendLink, which names the caller's own id.
+      if (!ends) continue;
+      for (const [kind, id] of [
+        [ends.subject_kind, ends.subject_id],
+        [ends.object_kind, ends.object_id],
+      ]) {
+        if (kind === 'memory') memoryEnds.push(id!);
+        else if (kind === 'edge') next.push(id!);
+      }
+    }
+    edgeIds = next;
+  }
   for (const scope of memoryEnds.flatMap((id) => boundScopesOf(adapter, id))) {
     scopes.set(`${scope.kind}\0${scope.id}`, scope);
   }
@@ -131,7 +139,7 @@ function correctionsOf(
       .prepare(
         `SELECT edge_id, object_id, reason_text, created_at FROM twin_edges
           WHERE object_kind = 'edge' AND edge_type = 'contradicts' AND object_id IN (${placeholders})
-          ORDER BY created_at, edge_id`
+          ORDER BY created_at, rowid`
       )
       .all(...frontier) as Array<{
       edge_id: string;
@@ -213,7 +221,7 @@ export function readDecisionWithEdges(
         WHERE edge_type <> 'derived_from'
           AND ((subject_kind = 'memory' AND subject_id = ? AND object_kind = 'memory')
             OR (object_kind = 'memory' AND object_id = ? AND subject_kind = 'memory'))
-        ORDER BY created_at, edge_id`
+        ORDER BY created_at, rowid`
     )
     .all(id, id) as Array<{
     edge_id: string;

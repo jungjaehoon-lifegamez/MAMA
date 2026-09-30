@@ -77,10 +77,19 @@ export async function readGraphEdges(
   const placeholders = scopeIds.map(() => '?').join(', ');
   // Both ends must be admitted: an edge to a memory this caller cannot read
   // would disclose that it exists, which is the read the join is here to bound.
+  // Links between memories live in twin_edges; decision_edges holds the rows
+  // written before links moved there.
   const rows = (await adapter
     .prepare(
       `SELECT e.from_id, e.to_id, e.relationship, e.reason
-       FROM decision_edges e
+       FROM (
+         SELECT from_id, to_id, relationship, reason FROM decision_edges
+         UNION ALL
+         SELECT subject_id, object_id, edge_type,
+                COALESCE(json_extract(relation_attrs_json, '$.reason'), reason_text)
+           FROM twin_edges
+          WHERE subject_kind = 'memory' AND object_kind = 'memory' AND edge_type <> 'derived_from'
+       ) e
        WHERE EXISTS (
                SELECT 1 FROM memory_scope_bindings b
                WHERE b.memory_id = e.from_id AND b.scope_id IN (${placeholders})

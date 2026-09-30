@@ -294,6 +294,46 @@ describe('knowledge/links: appending an edge the agent judged', () => {
     ).toThrow(/Unknown link relation/);
   });
 
+  it('shows the evidence of a link only as far as the reader can see it', async () => {
+    const bothAccess = {
+      principalId: 'principal-both',
+      agentId: 'agent-both',
+      scopes: [...access.scopes, ...otherAccess.scopes],
+      actions: [],
+    };
+    const current = await work('current', 'current');
+    const earlier = await work('earlier', 'earlier');
+    const theirs = await work('theirs', 'theirs', otherAccess);
+    const receipt = knowledge.appendLink(
+      {
+        commandId: 'l-evidence',
+        from: current.recordRef as { kind: 'memory'; id: string },
+        to: earlier.recordRef,
+        relation: 'builds_on',
+        reason: 'same kind',
+        evidenceRefs: [earlier.recordRef, theirs.recordRef],
+      },
+      bothAccess
+    );
+    const evidenceFor = (reader: typeof access) =>
+      (
+        knowledge
+          .queryGraph(
+            {
+              view: 'neighbors',
+              seeds: [current.recordRef],
+              maxDepth: 1,
+              relations: ['builds_on'],
+            },
+            reader
+          )
+          .edges.find((edge) => edge.id === receipt.edgeId)?.attrs as { evidence_refs: unknown }
+      ).evidence_refs;
+
+    expect(evidenceFor(bothAccess)).toEqual([earlier.recordRef, theirs.recordRef]);
+    expect(evidenceFor(access)).toEqual([earlier.recordRef]);
+  });
+
   it("links to a record with no scope binding, as a record's own links may", async () => {
     const current = await work('current', 'current');
     getAdapter()

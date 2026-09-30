@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a required reason and optional evidence, and no new record or revision. The row is its own
   receipt; a retried command id returns the same edge and a different payload under it is a
   conflict. A link to an edge takes `contradicts` and corrects it; graph pages return
-  `corrected_by` on the corrected edge and `evidence_refs` on every edge.
+  `corrected_by` on the corrected edge and, on every edge, the `evidence_refs` the reader can see.
+  `findLink` returns a stored link with its evidence.
 - `mama.save` takes `links [{id, relation, reason}]` and `replaces [{id, reason}]`;
   `mama.link` links after saving; `mama.getDecision` reads one decision with every edge in and
   out, each with its reason and writer.
@@ -25,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer links to the previous revision (added in 4.1.0); the revision order is in the
   commitment's assignments. Migration 099 now only stamps its version.
 - The save hint no longer asks for "builds_on: id" in the reasoning, which nothing parses.
+- `memory.read:graph` view `graph` returns links between memories from `twin_edges` beside the
+  `decision_edges` rows written before links moved there.
 
 ### Removed
 

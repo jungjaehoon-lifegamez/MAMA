@@ -48,6 +48,7 @@ export interface StoredLink extends LinkReceipt {
   to: TwinRef;
   relation: string;
   reason: string | null;
+  evidenceRefs: TwinRef[];
 }
 
 const TARGET_KINDS = new Set<TwinRef['kind']>(['memory', 'registry', 'observation', 'edge']);
@@ -139,6 +140,7 @@ export function findLink(
         to: existing.object_ref,
         relation: existing.edge_type,
         reason: existing.reason_text,
+        evidenceRefs: (existing.evidence_refs as TwinRef[] | null) ?? [],
       }
     : null;
 }

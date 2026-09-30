@@ -6,7 +6,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createKnowledge, type Knowledge } from '@jungjaehoon/mama-core/knowledge';
+import {
+  appendObservationVersion,
+  createKnowledge,
+  type Knowledge,
+} from '@jungjaehoon/mama-core/knowledge';
 
 import { minimalWorkActionRegistrations, runWorkListView } from '../../src/api/work-actions.js';
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
@@ -177,6 +181,40 @@ describe('work.link and work.list view links', () => {
     ).rejects.toThrow(/unavailable/);
   });
 
+  it('replays a link with its evidence, and refuses the same id with other evidence', async () => {
+    const current = await work('current', 'current');
+    const earlier = await work('earlier', 'earlier');
+    const observation = appendObservationVersion(handle.adapter, {
+      source: 'chat',
+      sourceType: 'message',
+      sourceId: 'message:evidence',
+      body: 'the client asked for the same fix',
+      sourceAt: 1,
+      observedAt: 1,
+      contentHash: 'hash-message-evidence',
+      producerVersionId: 'v-1',
+    });
+    const registration = minimalWorkActionRegistrations({
+      knowledge,
+      observationExists: (id) => id === observation.observationId,
+    }).find((candidate) => candidate.contract.name === 'work.link')!;
+    const exec = async (input: Record<string, unknown>) =>
+      registration.exec(input, { access, operationId: 'op-evidence' } as never);
+    const input = {
+      from: current.commitmentId,
+      to: { kind: 'work', id: earlier.commitmentId },
+      relation: 'builds_on',
+      reason: 'the same request',
+      evidenceRefs: [observation.observationId],
+    };
+
+    const first = (await exec(input)) as { edgeId: string };
+    expect(await exec(input)).toMatchObject({ edgeId: first.edgeId, replayed: true });
+    await expect(exec({ ...input, evidenceRefs: [] })).rejects.toThrow(
+      /already bound to another link/
+    );
+  });
+
   it('keeps the link readable after later revisions, and a retried call returns the same link', async () => {
     const current = await work('current', 'current v1');
     const earlier = await work('earlier', 'earlier');
@@ -206,6 +244,17 @@ describe('work.link and work.list view links', () => {
     await expect(link({ ...input, reason: 'another statement' }, 'op-retry')).rejects.toThrow(
       /already bound to another link/
     );
+    const withEvidence = minimalWorkActionRegistrations({
+      knowledge,
+      observationExists: (id) => id === 'obs_later',
+    }).find((candidate) => candidate.contract.name === 'work.link')!;
+    await expect(
+      (async () =>
+        withEvidence.exec({ ...input, evidenceRefs: ['obs_later'] }, {
+          access,
+          operationId: 'op-retry',
+        } as never))()
+    ).rejects.toThrow(/already bound to another link/);
     const view = (await runWorkListView(
       { view: 'links', ids: [current.commitmentId, earlier.commitmentId] },
       { knowledge, access, timeZone: 'UTC' }

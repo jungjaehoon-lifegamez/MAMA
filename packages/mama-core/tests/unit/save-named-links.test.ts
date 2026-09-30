@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { getAdapter } from '../../src/db-manager.js';
+import { readGraphEdges } from '../../src/memory/graph-read.js';
 import { cleanupTestDB, initTestDB } from '../helpers/test-utils.js';
 
 describe('mama.save: named links and replacements', () => {
@@ -163,11 +164,18 @@ describe('mama.save: named links and replacements', () => {
     const edge = (await api.getDecision(here.id))!.edges.find(
       (candidate) => candidate.otherId === elsewhere.id
     ) as { edgeId: string };
-    await api.link({
+    const correction = await api.link({
       from: here.id,
       to: edge.edgeId,
       relation: 'contradicts',
       reason: 'the rule does not carry over',
+    });
+    // The correction's far end is the other project's decision, two links away.
+    await api.link({
+      from: here.id,
+      to: correction.edgeId,
+      relation: 'contradicts',
+      reason: 'it does carry over after all',
     });
     await api.save({
       type: 'user_decision',
@@ -181,7 +189,12 @@ describe('mama.save: named links and replacements', () => {
     expect((await api.getDecision(here.id))!.edges).toEqual([
       expect.objectContaining({
         otherId: elsewhere.id,
-        correctedBy: [expect.objectContaining({ reason: 'the rule does not carry over' })],
+        correctedBy: [
+          expect.objectContaining({
+            reason: 'the rule does not carry over',
+            correctedBy: [expect.objectContaining({ reason: 'it does carry over after all' })],
+          }),
+        ],
       }),
     ]);
     expect(
@@ -240,5 +253,47 @@ describe('mama.save: named links and replacements', () => {
       expect.objectContaining({ outcome: null }),
       expect.objectContaining({ outcome: 'SUCCESS' }),
     ]);
+  });
+
+  it('draws a named link in the memory graph beside a legacy edge, both ends admitted', async () => {
+    const scope = { kind: 'project', id: '/graph/project' };
+    const base = await api.save({
+      type: 'user_decision',
+      topic: 'graph_base',
+      decision: 'Base',
+      reasoning: 'r',
+      scopes: [scope],
+    });
+    const next = await api.save({
+      type: 'user_decision',
+      topic: 'graph_next',
+      decision: 'Next',
+      reasoning: 'r',
+      scopes: [scope],
+      links: [{ id: base.id, relation: 'builds_on', reason: 'continues the base' }],
+    });
+    const outside = await api.save({
+      type: 'user_decision',
+      topic: 'graph_outside',
+      decision: 'Outside',
+      reasoning: 'r',
+      scopes: [{ kind: 'project', id: '/graph/other' }],
+    });
+    await api.link({ from: next.id, to: outside.id, relation: 'mentions', reason: 'names it' });
+    getAdapter()
+      .prepare(
+        `INSERT INTO decision_edges (from_id, to_id, relationship, reason, created_by)
+         VALUES (?, ?, 'refines', 'a legacy row', 'user')`
+      )
+      .run(base.id, next.id);
+
+    const edges = await readGraphEdges(getAdapter(), [scope]);
+    expect(edges).toHaveLength(2);
+    expect(edges).toEqual(
+      expect.arrayContaining([
+        { from: next.id, to: base.id, relationship: 'builds_on', reason: 'continues the base' },
+        { from: base.id, to: next.id, relationship: 'refines', reason: 'a legacy row' },
+      ])
+    );
   });
 });
