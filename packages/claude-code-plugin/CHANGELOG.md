@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.2] - 2026-09-30
+
+### Fixed
+
+- The plugin installs its own npm dependencies. Claude Code copies a marketplace plugin without
+  running npm install and replaces the copy on every update, so the hooks could not load
+  mama-core. The first session start after an install or a dependency change now installs them
+  into `${CLAUDE_PLUGIN_DATA}` (kept across updates), and every hook command sets `NODE_PATH` to
+  that folder's `node_modules`. The self-install that was there could never run: the hook
+  loaded mama-core before it, gave npm 120 s inside a 15 s hook, and installed into the plugin
+  folder. The SessionStart timeout is now 180 s (a cold install was 13 s and 416 MB).
+- PreToolUse and PreCompact say in one line that mama-core is not installed yet instead of
+  printing a stack trace.
+- Removed the `require('module').globalPaths.push(...)` lines, which never changed module
+  resolution.
+
 ## [2.1.1] - 2026-09-30
 
 ### Fixed

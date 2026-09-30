@@ -19,8 +19,8 @@ const path = require('path');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
-require('module').globalPaths.push(CORE_PATH);
 
+require('./plugin-deps.js').exitUnlessCoreLoadable('PreToolUse');
 const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
 const { getAdapter, initDB } = require('@jungjaehoon/mama-core/db-manager');
 const { vectorSearch } = require('@jungjaehoon/mama-core/knowledge');

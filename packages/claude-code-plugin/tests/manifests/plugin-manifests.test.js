@@ -135,6 +135,22 @@ describe('M3.3: Plugin Manifests', () => {
         expect(hookHandler.command).toContain('${CLAUDE_PLUGIN_ROOT}');
       });
     });
+
+    it('loads dependencies from CLAUDE_PLUGIN_DATA, which SessionStart has time to fill', () => {
+      // Claude Code never runs npm install for a plugin, and replaces its folder on update.
+      const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
+      for (const matcherGroups of Object.values(pluginConfig.hooks)) {
+        for (const matcherGroup of matcherGroups) {
+          for (const handler of matcherGroup.hooks) {
+            expect(handler.command).toMatch(
+              /^NODE_PATH="\$\{CLAUDE_PLUGIN_DATA\}\/node_modules" node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/[a-z-]+\.js"$/
+            );
+          }
+        }
+      }
+      // A cold install was 13 s and 416 MB on 2026-09-30; slower links need more.
+      expect(pluginConfig.hooks.SessionStart[0].hooks[0].timeout).toBeGreaterThanOrEqual(180);
+    });
   });
 
   describe('AC2: Hooks registered inline in plugin.json (official spec)', () => {
