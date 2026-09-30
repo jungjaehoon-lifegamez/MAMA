@@ -25,7 +25,6 @@ describe('Story M1.1: Core Module Exports', () => {
         'buildProfile',
         'ingestMemory',
         'ingestConversation',
-        'evolveMemory',
         'buildMemoryBootstrap',
         'createAuditAck',
         'recordMemoryAudit',
@@ -86,9 +85,11 @@ describe('Story M1.1: Core Module Exports', () => {
   });
 
   describe('package root memory compatibility exports', () => {
-    it('should retain evolveMemory at the package root', async () => {
+    it('exposes no host edge rules: the agent states every link', async () => {
       const core = await import('../../src/index.js');
-      expect(typeof core.evolveMemory).toBe('function');
+      expect(core.evolveMemory).toBeUndefined();
+      expect(core.promoteMemoryStatus).toBeUndefined();
+      expect(core.insertTwinEdge).toBeUndefined();
     });
   });
 

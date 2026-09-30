@@ -84,14 +84,12 @@ export {
   saveMemory,
   saveJudgmentRecord,
   saveLegacyMemory,
-  promoteMemoryStatus,
   readMemoryRecordById,
   readMemoryRecordsInScopes,
   retireMemoryRecord,
   recallMemory,
   buildProfile,
   ingestMemory,
-  evolveMemory,
   buildMemoryBootstrap,
   createAuditAck,
   recordMemoryAudit,
@@ -211,12 +209,7 @@ export {
   type TwinRefKind,
   type TwinScopeRef,
 } from './knowledge/twin-edge-types.js';
-export {
-  getTwinEdge,
-  insertTwinEdge,
-  listTwinEdgesForRefs,
-  mapTwinEdgeRow,
-} from './knowledge/judgments.js';
+export { getTwinEdge, listTwinEdgesForRefs, mapTwinEdgeRow } from './knowledge/judgments.js';
 export { listVisibleTwinEdgesForRefs } from './knowledge/access.js';
 export type {
   ActionCall,

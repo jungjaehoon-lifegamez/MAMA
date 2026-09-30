@@ -364,12 +364,6 @@ function localStamp(ms: number, timeZone: string): string {
   return `${new Date(ms).toLocaleString('ko-KR', { timeZone })} (${timeZone})`;
 }
 
-function edgeLabelSummary(node: WorkGraphPage['nodes'][number], timeZone: string): string {
-  if (node.data.kind !== 'memory') return node.label;
-  const at = node.data.recordedAt ? localStamp(node.data.recordedAt, timeZone) : '';
-  return `${at} ${node.data.topic}: ${node.data.summary}`;
-}
-
 function graphNodeKey(node: WorkGraphPage['nodes'][number]): string {
   return `${node.ref.kind}:${node.ref.id}`;
 }
@@ -652,7 +646,7 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
         {
           kind: 'revision_chain',
           message:
-            'graph.query does not expose revision-to-revision edges; use work.show history all.',
+            "Revisions are linked only where the agent stated a relation; the order of an item's revisions is in work.show history all.",
         },
       ],
     };
@@ -763,27 +757,12 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
       })) as {
         events?: Array<{ channel: string | null; observedAt: string | null; excerpt: string }>;
       };
-      const earlier = page.edges
-        .filter(
-          (edge) =>
-            `${edge.resolvedFrom.kind}:${edge.resolvedFrom.id}` === id &&
-            edge.resolvedTo.kind === 'memory'
-        )
-        .map((edge) =>
-          page.nodes.find(
-            (candidate) =>
-              graphNodeKey(candidate) === `${edge.resolvedTo.kind}:${edge.resolvedTo.id}`
-          )
-        )
-        .filter((candidate) => candidate !== undefined && candidate.data.kind === 'memory')
-        .map((candidate) => `- ${edgeLabelSummary(candidate!, options.timeZone.get())}`);
       const evidence = (provenance.events ?? []).map(
         (event) => `- ${event.observedAt ?? ''} ${event.channel ?? ''}: ${event.excerpt}`
       );
       const sections = [
         mapped.reasoning ?? '',
         evidence.length > 0 ? `**Evidence**\n${evidence.join('\n')}` : '',
-        earlier.length > 0 ? `**Earlier records**\n${earlier.join('\n')}` : '',
       ].filter((section) => section !== '');
       return { node: { ...mapped, reasoning: sections.join('\n\n') } };
     }

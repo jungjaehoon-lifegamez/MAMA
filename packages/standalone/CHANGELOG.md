@@ -5,7 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.60.0] - 2026-09-30
+
+### Added
+
+- `work.link`: link a work item to another item, a record, a person, an observation, or a link it
+  corrects, with the reason the agent judged. It writes no revision, so the item does not count
+  as changed.
+- `work.list` view `links`: every link from or to any revision of an item, with its reason,
+  writer, evidence, correction and the other end's title and status.
+- Help topic `cases`, indexed by the question (did something like this happen before, how did it
+  end): read the item's links first, search on the kind of problem when there are none, and link
+  a confirmed earlier case with its reason.
+
+### Changed
+
+- Turn lessons rank on the turn's own text and do not take records a search reached through a
+  link (`includeRelated: false`).
+- The viewer graph draws stored edges only; revisions of one item are no longer joined by a host
+  edge, and the viewer's "Earlier records" block, which read no edges, is removed.
 
 ## [0.58.1] - 2026-09-29
 

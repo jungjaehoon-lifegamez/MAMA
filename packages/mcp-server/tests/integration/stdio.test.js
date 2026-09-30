@@ -55,6 +55,8 @@ describe('public MCP stdio', () => {
           'save',
           'search',
           'update',
+          'link',
+          'get_decision',
           'search_decisions_and_contracts',
           'case_timeline_range',
         ])

@@ -55,6 +55,7 @@ const OWNER_ACTIONS = [
   'memory.checkpoint.save',
   'work.create',
   'work.revise',
+  'work.link',
   'work.list',
   'work.show',
   'work.no_update',

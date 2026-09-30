@@ -113,6 +113,8 @@ function helpTopicWhen(wikiEnabled: boolean): Record<string, string> {
     record: 'recording or revising work, its people and its evidence',
     corrections: 'the owner corrects you or states how something should be done',
     sources: 'reading source messages',
+    cases:
+      'the owner asks whether something like this happened before, how it ended, or what an item relates to',
     files: 'attachments and files',
     ...(wikiEnabled
       ? {
@@ -162,6 +164,12 @@ export function ownerHelpTopics(
       '- memory.search finds related memories, and memory.read:provenance traces one to its cited source messages. Read preserved sources only for what the ledger does not establish.',
       '- Use progressive source access: source.recent and source.search are bounded navigation, and source.read is required for the cited original content; a preview or index row is not the account of what happened. source.read reads several refs in one call with observationRefs.',
       `- To check a work item, follow its evidence: work.list detail names the messages it rests on; read what came after them in the same channel (source.search with channel and from) instead of guessing how its name is spelled.${judgeEnabled ? ' With many messages or items, pair them in the script first (asset code, channel, time; a message with no asset code, such as a review remark, pairs with the items that moved in its channel that day), judge each item with its own few messages, and return only the pairs that need you; never pass the whole ledger to judge.' : ''} Search by words only for an item with no evidence.`,
+    ].join('\n'),
+    cases: [
+      'Earlier cases:',
+      '- Start from the item: read its links with work.list view links, open the linked item that fits with work.list detail, and follow its links in turn. Cite the revisions you read.',
+      "- With no links, search on the kind of problem without the item's own name (memory.search query), then open the items that fit.",
+      '- When your answer confirms an earlier case of the same kind, link the item to it with work.link (relation builds_on) and a reason saying what is the same and how it ended, so the next question walks it. A link you find wrong is corrected with work.link to that link (to.kind edge, relation contradicts) and the reason; nothing is deleted.',
     ].join('\n'),
     files: [
       'Attachments and files:',

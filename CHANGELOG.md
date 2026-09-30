@@ -2,7 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## mama-os [0.60.0] / mama-core [5.0.0] / mama-server [2.3.0] / plugin [2.1.0] - 2026-09-30
+
+### Changed (edges)
+
+- The agent links records itself, with the reason it judged; the host writes no edge the agent did
+  not state. A link is an appended edge and writes no record or revision; a wrong link is answered
+  by a newer link that contradicts it, and both stay in the history. The host no longer links a
+  revision to the one before it, and the evolution rules that linked memories by topic overlap or
+  vector similarity are removed (mama-core major). An amendment keeps the values it replaced.
+- MAMA OS: `work.link`, `work.list` view `links`, and the help topic `cases` (read an item's links
+  first; search on the kind of problem when there are none; link a confirmed earlier case with its
+  reason). The viewer graph draws stored edges only.
+- MCP server and plugin: `save` takes `links` and `replaces`; `link` and `get_decision` read and
+  write edges with their reasons and who wrote them. The "builds_on: id" text instructions are
+  gone; `search`, `/mama:decision` and the save reminder say to link and to follow a result's
+  edges.
+- Search follows the links an agent stated: search expansion and checkpoint resume read only
+  those, not the host's similarity rows or revision chain. Each search hit lists the records its
+  links reach, with any later correction; a result reached through a link says which link; and a
+  hit that is one revision of a work item says which revision and the head, since an earlier
+  revision can rank above the one that corrected it. Turn lessons rank on the turn's text only.
+- Migration 084 no longer deletes memory scope bindings. Run inside the migration transaction with
+  foreign keys on, it had deleted every binding of a database older than schema 84.
 
 ### Changed
 

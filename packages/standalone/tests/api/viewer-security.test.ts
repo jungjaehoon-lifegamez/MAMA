@@ -589,7 +589,8 @@ describe('security events and owner alerts', () => {
     await request('/api/runtime/status', tunnel);
     expect(sendToOwner).toHaveBeenCalledTimes(3);
     const text = sendToOwner.mock.calls[0]![0];
-    for (const value of ['auth_failed', '/api/report', '401', 'AM 9:00:00', '(Asia/Seoul)', 'KR'])
+    // Whether ko-KR writes the day period as "AM" or in Korean depends on the Node release's ICU.
+    for (const value of ['auth_failed', '/api/report', '401', ' 9:00:00', '(Asia/Seoul)', 'KR'])
       expect(text).toContain(value);
     expect(text).not.toContain(tunnel['cf-ray']);
     expect(sendToOwner.mock.calls[2]![0]).toContain('Suppressed since previous alert: 3');

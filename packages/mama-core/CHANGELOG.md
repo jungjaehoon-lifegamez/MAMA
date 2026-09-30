@@ -5,7 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [5.0.0] - 2026-09-30
+
+### Added
+
+- `appendLink` (`Knowledge.appendLink`): one edge appended between records that already exist,
+  with a required reason and optional evidence, and no new record or revision. The row is its own
+  receipt; a retried command id returns the same edge and a different payload under it is a
+  conflict. A link to an edge takes `contradicts` and corrects it; graph pages return
+  `corrected_by` on the corrected edge and, on every edge, the `evidence_refs` the reader can see
+  (as do `getGraphNeighborhood`, `getGraphPaths` and `getGraphTimeline`).
+- `mama.save` takes `links [{id, relation, reason}]` and `replaces [{id, reason}]`;
+  `mama.link` links after saving; `mama.getDecision` reads one decision with every edge in and
+  out, each with its reason and writer.
+- An amendment keeps the values it replaced in its record's payload (`replacedValues`).
+
+### Changed
+
+- Search expansion (`suggest`, `memory.search`, recall's related records) follows only the edges
+  an agent stated: links between memories and legacy rows parsed from an agent's reasoning. The
+  host's similarity rows and revision chain are no longer followed. A record reached through a link
+  says so in the default results: `graph_source` (relation), `related_to` (the hit it came from),
+  `edge_reason`, and `edge_corrected_by` when a later link contradicts it and the reader may see
+  the record that states the correction. Expanded rows rank below every direct hit and are cut at
+  the usual limits, so each direct hit also lists the records its links reach in both directions,
+  including another hit (`links`: id, topic, summary, status when not active, relation, reason,
+  corrected_by). A hit that is one revision of a work item says which (`work_item`: commitment_id,
+  revision, head_revision): an earlier revision can rank above the head that corrected it. Expansion errors are raised instead of logged and
+  skipped. `STATED_DECISION_EDGES` is exported for readers of the same edges.
+- `queryDecisionGraph` no longer attaches an `edges` list to each decision (nothing read it);
+  `DecisionEdgeRow` is removed.
+
+- **Breaking:** the host writes no edge the agent did not state. A work revision or withdrawal no
+  longer links to the previous revision (added in 4.1.0); the revision order is in the
+  commitment's assignments. Migration 099 now only stamps its version.
+- The save hint no longer asks for "builds_on: id" in the reasoning, which nothing parses.
+- `memory.read:graph` view `graph` returns links between memories from `twin_edges` beside the
+  `decision_edges` rows written before links moved there.
+
+### Removed
+
+- **Breaking:** `evolveMemory`, `promoteMemoryStatus` and the evolution rules that linked memories
+  by topic overlap or vector similarity; the public `insertTwinEdge`; the decision-edge mutators
+  (`upsertDecisionEdge`, `proposeDecisionEdge`, `approveDecisionEdge`, `rejectDecisionEdge`,
+  `deprecateAutoDecisionEdges`, `deleteDecisionEdgesWithAudit`); the legacy `relationships` save
+  path and the `decisionEdges`/`supersedeTargets` projections; `memory.read:graph` view
+  `similarity`.
 
 ## [4.1.0] - 2026-09-29
 

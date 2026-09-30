@@ -8,8 +8,6 @@
  * A principal that admits nothing sees an empty graph rather than the file.
  */
 import { ensureMemoryScope, type DatabaseAdapter } from '../db-manager.js';
-import { generateEmbedding } from '../embedding/embedder.js';
-import { vectorSearch } from '../knowledge/search.js';
 
 export interface GraphReadNode {
   id: string;
@@ -26,10 +24,6 @@ export interface GraphReadEdge {
   to: string;
   relationship: string;
   reason: string | null;
-}
-
-export interface GraphSimilarityEdge extends GraphReadEdge {
-  similarity: number;
 }
 
 export interface GraphScope {
@@ -83,10 +77,19 @@ export async function readGraphEdges(
   const placeholders = scopeIds.map(() => '?').join(', ');
   // Both ends must be admitted: an edge to a memory this caller cannot read
   // would disclose that it exists, which is the read the join is here to bound.
+  // Links between memories live in twin_edges; decision_edges holds the rows
+  // written before links moved there.
   const rows = (await adapter
     .prepare(
       `SELECT e.from_id, e.to_id, e.relationship, e.reason
-       FROM decision_edges e
+       FROM (
+         SELECT from_id, to_id, relationship, reason FROM decision_edges
+         UNION ALL
+         SELECT subject_id, object_id, edge_type,
+                COALESCE(json_extract(relation_attrs_json, '$.reason'), reason_text)
+           FROM twin_edges
+          WHERE subject_kind = 'memory' AND object_kind = 'memory' AND edge_type <> 'derived_from'
+       ) e
        WHERE EXISTS (
                SELECT 1 FROM memory_scope_bindings b
                WHERE b.memory_id = e.from_id AND b.scope_id IN (${placeholders})
@@ -127,61 +130,4 @@ export async function countGraphNodes(
     )
     .get(...scopeIds)) as { count?: number } | undefined;
   return row?.count ?? 0;
-}
-
-/**
- * Similarity edges over the admitted set.
- *
- * This embeds a bounded window of admitted nodes and asks the vector index what
- * each is near. It lives here rather than in an HTTP handler because that is
- * where the embedder is — a door that embeds is a door that has opinions about
- * what memory means.
- */
-export async function readGraphSimilarityEdges(
-  adapter: DatabaseAdapter,
-  scopes: readonly GraphScope[],
-  options: { window?: number; neighbors?: number; threshold?: number } = {}
-): Promise<GraphSimilarityEdge[]> {
-  const window = options.window ?? 50;
-  const neighbors = options.neighbors ?? 3;
-  const threshold = options.threshold ?? 0.7;
-  const nodes = await readGraphNodes(adapter, scopes, { limit: Math.max(window * 2, window) });
-  if (nodes.length < 2) {
-    return [];
-  }
-  const admitted = new Set(nodes.map((node) => node.id));
-  const seen = new Set<string>();
-  const edges: GraphSimilarityEdge[] = [];
-  for (const node of nodes.slice(0, window)) {
-    const embedding = await generateEmbedding(`${node.topic} ${node.decision}`, 'query');
-    const similar = (await vectorSearch(
-      adapter as never,
-      embedding,
-      neighbors,
-      threshold
-    )) as Array<{ id: string; similarity?: number }>;
-    for (const match of similar) {
-      // A neighbour the caller may not read is not an edge it may see.
-      if (match.id === node.id || !admitted.has(match.id)) {
-        continue;
-      }
-      const similarity = match.similarity ?? threshold;
-      if (similarity <= threshold) {
-        continue;
-      }
-      const key = [node.id, match.id].sort().join('|');
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      edges.push({
-        from: node.id,
-        to: match.id,
-        relationship: 'similar',
-        reason: null,
-        similarity,
-      });
-    }
-  }
-  return edges;
 }

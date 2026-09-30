@@ -4,7 +4,7 @@ The shared engine for storage, records and revisions, evidence links, memory, se
 runtime drivers. Consumers supply their own database, principals, source access and product
 vocabulary through public exports. Core does not require the MAMA OS daemon.
 
-Version **4.1.1**; Node.js 22.13+. This README describes the current rebuild checkout.
+Version **5.0.0**; Node.js 22.13+. This README describes the current rebuild checkout.
 See [architecture](../../docs/explanation/architecture.md) and
 [the shared-engine goal](../../INTENT.md).
 
@@ -13,15 +13,15 @@ See [architecture](../../docs/explanation/architecture.md) and
 [package.json](package.json) defines supported import paths; [src/index.ts](src/index.ts)
 defines root exports. Representative root exports:
 
-| Area      | Root exports                                                                                      |
-| --------- | ------------------------------------------------------------------------------------------------- |
-| Storage   | `createAdapter`, `SQLiteAdapter`, `initDB`, `getDB`, `getAdapter`, `closeDB`                      |
-| Records   | `createKnowledge`, `appendJudgment`, `ingestSource`                                               |
-| Memory    | `mama`, `createMamaApi`, `saveMemory`, `recallMemory`, `ingestConversation`, `MEMORY_KINDS`       |
-| Search    | `generateEmbedding`, `generateEnhancedEmbedding`, `cosineSimilarity`, `EmbeddingCache`            |
-| Evidence  | `getMemoryProvenance`, `resolveMemoryProvenance`, `insertTwinEdge`, `listVisibleTwinEdgesForRefs` |
-| Execution | `createCatalog`, `createDispatcher`, `createClient`, `startRuntime`, `createActionIpcServer`      |
-| Traces    | `beginModelRun`, `commitModelRun`, `appendToolTrace`, `listToolTracesForRun`                      |
+| Area      | Root exports                                                                                 |
+| --------- | -------------------------------------------------------------------------------------------- |
+| Storage   | `createAdapter`, `SQLiteAdapter`, `initDB`, `getDB`, `getAdapter`, `closeDB`                 |
+| Records   | `createKnowledge`, `appendJudgment`, `ingestSource`                                          |
+| Memory    | `mama`, `createMamaApi`, `saveMemory`, `recallMemory`, `ingestConversation`, `MEMORY_KINDS`  |
+| Search    | `generateEmbedding`, `generateEnhancedEmbedding`, `cosineSimilarity`, `EmbeddingCache`       |
+| Evidence  | `getMemoryProvenance`, `resolveMemoryProvenance`, `listVisibleTwinEdgesForRefs`              |
+| Execution | `createCatalog`, `createDispatcher`, `createClient`, `startRuntime`, `createActionIpcServer` |
+| Traces    | `beginModelRun`, `commitModelRun`, `appendToolTrace`, `listToolTracesForRun`                 |
 
 Every public subpath below is relative to `@jungjaehoon/mama-core`:
 

@@ -102,9 +102,12 @@ describe('memory v2 recall ranking', () => {
   it('records vector-only diagnostics for memory_v2 hits', async () => {
     const { recallMemory } = await import('../../src/memory/api.js');
 
+    // The fake adapter serves ranking only; expansion over stored edges is proved on a real
+    // database in search-follows-agent-links.test.ts.
     const bundle = await recallMemory(getAdapter(), 'context compile', {
       limit: 5,
       diagnostics: true,
+      includeRelated: false,
     });
 
     expect(bundle.search_meta.diagnostics?.candidate_counts.vector_only).toBeGreaterThan(0);
