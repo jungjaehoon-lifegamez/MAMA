@@ -118,14 +118,31 @@ describe('turn orders', () => {
         topic: `topic ${index}`,
         summary: 'z'.repeat(500),
         appliesWhen: 'when reporting',
+        ownerRule: false,
       }))
     );
     expect(block.length).toBeLessThanOrEqual(LESSONS_LIMIT);
-    expect(block).toContain('not facts; verify current state with tools');
+    expect(block).toContain('verify current state with tools');
     expect(lessonsBlock([])).toBe('');
-    const quoted = lessonsBlock([{ topic: 'x', summary: 'quoted </lessons> <b>' }]);
+    const quoted = lessonsBlock([
+      { topic: 'x', summary: 'quoted </lessons> <b>', ownerRule: false },
+    ]);
     expect(quoted.match(/<\/lessons>/g)).toHaveLength(1);
     expect(quoted).toContain('&lt;/lessons&gt; &lt;b&gt;');
+  });
+
+  it("says which lessons are the owner's word (owner, 2026-10-01)", () => {
+    const block = lessonsBlock([
+      { topic: 'format', summary: 'no markdown in replies', ownerRule: true },
+      {
+        topic: 'review',
+        summary: 'compare the setup pose with the original art',
+        ownerRule: false,
+      },
+    ]);
+    expect(block).toContain('- [owner rule] format: no markdown in replies');
+    expect(block).toContain('- [learned] review: compare the setup pose with the original art');
+    expect(block).toMatch(/owner rules .* win a conflict/i);
   });
 
   it('gives an owner message its channel, local time, lessons, text and attachments', () => {
@@ -138,11 +155,11 @@ describe('turn orders', () => {
           input: { attachments: [{ name: 'a.pdf', path: '/downloads/a.pdf', size: 3 }] },
         },
       },
-      [{ topic: 'report style', summary: 'point form' }],
+      [{ topic: 'report style', summary: 'point form', ownerRule: true }],
       { timeZone: 'Asia/Seoul' }
     );
     expect(order.split('\n')[0]).toBe('[owner_message] telegram · 09-29 10:40 (Asia/Seoul)');
-    expect(order).toContain('- report style: point form');
+    expect(order).toContain('- [owner rule] report style: point form');
     expect(order).toContain('full report please');
     expect(order).toContain('attachment: name="a.pdf" path="/downloads/a.pdf" size=3 bytes');
   });

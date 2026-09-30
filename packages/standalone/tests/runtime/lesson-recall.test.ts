@@ -19,8 +19,12 @@ describe('lesson recall', () => {
     const picked = guidanceInSearchOrder(
       ['work-item', 'lesson-relevant', 'lesson-retired', 'lesson-second', 'workflow-unrelated'],
       records,
-      2
+      2,
+      new Set(['lesson-second'])
     );
-    expect(picked.map((lesson) => lesson.id)).toEqual(['lesson-relevant', 'lesson-second']);
+    expect(picked.map((lesson) => [lesson.id, lesson.ownerRule])).toEqual([
+      ['lesson-relevant', false],
+      ['lesson-second', true],
+    ]);
   });
 });

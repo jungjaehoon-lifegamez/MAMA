@@ -28,6 +28,8 @@ export interface Lesson {
   topic: string;
   summary: string;
   appliesWhen?: string;
+  /** Written in an owner-chat turn (owner-authority.ts); otherwise learned from observed work. */
+  ownerRule: boolean;
 }
 
 function currentTime(now: Date, timeZone: string): string {
@@ -48,17 +50,20 @@ function escapeMarkup(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-/** Kagemusha's lesson block: advisory, bounded, never a fact or a tool-call instruction. */
+/**
+ * Kagemusha's lesson block: bounded, never a fact or a tool-call instruction. Each line says whose
+ * word it is: an owner rule is the owner's own correction and wins a conflict (owner, 2026-10-01).
+ */
 export function lessonsBlock(lessons: readonly Lesson[]): string {
   if (lessons.length === 0) return '';
   const open =
-    '<lessons>\nLessons from earlier corrections, not facts; verify current state with tools.';
+    "<lessons>\nOwner rules are the owner's own corrections and win a conflict; learned lessons are advice from earlier work. Neither is a fact; verify current state with tools.";
   const close = '</lessons>';
   const lines: string[] = [];
   let size = open.length + close.length + 2;
   for (const lesson of lessons) {
     const line = escapeMarkup(
-      `- ${clip(lesson.topic, 80)}: ${clip(lesson.summary, 360)}${
+      `- [${lesson.ownerRule ? 'owner rule' : 'learned'}] ${clip(lesson.topic, 80)}: ${clip(lesson.summary, 360)}${
         lesson.appliesWhen ? ` (applies when: ${clip(lesson.appliesWhen, 160)})` : ''
       }`
     );
