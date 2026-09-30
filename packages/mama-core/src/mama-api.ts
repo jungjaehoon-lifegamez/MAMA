@@ -86,6 +86,13 @@ import {
 } from './runtime/tool-trace-store.js';
 import { type SearchHitDiagnostics } from './knowledge/search-quality.js';
 import type { RecordLink } from './memory/judgment-types.js';
+import {
+  appendDecisionLink,
+  readDecisionWithEdges,
+  type DecisionLinkInput,
+  type DecisionWithEdges,
+} from './memory/decision-links.js';
+import type { LinkReceipt } from './knowledge/links.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Type Definitions
@@ -844,6 +851,18 @@ async function updateOutcome(decisionId: string, outcome: UpdateOutcomeParams): 
   return updateOutcomeInAdapter(getAdapter(), decisionId, outcome);
 }
 
+/** Link one decision to another, or correct a link, with the reason the caller judged. */
+async function link(input: DecisionLinkInput): Promise<LinkReceipt> {
+  await initDB();
+  return appendDecisionLink(getAdapter(), input);
+}
+
+/** One decision with every edge in and out, each with its reason and who wrote it. */
+async function getDecision(id: string): Promise<DecisionWithEdges | null> {
+  await initDB();
+  return readDecisionWithEdges(getAdapter(), id);
+}
+
 async function listDecisions(
   options: ListDecisionsOptions = {}
 ): Promise<DecisionRecord[] | string> {
@@ -1199,8 +1218,10 @@ export function createMamaApi(adapter: DatabaseInstance) {
 export type MamaApi = ReturnType<typeof createMamaApi>;
 
 const mama = {
-  // Core functions (used by 4 MCP tools)
+  // Core functions (used by the MCP tools)
   save,
+  link,
+  getDecision,
   suggest,
   saveMemory,
   recallMemory,
@@ -1242,6 +1263,8 @@ const mama = {
 // Named exports for ESM consumers
 export {
   save,
+  link,
+  getDecision,
   suggest,
   saveMemory,
   recallMemory,

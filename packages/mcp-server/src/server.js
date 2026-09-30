@@ -81,8 +81,10 @@ class MAMAServer {
         description: `Save to MAMA memory. Use type parameter to choose what to save.
 
 **type='decision'** — Save architectural decisions, lessons learned, insights.
-  Required: topic, decision, reasoning. Optional: confidence, scopes, event_date.
-  Search for related decisions first, so the reasoning can reference them and the new one is not orphaned.
+  Required: topic, decision, reasoning. Optional: confidence, scopes, event_date, links, replaces.
+  Search for related decisions first. Link the ones this decision builds on, debates or combines
+  with links, and name the ones it replaces with replaces, each with the reason you judged.
+  Nothing is linked for you; link later with the link tool.
   Triggers: user says "기억해", "remember", "decided". Topic reuse alone does not create a relationship.
 
 **type='checkpoint'** — Save session state for resumption.
@@ -114,7 +116,44 @@ class MAMAServer {
             },
             reasoning: {
               type: 'string',
-              description: "[Decision] Why. End with 'builds_on: <id>' or 'debates: <id>' to link.",
+              description: '[Decision] Why. Relations go in links or replaces, not in this text.',
+            },
+            links: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string', description: 'The related decision id.' },
+                  relation: {
+                    type: 'string',
+                    enum: [
+                      'builds_on',
+                      'refines',
+                      'amends',
+                      'contradicts',
+                      'debates',
+                      'synthesizes',
+                      'mentions',
+                    ],
+                  },
+                  reason: { type: 'string', description: 'What relates the two, in a sentence.' },
+                },
+                required: ['id', 'relation', 'reason'],
+              },
+              description:
+                '[Decision] Decisions this one relates to, each with the relation and the reason you judged.',
+            },
+            replaces: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string', description: 'The replaced decision id.' },
+                  reason: { type: 'string', description: 'Why it is replaced.' },
+                },
+                required: ['id', 'reason'],
+              },
+              description: '[Decision] Decisions this one replaces, each with the reason.',
             },
             confidence: {
               type: 'number',
@@ -292,13 +331,59 @@ After failure → save a NEW decision and explicitly reference any relationship 
           required: ['id', 'outcome'],
         },
       },
-      // 4. SEARCH_DECISIONS_AND_CONTRACTS — PreToolUse hook RPC (defined in src/tools/)
+      // 4. LINK — a link after saving, or a correction of a link
+      {
+        name: 'link',
+        description: `Link one decision to another after saving, with the reason you judged.
+
+Nothing is edited: a wrong link is corrected by linking to it (to = its edgeId from get_decision,
+relation contradicts), and both stay in the history. A decision that replaces another is saved
+with replaces.`,
+        inputSchema: {
+          type: 'object',
+          properties: {
+            from: { type: 'string', description: 'The decision the link is stated from.' },
+            to: {
+              type: 'string',
+              description: 'The related decision id, or the edgeId of a link to correct.',
+            },
+            relation: {
+              type: 'string',
+              enum: [
+                'builds_on',
+                'refines',
+                'amends',
+                'contradicts',
+                'debates',
+                'synthesizes',
+                'mentions',
+              ],
+            },
+            reason: { type: 'string', description: 'What relates the two, in a sentence.' },
+          },
+          required: ['from', 'to', 'relation', 'reason'],
+        },
+      },
+      // 5. GET_DECISION — one decision and its edges, to walk the graph
+      {
+        name: 'get_decision',
+        description: `Read one decision by id with every edge in and out: the relation, the other
+decision's id, topic and first line, the reason, who wrote it (agent; agent_text, parsed from an
+older reasoning text; host, linked by similarity), and any correction. Follow an edge by reading
+the other id.`,
+        inputSchema: {
+          type: 'object',
+          properties: { id: { type: 'string', description: 'Decision id.' } },
+          required: ['id'],
+        },
+      },
+      // 6. SEARCH_DECISIONS_AND_CONTRACTS — PreToolUse hook RPC (defined in src/tools/)
       {
         name: memoryTools.search_decisions_and_contracts.name,
         description: memoryTools.search_decisions_and_contracts.description,
         inputSchema: memoryTools.search_decisions_and_contracts.inputSchema,
       },
-      // 5. CASE_TIMELINE_RANGE — Phase 3 case timeline RPC (defined in src/tools/)
+      // 7. CASE_TIMELINE_RANGE — Phase 3 case timeline RPC (defined in src/tools/)
       {
         name: memoryTools.case_timeline_range.name,
         description: memoryTools.case_timeline_range.description,
@@ -327,6 +412,12 @@ After failure → save a NEW decision and explicitly reference any relationship 
             break;
           case 'update':
             result = await this.handleUpdate(args);
+            break;
+          case 'link':
+            result = await this.handleLink(args);
+            break;
+          case 'get_decision':
+            result = await this.handleGetDecision(args);
             break;
           default:
             // All other tools → src/tools/ handlers (single source of truth)
@@ -379,6 +470,8 @@ After failure → save a NEW decision and explicitly reference any relationship 
         event_date,
         item,
         actors,
+        links,
+        replaces,
       } = args;
       if (!topic || !decision || !reasoning) {
         return { success: false, message: '❌ Decision requires: topic, decision, reasoning' };
@@ -393,6 +486,8 @@ After failure → save a NEW decision and explicitly reference any relationship 
         ...(event_date && { event_date }),
         ...(item && { item }),
         ...(actors && { actors }),
+        ...(links && { links }),
+        ...(replaces && { replaces }),
       });
       if (!saved.success) {
         return saved;
@@ -627,6 +722,26 @@ After failure → save a NEW decision and explicitly reference any relationship 
       success: true,
       message: `✅ Updated ${id} → ${normalizedOutcome}`,
     };
+  }
+
+  async handleLink(args) {
+    const { from, to, relation, reason } = args;
+    if (!from || !to || !relation || !reason) {
+      return { success: false, message: '❌ Link requires: from, to, relation, reason' };
+    }
+    const receipt = await mama.link({ from, to, relation, reason });
+    return { success: true, ...receipt };
+  }
+
+  async handleGetDecision(args) {
+    if (!args.id) {
+      return { success: false, message: '❌ get_decision requires: id' };
+    }
+    const decision = await mama.getDecision(args.id);
+    if (!decision) {
+      return { success: false, message: `❌ Decision not found: ${args.id}` };
+    }
+    return { success: true, decision };
   }
 
   async start() {

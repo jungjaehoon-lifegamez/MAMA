@@ -110,12 +110,12 @@ You are not just an AI assistant; you are a partner in this project. Your insigh
 ✓ User: "Let's use token bucket" → save(topic="rate_limiter", decision="Token bucket", reasoning="...")
 ✓ You discover: "Library X conflicts with Y" → save(topic="lib_conflict", decision="Avoid X+Y", reasoning="...")
 
-**COLLABORATION MODES:**
-When you find similar past decisions (returned in similar_decisions), choose your approach:
-- **build_on**: Add \`builds_on: <decision_id>\` in reasoning.
-- **supersede**: Add \`supersedes: <decision_id>\` in reasoning.
-- **debate**: Present a counter-argument with evidence. Explain why the prior decision may be wrong.
-- **synthesize**: Merge multiple decisions into a new unified approach.
+**LINKING:**
+When a past decision relates to this one (for example among similar_decisions), link it yourself;
+nothing is linked for you and the reasoning text is not parsed:
+- **links**: [{id, relation, reason}] with relation builds_on, refines, amends, contradicts, debates,
+  synthesizes or mentions, and the reason you judged.
+- **replaces**: [{id, reason}] for a decision this one replaces.
 
 **SCOPES & TEMPORAL:**
 - Use 'scopes' to isolate decisions per project/channel/user (e.g., [{"kind": "project", "id": "/my/app"}])
@@ -131,7 +131,7 @@ Structure your reasoning with these layers for maximum value:
 
 **INSTRUCTIONS:**
 1. **Search First**: Before saving, try to search for related past decisions.
-2. **Link**: Use \`builds_on: <id>\`, \`debates: <id>\`, \`supersedes: <id>\`, or \`synthesizes: [id1, id2]\` in reasoning.
+2. **Link**: Name related decisions in links or replaces, each with its reason.
 3. **Reasoning**: Explain your logic clearly so future agents can "empathize" with your decision.`,
   inputSchema: {
     type: 'object',
@@ -224,6 +224,39 @@ Structure your reasoning with these layers for maximum value:
         },
         description: 'Explicit registry person nodes and their roles.',
       },
+      links: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            relation: {
+              type: 'string',
+              enum: [
+                'builds_on',
+                'refines',
+                'amends',
+                'contradicts',
+                'debates',
+                'synthesizes',
+                'mentions',
+              ],
+            },
+            reason: { type: 'string' },
+          },
+          required: ['id', 'relation', 'reason'],
+        },
+        description: 'Decisions this one relates to, each with the relation and the reason.',
+      },
+      replaces: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: { id: { type: 'string' }, reason: { type: 'string' } },
+          required: ['id', 'reason'],
+        },
+        description: 'Decisions this one replaces, each with the reason.',
+      },
     },
     required: ['topic', 'decision', 'reasoning'],
   },
@@ -240,6 +273,8 @@ Structure your reasoning with these layers for maximum value:
       event_date,
       item,
       actors,
+      links,
+      replaces,
     } = params || {};
 
     try {
@@ -316,6 +351,8 @@ Structure your reasoning with these layers for maximum value:
         ...(event_date && { event_date }),
         ...(item && { item }),
         ...(actors && { actors }),
+        ...(links && { links }),
+        ...(replaces && { replaces }),
       });
 
       // Story 1.2: Return enhanced response with collaborative fields

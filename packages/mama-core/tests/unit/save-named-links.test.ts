@@ -11,6 +11,11 @@ describe('mama.save: named links and replacements', () => {
   let dbPath = '';
   let api: {
     save: (params: Record<string, unknown>) => Promise<{ success: boolean; id: string }>;
+    link: (input: Record<string, unknown>) => Promise<{ edgeId: string; replayed: boolean }>;
+    getDecision: (id: string) => Promise<{
+      supersededBy: string | null;
+      edges: Array<Record<string, unknown>>;
+    } | null>;
   };
 
   beforeAll(async () => {
@@ -74,5 +79,67 @@ describe('mama.save: named links and replacements', () => {
         links: [{ id: earlier.id, relation: 'builds_on', reason: ' ' }],
       })
     ).rejects.toThrow(/needs a reason/);
+  });
+
+  it('links after saving, reads the edges of one decision, and shows a correction and host rows', async () => {
+    const first = await api.save({
+      type: 'user_decision',
+      topic: 'read_tool',
+      decision: 'Add a read-by-id tool',
+      reasoning: 'r',
+    });
+    const second = await api.save({
+      type: 'user_decision',
+      topic: 'read_tool_edges',
+      decision: 'The read-by-id tool returns edges',
+      reasoning: 'r',
+    });
+    const linked = await api.link({
+      from: second.id,
+      to: first.id,
+      relation: 'builds_on',
+      reason: 'extends the read tool with its edges',
+    });
+    expect(
+      await api.link({
+        from: second.id,
+        to: first.id,
+        relation: 'builds_on',
+        reason: 'extends the read tool with its edges',
+      })
+    ).toMatchObject({ edgeId: linked.edgeId, replayed: true });
+    await api.link({
+      from: second.id,
+      to: linked.edgeId,
+      relation: 'contradicts',
+      reason: 'the second one replaces the first rather than extending it',
+    });
+    getAdapter()
+      .prepare(
+        `INSERT INTO decision_edges (from_id, to_id, relationship, reason, created_by)
+         VALUES (?, ?, 'builds_on', 'Semantically similar memory detected via vector search', 'user')`
+      )
+      .run(first.id, second.id);
+
+    const read = await api.getDecision(second.id);
+    expect(read?.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          relation: 'builds_on',
+          direction: 'out',
+          otherId: first.id,
+          otherTopic: 'read_tool',
+          reason: 'extends the read tool with its edges',
+          source: 'agent',
+          correctedBy: [
+            expect.objectContaining({
+              reason: 'the second one replaces the first rather than extending it',
+            }),
+          ],
+        }),
+        expect.objectContaining({ direction: 'in', otherId: first.id, source: 'host' }),
+      ])
+    );
+    expect(await api.getDecision('decision_missing')).toBeNull();
   });
 });
