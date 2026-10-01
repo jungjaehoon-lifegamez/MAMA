@@ -93,7 +93,11 @@ describe('backfill file format', () => {
     first!.revisions[0]!.recordedAt = 1;
     first!.revisions[1]!.at = '2026-08-02T00:00:00+09:00';
     first!.mentions = [{ reason: ' ', sources: ['src:3'] }];
-    first!.links = [{ to: { item: 'missing' }, relation: 'builds_on', reason: 'x' }];
+    first!.links = [
+      { to: { item: 'missing' }, relation: 'builds_on', reason: 'x' },
+      { to: { item: 'still-b', commitmentId: 'commitment_x' }, relation: 'builds_on', reason: 'x' },
+      { to: {}, relation: 'builds_on', reason: 'x' },
+    ];
     second!.revisions[0]!.set = { status: 'pending' };
     second!.appliesUntil = '2026-08-20T00:00:00+09:00';
     second!.revisions.push({
@@ -119,6 +123,8 @@ describe('backfill file format', () => {
       'item still-a.revisions[1].at: is earlier than the revision before it',
       'item still-a.mentions[0].reason: must be nonblank text',
       'item still-a.links: names no other item missing',
+      'item still-a.links[1].to: must name exactly one of item or commitmentId',
+      'item still-a.links[2].to: must name exactly one of item or commitmentId',
       'item still-b.revisions[0].set.title: the first revision must state the title',
       'item still-b.revisions[1].at: is outside the period',
       'item still-b.appliesUntil: must follow every revision of the period',

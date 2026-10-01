@@ -112,6 +112,18 @@ export function parseBackfillFile(raw: unknown): BackfillFile {
     const entries = list(value, where) ?? [];
     return entries.flatMap((entry, index) => text(entry, `${where}[${index}]`) ?? []);
   };
+  const ref = (value: unknown, where: string): BackfillWorkRef | undefined => {
+    const target = object(value, where, ['item', 'commitmentId']);
+    if (!target) return undefined;
+    if ((target.item === undefined) === (target.commitmentId === undefined))
+      return fail(where, 'must name exactly one of item or commitmentId');
+    if (target.item !== undefined) {
+      const key = text(target.item, `${where}.item`);
+      return key === undefined ? undefined : { item: key };
+    }
+    const id = text(target.commitmentId, `${where}.commitmentId`);
+    return id === undefined ? undefined : { commitmentId: id };
+  };
 
   const file = object(raw, 'file', [
     'format',
@@ -219,13 +231,10 @@ export function parseBackfillFile(raw: unknown): BackfillFile {
         const lw = `${at}.links[${n}]`;
         const link = object(entry, lw, ['to', 'relation', 'reason', 'sources']);
         if (!link) return [];
-        const target = object(link.to, `${lw}.to`, ['item', 'commitmentId']);
-        const to =
-          target?.item !== undefined
-            ? { item: text(target.item, `${lw}.to.item`) ?? '' }
-            : { commitmentId: text(target?.commitmentId, `${lw}.to.commitmentId`) ?? '' };
+        const to = ref(link.to, `${lw}.to`);
         if (!(LINK_RELATIONS as readonly unknown[]).includes(link.relation))
           fail(`${lw}.relation`, `must be one of ${LINK_RELATIONS.join(', ')}`);
+        if (!to) return [];
         return [
           {
             to,
@@ -339,15 +348,10 @@ export function parseBackfillFile(raw: unknown): BackfillFile {
   });
 
   const workRef = (value: unknown, where: string): BackfillWorkRef | undefined => {
-    const ref = object(value, where, ['item', 'commitmentId']);
-    if (!ref) return undefined;
-    if (ref.item !== undefined) {
-      const key = text(ref.item, `${where}.item`);
-      if (key !== undefined && !keys.has(key)) fail(`${where}.item`, `names no item ${key}`);
-      return key === undefined ? undefined : { item: key };
-    }
-    const id = text(ref.commitmentId, `${where}.commitmentId`);
-    return id === undefined ? undefined : { commitmentId: id };
+    const found = ref(value, where);
+    if (found && 'item' in found && !keys.has(found.item))
+      fail(`${where}.item`, `names no item ${found.item}`);
+    return found;
   };
   const links: BackfillWorkLink[] = (
     file.links === undefined ? [] : (list(file.links, 'links', 0) ?? [])
