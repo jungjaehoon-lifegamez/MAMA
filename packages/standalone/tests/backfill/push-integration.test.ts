@@ -193,6 +193,22 @@ describe('backfill push through the owner actions', () => {
     const early = read(at('2026-08-10T00:00:00+09:00'));
     expect(early.map((item) => item.values.title)).toEqual(['Still A']);
     expect(early[0]!.values.status).toBe('pending');
+    // A changed payload under an operation id that already wrote is refused, not replayed.
+    const edited = {
+      ...file,
+      items: file.items.map((item, index) =>
+        index === 0
+          ? {
+              ...item,
+              revisions: item.revisions.map((revision, n) =>
+                n === 1 ? { ...revision, summary: 'client FIX, worded differently' } : revision
+              ),
+            }
+          : item
+      ),
+    };
+    await expect(pushBackfill(edited, ports())).rejects.toThrow('COMMAND_CONFLICT');
+    expect(count('SELECT COUNT(*) AS n FROM commitment_assignments')).toBe(4);
     // Evidence is the observation the source row names.
     const edges = handle.adapter
       .prepare(
