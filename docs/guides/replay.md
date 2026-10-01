@@ -9,7 +9,8 @@ nav_order: 6
 Use replay to process already imported originals chronologically through the owner
 runtime. It rebuilds work history, daily journals, wiki pages and board views from
 the evidence available at each historical day. This is an operator workflow;
-`mama init` does not import historical sources.
+`mama init` does not import historical sources. To record a period that has already been read
+as a whole, use [backfill](backfill.md) instead.
 
 ## Prepare the input
 
