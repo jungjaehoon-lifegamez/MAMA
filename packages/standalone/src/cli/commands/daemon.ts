@@ -57,6 +57,7 @@ import { readViewerMemoryStats } from '../../api/viewer-data.js';
 import type { OwnerFileDeliveryResult } from '../../api/file-delivery.js';
 import { createReportScheduler, type ReportScheduler } from '../../runtime/report-scheduler.js';
 import { createTimeZoneSetting } from '../../runtime/timezone.js';
+import { messageWithCauses } from '../../utils/error-message.js';
 
 const OWNER_PRINCIPAL_ID = 'owner';
 const OWNER_AGENT_ID = 'owner-agent';
@@ -498,6 +499,23 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         logger.info(
           `stimulus skipped kind=${row.kind ?? 'unknown'} mailbox_id=${row.id} reason=${reason}`
         ),
+      observationEmbedding: {
+        everyMs: 20_000,
+        batch: 32,
+        onEvent: (event) => {
+          if (event.kind === 'backlog') {
+            logger.info(`observation embedding backlog pending=${event.pending}`);
+          } else if (event.kind === 'caught_up') {
+            logger.info(
+              `observation embedding caught up embedded=${event.embedded} elapsed_ms=${event.elapsedMs} per_message_ms=${
+                event.embedded === 0 ? 0 : Math.round(event.elapsedMs / event.embedded)
+              }`
+            );
+          } else {
+            logger.error(`observation embedding failed error=${messageWithCauses(event.error)}`);
+          }
+        },
+      },
       onRecordOrderEvent: (event) => {
         const line = `record order ${event.type} delta=${event.deltaStimulusId} attempt=${event.attempt}${
           'order' in event ? ` order=${event.order}` : ''

@@ -92,6 +92,8 @@ export interface ActionSurfaceOptions {
   scopes?: readonly MemoryScopeRef[];
   connectors?: readonly string[];
   storedSourceReader?: StoredSourceReader | null;
+  /** Query vectors for source.search's meaning hits; see SourcePorts.embedQuery. */
+  embedQuery?: (text: string) => Promise<Float32Array | null>;
   reportStore?: ReportStore | null;
   reportSseClients?: Set<ServerResponse>;
   wikiPorts?: WikiPorts;
@@ -186,6 +188,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     ...sourceActionRegistrations({
       stored: options.storedSourceReader,
       timeZone: options.timeZone,
+      embedQuery: options.embedQuery,
     }),
     ...reportSourceActionRegistrations({
       adapter: options.adapter,

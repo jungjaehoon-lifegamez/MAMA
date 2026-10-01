@@ -1,4 +1,5 @@
 import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
+import { readObservationEmbeddings } from '@jungjaehoon/mama-core/knowledge';
 import { MEMORY_SCOPE_KINDS, type MemoryScopeKind } from '@jungjaehoon/mama-core/memory/types';
 import { mapConnectorEventIndexRecord } from './event-index.js';
 import type {
@@ -370,6 +371,91 @@ export function searchRaw(adapter: RawQueryAdapter, input: RawSearchInput): RawS
     throw new Error('searchRaw requires exactly one connector filter.');
   }
   return runSearch(adapter, { ...input, connectors });
+}
+
+export interface RawMeaningOptions {
+  limit: number;
+  /**
+   * How far above the query's mean similarity over the filtered messages, in standard deviations,
+   * a hit must stand. e5 places every text in a narrow cone, so one absolute floor cannot separate
+   * a related message from the rest; each query is measured against its own scores. With n
+   * embedded messages under the filters no hit can stand more than (n - 1) / sqrt(n) above the
+   * mean, so a floor of 2.5 needs at least 9; a narrower filter returns text hits only.
+   */
+  minZ: number;
+  /** Observation ids already returned by the text search. */
+  exclude?: ReadonlySet<string>;
+}
+
+/**
+ * The observations nearest in meaning to a query vector, under the same filters as searchRaw: one
+ * connector, channels, scopes, time and the replay read ceiling. A message about the same thing
+ * in another language or spelling scores close to the query though no term matches as text. Only
+ * observations that already have a vector are considered; each hit's score is its similarity
+ * (e5 vectors are normalized, so a dot product).
+ */
+export function meaningSearchRaw(
+  adapter: RawQueryAdapter,
+  input: Omit<RawSearchInput, 'query' | 'cursor'>,
+  queryVector: Float32Array,
+  options: RawMeaningOptions
+): RawSearchHit[] {
+  const connectors = normalizeConnectors(input.connectors);
+  if (connectors.length !== 1) {
+    throw new Error('meaningSearchRaw requires exactly one connector filter.');
+  }
+  const clauses = ['e.current_observation_id IS NOT NULL'];
+  const params: unknown[] = [];
+  appendFilters(
+    clauses,
+    params,
+    { ...input, query: '', connectors },
+    'e',
+    'COALESCE(e.event_datetime, e.source_timestamp_ms)'
+  );
+  const rows = adapter
+    .prepare(
+      `SELECT e.*, ${timingSelectSql('e')} FROM connector_event_index e
+        WHERE ${clauses.join(' AND ')}`
+    )
+    .all(...params) as RawSearchRow[];
+  const vectors = readObservationEmbeddings(
+    adapter,
+    rows.map((row) => String(row.current_observation_id))
+  );
+  const scored: Array<{ row: RawSearchRow; similarity: number }> = [];
+  for (const row of rows) {
+    const vector = vectors.get(String(row.current_observation_id));
+    if (!vector) continue;
+    if (vector.length !== queryVector.length) {
+      throw new Error(
+        `Observation vector has ${vector.length} dimensions; the query has ${queryVector.length}`
+      );
+    }
+    let similarity = 0;
+    for (let index = 0; index < vector.length; index += 1) {
+      similarity += vector[index]! * queryVector[index]!;
+    }
+    scored.push({ row, similarity });
+  }
+  // The text hits stay in the background: they are part of what the query is measured against.
+  const mean = scored.reduce((sum, item) => sum + item.similarity, 0) / scored.length;
+  const deviation = Math.sqrt(
+    scored.reduce((sum, item) => sum + (item.similarity - mean) ** 2, 0) / scored.length
+  );
+  const page = scored
+    .filter(
+      (item) =>
+        !options.exclude?.has(String(item.row.current_observation_id)) &&
+        (item.similarity - mean) / deviation >= options.minZ
+    )
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, normalizeLimit(options.limit));
+  assertObservationRefsConsistent(
+    adapter,
+    page.map((item) => item.row)
+  );
+  return page.map((item) => ({ ...toRawHit(item.row), score: item.similarity }));
 }
 
 /** Browse stored evidence by source time when the agent has no search phrase yet. */
