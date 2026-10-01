@@ -1,7 +1,7 @@
 # MAMA for Claude Code
 
 Save development decisions and checkpoints, then retrieve them in later coding sessions.
-Version **2.1.4**, as declared in [package.json](package.json) and the
+Version **2.1.5**, as declared in [package.json](package.json) and the
 [plugin manifest](.claude-plugin/plugin.json). Requires Node.js 22.13+.
 
 The plugin supplies commands and hooks backed by the

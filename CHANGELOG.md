@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.61.2] / plugin [2.1.5] - 2026-10-01
+
+### Changed
+
+- The plugin's only hook is SessionStart; the assistant pulls everything else with the MCP tools
+  and the commands. PreToolUse blocked the first read of each code file to show decisions matched
+  on the file name, PostToolUse repeated a reminder after each first edit, and PreCompact's output
+  never reached the compaction. SessionStart loads no embedding model (about 0.1 s) and lists only
+  active decisions, with readable ages.
+- mama-os has no changes; its version carries the release tag.
+
 ## mama-os [0.61.1] / mama-core [5.2.0] / plugin [2.1.4] - 2026-10-01
 
 ### Fixed
