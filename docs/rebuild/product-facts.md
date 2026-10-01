@@ -81,5 +81,5 @@ reminder_start_hour 9, reminder_end_hour 21}`. Other keys are logged as ignored;
 - MCP tools: save (decision | checkpoint | ingest), search, update, search_decisions_and_contracts,
   case_timeline_range; load_checkpoint.
 - Plugin commands: /mama:decision, /mama:search, /mama:checkpoint, /mama:resume, /mama:configure (shows
-  the effective settings). Hooks: SessionStart, PreToolUse (Read), PostToolUse (Write/Edit), PreCompact.
+  the effective settings). Hook: SessionStart only (read, edit and compaction hooks removed 2026-10-01).
   Switches: MAMA_DISABLE_HOOKS=true; MAMA_HOOK_FEATURES under MAMA_DAEMON=1; MAMA_DEBUG.

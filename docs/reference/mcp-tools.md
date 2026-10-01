@@ -62,23 +62,21 @@ returned with `isError: true`. Individual tools can also return `success: false`
 | `/mama:resume`                                  | Load the latest checkpoint.                                                        |
 | `/mama:configure --show`                        | Show database, embedding model and hook switches. It does not write configuration. |
 
-| Hook event                                 | Current behavior                                                                                                                           | Manifest timeout |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------- |
-| `SessionStart`                             | Initialize local memory and include recent decisions and the latest checkpoint.                                                            | 15 seconds       |
-| `PreToolUse`, matcher `Read`               | On an eligible code file's first read in a session, search and inject up to three related decisions when found.                            | 5 seconds        |
-| `PostToolUse`, matchers `Write` and `Edit` | On an eligible file's first edit, remind the assistant to save meaningful decisions.                                                       | 5 seconds        |
-| `PreCompact`                               | Read the transcript and provide compaction guidance and a warning about unsaved decision candidates. It does not itself save a checkpoint. | 10 seconds       |
+| Hook event     | Current behavior                                                                                                   | Manifest timeout |
+| -------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------- |
+| `SessionStart` | Install the plugin's dependencies when needed, then include the latest checkpoint and the newest active decisions. | 180 seconds      |
 
-The manifest does not register a `UserPromptSubmit` hook. Hooks are guidance; verify a save and a
-later retrieval to check continuity.
+SessionStart is the only hook: the manifest registers no `PreToolUse`, `PostToolUse`, `PreCompact` or
+`UserPromptSubmit` hook, and the assistant pulls everything else with the tools and commands. Verify
+a save and a later retrieval to check continuity.
 
-| Environment variable      | Effect                                                                                                                                                  |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MAMA_DB_PATH`            | Development-memory database override; takes precedence over `MAMA_DATABASE_PATH`.                                                                       |
-| `MAMA_DISABLE_HOOKS=true` | Disable all hook features.                                                                                                                              |
-| `MAMA_DAEMON=1`           | Enable only the features named by `MAMA_HOOK_FEATURES`; none when it is unset.                                                                          |
-| `MAMA_HOOK_FEATURES`      | Comma-separated `memory`, `keywords`, `rules`, `agents`, `contracts` in daemon mode. Read/edit hooks require `contracts`; PreCompact requires `memory`. |
-| `MAMA_DEBUG=true`         | Enable diagnostic logging in components that support it.                                                                                                |
+| Environment variable      | Effect                                                                            |
+| ------------------------- | --------------------------------------------------------------------------------- |
+| `MAMA_DB_PATH`            | Development-memory database override; takes precedence over `MAMA_DATABASE_PATH`. |
+| `MAMA_DISABLE_HOOKS=true` | Disable all hook features.                                                        |
+| `MAMA_DAEMON=1`           | Enable only the features named by `MAMA_HOOK_FEATURES`; none when it is unset.    |
+| `MAMA_HOOK_FEATURES`      | Comma-separated feature names in daemon mode; any name enables SessionStart.      |
+| `MAMA_DEBUG=true`         | Enable diagnostic logging in components that support it.                          |
 
 Embeddings use the fixed `Xenova/multilingual-e5-large` model with 1024 dimensions, cached in
 `~/.cache/huggingface/transformers`. Initial setup may download dependencies and model assets.

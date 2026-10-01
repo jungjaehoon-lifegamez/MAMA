@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+- The PreToolUse, PostToolUse and PreCompact hooks. SessionStart is the only hook; the assistant
+  pulls everything else with the MCP tools and the commands.
+  - PreToolUse blocked the first read of each code file (exit 2 blocks a tool call) to show
+    decisions matched on the file name, loading the embedding model each time (1-1.5 s).
+  - PostToolUse added the same reminder after each first edit; recording decisions is in the
+    project instructions.
+  - PreCompact's output is shown to the user only; it never reached the compaction.
+
+### Changed
+
+- SessionStart loads no embedding model (it warmed one in a process that then exited) and takes
+  about 0.1 s. Its recent decisions leave out replaced, retired and contradicted decisions and
+  records that only amend another, as recall does. A decision whose `created_at` was stored as
+  text was always listed first with the age "NaNs ago"; both forms are now read as dates.
+
 ## [2.1.4] - 2026-10-01
 
 ### Fixed

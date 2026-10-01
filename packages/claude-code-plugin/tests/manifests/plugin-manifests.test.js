@@ -85,8 +85,9 @@ describe('M3.3: Plugin Manifests', () => {
       expect(pluginConfig.hooks).toBeDefined();
       expect(typeof pluginConfig.hooks).toBe('object');
 
-      // Expected hooks (SessionStart, PreToolUse, PostToolUse, PreCompact are active)
-      const expectedHooks = ['SessionStart', 'PreToolUse', 'PostToolUse', 'PreCompact'];
+      // SessionStart is the only hook: the agent pulls everything else (MCP tools, commands).
+      const expectedHooks = ['SessionStart'];
+      expect(Object.keys(pluginConfig.hooks)).toEqual(expectedHooks);
 
       expectedHooks.forEach((hookType) => {
         expect(pluginConfig.hooks[hookType]).toBeDefined();
@@ -97,12 +98,7 @@ describe('M3.3: Plugin Manifests', () => {
       });
 
       // Verify hook scripts exist and are executable
-      const hookScripts = [
-        'scripts/sessionstart-hook.js',
-        'scripts/pretooluse-hook.js',
-        'scripts/posttooluse-hook.js',
-        'scripts/precompact-hook.js',
-      ];
+      const hookScripts = ['scripts/sessionstart-hook.js'];
 
       hookScripts.forEach((script) => {
         const scriptPath = path.join(PLUGIN_ROOT, script);
@@ -162,36 +158,19 @@ describe('M3.3: Plugin Manifests', () => {
       expect(pluginConfig.hooks).toBeDefined();
       expect(typeof pluginConfig.hooks).toBe('object');
       expect(pluginConfig.hooks.SessionStart).toBeDefined();
-      expect(pluginConfig.hooks.PreToolUse).toBeDefined();
     });
 
-    it('should have PreToolUse and PostToolUse hooks enabled for MAMA v2', () => {
+    it('registers no tool or compaction hooks', () => {
+      // PreToolUse blocked the first read of each code file (exit 2) to push loosely related
+      // decisions, PostToolUse pushed the same reminder after each first edit, and PreCompact's
+      // output is shown to the user only, never used by compaction (removed 2026-10-01).
       const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
-      const hooksConfig = pluginConfig.hooks;
-
-      // MAMA v2: PreToolUse hook enabled for contract injection
-      // - Injects relevant contracts before Read/Grep operations
-      // - Prevents Claude from guessing schemas
-      expect(hooksConfig.PreToolUse).toBeDefined();
-      expect(Array.isArray(hooksConfig.PreToolUse)).toBe(true);
-      expect(hooksConfig.PreToolUse[0].hooks[0].command).toContain('pretooluse-hook.js');
-
-      // MAMA v2: PostToolUse hook enabled for contract detection
-      // - Detects code changes and extracts API contracts
-      // - Auto-injection to Claude via exit code 2 + stderr
-      // - Enables frontend/backend consistency checking
-      expect(hooksConfig.PostToolUse).toBeDefined();
-      expect(Array.isArray(hooksConfig.PostToolUse)).toBe(true);
-      expect(hooksConfig.PostToolUse[0].hooks[0].command).toContain('posttooluse-hook.js');
-    });
-
-    it('should still have hook scripts available (for future re-enablement)', () => {
-      // Hook scripts exist but are not registered
-      const preToolScript = path.join(PLUGIN_ROOT, 'scripts', 'pretooluse-hook.js');
-      const postToolScript = path.join(PLUGIN_ROOT, 'scripts', 'posttooluse-hook.js');
-
-      expect(fs.existsSync(preToolScript)).toBe(true);
-      expect(fs.existsSync(postToolScript)).toBe(true);
+      for (const event of ['PreToolUse', 'PostToolUse', 'PreCompact']) {
+        expect(pluginConfig.hooks[event]).toBeUndefined();
+        expect(
+          fs.existsSync(path.join(PLUGIN_ROOT, 'scripts', `${event.toLowerCase()}-hook.js`))
+        ).toBe(false);
+      }
     });
   });
 
@@ -318,7 +297,6 @@ describe('M3.3: Plugin Manifests', () => {
       // Updated validation script checks hook scripts exist (inline hooks)
       expect(output).toMatch(/Hook|hooks/i);
       expect(output).toContain('sessionstart-hook.js');
-      expect(output).toContain('pretooluse-hook.js');
     });
 
     it('should show summary with pass count', () => {
@@ -374,17 +352,6 @@ describe('M3.3: Plugin Manifests', () => {
       expect(configure).not.toMatch(/MAMA_AUTH_TOKEN|mcpServers\.mama\.env/);
     });
 
-    it('keeps PreCompact free of the retired memory-agent ingest endpoint', () => {
-      const precompact = fs.readFileSync(
-        path.join(PLUGIN_ROOT, 'scripts', 'precompact-hook.js'),
-        'utf8'
-      );
-
-      // The /api/memory-agent/ingest endpoint was retired; the hook must not
-      // POST conversation text to any host-side ingest surface.
-      expect(precompact).not.toMatch(/memory-agent\/ingest|MAMA_HTTP_PORT|http\.request/);
-    });
-
     it('describes exactly the active hook manifest in the shipped context skill', () => {
       const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
       const skill = fs.readFileSync(
@@ -392,19 +359,11 @@ describe('M3.3: Plugin Manifests', () => {
         'utf8'
       );
 
-      expect(Object.keys(pluginConfig.hooks)).toEqual([
-        'SessionStart',
-        'PreToolUse',
-        'PreCompact',
-        'PostToolUse',
-      ]);
-      for (const hookName of Object.keys(pluginConfig.hooks)) {
-        expect(skill).toContain(`**${hookName} Hook**`);
+      expect(Object.keys(pluginConfig.hooks)).toEqual(['SessionStart']);
+      expect(skill).toContain('**SessionStart Hook**');
+      for (const retired of ['PreToolUse', 'PostToolUse', 'PreCompact', 'UserPromptSubmit']) {
+        expect(skill).not.toContain(`**${retired} Hook**`);
       }
-      expect(skill).not.toContain('UserPromptSubmit');
-      expect(skill).toMatch(/PreToolUse[\s\S]*matcher:\s*`Read`/);
-      expect(skill).toMatch(/PostToolUse[\s\S]*matchers:\s*`Write`,\s*`Edit`/);
-      expect(skill).not.toMatch(/PreToolUse[^\n]*disabled|PostToolUse[^\n]*disabled/);
     });
 
     it('keeps package and marketplace plugin versions synchronized', () => {

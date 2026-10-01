@@ -1,85 +1,47 @@
 ---
 name: mama-context
-description: Hook-driven MAMA context for session startup, code reads, code changes, and compaction.
+description: MAMA context at session start; everything else is pulled with the MAMA tools and commands.
 ---
 
 # MAMA Context
 
 ## Overview
 
-This skill documents the hook behavior shipped by the MAMA Claude Code plugin. The plugin manifest
-is the authority for which hooks run. Context appears at the specific lifecycle and tool boundaries
-below; explicit memory lookup remains available through `/mama:search`.
+This skill documents the one hook the MAMA Claude Code plugin ships. The plugin manifest is the
+authority for which hooks run. At session start the agent sees the last checkpoint and the newest
+active decisions; everything else it pulls when it needs it, with `/mama:search <topic>` or the MCP
+`search` tool for the full decision, its reasoning, outcome and evolution chain.
 
-## Active hooks
+## Active hook
 
 **SessionStart Hook** (`scripts/sessionstart-hook.js`)
 
-- Runs once when a Claude Code session starts.
-- Initializes the local memory database and warms the in-process embedding model when its feature
-  flag is enabled.
-- Manifest timeout: 15 seconds.
+- Runs when a Claude Code session starts, resumes or is compacted.
+- Installs the plugin's npm dependencies into `${CLAUDE_PLUGIN_DATA}` when they are missing or out of
+  date (Claude Code does not install them).
+- Opens the local memory database and adds the last checkpoint and the five newest active decisions
+  to the session's context. Replaced, retired and contradicted decisions, and records that only amend
+  another, stay out, as recall leaves them out.
+- Loads no embedding model.
+- Manifest timeout: 180 seconds, for a first dependency install.
 
-**PreToolUse Hook** (`scripts/pretooluse-hook.js`)
+## No tool or compaction hooks
 
-- Active matcher: `Read`.
-- On the first eligible code-file read in a session, searches local MAMA memory for related
-  decisions and supplies bounded context when matches exist.
-- Repeated reads, unsupported files, missing matches, and Tier 3 test mode pass silently.
-- Manifest timeout: 5 seconds.
+The plugin registers no `PreToolUse`, `PostToolUse` or `PreCompact` hook (removed 2026-10-01):
 
-**PostToolUse Hook** (`scripts/posttooluse-hook.js`)
-
-- Active matchers: `Write`, `Edit`.
-- On the first eligible code-file change in a session, reminds the agent to record decisions that
-  future sessions need.
-- Repeated edits and unsupported files pass silently.
-- Manifest timeout: 5 seconds.
-
-**PreCompact Hook** (`scripts/precompact-hook.js`)
-
-- Runs before context compaction.
-- Examines bounded recent transcript content for unsaved decisions and emits checkpoint guidance.
-- Manifest timeout: 10 seconds.
-
-## How to use the context
-
-When a read hook surfaces related decisions, treat them as leads with provenance rather than as
-instructions that override the current request. Use `/mama:search <topic>` when the full decision,
-reasoning, outcome, or evolution chain is needed.
-
-After a meaningful code change, record only decisions that will matter in a later session. Include
-the affected module and relevant file paths so a future `Read` can retrieve the decision.
+- A read hook blocked the first read of each code file to push decisions matched on the file name.
+- An edit hook pushed the same reminder after each first edit; recording decisions is in the
+  project instructions.
+- A compaction hook's output is shown to the user only and never reaches the compaction.
 
 ## Configuration boundary
 
-Hook registration and matchers live in
-`packages/claude-code-plugin/.claude-plugin/plugin.json`. Feature activation within each script is
-controlled by `src/core/hook-features.js`. To stop the shipped hooks entirely, disable the plugin in
-Claude Code rather than relying on an undocumented configuration key.
-
-Embedding generation is local and in process. There is no embedding HTTP listener or compatibility
-server to start.
+Hook registration lives in `packages/claude-code-plugin/.claude-plugin/plugin.json`. Feature
+activation is controlled by `src/core/hook-features.js`. To stop the hook entirely, disable the
+plugin in Claude Code rather than relying on an undocumented configuration key.
 
 ## Developer checks
 
-Test the four registered paths with their existing suites:
-
 ```bash
-pnpm --dir packages/claude-code-plugin vitest run \
-  tests/hooks/sessionstart-hook.test.js \
-  tests/hooks/pretooluse-hook.test.js \
-  tests/hooks/posttooluse-hook.test.js \
-  tests/hooks/precompact-hook.test.js
-```
-
-The manifest test must continue to match the active hook names and `Read`/`Write`/`Edit` matchers.
-
-## Runtime flow
-
-```text
-Session starts ── SessionStart ── local database/model warmup
-Read tool      ── PreToolUse   ── bounded related-decision context
-Write/Edit     ── PostToolUse  ── decision-recording reminder
-Pre-compact    ── PreCompact   ── checkpoint guidance
+pnpm --dir packages/claude-code-plugin vitest run tests/hooks/sessionstart-hook.test.js
 ```

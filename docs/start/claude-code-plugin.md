@@ -53,10 +53,10 @@ context is restored. Check the current files before continuing from an older che
 
 ## Understand the automatic context
 
-SessionStart reads recent decisions and the latest checkpoint. The first eligible code-file Read
-can inject related decisions; the first Write or Edit can remind the assistant to save what matters.
-PreCompact supplies compaction guidance and unsaved-decision reminders. These hooks do not save
-every edit or replace the explicit save-and-retrieve check.
+SessionStart shows the latest checkpoint and the newest active decisions. That is the only automatic
+context: nothing is injected when the assistant reads or edits a file or when the context is
+compacted, and nothing is saved automatically. The assistant searches memory when it needs to, and
+the explicit save-and-retrieve check above stays the test of continuity.
 
 `/mama:configure --show` reports effective settings. Set `MAMA_DB_PATH` before starting the client to
 use another development-memory database. Set `MAMA_DISABLE_HOOKS=true` for manual-only use.

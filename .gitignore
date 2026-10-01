@@ -67,10 +67,6 @@ Thumbs.db
 *.db-shm
 *.db-wal
 .claude/
-# Hook runtime state
-packages/claude-code-plugin/.hook-session-state.json
-packages/claude-code-plugin/.posttooluse-contract-rate.json
-
 # Generated reports
 API_CONTRACT_VERIFICATION_REPORT.md
 

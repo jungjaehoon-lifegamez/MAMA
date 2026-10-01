@@ -38,22 +38,20 @@ Verify a save/search round trip, then save a checkpoint and resume it in a fresh
 
 ## Hooks and switches
 
-| Event                            | Behavior                                                                |
-| -------------------------------- | ----------------------------------------------------------------------- |
-| `SessionStart`                   | Initialize memory and supply recent decisions and the latest checkpoint |
-| `PreToolUse` → `Read`            | Inject related decisions on an eligible code file's first read          |
-| `PostToolUse` → `Write` / `Edit` | Remind the assistant to save meaningful decisions                       |
-| `PreCompact`                     | Supply compaction guidance and unsaved-decision reminders               |
+| Event          | Behavior                                                                                      |
+| -------------- | --------------------------------------------------------------------------------------------- |
+| `SessionStart` | Install dependencies when needed, then show the latest checkpoint and newest active decisions |
 
-Hooks provide context; they do not automatically save every edit or a checkpoint at compaction.
+That is the only hook. The assistant pulls everything else with the MCP tools and the commands above;
+nothing is injected on reads, edits or compaction, and nothing is saved automatically.
 
-| Environment               | Effect                                                                                                                               |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `MAMA_DB_PATH`            | Database override, ahead of the older `MAMA_DATABASE_PATH`                                                                           |
-| `MAMA_DISABLE_HOOKS=true` | Disable all hook features                                                                                                            |
-| `MAMA_DAEMON=1`           | Enable only features explicitly named in `MAMA_HOOK_FEATURES`                                                                        |
-| `MAMA_HOOK_FEATURES`      | Comma-separated `memory,keywords,rules,agents,contracts` in daemon mode; Read/Edit hooks need `contracts`, PreCompact needs `memory` |
-| `MAMA_DEBUG=true`         | Enable supported diagnostic logging                                                                                                  |
+| Environment               | Effect                                                                      |
+| ------------------------- | --------------------------------------------------------------------------- |
+| `MAMA_DB_PATH`            | Database override, ahead of the older `MAMA_DATABASE_PATH`                  |
+| `MAMA_DISABLE_HOOKS=true` | Disable all hook features                                                   |
+| `MAMA_DAEMON=1`           | Enable only features explicitly named in `MAMA_HOOK_FEATURES`               |
+| `MAMA_HOOK_FEATURES`      | Comma-separated feature names in daemon mode; any name enables SessionStart |
+| `MAMA_DEBUG=true`         | Enable supported diagnostic logging                                         |
 
 Embedding model: fixed `Xenova/multilingual-e5-large`, 1024 dimensions. Local storage and
 embedding computation do not imply that the Claude Code conversation stays on the machine;

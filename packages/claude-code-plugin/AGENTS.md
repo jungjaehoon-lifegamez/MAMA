@@ -24,11 +24,9 @@ claude-code-plugin/
 │   ├── mama-suggest.md             # Get context-aware suggestions
 │   ├── mama-list.md                # List recent decisions
 │   └── mama-configure.md           # Configure plugin settings
-├── scripts/                        # 7 hook scripts (2 active, 2 disabled)
-│   ├── session-start.js            # SessionStart hook (active)
-│   ├── user-prompt-submit.js       # UserPromptSubmit hook (active, <1800ms)
-│   ├── pre-tool-use.js             # PreToolUse hook (disabled)
-│   └── post-tool-use.js            # PostToolUse hook (disabled)
+├── scripts/
+│   ├── sessionstart-hook.js        # SessionStart, the only hook
+│   └── plugin-deps.js              # Installs dependencies into CLAUDE_PLUGIN_DATA
 ├── skills/mama-context/            # Skill for memory-aware context
 ├── src/core/                       # 27 modules DUPLICATED from mama-core
 │   ├── mama-api.js                 # High-level memory API
@@ -97,7 +95,7 @@ pnpm vitest run -t "SessionStart hook"
 ## NOTES
 
 1. **Entry Point:** `.claude-plugin/plugin.json` (no main field)
-2. **Active Hooks:** SessionStart, UserPromptSubmit (PreToolUse/PostToolUse disabled)
+2. **Active Hooks:** SessionStart only; the agent pulls everything else (removed 2026-10-01: PreToolUse, PostToolUse, PreCompact)
 3. **Bug Fix Protocol:** Apply changes to BOTH mama-core and plugin src/core/
 4. **Performance Target:** <1200ms for UserPromptSubmit hook (hard limit 1800ms)
 5. **Test Mode:** Use `MAMA_FORCE_TIER_3=true` to skip embeddings (faster tests)
