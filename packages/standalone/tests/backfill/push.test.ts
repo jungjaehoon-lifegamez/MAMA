@@ -55,8 +55,12 @@ function file(): ReturnType<typeof parseBackfillFile> {
         path: 'daily/2026-08-28.md',
         title: '2026-08-28',
         content: 'All delivered.',
-        baseContentVersion: null,
         sources: ['src:2'],
+      },
+      {
+        path: 'projects/example.md',
+        append: [{ section: '## Decisions', text: '- Bones stay near 150.' }],
+        sources: ['src:6'],
       },
     ],
     noUpdate: [{ reason: 'meeting notice', sources: ['src:7', 'src:8'] }],
@@ -94,6 +98,7 @@ describe('backfill push', () => {
       `work.link backfill:${Date.parse(AUG('01T00:00:00'))}:new-work:l0`,
       `memory.save backfill:${Date.parse(AUG('01T00:00:00'))}:lesson:lesson-a`,
       `manage.wiki.publish backfill:${Date.parse(AUG('01T00:00:00'))}:wiki:daily/2026-08-28.md`,
+      `manage.wiki.update backfill:${Date.parse(AUG('01T00:00:00'))}:wiki:projects/example.md`,
     ]);
     expect(calls[0]!.input).toMatchObject({
       topic: 'new-work',
@@ -120,13 +125,19 @@ describe('backfill push', () => {
       expectedContentVersion: null,
       sourceRefs: [{ kind: 'raw', connector: 'chat', id: 'obs_2' }],
     });
+    // An existing page gets section appends; its own metadata and evidence ids stay.
+    expect(calls[8]!.input).toEqual({
+      path: 'projects/example.md',
+      edits: [{ section: '## Decisions', append: '- Bones stay near 150.' }],
+      sourceIds: ['obs_6'],
+    });
     expect(result).toEqual({
       created: 1,
       revised: 2,
       mentions: 2,
       links: 1,
       lessons: 1,
-      pagesPublished: 1,
+      pagesPublished: 2,
       pagesSkipped: 0,
       notWork: 2,
     });
@@ -140,9 +151,9 @@ describe('backfill push', () => {
     const result = await pushBackfill(file(), again.ports);
 
     expect(again.calls.map((call) => call.operationId)).toEqual(
-      first.calls.slice(0, -1).map((call) => call.operationId)
+      first.calls.slice(0, -2).map((call) => call.operationId)
     );
-    expect(result).toMatchObject({ pagesPublished: 0, pagesSkipped: 1 });
+    expect(result).toMatchObject({ pagesPublished: 0, pagesSkipped: 2 });
   });
 
   it('stops before writing when a source is not imported or the period cannot be bounded', async () => {
