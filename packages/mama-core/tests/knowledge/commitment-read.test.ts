@@ -9,7 +9,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { ensureMemoryScope, getAdapter } from '../../src/db-manager.js';
 import { appendJudgment } from '../../src/knowledge/judgments.js';
-import { readWork } from '../../src/knowledge/commitments.js';
+import { readWork, reviseWork } from '../../src/knowledge/commitments.js';
 import { cleanupTestDB, initTestDB } from '../helpers/test-utils.js';
 
 const access = {
@@ -316,6 +316,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         revision: 1,
         operation: 'create',
         eventDatetime: null,
+        appliesUntil: null,
         createdAt: expect.any(Number),
         status: 'pending',
         stage: 'intake',
@@ -325,6 +326,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         revision: 2,
         operation: 'revise',
         eventDatetime: 2_000,
+        appliesUntil: null,
         createdAt: expect.any(Number),
         status: 'in_progress',
         stage: 'intake',
@@ -334,6 +336,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         revision: 3,
         operation: 'revise',
         eventDatetime: null,
+        appliesUntil: null,
         createdAt: expect.any(Number),
         status: 'in_progress',
         stage: 'draft',
@@ -343,6 +346,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         revision: 4,
         operation: 'revise',
         eventDatetime: 4_000,
+        appliesUntil: null,
         createdAt: expect.any(Number),
         status: 'in_progress',
         stage: null,
@@ -352,6 +356,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         revision: 5,
         operation: 'revise',
         eventDatetime: 5_000,
+        appliesUntil: null,
         createdAt: expect.any(Number),
         status: 'review',
         stage: 'review',
@@ -361,6 +366,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         revision: 6,
         operation: 'revise',
         eventDatetime: 6_000,
+        appliesUntil: null,
         createdAt: expect.any(Number),
         status: null,
         stage: 'review',
@@ -370,6 +376,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         revision: 7,
         operation: 'withdraw',
         eventDatetime: 7_000,
+        appliesUntil: null,
         createdAt: expect.any(Number),
         status: 'cancelled',
         stage: 'review',
@@ -475,7 +482,74 @@ describe('knowledge/commitments: reading owner work back', () => {
     const past = readWork(getAdapter(), { commitmentId, asOf: createdAt + 1 }, access);
     expect(past.items[0].values.status).toBe('pending');
     expect(past.items[0].revision).toBe(1);
-    expect(past.coverage.reasons.join(' ')).toContain('bounded to revisions');
+    // A read bounded in time is the whole answer for that instant, not a truncated page.
+    expect(past.coverage).toMatchObject({ complete: true, reasons: [] });
+  });
+
+  it('a revision bounded by appliesUntil stops applying then and stays in the history', async () => {
+    const laterAt = 1_788_220_000_000;
+    const earlierAt = laterAt - 6 * 86_400_000;
+    const created = await appendJudgment(
+      {
+        commandId: 'cmd-bounded-create',
+        topic: 'topic-bounded',
+        summary: 'work recorded live',
+        recordKind: 'commitment',
+        work: { operation: 'create', set: { title: 'Live title', status: 'in_progress' } },
+        eventDatetime: laterAt,
+        scopes: access.scopes,
+      },
+      access,
+      { adapter: getAdapter() }
+    );
+    const commitmentId = created.work!.commitmentId;
+    // A backfill appends the earlier period after the live revisions were written.
+    await reviseWork(
+      {
+        commandId: 'cmd-bounded-earlier',
+        summary: 'earlier period, written later',
+        commitmentId,
+        expectedRevision: 1,
+        set: { title: 'Earlier title', status: 'pending' },
+        eventDatetime: earlierAt,
+        appliesUntil: laterAt,
+        scopes: access.scopes,
+      },
+      access,
+      { adapter: getAdapter() }
+    );
+
+    const current = readWork(getAdapter(), { commitmentId, history: 'all' }, access).items[0];
+    expect(current.values).toMatchObject({ title: 'Live title', status: 'in_progress' });
+    // The revision a writer must name next is still the last one written.
+    expect(current.revision).toBe(2);
+    expect(current.history!.map((revision) => revision.appliesUntil)).toEqual([null, laterAt]);
+
+    const during = readWork(getAdapter(), { commitmentId, asOf: earlierAt + 1 }, access);
+    expect(during.items[0].values).toMatchObject({ title: 'Earlier title', status: 'pending' });
+    const after = readWork(getAdapter(), { commitmentId, asOf: laterAt + 1 }, access);
+    expect(after.items[0].values).toMatchObject({ title: 'Live title', status: 'in_progress' });
+  });
+
+  it('refuses an appliesUntil that does not follow the revision event time', async () => {
+    const at = 1_788_220_000_000;
+    const commitmentId = await createCommitment('cmd-bound-check', { title: 'Bound check' });
+    const revise = (appliesUntil: number, eventDatetime?: number) =>
+      reviseWork(
+        {
+          commandId: `cmd-bound-check-${appliesUntil}-${eventDatetime ?? 'none'}`,
+          summary: 'bounded',
+          commitmentId,
+          set: { status: 'pending' },
+          ...(eventDatetime === undefined ? {} : { eventDatetime }),
+          appliesUntil,
+          scopes: access.scopes,
+        },
+        access,
+        { adapter: getAdapter() }
+      );
+    await expect(revise(at, at)).rejects.toThrow(/appliesUntil/);
+    await expect(revise(at)).rejects.toThrow(/appliesUntil/);
   });
 
   it('folds a backfilled commitment by source event time rather than the import clock', async () => {
