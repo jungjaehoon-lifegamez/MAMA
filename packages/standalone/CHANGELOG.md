@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Chatwork and Trello poll errors name the cause of a failed fetch, as
+  `fetch failed: other side closed`. Node's fetch keeps the reason outside the message, so the
+  intermittent Chatwork failures in `daemon.log` (one room at a time, recovered on the next poll)
+  and the Trello `fetch failed` ones could not be told apart. A Trello transport error now names
+  its board, as an HTTP error already did.
+
 ## [0.61.0] - 2026-10-01
 
 ### Changed

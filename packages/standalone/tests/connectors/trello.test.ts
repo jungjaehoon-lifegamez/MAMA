@@ -59,7 +59,8 @@ describe('TrelloConnector', () => {
       vi.fn(async (url: string) => {
         if (!failing || url.includes('/healthy/')) return Response.json([]);
         if (url.includes('/http/')) return new Response(null, { status: 503 });
-        if (url.includes('/caught/')) throw new Error('fixture transport error');
+        if (url.includes('/caught/'))
+          throw new TypeError('fetch failed', { cause: new Error('fixture transport error') });
         return Response.json(
           lists([
             { id: 'invalid-card', name: 'invalid', idMembers: [], dateLastActivity: 'invalid' },
@@ -76,7 +77,7 @@ describe('TrelloConnector', () => {
     const connector = new TrelloConnector({ ...config, channels }, join(root, 'state.json'));
     await connector.init();
     await expect(connector.poll(new Date(0))).rejects.toThrow(
-      'failed for 3 of 4 configured boards; last error: fixture transport error'
+      'failed for 3 of 4 configured boards; last error: Board caught: fetch failed: fixture transport error'
     );
     failing = false;
     await expect(connector.poll(new Date(0))).resolves.toEqual([]);

@@ -30,6 +30,7 @@ import {
   type SessionStartInput,
 } from './turn-orders.js';
 import { localDateKey, localStamp, type TimeZoneSetting } from './timezone.js';
+import { messageWithCauses } from '../utils/error-message.js';
 
 export const OWNER_RUNTIME_SESSION_KEY = 'owner:runtime';
 
@@ -422,13 +423,7 @@ function replayWindowText(
  * timeout, for one), and the wrapper's message alone hid it from the log on 2026-09-29.
  */
 export function stimulusFailureReason(error: unknown): string {
-  const messages: string[] = [];
-  let current: unknown = error;
-  while (current !== undefined && current !== null && messages.length < 3) {
-    messages.push(current instanceof Error ? current.message : String(current));
-    current = current instanceof Error ? current.cause : undefined;
-  }
-  return messages.join(': ').replace(/\s+/g, ' ').slice(0, 500);
+  return messageWithCauses(error).slice(0, 500);
 }
 
 function replaySourceCeiling(row: MailboxRow): number | undefined {

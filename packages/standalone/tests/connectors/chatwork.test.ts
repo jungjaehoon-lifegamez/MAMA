@@ -61,6 +61,19 @@ describe('ChatworkConnector', () => {
     });
   });
 
+  it('names the cause of a failed fetch, which Node puts outside the message', async () => {
+    const connector = new ChatworkConnector(config, {
+      fetch: async () => {
+        throw new TypeError('fetch failed', { cause: new Error('other side closed') });
+      },
+    });
+    await connector.init();
+    await expect(connector.poll(new Date(0))).rejects.toThrow(
+      'last error: Room room-key: fetch failed: other side closed'
+    );
+    await connector.dispose();
+  });
+
   it('retries earlier room messages when a later room fails', async () => {
     let failSecondRoom = true;
     const connector = new ChatworkConnector(
