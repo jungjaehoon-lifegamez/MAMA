@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- The recent decisions at an owner session start leave out records that only amend another (a
+  retirement or an outcome change), as recall does. A retirement was the newest active record
+  right after it was made, so it could take a place in the list as "Status 'stale' applied to …".
+  None was in the list yet (26 among 934 active records, none in the newest 10).
+
 ## [0.61.0] - 2026-10-01
 
 ### Changed

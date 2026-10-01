@@ -161,4 +161,85 @@ describe('owner runtime assembly', () => {
       await owner.stop();
     }
   });
+  it('starts a session with recent decisions, not the records that amend them', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'mama-owner-session-start-'));
+    homes.push(home);
+    let prompt = '';
+    const runTurn = vi.fn<NonNullable<NativeSessionHandle['runTurn']>>(
+      async (_content, request) => {
+        request?.streamCallbacks?.onInputDispatch?.({
+          backend: 'codex',
+          sessionId: 'owner-thread',
+          inputId: request.nativeInputId!,
+        });
+        request?.streamCallbacks?.onAccepted?.({
+          backend: 'codex',
+          sessionId: 'owner-thread',
+          turnId: 'turn-1',
+        });
+        const prepared = await request?.prepareSessionContent?.({
+          sessionId: 'owner-thread',
+          isNewSession: true,
+        });
+        prompt = prepared?.map((block) => ('text' in block ? block.text : '')).join('\n') ?? '';
+        return { response: '[ack]', modelRunId: 'run-1' } as never;
+      }
+    );
+    const owner = await createOwnerRuntime({
+      backend: 'codex',
+      model: 'test-model',
+      databasePath: join(home, 'state.db'),
+      socketPath: join(home, 'runtime.sock'),
+      credentialPath: join(home, 'credential'),
+      runtimeRoot: home,
+      timeZone: createTimeZoneSetting('UTC'),
+      workspaceDir: join(home, 'workspace'),
+      ownerPrincipalId: 'owner',
+      agentId: 'agent',
+      scopes: [{ kind: 'global', id: 'system' }],
+      embedder: { embed: async () => new Float32Array(1024).fill(0.25) },
+      nativeSession: { stop: async () => {}, runTurn },
+      maxTurns: 20,
+      timeout: 1_000,
+    });
+    try {
+      const save = async (topic: string) => {
+        const saved = await owner.surface.hostToolCall(
+          'memory.save',
+          {
+            topic,
+            kind: 'decision',
+            summary: `${topic} summary`,
+            details: `${topic} details`,
+            scopes: [{ kind: 'global', id: 'system' }],
+            source: { package: 'standalone', source_type: 'test' },
+          },
+          `save-${topic}`
+        );
+        expect(saved).toMatchObject({ status: 'completed' });
+        return (saved as { data: { id: string } }).data.id;
+      };
+      await save('kept-decision');
+      const retired = await save('retired-decision');
+      const retirement = await owner.surface.hostToolCall(
+        'memory.retire',
+        { memory_id: retired, status: 'stale', reason: 'no longer true' },
+        'retire-decision'
+      );
+      expect(retirement).toMatchObject({ status: 'completed' });
+
+      owner.intake.acceptOwnerMessage({
+        id: 'owner-1',
+        channelKey: 'owner-chat',
+        occurredAt: Date.now(),
+        text: 'hello',
+      });
+      await vi.waitFor(() => expect(runTurn).toHaveBeenCalledOnce());
+      expect(prompt).toContain('kept-decision');
+      expect(prompt).not.toContain('retired-decision');
+      expect(prompt).not.toContain('no longer true');
+    } finally {
+      await owner.stop();
+    }
+  });
 });

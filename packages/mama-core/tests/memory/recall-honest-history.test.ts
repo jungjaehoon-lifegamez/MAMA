@@ -10,7 +10,12 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { closeDB, getAdapter, initDB } from '../../src/db-manager.js';
-import { recallMemory, retireMemoryRecord, saveJudgmentRecord } from '../../src/memory/api.js';
+import {
+  readMemoryRecordsInScopes,
+  recallMemory,
+  retireMemoryRecord,
+  saveJudgmentRecord,
+} from '../../src/memory/api.js';
 import { appendOutcomeAmendment } from '../../src/memory/write-adapters.js';
 import type { MemoryScopeRef } from '../../src/memory/types.js';
 
@@ -186,5 +191,24 @@ describe('search shows history honestly', () => {
     expect(withHistory.graph_context.expanded.map((memory) => memory.id)).toContain(
       amendment.recordId
     );
+  });
+  it('leaves amendments out of an active-records read when asked, as recall does', async () => {
+    const kept = await save('rule/heron', 'Heron rota stays weekly', [PROJECT_A]);
+    const retired = await save('rule/heron-old', 'Heron rota was daily', [PROJECT_A]);
+    await retireMemoryRecord(
+      getAdapter(),
+      { memoryId: retired.id, status: 'stale', reason: 'the rota changed' },
+      access([PROJECT_A]),
+      `cmd-${randomUUID()}`
+    );
+
+    const all = await readMemoryRecordsInScopes(getAdapter(), [PROJECT_A], { status: 'active' });
+    expect(all.map((record) => record.topic)).toContain(`judgment/${retired.id}`);
+
+    const facts = await readMemoryRecordsInScopes(getAdapter(), [PROJECT_A], {
+      status: 'active',
+      excludeAmendments: true,
+    });
+    expect(facts.map((record) => record.id)).toEqual([kept.id]);
   });
 });

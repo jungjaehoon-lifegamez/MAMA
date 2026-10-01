@@ -194,6 +194,8 @@ function scopeBoundRowsClause(scopes: readonly MemoryScopeRef[], alias = 'd') {
 export interface ReadMemoryRecordsOptions {
   kind?: MemoryKindFilter;
   status?: MemoryStatus | readonly MemoryStatus[];
+  /** Leave out records that only amend another (a retirement or an outcome change), as recall does. */
+  excludeAmendments?: boolean;
 }
 
 /** Read complete memory records whose stored scopes intersect the admitted scopes. */
@@ -220,6 +222,9 @@ export async function readMemoryRecordsInScopes(
   if (statuses.length > 0) {
     conditions.push(`COALESCE(d.status, 'active') IN (${statuses.map(() => '?').join(', ')})`);
     params.push(...statuses);
+  }
+  if (options.excludeAmendments === true) {
+    conditions.push(`json_extract(d.payload_json, '$.amended') IS NULL`);
   }
   const rows = adapter
     .prepare(

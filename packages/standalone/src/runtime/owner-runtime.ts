@@ -394,7 +394,10 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           deliveredRefs: options.recentDeliveredOwnerMessages?.() ?? [],
           current: row,
           records: () =>
-            readMemoryRecordsInScopes(database.adapter, [...access.scopes], { status: 'active' }),
+            readMemoryRecordsInScopes(database.adapter, [...access.scopes], {
+              status: 'active',
+              excludeAmendments: true,
+            }),
           checkpoint: async () => {
             const listed = await surface.hostToolCall(
               'memory.checkpoint.list',

@@ -88,7 +88,7 @@ export async function readSessionStartInput(ports: {
   mailbox: Mailbox;
   deliveredRefs: readonly string[];
   current: MailboxRow;
-  /** The owner's active memory records, in any order. */
+  /** The owner's active memory records, without amendments (as recall shows them), in any order. */
   records: () => Promise<readonly MemoryRecord[]>;
   /** The latest session checkpoint the agent saved, if any; `createdAt` in epoch ms. */
   checkpoint: () => Promise<{ summary: string; nextSteps: string; createdAt: number } | null>;
