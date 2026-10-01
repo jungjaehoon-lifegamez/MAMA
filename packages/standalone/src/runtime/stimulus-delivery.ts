@@ -673,9 +673,8 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
         // Core parks the orphan uncertain, preserving its receipt and any result.
         throw new Error(reason);
       }
-      if (row.nativeDelivery?.state === 'uncertain') {
-        throw new Error(`${row.kind} remains uncertain after restart; no stored result`);
-      }
+      // A row already parked uncertain was reported when it was parked. Throwing again would
+      // report it at every start and every tick, since core remembers reports only per process.
       return 'unresolved';
     },
     getReplaySourceEndMs: () => activeReplaySourceEndMs,

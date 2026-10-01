@@ -40,9 +40,16 @@ afterEach(async () => {
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 
-async function boot(model: NativeSessionHandle['runTurn']) {
-  const home = mkdtempSync(join(tmpdir(), 'mama-stimulus-'));
-  homes.push(home);
+async function boot(
+  model: NativeSessionHandle['runTurn'],
+  options: {
+    /** Start again on an earlier boot's home, as a daemon restart does. */
+    home?: string;
+    onUncertain?: Parameters<typeof createStimulusDelivery>[0]['onUncertain'];
+  } = {}
+) {
+  const home = options.home ?? mkdtempSync(join(tmpdir(), 'mama-stimulus-'));
+  if (options.home === undefined) homes.push(home);
   const database = await openCoreDatabase({ path: join(home, 'state.db') });
   const adapter = database.adapter as DatabaseInstance;
   databases.push(database);
@@ -69,12 +76,14 @@ async function boot(model: NativeSessionHandle['runTurn']) {
       stop: async () => {},
     },
     delivery: {
-      ...createDelivery(),
+      ...createDelivery(
+        options.onUncertain === undefined ? {} : { onUncertain: options.onUncertain }
+      ),
       intervalMs: 0,
     },
   });
   runtimes.push(runtime);
-  return { runtime, intake: createStimulusIntake(runtime, 'owner') };
+  return { runtime, home, intake: createStimulusIntake(runtime, 'owner') };
 }
 
 describe('one stimulus intake and delivery', () => {
@@ -400,6 +409,46 @@ describe('one stimulus intake and delivery', () => {
 
     await vi.waitFor(() => expect(runTurn).toHaveBeenCalledOnce());
     expect(runtime.mailbox?.readInput('input-1', 'owner')).toMatchObject({
+      status: 'claimed',
+      nativeDelivery: { state: 'uncertain', error: 'native turn failed' },
+    });
+  });
+
+  it('reports a row parked uncertain when it is parked, not again at the next start', async () => {
+    const failing = vi.fn(async (_content, request) => {
+      request?.streamCallbacks?.onInputDispatch?.({
+        backend: 'codex',
+        sessionId: 'owner-thread',
+        inputId: request.nativeInputId!,
+      });
+      request?.streamCallbacks?.onAccepted?.({
+        backend: 'codex',
+        sessionId: 'owner-thread',
+        turnId: 'failed-turn',
+      });
+      throw new Error('native turn failed');
+    });
+    const parked = vi.fn();
+    const first = await boot(failing, { onUncertain: parked });
+    first.intake.acceptOwnerMessage({
+      id: 'input-1',
+      channelKey: 'channel',
+      occurredAt: 1,
+      text: 'request',
+    });
+    await vi.waitFor(() => expect(parked).toHaveBeenCalledOnce());
+    runtimes.splice(runtimes.indexOf(first.runtime), 1);
+    await first.runtime.stop();
+
+    const reported = vi.fn();
+    const model = vi.fn();
+    const restarted = await boot(model, { home: first.home, onUncertain: reported });
+    await restarted.runtime.drainOnce();
+    await restarted.runtime.drainOnce();
+
+    expect(reported).not.toHaveBeenCalled();
+    expect(model).not.toHaveBeenCalled();
+    expect(restarted.runtime.mailbox?.readInput('input-1', 'owner')).toMatchObject({
       status: 'claimed',
       nativeDelivery: { state: 'uncertain', error: 'native turn failed' },
     });
