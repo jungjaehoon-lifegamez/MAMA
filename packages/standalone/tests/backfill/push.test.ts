@@ -20,7 +20,10 @@ function file(): ReturnType<typeof parseBackfillFile> {
           },
           { at: AUG('24T16:04:00'), summary: 'FIX', set: { status: 'done' }, sources: ['src:2'] },
         ],
-        mentions: { reason: 'progress notes on this work', sources: ['src:3', 'src:4'] },
+        mentions: [
+          { reason: 'progress notes on this work', sources: ['src:3'] },
+          { reason: 'a translation of its feedback', sources: ['src:4'] },
+        ],
         links: [{ to: { item: 'existing-work' }, relation: 'builds_on', reason: 'same character' }],
       },
       {
@@ -86,8 +89,8 @@ describe('backfill push', () => {
       `work.create backfill:${Date.parse(AUG('01T00:00:00'))}:new-work:r0`,
       `work.revise backfill:${Date.parse(AUG('01T00:00:00'))}:new-work:r1`,
       `work.revise backfill:${Date.parse(AUG('01T00:00:00'))}:existing-work:r0`,
-      `work.link backfill:${Date.parse(AUG('01T00:00:00'))}:new-work:m0`,
-      `work.link backfill:${Date.parse(AUG('01T00:00:00'))}:new-work:m1`,
+      `work.link backfill:${Date.parse(AUG('01T00:00:00'))}:new-work:m0.0`,
+      `work.link backfill:${Date.parse(AUG('01T00:00:00'))}:new-work:m1.0`,
       `work.link backfill:${Date.parse(AUG('01T00:00:00'))}:new-work:l0`,
       `memory.save backfill:${Date.parse(AUG('01T00:00:00'))}:lesson:lesson-a`,
       `manage.wiki.publish backfill:${Date.parse(AUG('01T00:00:00'))}:wiki:daily/2026-08-28.md`,

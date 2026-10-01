@@ -45,7 +45,7 @@ function allSources(file: BackfillFile): string[] {
   const add = (sources: readonly string[] | undefined) => sources?.forEach((id) => ids.add(id));
   for (const item of file.items) {
     item.revisions.forEach((revision) => add(revision.sources));
-    add(item.mentions?.sources);
+    item.mentions?.forEach((group) => add(group.sources));
     item.links?.forEach((link) => add(link.sources));
   }
   file.lessons.forEach((lesson) => add(lesson.sources));
@@ -142,18 +142,20 @@ export async function pushBackfill(
 
   for (const item of file.items) {
     const from = ids.get(item.key)!;
-    for (const [n, observation] of observations(item.mentions?.sources).entries()) {
-      await ports.callAction(
-        'work.link',
-        {
-          from,
-          to: { kind: 'observation', id: observation },
-          relation: 'mentions',
-          reason: item.mentions!.reason,
-        },
-        `${prefix}${item.key}:m${n}`
-      );
-      result.mentions += 1;
+    for (const [g, group] of (item.mentions ?? []).entries()) {
+      for (const [n, observation] of observations(group.sources).entries()) {
+        await ports.callAction(
+          'work.link',
+          {
+            from,
+            to: { kind: 'observation', id: observation },
+            relation: 'mentions',
+            reason: group.reason,
+          },
+          `${prefix}${item.key}:m${g}.${n}`
+        );
+        result.mentions += 1;
+      }
     }
     for (const [n, link] of (item.links ?? []).entries()) {
       const to = 'item' in link.to ? ids.get(link.to.item)! : link.to.commitmentId;

@@ -27,7 +27,7 @@ function validFile(): Record<string, unknown> {
             sources: ['src:2'],
           },
         ],
-        mentions: { reason: 'progress notes about this still', sources: ['src:3'] },
+        mentions: [{ reason: 'progress notes about this still', sources: ['src:3'] }],
         links: [{ to: { item: 'still-b' }, relation: 'builds_on', reason: 'same character' }],
       },
       {
@@ -88,7 +88,7 @@ describe('backfill file format', () => {
     const [first, second] = raw.items as RawItem[];
     first!.revisions[0]!.recordedAt = 1;
     first!.revisions[1]!.at = '2026-08-02T00:00:00+09:00';
-    first!.mentions = { reason: ' ', sources: ['src:3'] };
+    first!.mentions = [{ reason: ' ', sources: ['src:3'] }];
     first!.links = [{ to: { item: 'missing' }, relation: 'builds_on', reason: 'x' }];
     second!.revisions[0]!.set = { status: 'pending' };
     second!.appliesUntil = '2026-08-20T00:00:00+09:00';
@@ -108,7 +108,7 @@ describe('backfill file format', () => {
     for (const expected of [
       'item still-a.revisions[0]: unknown field recordedAt',
       'item still-a.revisions[1].at: is earlier than the revision before it',
-      'item still-a.mentions.reason: must be nonblank text',
+      'item still-a.mentions[0].reason: must be nonblank text',
       'item still-a.links: names no other item missing',
       'item still-b.revisions[0].set.title: the first revision must state the title',
       'item still-b.revisions[1].at: is outside the period',
