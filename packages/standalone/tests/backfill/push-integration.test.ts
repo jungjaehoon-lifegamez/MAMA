@@ -124,7 +124,7 @@ describe('backfill push through the owner actions', () => {
               sources: ['src:fix'],
             },
           ],
-          mentions: { reason: 'a progress note on this still', sources: ['src:progress'] },
+          mentions: [{ reason: 'a progress note on this still', sources: ['src:progress'] }],
           links: [{ to: { item: 'next-still' }, relation: 'builds_on', reason: 'same series' }],
         },
         {

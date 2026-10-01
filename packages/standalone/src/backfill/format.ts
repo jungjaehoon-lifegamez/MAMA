@@ -33,7 +33,8 @@ export interface BackfillItem {
   appliesUntil?: number;
   topic?: string;
   revisions: BackfillRevision[];
-  mentions?: { reason: string; sources: string[] };
+  /** Lines about the item that change nothing, grouped by the reason the reader states. */
+  mentions?: Array<{ reason: string; sources: string[] }>;
   links?: Array<{
     to: { item: string } | { commitmentId: string };
     relation: BackfillLinkRelation;
@@ -180,15 +181,20 @@ export function parseBackfillFile(raw: unknown): BackfillFile {
     const last = revisions[revisions.length - 1];
     if (appliesUntil !== undefined && last && appliesUntil <= last.at)
       fail(`${at}.appliesUntil`, 'must follow every revision of the period');
-    let mentions: BackfillItem['mentions'];
-    if (item.mentions !== undefined) {
-      const m = object(item.mentions, `${at}.mentions`, ['reason', 'sources']);
-      if (m)
-        mentions = {
-          reason: text(m.reason, `${at}.mentions.reason`) ?? '',
-          sources: sources(m.sources, `${at}.mentions.sources`),
-        };
-    }
+    const mentions = (
+      item.mentions === undefined ? [] : (list(item.mentions, `${at}.mentions`) ?? [])
+    ).flatMap((entry, n) => {
+      const mw = `${at}.mentions[${n}]`;
+      const m = object(entry, mw, ['reason', 'sources']);
+      return m
+        ? [
+            {
+              reason: text(m.reason, `${mw}.reason`) ?? '',
+              sources: sources(m.sources, `${mw}.sources`),
+            },
+          ]
+        : [];
+    });
     const links = (item.links === undefined ? [] : (list(item.links, `${at}.links`) ?? [])).flatMap(
       (entry, n) => {
         const lw = `${at}.links[${n}]`;
@@ -220,7 +226,7 @@ export function parseBackfillFile(raw: unknown): BackfillFile {
         ...(appliesUntil === undefined ? {} : { appliesUntil }),
         ...(item.topic === undefined ? {} : { topic: text(item.topic, `${at}.topic`) ?? '' }),
         revisions,
-        ...(mentions === undefined ? {} : { mentions }),
+        ...(mentions.length === 0 ? {} : { mentions }),
         ...(links.length === 0 ? {} : { links }),
       },
     ];
