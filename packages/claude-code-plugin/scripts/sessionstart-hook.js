@@ -412,7 +412,11 @@ ${steps}`,
       console.log(JSON.stringify(response));
 
       writeEnvStatus({ success: false, totalLatencyMs });
-      return 0;
+      // Exit now rather than wait: the timeout exists so a long model download does not hold the
+      // session start. While the model is still downloading or loading there is no onnxruntime
+      // session, so the exit is clean; if loading finishes in this moment it can still abort
+      // (134), after the output above is written.
+      process.exit(0);
     }
 
     const { dbResult, embeddingResult } = result;
