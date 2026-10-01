@@ -129,7 +129,10 @@ The file is JSON in the `mama-backfill/1` format:
 How to read a period well:
 
 - Export each channel as lines of time, author, text and source id.
-- Read whole conversations, not single lines.
+- Read whole conversations, not single lines. If the work has a board, read it beside the chats:
+  it shows each stage change to the minute.
+- A change stands at the message that made it, such as your submission or the received feedback,
+  not at a reply that came hours or days later. Cite the reply on a later revision or as a mention.
 - Give each line its home.
 - Then check that no revision cites a line later than its own time.
 
