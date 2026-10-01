@@ -216,30 +216,46 @@ export async function pushBackfill(
       result.pagesSkipped += 1;
       continue;
     }
-    await ports.callAction(
-      'manage.wiki.publish',
-      {
-        pages: [
-          {
-            path: page.path,
-            title: page.title,
-            content: page.content,
-            // A page changed since the reader merged it is refused, not overwritten.
-            expectedContentVersion: page.baseContentVersion,
-            ...(page.sources === undefined
-              ? {}
-              : {
-                  sourceRefs: (page.sources ?? []).map((id) => ({
-                    kind: 'raw',
-                    connector: sources.get(id)!.connector,
-                    id: sources.get(id)!.observationRef,
-                  })),
-                }),
-          },
-        ],
-      },
-      operationId
-    );
+    const refs = (page.sources ?? []).map((id) => sources.get(id)!);
+    if ('append' in page) {
+      // Section appends keep the page's title, metadata and earlier evidence ids.
+      await ports.callAction(
+        'manage.wiki.update',
+        {
+          path: page.path,
+          edits: page.append.map((edit) => ({ section: edit.section, append: edit.text })),
+          ...(page.sources === undefined
+            ? {}
+            : { sourceIds: refs.map((ref) => ref.observationRef) }),
+        },
+        operationId
+      );
+    } else {
+      await ports.callAction(
+        'manage.wiki.publish',
+        {
+          pages: [
+            {
+              path: page.path,
+              title: page.title,
+              content: page.content,
+              // A new page only: one that already exists is refused, not overwritten.
+              expectedContentVersion: null,
+              ...(page.sources === undefined
+                ? {}
+                : {
+                    sourceRefs: refs.map((ref) => ({
+                      kind: 'raw',
+                      connector: ref.connector,
+                      id: ref.observationRef,
+                    })),
+                  }),
+            },
+          ],
+        },
+        operationId
+      );
+    }
     ports.pagePublished(operationId);
     result.pagesPublished += 1;
   }

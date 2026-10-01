@@ -59,7 +59,11 @@ function validFile(): Record<string, unknown> {
         path: 'daily/2026-08-28.md',
         title: '2026-08-28',
         content: 'All August items delivered.',
-        baseContentVersion: null,
+      },
+      {
+        path: 'projects/example.md',
+        append: [{ section: '## Decisions', text: '- Bones stay near 150.' }],
+        sources: ['src:5'],
       },
     ],
     noUpdate: [{ reason: 'weekly meeting notice', sources: ['src:6'] }],
@@ -98,6 +102,11 @@ describe('backfill file format', () => {
       sources: ['src:7'],
     });
     (raw.wiki as Array<Record<string, unknown>>)[0]!.path = '../secrets.md';
+    (raw.wiki as Array<Record<string, unknown>>)[1]!.title = 'a page gets content or appends';
+    (raw.wiki as Array<Record<string, unknown>>).push({
+      path: 'projects/other.md',
+      append: [{ section: 'Decisions', text: '- x' }],
+    });
 
     let message = '';
     try {
@@ -114,6 +123,8 @@ describe('backfill file format', () => {
       'item still-b.revisions[1].at: is outside the period',
       'item still-b.appliesUntil: must follow every revision of the period',
       'wiki[0].path: must be a relative .md path inside the wiki',
+      'wiki[1]: carries either title and content (a new page) or append (an existing page)',
+      'wiki[2].append[0].section: must be a Markdown heading line',
     ])
       expect(message).toContain(expected);
   });

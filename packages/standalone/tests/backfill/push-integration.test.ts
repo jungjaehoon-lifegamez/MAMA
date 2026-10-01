@@ -4,7 +4,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createKnowledge } from '@jungjaehoon/mama-core/knowledge';
@@ -12,6 +12,7 @@ import { upsertConnectorEventIndex } from '../../src/connectors/framework/event-
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
 import { createActionSurface } from '../../src/runtime/action-surface.js';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
+import { ObsidianWriter } from '../../src/wiki/obsidian-writer.js';
 import { BACKFILL_FORMAT, parseBackfillFile } from '../../src/backfill/format.js';
 import {
   indexSourceResolver,
@@ -228,5 +229,113 @@ describe('backfill push through the owner actions', () => {
       )
       .all(parts);
     expect(edges).toHaveLength(1);
+  });
+  it('appends to an existing page without losing its evidence and refuses a new page that exists', async () => {
+    const observation = upsertConnectorEventIndex(handle.adapter, {
+      source_connector: 'chatwork',
+      source_type: 'message',
+      source_id: 'src:spec',
+      channel: 'room-test',
+      content: 'content src:spec',
+      event_datetime: at('2026-08-12T15:00:00+09:00'),
+      observation: { observed_at: at('2026-08-12T15:00:00+09:00') },
+      content_hash: createHash('sha256').update('src:spec').digest(),
+    }).current_observation_id!;
+    const writer = new ObsidianWriter(join(root, 'vault'), '.');
+    mkdirSync(join(writer.getWikiPath(), 'projects'), { recursive: true });
+    const project = join(writer.getWikiPath(), 'projects', 'example.md');
+    writeFileSync(
+      project,
+      [
+        '---',
+        'title: "Example"',
+        'type: "entity"',
+        'confidence: "high"',
+        'compiled_at: "2026-09-30T00:00:00.000Z"',
+        'source_ids:',
+        '  - "obs_september"',
+        '---',
+        '',
+        '# Example',
+        '',
+        '## Decisions',
+        '- Delivery is monthly.',
+        '',
+      ].join('\n')
+    );
+    const surface = createActionSurface({
+      adapter: handle.adapter,
+      knowledge: createKnowledge({ adapter: handle.adapter }),
+      ownerPrincipalId: 'owner',
+      agentId: 'owner-agent',
+      timeZone: createTimeZoneSetting('Asia/Seoul'),
+      configPath: join(root, 'config.yaml'),
+      isOwnerMessageTurn: () => false,
+      wikiPorts: {
+        vault: { path: writer.getWikiPath(), name: null },
+        publisher: (pages) => writer.writePagesAtomically(pages),
+      },
+    });
+    const file = (pages: unknown[]) =>
+      parseBackfillFile({
+        format: BACKFILL_FORMAT,
+        period: { from: '2026-08-01T00:00:00+09:00', until: '2026-09-01T00:00:00+09:00' },
+        items: [
+          {
+            key: 'spec',
+            topic: 'spec',
+            revisions: [
+              {
+                at: '2026-08-12T15:00:00+09:00',
+                summary: 'spec settled',
+                set: { title: 'Spec', status: 'done' },
+                sources: ['src:spec'],
+              },
+            ],
+          },
+        ],
+        wiki: pages,
+      });
+    const ports = (): BackfillPushPorts => ({
+      callAction: async (name, input, operationId) => {
+        const result = await surface.hostToolCall(name, input, operationId, {
+          session: { replaySourceEndMs: at('2026-09-01T00:00:00+09:00') - 1 },
+        });
+        if (result.status !== 'completed')
+          throw new Error(`${name}: ${result.error.code} ${result.error.message}`);
+        return result.data;
+      },
+      resolveSources: indexSourceResolver(handle.adapter),
+      firstEventAt: () => {
+        throw new Error('this file names no existing work');
+      },
+      publishedPages: new Set(),
+      pagePublished: () => undefined,
+    });
+
+    await pushBackfill(
+      file([
+        {
+          path: 'projects/example.md',
+          append: [{ section: '## Decisions', text: '- Bones stay near 150.' }],
+          sources: ['src:spec'],
+        },
+        { path: 'daily/2026-08-12.md', title: '2026-08-12', content: 'One spec settled.' },
+      ]),
+      ports()
+    );
+
+    const page = readFileSync(project, 'utf8');
+    expect(page).toContain('confidence: "high"');
+    expect(page).toContain('obs_september');
+    expect(page).toContain(observation);
+    expect(page).toContain('- Delivery is monthly.\n- Bones stay near 150.');
+    await expect(
+      pushBackfill(
+        file([{ path: 'projects/example.md', title: 'Example', content: 'Replaced.' }]),
+        ports()
+      )
+    ).rejects.toThrow('manage.wiki.publish: TOOL_ERROR');
+    expect(readFileSync(project, 'utf8')).toBe(page);
   });
 });

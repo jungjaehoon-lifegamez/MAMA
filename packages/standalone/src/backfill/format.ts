@@ -54,14 +54,13 @@ export interface BackfillLesson {
   sources: string[];
 }
 
-export interface BackfillWikiPage {
-  path: string;
-  title: string;
-  content: string;
-  /** The page version the content was merged from; null for a page that does not exist yet. */
-  baseContentVersion: string | null;
-  sources?: string[];
-}
+/**
+ * A wiki page the period adds: a new page carries its whole content; an existing page gets
+ * section appends, so its title, metadata and earlier evidence stay as they are.
+ */
+export type BackfillWikiPage =
+  | { path: string; title: string; content: string; sources?: string[] }
+  | { path: string; append: Array<{ section: string; text: string }>; sources?: string[] };
 
 export interface BackfillFile {
   format: typeof BACKFILL_FORMAT;
@@ -292,37 +291,38 @@ export function parseBackfillFile(raw: unknown): BackfillFile {
   const paths = new Set<string>();
   const wiki: BackfillWikiPage[] = (
     file.wiki === undefined ? [] : (list(file.wiki, 'wiki', 0) ?? [])
-  ).flatMap((value, index) => {
+  ).flatMap((value, index): BackfillWikiPage[] => {
     const where = `wiki[${index}]`;
-    const page = object(value, where, [
-      'path',
-      'title',
-      'content',
-      'baseContentVersion',
-      'sources',
-    ]);
+    const page = object(value, where, ['path', 'title', 'content', 'append', 'sources']);
     if (!page) return [];
     const path = text(page.path, `${where}.path`) ?? '';
     if (path.startsWith('/') || path.split('/').includes('..') || !path.endsWith('.md'))
       fail(`${where}.path`, 'must be a relative .md path inside the wiki');
     if (paths.has(path)) fail(`${where}.path`, `repeats ${path}`);
     paths.add(path);
-    if (page.baseContentVersion !== null && typeof page.baseContentVersion !== 'string')
-      fail(
-        `${where}.baseContentVersion`,
-        'must be the version merged from, or null for a new page'
-      );
-    return [
-      {
-        path,
-        title: text(page.title, `${where}.title`) ?? '',
-        content: text(page.content, `${where}.content`) ?? '',
-        baseContentVersion: (page.baseContentVersion as string | null) ?? null,
-        ...(page.sources === undefined
-          ? {}
-          : { sources: sources(page.sources, `${where}.sources`) }),
-      },
-    ];
+    const pageSources =
+      page.sources === undefined ? {} : { sources: sources(page.sources, `${where}.sources`) };
+    if (page.append === undefined) {
+      return [
+        {
+          path,
+          title: text(page.title, `${where}.title`) ?? '',
+          content: text(page.content, `${where}.content`) ?? '',
+          ...pageSources,
+        },
+      ];
+    }
+    if (page.title !== undefined || page.content !== undefined)
+      fail(where, 'carries either title and content (a new page) or append (an existing page)');
+    const append = (list(page.append, `${where}.append`) ?? []).flatMap((entry, n) => {
+      const edit = object(entry, `${where}.append[${n}]`, ['section', 'text']);
+      if (!edit) return [];
+      const section = text(edit.section, `${where}.append[${n}].section`) ?? '';
+      if (!/^#{1,6}\s/.test(section))
+        fail(`${where}.append[${n}].section`, 'must be a Markdown heading line');
+      return [{ section, text: text(edit.text, `${where}.append[${n}].text`) ?? '' }];
+    });
+    return [{ path, append, ...pageSources }];
   });
 
   const noUpdate = (
