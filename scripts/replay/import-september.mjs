@@ -3,7 +3,19 @@
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
-const FROM_MS = Date.parse('2026-09-01T00:00:00.000+09:00');
+const DEFAULT_FROM = '2026-09-01T00:00:00.000+09:00';
+
+/** A window bound must carry its offset; a local time would be read in the machine's zone. */
+function windowTime(text, name) {
+  if (!/(Z|[+-]\d\d:\d\d)$/.test(text)) {
+    throw new Error(`${name} must be an ISO time with its offset, e.g. 2026-08-01T00:00:00+09:00`);
+  }
+  const ms = Date.parse(text);
+  if (!Number.isSafeInteger(ms)) {
+    throw new Error(`${name} is not a valid time: ${text}`);
+  }
+  return ms;
+}
 
 function value(args, name, fallback) {
   const index = args.indexOf(name);
@@ -20,7 +32,10 @@ function required(args, name, fallback) {
 
 function help() {
   console.log(
-    'Usage: node scripts/replay/import-september.mjs --mama-db PATH --raw-root PATH --connectors-config PATH --manifest PATH [--source-db PATH]'
+    'Usage: node scripts/replay/import-september.mjs --mama-db PATH --raw-root PATH --connectors-config PATH --manifest PATH [--source-db PATH] [--from ISO] [--until ISO]'
+  );
+  console.log(
+    `--from defaults to ${DEFAULT_FROM}; --until (exclusive) defaults to the newest source row.`
   );
   console.log('Trello credentials come from TRELLO_API_KEY and TRELLO_TOKEN.');
 }
@@ -44,6 +59,12 @@ async function main(argv) {
     '--manifest',
     join(home, 'runtime', 'september-import-manifest.json')
   );
+  const fromMs = windowTime(value(argv, '--from', DEFAULT_FROM), '--from');
+  const untilText = value(argv, '--until', undefined);
+  const untilMs = untilText === undefined ? undefined : windowTime(untilText, '--until');
+  if (untilMs !== undefined && untilMs <= fromMs) {
+    throw new Error('--until must follow --from');
+  }
   const apiKey = process.env.TRELLO_API_KEY;
   const token = process.env.TRELLO_TOKEN;
   if (!apiKey || !token) {
@@ -74,7 +95,8 @@ async function main(argv) {
       connectorsConfigPath,
       rawStore,
       rawIndexSink,
-      fromMs: FROM_MS,
+      fromMs,
+      ...(untilMs === undefined ? {} : { untilMs }),
       observedAtMs,
       manifestPath,
     });
@@ -83,7 +105,7 @@ async function main(argv) {
       rawStore,
       rawIndexSink,
       credentials: { apiKey, token },
-      fromMs: FROM_MS,
+      fromMs,
       untilMs: kagemusha.untilMs,
       observedAtMs,
       manifestPath,
