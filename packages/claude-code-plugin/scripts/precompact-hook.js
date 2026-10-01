@@ -231,7 +231,7 @@ module.exports = {
 async function main() {
   const features = getEnabledFeatures();
   if (!features.has('memory')) {
-    process.exit(0);
+    return 0;
   }
 
   let input = '';
@@ -243,19 +243,19 @@ async function main() {
   try {
     parsed = JSON.parse(input);
   } catch {
-    process.exit(0);
+    return 0;
   }
 
   const transcriptPath = parsed.transcript_path || '';
   if (!transcriptPath) {
-    process.exit(0);
+    return 0;
   }
 
   let transcript = '';
   try {
     transcript = fs.readFileSync(transcriptPath, 'utf8');
   } catch {
-    process.exit(0);
+    return 0;
   }
 
   // Extract candidates from transcript
@@ -271,7 +271,7 @@ async function main() {
       systemMessage: compactionPrompt,
     };
     console.log(JSON.stringify(output));
-    process.exit(0);
+    return 0;
   }
 
   // Query MAMA DB for saved topics and filter
@@ -294,9 +294,19 @@ async function main() {
   };
 
   console.log(JSON.stringify(output));
-  process.exit(0);
+  return 0;
 }
 
 if (require.main === module) {
-  main().catch(() => process.exit(0));
+  // The code is set, not passed to process.exit(): once the embedding model has loaded,
+  // onnxruntime-node 1.21 aborts in its exit-time teardown on macOS (exit 134, output lost;
+  // microsoft/onnxruntime#24579). Ending on its own, the process exits cleanly.
+  main().then(
+    (code) => {
+      process.exitCode = code;
+    },
+    () => {
+      process.exitCode = 0;
+    }
+  );
 }

@@ -407,7 +407,7 @@ describe('record orders', () => {
     expect(accepted.map((stimulus) => stimulus.id)).toEqual([`record:${delta.stimulusId}:2`]);
   });
 
-  it('ignores a parked row re-reported after a later attempt of its batch', async () => {
+  it('ignores a parked row whose batch already has a later attempt', async () => {
     const adapter = await database();
     const parked = store(adapter, recordOrderPayload(delta, 1), 'claimed', 'uncertain');
     mailboxRow(adapter, 2, 'pending');

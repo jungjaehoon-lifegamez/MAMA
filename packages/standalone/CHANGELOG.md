@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A stimulus parked uncertain is reported once, when it is parked. Reconciliation threw again for a
+  row that was already uncertain, and the runtime remembers reports only per process, so every
+  daemon start logged the same rows again (11 lines at each start, the oldest from 2026-09-27) and
+  `daemon.log` could never be clean. The rows stay uncertain; only the repeat is gone.
 - Chatwork and Trello poll errors name the cause of a failed fetch, as
   `fetch failed: other side closed`. Node's fetch keeps the reason outside the message, so the
   intermittent Chatwork failures in `daemon.log` (one room at a time, recovered on the next poll)

@@ -213,7 +213,7 @@ describe('Story M2.2: PreToolUse Hook', () => {
       const content = fs.readFileSync(SCRIPT_PATH, 'utf8');
 
       expect(content).toContain('JSON.parse');
-      expect(content).toContain('process.exit(0)');
+      expect(content).toContain('process.exitCode');
       expect(content).toContain('decision');
       expect(content).toContain('allow');
     });
