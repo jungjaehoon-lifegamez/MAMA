@@ -79,6 +79,9 @@ describe('owner standing prompt', () => {
       'Write the report in five parts: key situation today (with the owner schedule and holidays); needs a response; needs a decision; pipeline with each stage and item; next actions.',
       // Owner 2026-09-29: the report is a delta on the ledger; the agent finds what it verifies.
       'The ledger is the record: the report is what changed since the previous report on top of it.',
+      // A backfill writes past work today: a change is chosen by when it happened, not when it was written.
+      'Find the items whose events happened since then with work.list eventSince',
+      'an item written since then about earlier events is a late recording',
       'settle an item and record it before the next',
     ]) {
       expect(procedures).toContain(procedure);

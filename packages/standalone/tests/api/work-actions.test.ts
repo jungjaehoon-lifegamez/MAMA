@@ -676,6 +676,54 @@ describe('minimal work actions', () => {
     expect(knowledge.reviseWork).toHaveBeenCalledTimes(1);
   });
 
+  it('passes appliesUntil to the ledger as epoch ms on revise, not on create', async () => {
+    const knowledge = { createWork: vi.fn(), reviseWork: vi.fn().mockReturnValue({}) };
+    const dispatch = createDispatcher(
+      createCatalog(
+        minimalWorkActionRegistrations({
+          observationExists: () => true,
+          knowledge: knowledge as never,
+        })
+      )
+    );
+
+    const revised = await dispatch(
+      {
+        action: 'work.revise',
+        operationId: 'operation-bounded-revise',
+        input: {
+          commitmentId: 'commitment-test',
+          summary: 'an earlier period, written later',
+          eventDatetime: '2026-08-26T17:43:00+09:00',
+          appliesUntil: '2026-09-01T10:31:00+09:00',
+          set: { status: 'pending' },
+        },
+      },
+      { access }
+    );
+    expect(revised).toMatchObject({ status: 'completed' });
+    expect(knowledge.reviseWork.mock.calls[0]![0]).toMatchObject({
+      eventDatetime: Date.parse('2026-08-26T08:43:00Z'),
+      appliesUntil: Date.parse('2026-09-01T01:31:00Z'),
+    });
+
+    const created = await dispatch(
+      {
+        action: 'work.create',
+        operationId: 'operation-bounded-create',
+        input: {
+          topic: 'work',
+          summary: 'new work',
+          appliesUntil: 1_000,
+          set: { title: 'work' },
+        },
+      },
+      { access }
+    );
+    expect(created).toMatchObject({ status: 'failed', error: { code: 'invalid_input' } });
+    expect(knowledge.createWork).not.toHaveBeenCalled();
+  });
+
   it('describes the owner work contract fields and stable citation handles', () => {
     const knowledge = { createWork: vi.fn(), reviseWork: vi.fn() };
     const contracts = minimalWorkActionRegistrations({
