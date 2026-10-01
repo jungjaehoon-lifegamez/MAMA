@@ -303,7 +303,7 @@ async function main() {
   const features = getEnabledFeatures();
   if (features.size === 0) {
     info('[SessionStart] All hooks disabled');
-    process.exit(0);
+    return 0;
   }
 
   // Check if this is a resume/compact event (not a fresh session start)
@@ -323,7 +323,7 @@ async function main() {
     };
     console.log(JSON.stringify(response));
     info('[SessionStart] Session already warm, skipping re-initialization');
-    process.exit(0);
+    return 0;
   }
 
   const startTime = Date.now();
@@ -360,7 +360,7 @@ ${steps}`,
       },
     };
     console.log(JSON.stringify(response));
-    process.exit(busy ? 0 : 1);
+    return busy ? 0 : 1;
   }
 
   // Upgrade to real logger now that dependencies are available
@@ -374,11 +374,16 @@ ${steps}`,
   try {
     // Read stdin (may be empty for SessionStart)
     await readStdin();
+    // Reading may stop at its 1s timeout with stdin still open; the process ends on its own
+    // (see the end of this file), so an open stdin would hold it.
+    process.stdin.destroy();
 
-    // Create a timeout promise
-    const timeoutPromise = new Promise((resolve) =>
-      setTimeout(() => resolve({ timedOut: true }), MAX_WARMUP_MS)
-    );
+    // Cleared once the race settles: the process ends on its own (see the end of this file),
+    // so a pending timer would hold it open.
+    let warmupTimer;
+    const timeoutPromise = new Promise((resolve) => {
+      warmupTimer = setTimeout(() => resolve({ timedOut: true }), MAX_WARMUP_MS);
+    });
 
     // Run warmup tasks in parallel
     const warmupPromise = Promise.all([warmDatabase(), warmEmbeddingModel()]).then(
@@ -390,6 +395,7 @@ ${steps}`,
     );
 
     const result = await Promise.race([warmupPromise, timeoutPromise]);
+    clearTimeout(warmupTimer);
 
     const totalLatencyMs = Date.now() - startTime;
 
@@ -406,7 +412,7 @@ ${steps}`,
       console.log(JSON.stringify(response));
 
       writeEnvStatus({ success: false, totalLatencyMs });
-      process.exit(0);
+      return 0;
     }
 
     const { dbResult, embeddingResult } = result;
@@ -456,7 +462,7 @@ ${recentContextText}
     console.log(JSON.stringify(response));
 
     info(`[SessionStart] MAMA session ready (${totalLatencyMs}ms)`);
-    process.exit(0);
+    return 0;
   } catch (error) {
     logError(`[SessionStart] Fatal error: ${error.message}`);
 
@@ -468,7 +474,7 @@ ${recentContextText}
     };
     console.log(JSON.stringify(response));
 
-    process.exit(1);
+    return 1;
   }
 }
 
@@ -503,14 +509,23 @@ process.on('unhandledRejection', (reason) => {
 
 // Run hook
 if (require.main === module) {
-  main().catch((error) => {
-    if (error.name === 'AbortError') {
-      warn('[SessionStart] Main aborted by external timeout');
-      process.exit(0);
+  // The code is set, not passed to process.exit(): once the embedding model has loaded,
+  // onnxruntime-node 1.21 aborts in its exit-time teardown on macOS (exit 134;
+  // microsoft/onnxruntime#24579). Ending on its own, the process exits with the code.
+  main().then(
+    (code) => {
+      process.exitCode = code;
+    },
+    (error) => {
+      if (error.name === 'AbortError') {
+        warn('[SessionStart] Main aborted by external timeout');
+        process.exitCode = 0;
+        return;
+      }
+      logError(`[SessionStart] Unhandled error: ${error.message}`);
+      process.exitCode = 1;
     }
-    logError(`[SessionStart] Unhandled error: ${error.message}`);
-    process.exit(1);
-  });
+  );
 }
 
 module.exports = { main, warmEmbeddingModel, warmDatabase };

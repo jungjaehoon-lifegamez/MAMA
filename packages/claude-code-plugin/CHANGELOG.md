@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- SessionStart, PreToolUse and PreCompact end on their own instead of calling `process.exit()`.
+  Once the embedding model had loaded, onnxruntime-node 1.21 aborted at exit on macOS (exit 134,
+  microsoft/onnxruntime#24579): SessionStart and PreCompact lost their output, and PreToolUse
+  lost the related decisions it sends with exit 2. It began with 2.1.2, the first version whose
+  hooks could load mama-core. SessionStart now closes stdin after reading it and clears its
+  warmup timer, so neither holds the process open.
+
 ## [2.1.3] - 2026-10-01
 
 ### Changed
