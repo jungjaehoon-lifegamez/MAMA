@@ -674,7 +674,7 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
         throw new Error(reason);
       }
       // A row already parked uncertain was reported when it was parked. Throwing again would
-      // report it at every start and every tick, since core remembers reports only per process.
+      // report it again at every start, since core remembers reports only per process.
       return 'unresolved';
     },
     getReplaySourceEndMs: () => activeReplaySourceEndMs,
