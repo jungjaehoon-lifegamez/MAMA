@@ -16,6 +16,7 @@ Use `mama` from `@jungjaehoon/mama-os` to configure and run the owner agent. Sta
 | `mama secret list`       | Prints configured secret names only. It does not print values.                                                              |
 | `mama daemon`            | Runs the daemon in the foreground until stopped. It expects the credentials in its environment.                             |
 | `mama replay`            | Runs the historical replay using the configured database and prepared import manifest, then stops.                          |
+| `mama backfill <file>`   | Checks a backfill file and writes the period it describes through the owner's actions, then stops.                          |
 | `mama status`            | Prints `running` or `stopped` from the PID record and process check.                                                        |
 | `mama stop`              | Sends SIGTERM to the recorded daemon PID.                                                                                   |
 
@@ -55,6 +56,12 @@ launchctl bootout gui/$(id -u)/com.mama.server
 with `september-replay-cursor.json` and `september-replay-ledger.jsonl` beside it. These are the
 current filenames used by the implementation. Prepare the source archive and stop the live service
 before following the [replay guide](../guides/replay.md).
+
+## Backfill a past period
+
+`mama backfill <file>` takes one `mama-backfill/1` file. It refuses an invalid file and lists every
+problem, and it writes nothing until every cited source has been imported. Stop the live service
+first. See the [backfill guide](../guides/backfill.md).
 
 Sources: [CLI dispatch](../../packages/standalone/src/cli/index.ts),
 [commands](../../packages/standalone/src/cli/commands),

@@ -12,6 +12,7 @@ and in-process public MCP server. The two products share mama-core, not a data h
 - [Connectors](guides/connectors.md)
 - [Reports and board](guides/reports-and-board.md)
 - [Replay](guides/replay.md)
+- [Backfill](guides/backfill.md)
 - [Wiki](guides/wiki.md)
 - [Corrections and learning](guides/corrections-and-learning.md)
 - [Viewer](guides/viewer.md)
