@@ -11,7 +11,7 @@
   "plugins": [
     {
       "name": "mama",
-      "version": "2.1.3",
+      "version": "2.1.4",
       "source": "./packages/claude-code-plugin",
       "description": "Memory-Augmented MCP Assistant - Track decisions, learn from mistakes, never repeat errors.",
       "author": {

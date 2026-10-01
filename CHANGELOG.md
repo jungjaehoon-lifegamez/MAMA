@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.61.1] / mama-core [5.2.0] / plugin [2.1.4] - 2026-10-01
+
+### Fixed
+
+- Plugin hooks no longer abort at exit. Once the embedding model had loaded, onnxruntime-node 1.21
+  aborted at `process.exit()` on macOS (exit 134, microsoft/onnxruntime#24579), so SessionStart and
+  PreCompact lost their output and PreToolUse lost its related decisions. The hooks now end on their
+  own; a warmup past its budget still exits at once.
+- A stimulus parked uncertain is reported once, when it is parked, not again at every daemon start.
+- Chatwork and Trello poll errors name the cause of a failed fetch, as
+  `fetch failed: other side closed`, including a refused connection whose cause has no message.
+- The recent decisions at an owner session start leave out retirements and outcome changes, as
+  recall does; mama-core's `readMemoryRecordsInScopes` takes `excludeAmendments`.
+- A connector test that began failing on 2026-10-01 (its "future" event became past) pins its clock.
+
 ## mama-os [0.61.0] / mama-core [5.1.0] / mama-server [2.4.0] / plugin [2.1.3] - 2026-10-01
 
 The owner's word keeps its authority, and search shows history honestly (W31,
