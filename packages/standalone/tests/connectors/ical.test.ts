@@ -40,6 +40,7 @@ function statePath(): string {
 
 describe('iCal connector', () => {
   afterEach(async () => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     for (const raw of openRawStores.splice(0).reverse()) raw.close();
     for (const database of openDatabases.splice(0).reverse()) await database.close();
@@ -252,6 +253,9 @@ describe('iCal connector', () => {
   });
 
   it('emits future removals as cancelled versions and forgets past removals', async () => {
+    // "Now" is pinned between the fixture's LAST-MODIFIED (2026-09-27) and its event (2026-10-01
+    // 10:00): the event stays future and inside schedule.upcoming's default 14 days.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-09-28T12:00:00+09:00') });
     process.env.MAMA_ICAL_URL_PRIMARY = 'https://example.invalid/calendar.ics';
     const future = calendar;
     const past = calendar
@@ -327,6 +331,8 @@ describe('iCal connector', () => {
       status: 'completed',
       data: { returned: 1, events: [{ title: 'Planning, review' }] },
     });
+    // The pinned clock stands still; the cancellation is a later revision.
+    vi.setSystemTime(new Date('2026-09-28T12:01:00+09:00'));
     const futureCancellation = await connector.poll(new Date(0));
     raw.save(
       'ical',
