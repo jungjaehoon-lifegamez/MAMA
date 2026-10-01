@@ -21,6 +21,7 @@ import type {
   IConnector,
   NormalizedItem,
 } from '../framework/types.js';
+import { messageWithCauses } from '../../utils/error-message.js';
 
 interface TrelloLabel {
   name: string;
@@ -348,7 +349,7 @@ export class TrelloConnector implements IConnector {
         pendingCardStates.set(boardId, newCardState);
       } catch (err) {
         failedBoards.add(boardId);
-        this.lastError = err instanceof Error ? err.message : String(err);
+        this.lastError = `Board ${boardId}: ${messageWithCauses(err)}`;
       }
     }
 

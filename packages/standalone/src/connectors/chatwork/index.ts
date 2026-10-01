@@ -16,6 +16,7 @@ import {
   type AttachmentDownloadRequest,
 } from '../framework/attachments.js';
 import { requireHttpsUrl, saveResponseBody } from '../framework/attachment-io.js';
+import { messageWithCauses } from '../../utils/error-message.js';
 
 interface ChatworkMessage {
   message_id: string;
@@ -205,7 +206,7 @@ export class ChatworkConnector implements IConnector {
         if (maxMsgId) pendingMessageIds.set(roomId, maxMsgId);
       } catch (err) {
         failedRooms.add(roomId);
-        this.lastError = `Room ${roomId}: ${err instanceof Error ? err.message : String(err)}`;
+        this.lastError = `Room ${roomId}: ${messageWithCauses(err)}`;
       }
     }
 
