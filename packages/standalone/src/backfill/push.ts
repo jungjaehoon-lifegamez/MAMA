@@ -20,8 +20,8 @@ export interface BackfillPushPorts {
   callAction(name: string, input: Record<string, unknown>, operationId: string): Promise<unknown>;
   /** Exact `connector_event_index.source_id`s to observations; throws naming every unresolved id. */
   resolveSources(sourceIds: readonly string[]): ReadonlyMap<string, BackfillSource>;
-  /** The earliest event time among existing work's revisions, the bound of an earlier period. */
-  firstEventAt(commitmentId: string): number;
+  /** The earliest event time of existing work at or after `after` (the period's end): the period's bound. */
+  firstEventAt(commitmentId: string, after: number): number;
   /** Wiki pages an earlier run already published, by operation id. */
   publishedPages: ReadonlySet<string>;
   /** Called after a wiki page is published, so a later run skips it. */
@@ -91,12 +91,10 @@ export async function pushBackfill(
   const bounds = new Map<string, number>();
   for (const item of file.items) {
     if (item.commitmentId === undefined) continue;
-    const appliesUntil = item.appliesUntil ?? ports.firstEventAt(item.commitmentId);
-    if (appliesUntil <= item.revisions[item.revisions.length - 1]!.at)
-      throw new Error(
-        `item ${item.key}: its existing revisions start at or before this period's last revision; the period cannot be bounded`
-      );
-    bounds.set(item.key, appliesUntil);
+    bounds.set(
+      item.key,
+      item.appliesUntil ?? ports.firstEventAt(item.commitmentId, file.period.until)
+    );
   }
 
   // Each piece of work goes in complete, its revisions in event order.
@@ -308,8 +306,9 @@ export function indexSourceResolver(adapter: {
 }
 
 /**
- * The earliest event time among existing work's unbounded revisions, read through the ledger.
- * Bounded revisions are an earlier backfill's (a re-run finds its own), so they do not count.
+ * The earliest event time of existing work at or after the period's end, read through the ledger.
+ * Revisions of the period itself (a re-run finds its own) fall before it; a later period's
+ * revisions count whether or not an earlier backfill bounded them.
  */
 export function ledgerFirstEventAt(
   readWork: (query: { commitmentId: string; history: 'all' }) => {
@@ -322,11 +321,13 @@ export function ledgerFirstEventAt(
     }>;
   }
 ): BackfillPushPorts['firstEventAt'] {
-  return (commitmentId) => {
+  return (commitmentId, after) => {
     const history = readWork({ commitmentId, history: 'all' }).items[0]?.history ?? [];
-    const unbounded = history.filter((revision) => revision.appliesUntil === null);
-    if (unbounded.length === 0)
-      throw new Error(`Existing work ${commitmentId} has no unbounded revision in the ledger`);
-    return Math.min(...unbounded.map((revision) => revision.eventDatetime ?? revision.createdAt));
+    const later = history
+      .map((revision) => revision.eventDatetime ?? revision.createdAt)
+      .filter((time) => time >= after);
+    if (later.length === 0)
+      throw new Error(`Existing work ${commitmentId} has no revision after the period`);
+    return Math.min(...later);
   };
 }

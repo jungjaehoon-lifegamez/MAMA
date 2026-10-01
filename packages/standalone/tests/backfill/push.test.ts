@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { BACKFILL_FORMAT, parseBackfillFile } from '../../src/backfill/format.js';
-import { pushBackfill, type BackfillPushPorts } from '../../src/backfill/push.js';
+import {
+  ledgerFirstEventAt,
+  pushBackfill,
+  type BackfillPushPorts,
+} from '../../src/backfill/push.js';
 
 const AUG = (day: string) => `2026-08-${day}+09:00`;
 
@@ -165,10 +169,39 @@ describe('backfill push', () => {
     expect(missing.calls).toEqual([]);
 
     const unbounded = fakePorts();
-    unbounded.ports.firstEventAt = () => Date.parse(AUG('20T00:00:00'));
+    const asked: number[] = [];
+    unbounded.ports.firstEventAt = (_commitmentId, after) => {
+      asked.push(after);
+      throw new Error('Existing work commitment_existing has no revision after the period');
+    };
     await expect(pushBackfill(file(), unbounded.ports)).rejects.toThrow(
-      'item existing-work: its existing revisions start at or before'
+      'has no revision after the period'
     );
+    expect(asked).toEqual([Date.parse('2026-09-01T00:00:00+09:00')]);
     expect(unbounded.calls).toEqual([]);
+  });
+
+  it('bounds existing work by its first revision after the period, bounded or not', () => {
+    const at = (text: string) => Date.parse(text);
+    const history = [
+      // An August backfill already bounded by September, then the live September work.
+      {
+        eventDatetime: at(AUG('26T17:43:00')),
+        appliesUntil: at('2026-09-01T10:31:00+09:00'),
+        createdAt: 1,
+      },
+      { eventDatetime: at('2026-09-01T10:31:00+09:00'), appliesUntil: null, createdAt: 2 },
+      { eventDatetime: at('2026-09-02T20:03:00+09:00'), appliesUntil: null, createdAt: 3 },
+    ];
+    const firstEventAt = ledgerFirstEventAt(() => ({ items: [{ history }] }));
+
+    // A re-run of August finds the same bound; a July backfill is bounded by August.
+    expect(firstEventAt('c', at('2026-09-01T00:00:00+09:00'))).toBe(
+      at('2026-09-01T10:31:00+09:00')
+    );
+    expect(firstEventAt('c', at(AUG('01T00:00:00')))).toBe(at(AUG('26T17:43:00')));
+    expect(() => firstEventAt('c', at('2026-10-01T00:00:00+09:00'))).toThrow(
+      'Existing work c has no revision after the period'
+    );
   });
 });
