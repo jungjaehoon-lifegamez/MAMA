@@ -41,6 +41,10 @@ import {
 } from './session-start-context.js';
 import { createJevClient } from '../replay/jev-client.js';
 import { createRecordOrders, type RecordOrderEvent } from './record-orders.js';
+import {
+  startObservationEmbedder,
+  type ObservationEmbedderOptions,
+} from './observation-embedding.js';
 import { initTokenEstimator } from '@jungjaehoon/mama-core/runtime/token-estimator';
 import {
   createStimulusDelivery,
@@ -95,6 +99,8 @@ export interface OwnerRuntimeOptions {
   onStimulusFailed?: StimulusDeliveryOptions['onFailed'];
   onStimulusUncertain?: StimulusDeliveryOptions['onUncertain'];
   onStimulusDead?: StimulusDeliveryOptions['onDead'];
+  /** Embed stored observations for source.search's meaning hits; off unless the daemon sets it. */
+  observationEmbedding?: Pick<ObservationEmbedderOptions, 'everyMs' | 'batch' | 'onEvent'>;
   /** Record-order outcomes (recorded, retry, lost); the daemon logs them. */
   onRecordOrderEvent?: (event: RecordOrderEvent) => void;
   /** Lesson recall for a turn; defaults to memory.search over the owner's guidance. */
@@ -234,10 +240,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
   const reportSseClients = new Set<ServerResponse>();
   let wikiRoot: string | null = null;
   try {
-    const knowledge = createKnowledge({
-      adapter: database.adapter,
-      embedder: runtimeEmbedder(options),
-    });
+    const embedder = runtimeEmbedder(options);
+    const knowledge = createKnowledge({ adapter: database.adapter, embedder });
     if (options.rawPath !== undefined) rawStore = new RawStore(options.rawPath);
     const storedSourceReader =
       rawStore === undefined
@@ -285,6 +289,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       scopes: options.scopes,
       connectors: options.connectors,
       storedSourceReader,
+      embedQuery: (text) => embedder.embed(text, 'query'),
       timeZone: options.timeZone,
       configPath: join(options.runtimeRoot, 'config.yaml'),
       isOwnerMessageTurn: (sourceMessageRef) =>
@@ -503,6 +508,14 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
     });
     ownerMailbox = intakeRuntime.mailbox;
     recordOrders.recover();
+    const observationEmbedder =
+      options.observationEmbedding === undefined
+        ? null
+        : startObservationEmbedder({
+            adapter: database.adapter,
+            embed: (text) => embedder.embed(text, 'passage'),
+            ...options.observationEmbedding,
+          });
     const intake = createStimulusIntake(intakeRuntime, options.ownerPrincipalId);
     let stopped = false;
     return {
@@ -519,6 +532,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         if (stopped) return;
         stopped = true;
         recordOrders.stop();
+        await observationEmbedder?.stop();
         await intakeRuntime.stop();
         rawStore?.close();
         await database.close();

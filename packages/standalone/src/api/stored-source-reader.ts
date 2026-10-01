@@ -3,7 +3,8 @@ import type { MemoryReadAllowance } from '@jungjaehoon/mama-core/api/catalog';
 import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
 import { getObservationVersion, readObservationVersion } from '@jungjaehoon/mama-core/knowledge';
 import type { RawStore } from '../storage/source-archive.js';
-import { listRaw, searchRaw } from '../connectors/framework/raw-query.js';
+import { listRaw, meaningSearchRaw, searchRaw } from '../connectors/framework/raw-query.js';
+import type { RawSearchHit } from '../connectors/framework/connector-event-types.js';
 import {
   hasStoredConnector,
   storedConnectorOverview,
@@ -34,6 +35,18 @@ export interface StoredSourceReader {
     access: Access,
     allowance?: Pick<MemoryReadAllowance, 'maxSourceMs'>
   ): Record<string, unknown>;
+  /**
+   * The search's nearest-meaning hits for an embedded query, under the same grants and filters,
+   * leaving out the observations `exclude` names (the text hits already returned).
+   */
+  searchMeaning(
+    source: string,
+    input: Record<string, unknown>,
+    access: Access,
+    queryVector: Float32Array,
+    exclude: ReadonlySet<string>,
+    allowance?: Pick<MemoryReadAllowance, 'maxSourceMs'>
+  ): Record<string, unknown>[];
   read(
     source: string,
     input: Record<string, unknown>,
@@ -130,6 +143,79 @@ function readError(error: unknown): { code: string; message: string } {
   };
 }
 
+/**
+ * Meaning hits follow a search's text hits as a fixed tail, so a full text page cannot crowd out
+ * the other spelling. A hit stands at least 2.5 standard deviations above the query's mean
+ * similarity in the connector: on 14 card-name queries (Japanese and Korean) this kept a message
+ * about the card that the text query could not find for every query, at 81% precision, and
+ * dropped short replies (W32.1 in checks.md).
+ */
+const MEANING_LIMIT = 10;
+const MEANING_MIN_Z = 2.5;
+
+function searchInput(
+  source: string,
+  input: Record<string, unknown>,
+  access: Access,
+  allowance: Pick<MemoryReadAllowance, 'maxSourceMs'> | undefined,
+  ownerPrincipalId: string
+) {
+  const granted = allowedChannels(source, access, ownerPrincipalId);
+  const query = input.query === undefined ? '' : input.query;
+  if (typeof query !== 'string') throw new Error('query must be text');
+  const channels = pageChannels(input, granted);
+  const fromMs = time(input.from, 'from');
+  const toMs = time(input.to, 'to');
+  if (fromMs !== undefined && toMs !== undefined && fromMs > toMs) {
+    throw new Error('from must not be later than to');
+  }
+  if (
+    input.limit !== undefined &&
+    (!Number.isSafeInteger(input.limit) || Number(input.limit) < 1 || Number(input.limit) > 100)
+  ) {
+    throw new Error('limit must be an integer from 1 to 100');
+  }
+  if (input.cursor !== undefined && typeof input.cursor !== 'string') {
+    throw new Error('cursor must be text');
+  }
+  const detail = input.detail ?? 'compact';
+  if (detail !== 'compact' && detail !== 'full') {
+    throw new Error('detail must be compact or full');
+  }
+  const queryInput = {
+    connectors: [source],
+    ...(channels === undefined ? {} : { channels }),
+    ...(fromMs === undefined ? {} : { fromMs }),
+    ...(toMs === undefined ? {} : { toMs }),
+    ...(input.limit === undefined ? {} : { limit: Number(input.limit) }),
+    ...(input.cursor === undefined ? {} : { cursor: input.cursor as string }),
+    ...(allowance?.maxSourceMs === undefined ? {} : { maxSourceMs: allowance.maxSourceMs }),
+  };
+  return { queryInput, query, detail: detail as 'compact' | 'full' };
+}
+
+function presentHit(
+  hit: RawSearchHit,
+  source: string,
+  detail: 'compact' | 'full'
+): Record<string, unknown> {
+  const nextRead = hit.raw_id ? { source, view: 'stored', observationRef: hit.raw_id } : null;
+  return detail === 'full'
+    ? { ...hit, observationRef: hit.raw_id || null, nextRead }
+    : {
+        raw_id: hit.raw_id,
+        source_id: hit.source_id,
+        channel_id: hit.channel_id,
+        author_label: hit.author_label,
+        source_at: hit.source_at,
+        observed_at: hit.observed_at,
+        content_preview: hit.content_preview,
+        score: hit.score,
+        observationRef: hit.raw_id || null,
+        nextRead,
+      };
+}
+
 export function createStoredSourceReader(options: StoredSourceReaderOptions): StoredSourceReader {
   const { adapter } = options;
   return {
@@ -153,72 +239,41 @@ export function createStoredSourceReader(options: StoredSourceReaderOptions): St
       };
     },
     search(source, input, access, allowance) {
-      const granted = allowedChannels(source, access, options.ownerPrincipalId());
-      const query = input.query === undefined ? '' : input.query;
-      if (typeof query !== 'string') throw new Error('query must be text');
-      const channels = pageChannels(input, granted);
-      const fromMs = time(input.from, 'from');
-      const toMs = time(input.to, 'to');
-      if (fromMs !== undefined && toMs !== undefined && fromMs > toMs) {
-        throw new Error('from must not be later than to');
-      }
-      if (
-        input.limit !== undefined &&
-        (!Number.isSafeInteger(input.limit) || Number(input.limit) < 1 || Number(input.limit) > 100)
-      ) {
-        throw new Error('limit must be an integer from 1 to 100');
-      }
-      if (input.cursor !== undefined && typeof input.cursor !== 'string') {
-        throw new Error('cursor must be text');
-      }
-      const detail = input.detail ?? 'compact';
-      if (detail !== 'compact' && detail !== 'full') {
-        throw new Error('detail must be compact or full');
-      }
-      const queryInput = {
-        query,
-        connectors: [source],
-        ...(channels === undefined ? {} : { channels }),
-        ...(fromMs === undefined ? {} : { fromMs }),
-        ...(toMs === undefined ? {} : { toMs }),
-        ...(input.limit === undefined ? {} : { limit: Number(input.limit) }),
-        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
-        ...(allowance?.maxSourceMs === undefined ? {} : { maxSourceMs: allowance.maxSourceMs }),
-      };
-      const result = query.trim() ? searchRaw(adapter, queryInput) : listRaw(adapter, queryInput);
+      const { queryInput, query, detail } = searchInput(
+        source,
+        input,
+        access,
+        allowance,
+        options.ownerPrincipalId()
+      );
+      const result = query.trim()
+        ? searchRaw(adapter, { ...queryInput, query })
+        : listRaw(adapter, { ...queryInput, query });
       return {
         source,
         mode: 'stored',
         ...result,
-        hits: result.hits.map((hit) =>
-          detail === 'full'
-            ? {
-                ...hit,
-                observationRef: hit.raw_id || null,
-                nextRead: hit.raw_id
-                  ? { source, view: 'stored', observationRef: hit.raw_id }
-                  : null,
-              }
-            : {
-                raw_id: hit.raw_id,
-                source_id: hit.source_id,
-                channel_id: hit.channel_id,
-                author_label: hit.author_label,
-                source_at: hit.source_at,
-                observed_at: hit.observed_at,
-                content_preview: hit.content_preview,
-                score: hit.score,
-                observationRef: hit.raw_id || null,
-                nextRead: hit.raw_id
-                  ? { source, view: 'stored', observationRef: hit.raw_id }
-                  : null,
-              }
-        ),
+        hits: result.hits.map((hit) => presentHit(hit, source, detail)),
         coverage: {
           returned: result.hits.length,
           pageComplete: result.next_cursor === null,
         },
       };
+    },
+    searchMeaning(source, input, access, queryVector, exclude, allowance) {
+      const { queryInput, detail } = searchInput(
+        source,
+        input,
+        access,
+        allowance,
+        options.ownerPrincipalId()
+      );
+      const { cursor: _cursor, limit: _limit, ...filters } = queryInput;
+      return meaningSearchRaw(adapter, filters, queryVector, {
+        limit: MEANING_LIMIT,
+        minZ: MEANING_MIN_Z,
+        exclude,
+      }).map((hit) => presentHit(hit, source, detail));
     },
     read(source, input, access, allowance) {
       const granted = allowedChannels(source, access, options.ownerPrincipalId());

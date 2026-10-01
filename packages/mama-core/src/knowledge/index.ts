@@ -138,6 +138,7 @@ export type {
   WorkWriteResult,
 } from './commitments.js';
 export { vectorSearch, fts5Search, RECALL_EXCLUDED_STATUSES } from './search.js';
+export { saveObservationEmbedding, readObservationEmbeddings } from './observation-embeddings.js';
 export {
   queryDecisionGraph,
   querySemanticEdges,

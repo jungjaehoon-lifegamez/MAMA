@@ -6,6 +6,11 @@ import type { TimeZoneSetting } from '../runtime/timezone.js';
 export interface SourcePorts {
   stored?: StoredSourceReader | null;
   timeZone: TimeZoneSetting;
+  /**
+   * The query vector for meaning search. Null is the embedder's explicit no-vector mode; without
+   * this port, or with null, `source.search` returns its text hits only.
+   */
+  embedQuery?: (text: string) => Promise<Float32Array | null>;
 }
 
 function replayReadAllowance(
@@ -118,13 +123,14 @@ const sourceSchema = {
     to: timeValue,
     query: {
       type: 'string' as const,
-      description: 'Text to find in preserved observations, e.g. "review".',
+      description:
+        'Text to find in preserved observations, e.g. "review". The first page also returns up to 10 hits close in meaning, which can be in another language or spelling.',
     },
     limit: {
       type: 'integer' as const,
       minimum: 1,
       maximum: 100,
-      description: 'Maximum search hits, e.g. 20.',
+      description: 'Maximum text hits, e.g. 20; meaning hits come after them.',
     },
     cursor: {
       type: 'string' as const,
@@ -190,52 +196,68 @@ export function sourceActionRegistrations(ports: SourcePorts): ActionRegistratio
           },
         ],
       },
-      exec: (input, context) => {
+      exec: async (input, context) => {
         const source = sourceName(input, 'source.search');
         assertGrantedSource(source, context.access);
+        const body = input as Record<string, unknown>;
+        const reader = storedReader(ports);
         const allowance = replayReadAllowance(context.readAllowance);
         const result =
           allowance === undefined
-            ? storedReader(ports).search(source, input as Record<string, unknown>, context.access)
-            : storedReader(ports).search(
+            ? reader.search(source, body, context.access)
+            : reader.search(source, body, context.access, allowance);
+        const textHits = (result as { hits?: Array<Record<string, unknown>> }).hits ?? [];
+        const query = typeof body.query === 'string' ? body.query.trim() : '';
+        // Meaning hits join the first page only; later pages continue the text hits.
+        const vector =
+          query !== '' && body.cursor === undefined && ports.embedQuery
+            ? await ports.embedQuery(query)
+            : null;
+        const meaningHits =
+          vector === null
+            ? []
+            : reader.searchMeaning(
                 source,
-                input as Record<string, unknown>,
+                body,
                 context.access,
+                vector,
+                new Set(textHits.map((hit) => String(hit.raw_id))),
                 allowance
               );
-        const data = result as { hits?: Array<Record<string, unknown>> };
+        const hits = [
+          ...textHits.map((hit) => ({ hit, match: 'text' as const })),
+          ...meaningHits.map((hit) => ({ hit, match: 'meaning' as const })),
+        ];
+        const coverage = (result as { coverage?: Record<string, unknown> }).coverage;
         return {
           ...result,
-          ...(Array.isArray(data.hits)
-            ? {
-                hits: data.hits.map((hit) => {
-                  const sourceAt = hit.source_at;
-                  const timestamp =
-                    typeof sourceAt === 'string' ? Date.parse(sourceAt) : Number.NaN;
-                  const content =
-                    typeof hit.content_preview === 'string' ? hit.content_preview : '';
-                  const metadata =
-                    hit.metadata && typeof hit.metadata === 'object' && !Array.isArray(hit.metadata)
-                      ? (hit.metadata as Record<string, unknown>)
-                      : {};
-                  return {
-                    author: hit.author_label ?? null,
-                    channel:
-                      hit.channel_name ??
-                      hit.channelName ??
-                      metadata.channelName ??
-                      hit.channel ??
-                      hit.channel_id ??
-                      null,
-                    time: Number.isFinite(timestamp)
-                      ? `${new Date(timestamp).toLocaleString('ko-KR', { timeZone: ports.timeZone.get() })} (${ports.timeZone.get()})`
-                      : null,
-                    text: content.replace(/\s+/g, ' ').trim().slice(0, 200),
-                    observationRef: hit.raw_id ?? null,
-                  };
-                }),
-              }
-            : {}),
+          coverage: { ...coverage, returned: hits.length },
+          hits: hits.map(({ hit, match }) => {
+            const sourceAt = hit.source_at;
+            const timestamp = typeof sourceAt === 'string' ? Date.parse(sourceAt) : Number.NaN;
+            const content = typeof hit.content_preview === 'string' ? hit.content_preview : '';
+            const metadata =
+              hit.metadata && typeof hit.metadata === 'object' && !Array.isArray(hit.metadata)
+                ? (hit.metadata as Record<string, unknown>)
+                : {};
+            return {
+              author: hit.author_label ?? null,
+              channel:
+                hit.channel_name ??
+                hit.channelName ??
+                metadata.channelName ??
+                hit.channel ??
+                hit.channel_id ??
+                null,
+              time: Number.isFinite(timestamp)
+                ? `${new Date(timestamp).toLocaleString('ko-KR', { timeZone: ports.timeZone.get() })} (${ports.timeZone.get()})`
+                : null,
+              text: content.replace(/\s+/g, ' ').trim().slice(0, 200),
+              observationRef: hit.raw_id ?? null,
+              match,
+              ...(match === 'meaning' ? { similarity: Number(Number(hit.score).toFixed(3)) } : {}),
+            };
+          }),
         };
       },
     },
