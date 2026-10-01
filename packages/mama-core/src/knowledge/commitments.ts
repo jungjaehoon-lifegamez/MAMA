@@ -39,6 +39,8 @@ export interface CommitmentRevision {
   clear: Array<keyof OwnerWorkPatch>;
   /** Source event time; null means this legacy revision had no event time. */
   eventDatetime: number | null;
+  /** When this revision stops applying; null while it holds until a later revision. */
+  appliesUntil: number | null;
   createdAt: number;
 }
 
@@ -47,6 +49,7 @@ export interface CommitmentChainEntry {
   revision: number;
   operation: CommitmentRevision['operation'];
   eventDatetime: number | null;
+  appliesUntil: number | null;
   /** When the revision was written; the day of a revision with no event time. */
   createdAt: number;
   status: string | null;
@@ -219,6 +222,7 @@ function buildChain(
       revision: revision.revision,
       operation: revision.operation,
       eventDatetime: revision.eventDatetime,
+      appliesUntil: revision.appliesUntil,
       createdAt: revision.createdAt,
       status: revision.operation === 'withdraw' ? 'cancelled' : stringField(values, 'status'),
       stage: stringField(values, 'stage'),
@@ -260,10 +264,16 @@ function recordVisible(
 /**
  * Read owner work: one commitment, or a bounded page of them.
  *
- * `asOf` folds revisions by their source event time when recorded, or by the
- * commit clock for judgments without an event time. A backfill committed today
+ * `asOf` selects revisions by their source event time when recorded, or by the
+ * commit clock for judgments without an event time, and folds them in the order
+ * they were written: a later write is later knowledge. A backfill committed today
  * can therefore answer what was current at a historical instant. A commitment
  * whose first revision is later than `asOf` is absent, not empty.
+ *
+ * A revision with `applies_until` stops applying at that instant: it stays in the
+ * history but leaves the fold once the read time reaches it. A backfill that
+ * appends an earlier period to work already revised later bounds those revisions
+ * by the first later one, so the current state stays the later one.
  */
 export function readWork(
   adapter: DatabaseAdapter,
@@ -314,6 +324,8 @@ export function readWork(
 
   const items: CommitmentView[] = [];
   let scopeHidden = 0;
+  // Bounded revisions leave the fold once the read time reaches their bound.
+  const readTime = asOf ?? Date.now();
   for (const row of pageRows) {
     if (!recordVisible(adapter, row.head_record_id, admitted)) {
       scopeHidden += 1;
@@ -344,19 +356,26 @@ export function readWork(
       set: parsePatch(assignment.set_json, 'set_json'),
       clear: parseClear(assignment.clear_json),
       eventDatetime: assignment.applies_from ?? assignment.judgment_event_datetime ?? null,
+      appliesUntil: assignment.applies_until,
       createdAt: assignment.created_at,
     }));
+    const applying = revisions.filter(
+      (revision) => revision.appliesUntil === null || revision.appliesUntil > readTime
+    );
+    // The revision a writer names next is the last one written, applying or not.
     const head = revisions[revisions.length - 1];
+    const lastApplying = applying[applying.length - 1] ?? head;
     items.push({
       commitmentId: row.commitment_id,
       rowId: row.row_id,
       revision: head.revision,
       latestJudgmentRef: head.recordRef,
-      values: foldAssignments(revisions),
-      withdrawn: revisions.some((revision) => revision.operation === 'withdraw'),
-      basis: revisions.map((revision) => revision.recordRef),
+      values: foldAssignments(applying),
+      withdrawn: applying.some((revision) => revision.operation === 'withdraw'),
+      basis: applying.map((revision) => revision.recordRef),
       createdAt: row.created_at,
-      updatedAt: asOf === null ? row.updated_at : (head.eventDatetime ?? head.createdAt),
+      updatedAt:
+        asOf === null ? row.updated_at : (lastApplying.eventDatetime ?? lastApplying.createdAt),
       ...(wantsHistory ? { history: revisions } : {}),
       ...(wantsChain ? { chain: buildChain(adapter, revisions, admitted) } : {}),
     });
@@ -369,9 +388,6 @@ export function readWork(
     // Named, never silent: a page short by rows the caller cannot read is a
     // different answer from a page that is short because there is no more work.
     reasons.push(`${scopeHidden} commitment(s) outside the caller's scopes`);
-  }
-  if (asOf !== null) {
-    reasons.push(`bounded to revisions effective at or before ${asOf}`);
   }
 
   return {
@@ -411,6 +427,12 @@ export interface WorkCommand {
    */
   links?: RecordLink[];
   eventDatetime?: number | null;
+  /**
+   * When this revision stops applying. A backfill that appends an earlier period
+   * to work already revised later sets it to the first later revision's event
+   * time, so the later state stays current. It must follow `eventDatetime`.
+   */
+  appliesUntil?: number;
   /**
    * When this command happened, if the caller keeps its own clock. It stamps
    * the record and the commitment row alike, so a board that filters on
@@ -482,9 +504,23 @@ function recordFields(command: WorkCommand & { topic: string }): {
   sourceRefs?: string[];
   links?: RecordLink[];
   eventDatetime?: number | null;
+  appliesUntil?: number;
   recordedAt?: number;
   event?: JudgmentEventMeta;
 } {
+  if (command.appliesUntil !== undefined) {
+    // A bound before the revision's own event time would never apply; without an event time the
+    // revision would fall back to the commit clock, which a backfill bound always precedes.
+    if (
+      typeof command.eventDatetime !== 'number' ||
+      command.eventDatetime >= command.appliesUntil
+    ) {
+      throw new JudgmentError(
+        'INVALID_TIME',
+        'appliesUntil must follow the revision eventDatetime'
+      );
+    }
+  }
   return {
     commandId: command.commandId,
     ...(command.modelRunId === undefined ? {} : { modelRunId: command.modelRunId }),
@@ -496,6 +532,7 @@ function recordFields(command: WorkCommand & { topic: string }): {
     ...(command.sourceRefs === undefined ? {} : { sourceRefs: command.sourceRefs }),
     ...(command.links === undefined ? {} : { links: command.links }),
     ...(command.eventDatetime === undefined ? {} : { eventDatetime: command.eventDatetime }),
+    ...(command.appliesUntil === undefined ? {} : { appliesUntil: command.appliesUntil }),
     ...(command.recordedAt === undefined ? {} : { recordedAt: command.recordedAt }),
     ...(command.event === undefined ? {} : { event: command.event }),
   };
