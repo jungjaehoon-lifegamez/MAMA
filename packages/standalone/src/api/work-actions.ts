@@ -1377,6 +1377,11 @@ const reviseSchema: ActionSchemaObject = {
       description:
         'Optional revision read before editing; when omitted, the latest owner revision is appended.',
     },
+    appliesUntil: {
+      description:
+        'When this revision stops applying, as epoch milliseconds or an ISO time with its offset. A backfill that adds an earlier period to work already revised later sets it to the event time of the first later revision, so the later state stays current; it must follow eventDatetime, e.g. "2026-09-01T10:31:00+09:00".',
+      oneOf: [{ type: 'number' }, { type: 'string', pattern: OFFSET_ISO_PATTERN }],
+    },
     set: {
       ...workPatchSchema,
       description: 'Fields to update on the existing work item, e.g. {"assignee":null}.',
@@ -1410,18 +1415,23 @@ function assertSourceRefsExist(body: Record<string, unknown>, ports: WorkPorts):
 }
 
 /**
- * The ledger stores eventDatetime as epoch ms. On 2026-09-29 an agent passed the source time as
- * "…T12:30:00+09:00", the write was refused, and the record order ended without a record.
+ * The ledger stores eventDatetime and appliesUntil as epoch ms. On 2026-09-29 an agent passed the
+ * source time as "…T12:30:00+09:00", the write was refused, and the record order ended without a
+ * record.
  */
 function withEventEpoch(body: Record<string, unknown>, action: string): Record<string, unknown> {
-  if (typeof body.eventDatetime !== 'string') return body;
-  const eventDatetime = offsetIsoTime(body.eventDatetime);
-  if (eventDatetime === undefined)
-    throw new JudgmentError(
-      'INVALID_COMMAND',
-      `${action} eventDatetime must be epoch milliseconds or an ISO time with its offset`
-    );
-  return { ...body, eventDatetime };
+  let normalized = body;
+  for (const field of ['eventDatetime', 'appliesUntil'] as const) {
+    if (typeof body[field] !== 'string') continue;
+    const epoch = offsetIsoTime(body[field] as string);
+    if (epoch === undefined)
+      throw new JudgmentError(
+        'INVALID_COMMAND',
+        `${action} ${field} must be epoch milliseconds or an ISO time with its offset`
+      );
+    normalized = { ...normalized, [field]: epoch };
+  }
+  return normalized;
 }
 
 function commandFieldsFrom(body: Record<string, unknown>): Record<string, unknown> {
@@ -1540,7 +1550,7 @@ export function minimalWorkActionRegistrations(ports: WorkPorts): ActionRegistra
 
 // Replacing and amending change the target's state and are written with a revision (work.revise
 // links, memory.retire), not as a bare link.
-const LINK_RELATIONS = [
+export const LINK_RELATIONS = [
   'builds_on',
   'refines',
   'contradicts',

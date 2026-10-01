@@ -33,6 +33,7 @@ function revision(
     set: values,
     clear: [],
     eventDatetime: 1_700_000_000_000 + revisionNumber,
+    appliesUntil: null,
     createdAt: 1_700_000_000_000 + revisionNumber,
   };
 }
@@ -126,6 +127,7 @@ describe('progressive work.list views', () => {
       revision: revisionNumber,
       operation: 'revise' as const,
       eventDatetime,
+      appliesUntil: null,
       createdAt,
       status: 'in_progress',
       stage: 'Review',

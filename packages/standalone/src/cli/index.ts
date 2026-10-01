@@ -26,6 +26,11 @@ async function main(): Promise<void> {
     await runReplay();
     return;
   }
+  if (command === 'backfill') {
+    const { runBackfill } = await import('./commands/backfill.js');
+    await runBackfill(process.argv.slice(3));
+    return;
+  }
   if (command === 'status') {
     const { daemonStatus } = await import('./commands/daemon.js');
     console.log(daemonStatus());
@@ -37,7 +42,7 @@ async function main(): Promise<void> {
     return;
   }
   console.log(
-    'Usage: mama init | secret set <NAME> | secret list | daemon | replay | status | stop'
+    'Usage: mama init | secret set <NAME> | secret list | daemon | replay | backfill <file> | status | stop'
   );
 }
 
