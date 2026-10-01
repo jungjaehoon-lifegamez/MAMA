@@ -1448,3 +1448,26 @@ The implementation writes raw/index data during import only. Replay is the owner
 
 - Result: 57 s, one large write, no failed write, 29 calls, delivered to the group (message 7289). Yesterday's full reports took 104–125 s, and the group one 240 s. Active since 22:53 on 09-30: #355 (values carried between scripts, no 6KB rule) and effort `high`; both changed together, so this run does not separate them.
 - Evidence: 8 scripts in the run reported carried values (`kept`); two short reading scripts failed (an argument over its limit, an undefined read) and the agent fixed those calls without rewriting anything. Kagemusha's 08:00 full report went to its new 1:1 chat without error (08:02).
+
+### W31 done: both hand-saved rules are owner rules (2026-10-01)
+
+- Result: two owner messages in the group restated the remaining rules. The agent saved a preference
+  replacing the take-number owner rule (a refinement in an owner turn, allowed), and a constraint
+  replacing the learned Spine lesson with the owner's words, citing the owner's restatement. Active
+  rules now split 16 owner / 12 learned.
+- Evidence: read back from the live database (both new rules carry `telegram:` message refs; the
+  replaced ones are superseded) and `daemon.log`: no `denied` write since the 09:48 deploy.
+- Still open: no source-change turn has tried to change an owner rule live; the refusal is proved on
+  a database copy only.
+
+### Open items checked: hook exits, uncertain repeats, poll causes, session-start amendments (2026-10-01)
+
+- Result: four open items, each traced to a cause and fixed in its own PR (#364, #366, #367, #368), plus a test that started failing today (#365).
+  - Plugin hooks exited 134 on macOS once the embedding model had loaded: onnxruntime-node 1.21.0 (pinned by transformers 3.8.1) aborts in its exit-time teardown at `process.exit()` (microsoft/onnxruntime#24579). It began with plugin 2.1.2, the first version whose hooks could load mama-core; crash reports start 2026-09-30 21:48. The hooks now set the exit code and end on their own; a warmup past its 8 s budget still exits at once.
+  - Every daemon start logged the same 11 "stimulus parked uncertain" lines (turns cut off by restarts on 09-27 to 09-29): reconciliation threw again for rows already uncertain, and core remembers reports only per process. This reverses the 2026-09-27 per-start log line; a row is reported when it is parked.
+  - Chatwork and Trello `fetch failed` lines dropped the cause Node keeps outside the message; they now name it.
+  - The session-start list of recent decisions could show a retirement; it now leaves amendments out, as recall does.
+- Evidence: hooks on a copy of the plugin DB with the installed 2.1.3 layout, before 134/134/134, after PreToolUse 2, PreCompact 0, SessionStart 0 at the same latency; tests red on the old code for each fix (hook marker on `process.exit`, a restart on the same DB calling `onUncertain`, a fetch cause, an amendment in the session-start prompt). Reviews: CodeRabbit (#364: the warmup-timeout path), an independent reviewer (#366 comment, #367 empty AggregateError message).
+- Live: the daemon restarted on main `ccafa34c2` at 13:42 KST and logged no "parked uncertain" line (11 at each start before) and no error; the 11 rows stay `uncertain` in the database.
+- Released mama-core 5.2.0, mama-os 0.61.1 and plugin 2.1.4 (run 36817003414, tag `v0.61.1`). On this machine `claude plugin update` moved to 2.1.4; its SessionStart, run as a new session would run it on a copy of the development memory, installed mama-core 5.2.0 into the plugin data folder and exited 0 (2.6 s); PreToolUse exited 2 with related decisions and PreCompact 0 with its `systemMessage`; no abort line.
+- Still open: an `uncertain` row has no exit except a stored result (11 rows stay parked; settling them is an administration decision). The Chatwork failures themselves are not diagnosed yet; the next one names its cause.
