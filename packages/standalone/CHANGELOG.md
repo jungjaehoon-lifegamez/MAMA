@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A stimulus parked uncertain is reported once, when it is parked. Reconciliation threw again for a
+  row that was already uncertain, and the runtime remembers reports only per process, so every
+  daemon start logged the same rows again (11 lines at each start, the oldest from 2026-09-27) and
+  `daemon.log` could never be clean. The rows stay uncertain; only the repeat is gone.
 - The recent decisions at an owner session start leave out records that only amend another (a
   retirement or an outcome change), as recall does. A retirement was the newest active record
   right after it was made, so it could take a place in the list as "Status 'stale' applied to …".

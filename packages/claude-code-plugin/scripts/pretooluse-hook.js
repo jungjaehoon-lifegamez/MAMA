@@ -78,7 +78,7 @@ async function main() {
   const features = getEnabledFeatures();
   if (!features.has('contracts')) {
     console.error(JSON.stringify({ decision: 'allow', reason: '' }));
-    process.exit(0);
+    return 0;
   }
 
   // Read stdin
@@ -99,7 +99,7 @@ async function main() {
   // Only process Read tool
   if (!READ_TOOLS.has(toolName)) {
     console.error(JSON.stringify({ decision: 'allow', reason: '' }));
-    process.exit(0);
+    return 0;
   }
 
   const filePath = input.tool_input?.file_path || process.env.FILE_PATH || '';
@@ -107,20 +107,20 @@ async function main() {
   // Skip non-code files
   if (!shouldProcessFile(filePath)) {
     console.error(JSON.stringify({ decision: 'allow', reason: '' }));
-    process.exit(0);
+    return 0;
   }
 
   // Only show decisions on FIRST read of this file in session
   if (!isFirstEdit(filePath)) {
     console.error(JSON.stringify({ decision: 'allow', reason: '' }));
-    process.exit(0);
+    return 0;
   }
 
   // Test mode: skip embeddings entirely for deterministic, fast hook tests.
   if (process.env.MAMA_FORCE_TIER_3 === 'true') {
     markFileEdited(filePath);
     console.error(JSON.stringify({ decision: 'allow', reason: '' }));
-    process.exit(0);
+    return 0;
   }
 
   try {
@@ -134,7 +134,7 @@ async function main() {
     if (!embedding) {
       markFileEdited(filePath);
       console.error(JSON.stringify({ decision: 'allow', reason: '' }));
-      process.exit(0);
+      return 0;
     }
 
     // Search for related decisions
@@ -151,7 +151,7 @@ async function main() {
       // No decisions found - mark file as processed and silent pass
       markFileEdited(filePath);
       console.error(JSON.stringify({ decision: 'allow', reason: '' }));
-      process.exit(0);
+      return 0;
     }
 
     // Take top results above threshold
@@ -162,7 +162,7 @@ async function main() {
     if (relevant.length === 0) {
       markFileEdited(filePath);
       console.error(JSON.stringify({ decision: 'allow', reason: '' }));
-      process.exit(0);
+      return 0;
     }
 
     // Format output
@@ -180,20 +180,29 @@ Use \`/mama:search <query>\` for more context.`;
     // PreToolUse doesn't support additionalContext
     // Use exit(2) to pass context via stderr (shown as "blocking" message)
     console.error(message);
-    process.exit(2);
+    return 2;
   } catch (err) {
     // Error - silent pass
     markFileEdited(filePath);
     console.error(JSON.stringify({ decision: 'allow', reason: '' }));
-    process.exit(0);
+    return 0;
   }
 }
 
 if (require.main === module) {
-  main().catch(() => {
-    console.error(JSON.stringify({ decision: 'allow', reason: '' }));
-    process.exit(0);
-  });
+  // The code is set, not passed to process.exit(): once the embedding model has loaded,
+  // onnxruntime-node 1.21 aborts in its exit-time teardown on macOS (exit 134, so the related
+  // decisions sent with exit 2 are lost; microsoft/onnxruntime#24579). Ending on its own, the
+  // process exits with the code.
+  main().then(
+    (code) => {
+      process.exitCode = code;
+    },
+    () => {
+      console.error(JSON.stringify({ decision: 'allow', reason: '' }));
+      process.exitCode = 0;
+    }
+  );
 }
 
 module.exports = { handler: main, main };

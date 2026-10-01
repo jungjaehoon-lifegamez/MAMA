@@ -429,9 +429,8 @@ export function createRecordOrders(options: RecordOrdersOptions): RecordOrders {
         const stored = storedBatches(options.adapter);
         for (const batch of recordOrderBatches(record)) {
           const state = stored.get(batch.deltaStimulusId);
-          // The runtime reports a row parked uncertain again at every start. It was settled when it
-          // was first reported: skip it once a later attempt exists, or once it is older than the
-          // day recovery reads (a lost batch would otherwise run again).
+          // Skip a batch that already has a later attempt, or that is older than the day recovery
+          // reads (a lost batch would otherwise run again).
           if (state === undefined || state.batch.attempt > batch.attempt) continue;
           settle(batch, record, [...state.orders, row.stimulusId], reason);
         }
