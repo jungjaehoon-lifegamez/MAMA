@@ -8,7 +8,7 @@
 
 ## OVERVIEW
 
-Claude Code plugin for MAMA memory system. Provides 5 slash commands, 4 hooks (2 active), and 1 skill. Distributed via Claude Code marketplace. Self-contained (no npm dependencies) — 27 mama-core modules duplicated in `src/core/`.
+Claude Code plugin for MAMA memory system. Provides 5 slash commands, 1 hook (SessionStart), and skills. Distributed via Claude Code marketplace. SessionStart installs the npm dependencies (mama-core) into `${CLAUDE_PLUGIN_DATA}`; Claude Code does not install them.
 
 **Stack:** JavaScript, Vitest, SQLite + pure-TS cosine similarity, Transformers.js (local embeddings)
 
@@ -67,9 +67,9 @@ Mitigation: ALWAYS apply fixes to BOTH locations:
 ### **Hook Performance**
 
 ```javascript
-// ❌ FORBIDDEN: Hook execution >1800ms
-// UserPromptSubmit hook must complete within 1800ms (target <1200ms)
-// Use MAMA_FORCE_TIER_3=true to skip embeddings in tests (~500ms vs ~2-9s)
+// SessionStart loads no embedding model and takes about 0.1 s; its 180 s manifest timeout
+// covers a first dependency install. No other hook runs.
+// Tests set MAMA_FORCE_TIER_3=true, including for spawned hook processes.
 ```
 
 ---
@@ -84,7 +84,7 @@ pnpm test
 pnpm test:watch
 
 # Run single test file
-pnpm vitest run tests/hooks/user-prompt-submit.test.js
+pnpm vitest run tests/hooks/sessionstart-hook.test.js
 
 # Run tests matching pattern
 pnpm vitest run -t "SessionStart hook"
@@ -97,5 +97,5 @@ pnpm vitest run -t "SessionStart hook"
 1. **Entry Point:** `.claude-plugin/plugin.json` (no main field)
 2. **Active Hooks:** SessionStart only; the agent pulls everything else (removed 2026-10-01: PreToolUse, PostToolUse, PreCompact)
 3. **Bug Fix Protocol:** Apply changes to BOTH mama-core and plugin src/core/
-4. **Performance Target:** <1200ms for UserPromptSubmit hook (hard limit 1800ms)
+4. **Performance:** SessionStart about 0.1 s after the first install
 5. **Test Mode:** Use `MAMA_FORCE_TIER_3=true` to skip embeddings (faster tests)

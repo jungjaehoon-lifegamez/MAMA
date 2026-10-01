@@ -21,7 +21,13 @@ function runHook() {
     input: '{}',
     encoding: 'utf8',
     timeout: 60_000,
-    env: { ...process.env, HOME: dir, MAMA_DB_PATH: dbPath, CLAUDE_PLUGIN_DATA: '' },
+    env: {
+      ...process.env,
+      HOME: dir,
+      MAMA_DB_PATH: dbPath,
+      CLAUDE_PLUGIN_DATA: '',
+      MAMA_FORCE_TIER_3: 'true',
+    },
   });
   const context = result.stdout
     ? JSON.parse(result.stdout).hookSpecificOutput.additionalContext
