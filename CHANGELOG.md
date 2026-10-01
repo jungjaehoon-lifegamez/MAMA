@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.61.0] / mama-core [5.1.0] / mama-server [2.4.0] / plugin [2.1.3] - 2026-10-01
+
+The owner's word keeps its authority, and search shows history honestly (W31,
+`docs/rebuild/memory-authority.md`, after the Agent Memory Atlas review of MAMA).
+
+### Changed (authority)
+
+- Only the owner changes an owner rule (owner, 2026-10-01). A rule written in an owner-chat turn
+  is an owner rule; replacing or retiring it is refused in any other turn (a source-change turn,
+  a subagent, a replay). Rules learned in other turns are memory too, and any turn may add or
+  change them.
+- The lessons shown with each turn say whose word each one is: `[owner rule]`, which wins a
+  conflict, or `[learned]`, advice from earlier work.
+
+### Changed (search)
+
+- What a record replaced is attached only inside the reader's scopes, labelled
+  `[Replaced by this record]`.
+- Default recall leaves out retirements and outcome changes (history shows them), in the
+  text-search pool, the fallback, the results and link expansion; a retirement records who retired.
+- The plugin hooks and the MCP searches leave out replaced and retired decisions, using
+  `RECALL_EXCLUDED_STATUSES` from `@jungjaehoon/mama-core/knowledge`.
+- An MCP save is user-approved only with `stated_by_user`; every save used to be labelled so.
+- `quarantined` leaves the memory status sets; nothing wrote it.
+
 ## mama-os [0.60.2] / plugin [2.1.2] - 2026-10-01
 
 ### Fixed
