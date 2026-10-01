@@ -152,6 +152,14 @@ describe('backfill push through the owner actions', () => {
         },
       ],
       noUpdate: [{ reason: 'meeting notice', sources: ['src:parts'] }],
+      links: [
+        {
+          from: { commitmentId: live.commitmentId },
+          to: { item: 'still-a' },
+          relation: 'builds_on',
+          reason: 'the next still of the same series follows the earlier case',
+        },
+      ],
     });
     const ports = (): BackfillPushPorts => ({
       callAction: (name, input, operationId) =>
@@ -166,7 +174,11 @@ describe('backfill push through the owner actions', () => {
     const again = await pushBackfill(file, ports());
 
     expect(first).toEqual(again);
-    expect(first).toMatchObject({ created: 1, revised: 2, mentions: 1, links: 1, lessons: 1 });
+    expect(first).toMatchObject({ created: 1, revised: 2, mentions: 1, links: 2, lessons: 1 });
+    const fromExisting = handle.adapter
+      .prepare("SELECT COUNT(*) AS n FROM twin_edges WHERE edge_type = 'builds_on'")
+      .get() as { n: number };
+    expect(fromExisting.n).toBe(2);
     const count = (sql: string) => (handle.adapter.prepare(sql).get() as { n: number }).n;
     expect(count('SELECT COUNT(*) AS n FROM commitments')).toBe(2);
     expect(count('SELECT COUNT(*) AS n FROM commitment_assignments')).toBe(4);

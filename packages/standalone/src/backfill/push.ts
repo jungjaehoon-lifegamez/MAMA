@@ -50,6 +50,7 @@ function allSources(file: BackfillFile): string[] {
   }
   file.lessons.forEach((lesson) => add(lesson.sources));
   file.wiki.forEach((page) => add(page.sources));
+  file.links.forEach((link) => add(link.sources));
   // Not-work lines are resolved too: a period is pushed only when all of it was imported.
   file.noUpdate.forEach((entry) => add(entry.sources));
   return [...ids];
@@ -172,6 +173,23 @@ export async function pushBackfill(
       );
       result.links += 1;
     }
+  }
+
+  const workId = (ref: { item: string } | { commitmentId: string }) =>
+    'item' in ref ? ids.get(ref.item)! : ref.commitmentId;
+  for (const [n, link] of file.links.entries()) {
+    await ports.callAction(
+      'work.link',
+      {
+        from: workId(link.from),
+        to: { kind: 'work', id: workId(link.to) },
+        relation: link.relation,
+        reason: link.reason,
+        ...(link.sources === undefined ? {} : { evidenceRefs: observations(link.sources) }),
+      },
+      `${prefix}link:${n}`
+    );
+    result.links += 1;
   }
 
   for (const lesson of file.lessons) {

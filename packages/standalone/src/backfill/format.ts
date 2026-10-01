@@ -70,6 +70,18 @@ export interface BackfillFile {
   lessons: BackfillLesson[];
   wiki: BackfillWikiPage[];
   noUpdate: Array<{ reason: string; sources: string[] }>;
+  /** Links between pieces of work where the source is existing work, e.g. a later case that builds on one of this period. */
+  links: BackfillWorkLink[];
+}
+
+export type BackfillWorkRef = { item: string } | { commitmentId: string };
+
+export interface BackfillWorkLink {
+  from: BackfillWorkRef;
+  to: BackfillWorkRef;
+  relation: BackfillLinkRelation;
+  reason: string;
+  sources?: string[];
 }
 
 type Json = Record<string, unknown>;
@@ -102,7 +114,15 @@ export function parseBackfillFile(raw: unknown): BackfillFile {
     return entries.flatMap((entry, index) => text(entry, `${where}[${index}]`) ?? []);
   };
 
-  const file = object(raw, 'file', ['format', 'period', 'items', 'lessons', 'wiki', 'noUpdate']);
+  const file = object(raw, 'file', [
+    'format',
+    'period',
+    'items',
+    'lessons',
+    'wiki',
+    'noUpdate',
+    'links',
+  ]);
   if (!file) throw new Error(errors.join('\n'));
   if (file.format !== BACKFILL_FORMAT) fail('format', `must be ${BACKFILL_FORMAT}`);
   const period = object(file.period, 'period', ['from', 'until']);
@@ -318,6 +338,43 @@ export function parseBackfillFile(raw: unknown): BackfillFile {
     ];
   });
 
+  const workRef = (value: unknown, where: string): BackfillWorkRef | undefined => {
+    const ref = object(value, where, ['item', 'commitmentId']);
+    if (!ref) return undefined;
+    if (ref.item !== undefined) {
+      const key = text(ref.item, `${where}.item`);
+      if (key !== undefined && !keys.has(key)) fail(`${where}.item`, `names no item ${key}`);
+      return key === undefined ? undefined : { item: key };
+    }
+    const id = text(ref.commitmentId, `${where}.commitmentId`);
+    return id === undefined ? undefined : { commitmentId: id };
+  };
+  const links: BackfillWorkLink[] = (
+    file.links === undefined ? [] : (list(file.links, 'links', 0) ?? [])
+  ).flatMap((value, index) => {
+    const where = `links[${index}]`;
+    const link = object(value, where, ['from', 'to', 'relation', 'reason', 'sources']);
+    if (!link) return [];
+    const from = workRef(link.from, `${where}.from`);
+    const to = workRef(link.to, `${where}.to`);
+    if (from && to && JSON.stringify(from) === JSON.stringify(to))
+      fail(where, 'links work to itself');
+    if (!(LINK_RELATIONS as readonly unknown[]).includes(link.relation))
+      fail(`${where}.relation`, `must be one of ${LINK_RELATIONS.join(', ')}`);
+    if (!from || !to) return [];
+    return [
+      {
+        from,
+        to,
+        relation: link.relation as BackfillLinkRelation,
+        reason: text(link.reason, `${where}.reason`) ?? '',
+        ...(link.sources === undefined
+          ? {}
+          : { sources: sources(link.sources, `${where}.sources`) }),
+      },
+    ];
+  });
+
   if (errors.length > 0) throw new Error(`Backfill file is invalid:\n${errors.join('\n')}`);
   return {
     format: BACKFILL_FORMAT,
@@ -326,5 +383,6 @@ export function parseBackfillFile(raw: unknown): BackfillFile {
     lessons,
     wiki,
     noUpdate,
+    links,
   };
 }
