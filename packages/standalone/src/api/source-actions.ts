@@ -112,7 +112,8 @@ const sourceSchema = {
     },
     channel: {
       type: 'string' as const,
-      description: 'Connector channel filter, e.g. "channel_123".',
+      description:
+        'Stored channel value to narrow to: channel as source.search hits and source.recent list it (not the channelName or the source.recent key), e.g. "channel_123".',
     },
     from: timeValue,
     to: timeValue,
@@ -218,15 +219,14 @@ export function sourceActionRegistrations(ports: SourcePorts): ActionRegistratio
                     hit.metadata && typeof hit.metadata === 'object' && !Array.isArray(hit.metadata)
                       ? (hit.metadata as Record<string, unknown>)
                       : {};
+                  const channel = typeof hit.channel_id === 'string' ? hit.channel_id : null;
+                  const channelName = hit.channel_name ?? metadata.channelName;
                   return {
                     author: hit.author_label ?? null,
-                    channel:
-                      hit.channel_name ??
-                      hit.channelName ??
-                      metadata.channelName ??
-                      hit.channel ??
-                      hit.channel_id ??
-                      null,
+                    channel,
+                    ...(typeof channelName === 'string' && channelName !== channel
+                      ? { channelName }
+                      : {}),
                     time: Number.isFinite(timestamp)
                       ? `${new Date(timestamp).toLocaleString('ko-KR', { timeZone: ports.timeZone.get() })} (${ports.timeZone.get()})`
                       : null,
