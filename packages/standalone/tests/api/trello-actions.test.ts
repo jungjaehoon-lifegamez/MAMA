@@ -280,6 +280,19 @@ describe('trello.read', () => {
     });
   });
 
+  it('names only the boards a member may read when a board is unknown', async () => {
+    const { dispatch, member } = await setup();
+    const result = await dispatch(
+      { action: 'trello.read', input: { view: 'cards', board: 'nowhere' } },
+      { access: member }
+    );
+    expect(result).toMatchObject({
+      status: 'failed',
+      error: { code: 'invalid_input', message: expect.stringContaining('board-key') },
+    });
+    expect(JSON.stringify(result)).not.toContain('board-b-key');
+  });
+
   it('refuses a list that is not on the named board', async () => {
     const { dispatch, member, owner } = await setup();
     for (const access of [member, owner]) {

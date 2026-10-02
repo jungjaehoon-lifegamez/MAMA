@@ -47,6 +47,24 @@ describe('TrelloApi', () => {
     expect(urls[1]!.searchParams.get('before')).toBe('a-0999');
   });
 
+  it('reads one more page when a full page ends exactly at the window start', async () => {
+    const start = Date.parse('2026-09-01T00:00:00.000Z');
+    const firstPage = Array.from({ length: 1_000 }, (_, index) =>
+      action(
+        `b-${String(index).padStart(4, '0')}`,
+        new Date(index === 999 ? start : start + (1_000 - index) * 1_000).toISOString()
+      )
+    );
+    const secondPage = [action('b-tie', new Date(start).toISOString())];
+    let calls = 0;
+    const api = new TrelloApi({ apiKey: 'k', token: 't' }, async () =>
+      Response.json(++calls === 1 ? firstPage : secondPage)
+    );
+    const actions = await api.boardActions('board-a', { fromMs: start });
+    expect(calls).toBe(2);
+    expect(actions.map((a) => a.id)).toContain('b-tie');
+  });
+
   it('keeps an action inside the window only', async () => {
     const api = new TrelloApi({ apiKey: 'k', token: 't' }, async () =>
       Response.json([
