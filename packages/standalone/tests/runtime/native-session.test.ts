@@ -103,6 +103,7 @@ describe('one owner native session', () => {
         'source.read',
         'source.recent',
         'source.search',
+        'trello.read',
         'work.create',
         'work.link',
         'work.list',

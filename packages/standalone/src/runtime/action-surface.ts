@@ -33,6 +33,7 @@ import {
 } from '../api/owner-message-actions.js';
 import type { TimeZoneSetting } from './timezone.js';
 import { reportSourceActionRegistrations } from '../api/report-source-actions.js';
+import { trelloActionRegistrations } from '../api/trello-actions.js';
 import {
   minimalWorkActionRegistrations,
   workListActionRegistrations,
@@ -49,6 +50,7 @@ const OWNER_ACTIONS = [
   'source.recent',
   'schedule.upcoming',
   'source.read',
+  'trello.read',
   'judge',
   'owner.timezone.set',
   'owner.messages',
@@ -201,6 +203,14 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     ...createAttachmentActionRegistrations({
       ...(options.attachmentPorts ?? {}),
       stored: options.storedSourceReader,
+    }),
+    // trello.read reaches the live connector through the same registry port as attachments.
+    ...trelloActionRegistrations({
+      ...(options.attachmentPorts?.connectors === undefined
+        ? {}
+        : { connectors: options.attachmentPorts.connectors }),
+      adapter: options.adapter,
+      ownerPrincipalId: options.ownerPrincipalId,
     }),
     ...workListActionRegistrations({ knowledge: options.knowledge, timeZone: options.timeZone }),
     ...minimalWorkActionRegistrations({
