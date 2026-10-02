@@ -1,16 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type OperatorTask, type TaskPatch, type TaskStatus } from '../api/client';
+import { useQuery } from '@tanstack/react-query';
+import { api, type OperatorTask, type TaskStatus } from '../api/client';
 import TaskDrawer from '../components/TaskDrawer';
 import TaskRow from '../components/TaskRow';
-import { updateTaskCache, type OperatorTasksCache } from '../lib/task-cache';
 import { scrollTaskHashIntoView } from '../lib/task-scroll';
 import { positiveTaskId } from '../lib/task-selection';
-import {
-  finishTaskMutation,
-  startTaskMutation,
-  type TaskMutationState,
-} from '../lib/task-mutation-state';
 
 const STATUS_FILTERS: Array<{ value: TaskStatus | null; label: string }> = [
   { value: null, label: 'All' },
@@ -21,11 +15,6 @@ const STATUS_FILTERS: Array<{ value: TaskStatus | null; label: string }> = [
   { value: 'done', label: 'Done' },
   { value: 'cancelled', label: 'Cancelled' },
 ];
-
-interface MutationInput {
-  task: OperatorTask;
-  patch: TaskPatch;
-}
 
 export default function Tasks({
   focusTaskId,
@@ -39,43 +28,17 @@ export default function Tasks({
 }) {
   const [selectedStatus, setSelectedStatus] = useState<TaskStatus | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const [mutationStates, setMutationStates] = useState<TaskMutationState>(() => new Map());
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(
     () => positiveTaskId(focusTaskId) ?? null
   );
   const [drawerOpener, setDrawerOpener] = useState<HTMLElement | null>(null);
   const [unresolvedTaskId, setUnresolvedTaskId] = useState<number | null>(null);
-  const queryClient = useQueryClient();
   const scrolledHashRef = useRef<string | null>(null);
   const firstFilterRef = useRef<HTMLButtonElement>(null);
   const query = useQuery({
     queryKey: ['operatorTasks', selectedStatus],
     queryFn: () => api.listTasks({ status: selectedStatus ?? undefined, limit: 50 }),
     refetchInterval: 30_000,
-  });
-  const mutation = useMutation({
-    mutationFn: ({ task, patch }: MutationInput) => api.updateTask(task.id, patch),
-    onMutate: ({ task }) => {
-      setMutationStates((current) => startTaskMutation(current, task.id));
-    },
-    onSuccess: ({ task: updated }, { task }) => {
-      const cachedQueries = queryClient.getQueriesData<OperatorTasksCache>({
-        queryKey: ['operatorTasks'],
-      });
-      for (const [queryKey, cached] of cachedQueries) {
-        if (!cached) {
-          continue;
-        }
-        const status = queryKey[1] as TaskStatus | null;
-        queryClient.setQueryData(queryKey, updateTaskCache(cached, status, updated));
-      }
-      setMutationStates((current) => finishTaskMutation(current, task.id));
-      void queryClient.invalidateQueries({ queryKey: ['operatorTasks'] });
-    },
-    onError: (error, { task }) => {
-      const message = error instanceof Error ? error.message : 'Task update failed';
-      setMutationStates((current) => finishTaskMutation(current, task.id, message));
-    },
   });
 
   useEffect(() => {
@@ -145,10 +108,6 @@ export default function Tasks({
     });
   }, [drawerOpener, onSelectTask, query.data, selectedTask, selectedTaskId]);
 
-  const patchTask = (task: OperatorTask, patch: TaskPatch) => {
-    mutation.mutate({ task, patch });
-  };
-
   const openDetails = (task: OperatorTask, opener: HTMLElement) => {
     setUnresolvedTaskId(null);
     setDrawerOpener(opener);
@@ -168,6 +127,9 @@ export default function Tasks({
         <h1 className="text-base font-semibold text-text">Tasks</h1>
         <p className="mt-1 text-xs text-text-secondary">
           Native operator ledger with workflow and temporal state shown separately.
+        </p>
+        <p className="mt-1 text-xs text-text-secondary">
+          Read-only. To change a task, ask MAMA in your messenger.
         </p>
       </header>
 
@@ -249,20 +211,9 @@ export default function Tasks({
                     </tr>
                   </thead>
                   <tbody>
-                    {query.data.tasks.map((task) => {
-                      const mutationState = mutationStates.get(task.id);
-                      return (
-                        <TaskRow
-                          key={task.id}
-                          task={task}
-                          now={now}
-                          pending={mutationState?.pending === true}
-                          error={mutationState?.error}
-                          onPatch={patchTask}
-                          onOpenDetails={openDetails}
-                        />
-                      );
-                    })}
+                    {query.data.tasks.map((task) => (
+                      <TaskRow key={task.id} task={task} now={now} onOpenDetails={openDetails} />
+                    ))}
                   </tbody>
                 </table>
               </div>
