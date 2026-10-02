@@ -28,6 +28,13 @@ function ownerPrompt(
 }
 
 describe('owner standing prompt', () => {
+  it('tells the agent the current Trello state is read live and its history is stored', () => {
+    const sources = ownerHelpTopics('claude', true).sources;
+    expect(sources).toContain(
+      '- Trello: the current state (where a card is, its labels, members and checklist) is read live with trello.read; past changes are stored history, read with source.search and source.read (source "trello").'
+    );
+  });
+
   it('holds messenger syntax, boundaries, step-by-step work, continuity and tools; procedures are topics', () => {
     const prompt = ownerPrompt('codex');
     const topics = ownerHelpTopics('codex', true);
