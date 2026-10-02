@@ -516,6 +516,23 @@ describe('TelegramGateway', () => {
     await gateway.stop();
   });
 
+  it('counts a message answered once its reply or its interruption notice is delivered', async () => {
+    const received: OwnerMessageInput[] = [];
+    const intake = { ...intakeFor(received), isPending: vi.fn(() => true) };
+    const gateway = await gatewayFor(intake);
+    const handler = seams.handlers.get('message');
+    await handler!({ message: message() });
+    await gateway.recoverPendingResponses();
+    expect(gateway.answered('telegram:7:11')).toBe(false);
+
+    // The turn died and the runtime no longer holds the message: recovery tells the owner.
+    intake.isPending.mockReturnValue(false);
+    await gateway.recoverPendingResponses();
+    expect(gateway.answered('telegram:7:11')).toBe(true);
+    expect(gateway.answered('telegram:7:12')).toBe(false);
+    await gateway.stop();
+  });
+
   it('recovers a ready response from the durable ledger without resubmitting the message', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mama-telegram-recovery-'));
     temporaryRoots.push(root);

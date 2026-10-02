@@ -46,6 +46,7 @@ async function boot(
     /** Start again on an earlier boot's home, as a daemon restart does. */
     home?: string;
     onUncertain?: Parameters<typeof createStimulusDelivery>[0]['onUncertain'];
+    closeUncertain?: Parameters<typeof createStimulusDelivery>[0]['closeUncertain'];
   } = {}
 ) {
   const home = options.home ?? mkdtempSync(join(tmpdir(), 'mama-stimulus-'));
@@ -76,9 +77,10 @@ async function boot(
       stop: async () => {},
     },
     delivery: {
-      ...createDelivery(
-        options.onUncertain === undefined ? {} : { onUncertain: options.onUncertain }
-      ),
+      ...createDelivery({
+        ...(options.onUncertain === undefined ? {} : { onUncertain: options.onUncertain }),
+        ...(options.closeUncertain === undefined ? {} : { closeUncertain: options.closeUncertain }),
+      }),
       intervalMs: 0,
     },
   });
@@ -454,6 +456,52 @@ describe('one stimulus intake and delivery', () => {
     });
   });
 
+  it('closes a parked owner message at the next start once the owner was told, never rerunning it', async () => {
+    const failing = vi.fn(async (_content, request) => {
+      request?.streamCallbacks?.onInputDispatch?.({
+        backend: 'codex',
+        sessionId: 'owner-thread',
+        inputId: request.nativeInputId!,
+      });
+      throw new Error('Request timeout');
+    });
+    const parked = vi.fn();
+    const first = await boot(failing, { onUncertain: parked });
+    first.intake.acceptOwnerMessage({
+      id: 'input-1',
+      channelKey: 'c',
+      occurredAt: 1,
+      text: 'report',
+    });
+    await vi.waitFor(() => expect(parked).toHaveBeenCalledOnce());
+    // The messenger's notice path reads a parked row as no longer pending.
+    expect(first.intake.isPending?.('input-1')).toBe(false);
+    runtimes.splice(runtimes.indexOf(first.runtime), 1);
+    await first.runtime.stop();
+
+    let told = false;
+    const closed = vi.fn();
+    const model = vi.fn();
+    const restarted = await boot(model, {
+      home: first.home,
+      closeUncertain: { ownerAnswered: () => told, onClosed: closed },
+    });
+    await restarted.runtime.drainOnce();
+    expect(restarted.runtime.mailbox?.readInput('input-1', 'owner')).toMatchObject({
+      status: 'claimed',
+    });
+    told = true;
+    await restarted.runtime.drainOnce();
+
+    expect(model).not.toHaveBeenCalled();
+    expect(closed).toHaveBeenCalledOnce();
+    expect(closed.mock.calls[0]![1]).toBe('the owner was told it was interrupted');
+    expect(restarted.runtime.mailbox?.readInput('input-1', 'owner')).toMatchObject({
+      status: 'acked',
+      nativeDelivery: { state: 'settled' },
+    });
+  });
+
   const recent = () => new Date(Date.now() - 60_000).toISOString();
 
   function claimed(row: Record<string, unknown>) {
@@ -501,6 +549,7 @@ describe('one stimulus intake and delivery', () => {
     enqueueFirst: vi.fn(),
     onResult: vi.fn(),
     onLost: vi.fn(),
+    onDeltaLost: vi.fn((): 'recorded' | 'ordered' | 'lost' => 'ordered'),
   });
 
   it('runs a live delta as the notify order and enqueues its record order before routing', async () => {
@@ -795,6 +844,93 @@ describe('one stimulus intake and delivery', () => {
       'no result after restart',
       'lease expired',
     ]);
+  });
+
+  it('closes each kind of parked row only where its remaining duty has a place, live only', async () => {
+    const records = recordOrders();
+    const closed: Array<[string, string]> = [];
+    let answered = false;
+    const live = createDelivery({
+      recordOrders: records,
+      closeUncertain: {
+        ownerAnswered: () => answered,
+        onClosed: (row, followUp) => {
+          closed.push([row.stimulusId, followUp]);
+        },
+      },
+    });
+    const parked = (row: Record<string, unknown>) =>
+      claimed({ ...row, nativeDelivery: { state: 'uncertain', error: 'Request timeout' } });
+    const owner = parked({
+      stimulusId: 'telegram:1:1',
+      kind: 'owner_message',
+      channelKey: 'c',
+      payload: { text: 'x' },
+    });
+    // Shapes stored by earlier code: a collector delta and a board event no code produces now.
+    const delta = parked({
+      stimulusId: 'source_delta:legacy',
+      kind: 'source_delta',
+      channelKey: 'source:calendar:primary',
+      payload: {
+        channel: 'primary',
+        collector: 'calendar',
+        preview: ['moved'],
+        refs: [{ connector: 'calendar', observationRef: 'obs-1', sourceAt: recent() }],
+      },
+    });
+    const boardEvent = parked({
+      stimulusId: 'delta-board:source_delta:legacy',
+      kind: 'native_event',
+      channelKey: 'calendar',
+      payload: {
+        refs: [{ observationRef: 'obs-1', refId: 'r' }],
+        sourceStimulusId: 's',
+        text: 't',
+      },
+    });
+    const record = parked({
+      stimulusId: 'record:source_delta:legacy:1',
+      kind: 'scheduled',
+      channelKey: 'operator:record',
+      payload: {},
+    });
+    const report = parked({
+      stimulusId: 'report:1',
+      kind: 'scheduled',
+      channelKey: 'schedule',
+      payload: {},
+    });
+    const replay = parked({
+      stimulusId: 'source_delta:replay',
+      kind: 'source_delta',
+      channelKey: 'c',
+      payload: { replay: { windowEndMs: 1_501 } },
+    });
+
+    expect(await live.reconcile!(owner)).toBe('unresolved');
+    answered = true;
+    expect(await live.reconcile!(owner)).toBe('settled');
+    expect(await live.reconcile!(delta)).toBe('settled');
+    expect(await live.reconcile!(boardEvent)).toBe('settled');
+    expect(await live.reconcile!(record)).toBe('settled');
+    expect(await live.reconcile!(report)).toBe('settled');
+    expect(await live.reconcile!(replay)).toBe('unresolved');
+    expect(records.onDeltaLost).toHaveBeenCalledOnce();
+    expect(records.onLost.mock.calls.map((call) => call[1])).toEqual([
+      'record order parked uncertain',
+    ]);
+    expect(closed).toEqual([
+      ['telegram:1:1', 'the owner was told it was interrupted'],
+      ['source_delta:legacy', 'record check: ordered'],
+      ['delta-board:source_delta:legacy', 'nothing further'],
+      ['record:source_delta:legacy:1', 'record check'],
+      ['report:1', 'the next report tick'],
+    ]);
+
+    // Without the live hooks (replay, backfill) a parked row stays as it is.
+    const replayDelivery = createDelivery({ recordOrders: recordOrders() });
+    expect(await replayDelivery.reconcile!(delta)).toBe('unresolved');
   });
 
   it('passes a replay ceiling to one turn and clears it after delivery', async () => {

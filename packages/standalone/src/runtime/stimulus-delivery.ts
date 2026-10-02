@@ -74,6 +74,12 @@ export interface RecordOrderPort {
   onResult(row: MailboxRow, modelRunId: string | null): void | Promise<void>;
   /** A record row that went uncertain or dead: the same check, run at once. */
   onLost(row: MailboxRow, reason: string): void | Promise<void>;
+  /**
+   * A live delta whose notify turn was interrupted: its batch counts as recorded, gets its first
+   * record order, or is reported lost when it is too old to record without bringing back stale
+   * facts.
+   */
+  onDeltaLost(row: MailboxRow): 'recorded' | 'ordered' | 'lost';
 }
 
 export interface StimulusDeliveryOptions {
@@ -97,6 +103,15 @@ export interface StimulusDeliveryOptions {
   onFailed?: (row: MailboxRow, reason: string, modelRunId: string | null) => void | Promise<void>;
   /** A live delta acked without a turn because every line was history when it was accepted. */
   onSkipped?: (row: MailboxRow, reason: string) => void | Promise<void>;
+  /**
+   * Live only. A row parked uncertain is never rerun; it closes once what it still owes has a
+   * place: the owner was told, the record check took the batch, or the next report tick will.
+   */
+  closeUncertain?: {
+    /** The owner's messenger delivered an answer to this message, the interruption notice included. */
+    ownerAnswered(row: MailboxRow): boolean;
+    onClosed(row: MailboxRow, followUp: string): void | Promise<void>;
+  };
 }
 
 export interface ReplayClockDelivery extends StimulusDelivery {
@@ -639,6 +654,27 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
     if (isRecordOrderRow(row)) await options.recordOrders?.onLost(row, reason);
   };
 
+  /** Where an uncertain row's remaining duty went, or null while it has nowhere to go yet. */
+  const followUp = async (
+    row: MailboxRow,
+    close: NonNullable<StimulusDeliveryOptions['closeUncertain']>
+  ): Promise<string | null> => {
+    if (row.kind === 'owner_message')
+      return close.ownerAnswered(row) ? 'the owner was told it was interrupted' : null;
+    if (row.kind === 'source_delta') {
+      if (!options.recordOrders) return null;
+      return `record check: ${options.recordOrders.onDeltaLost(row)}`;
+    }
+    if (isRecordOrderRow(row)) {
+      if (!options.recordOrders) return null;
+      await options.recordOrders.onLost(row, 'record order parked uncertain');
+      return 'record check';
+    }
+    if (row.kind === 'scheduled') return 'the next report tick';
+    // Other kinds (native_event) have no producer left and owe nothing further.
+    return 'nothing further';
+  };
+
   return {
     deliver,
     prefer: ['owner_message'],
@@ -669,8 +705,13 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
         throw new Error(reason);
       }
       // A row already parked uncertain was reported when it was parked. Throwing again would
-      // report it again at every start, since core remembers reports only per process.
-      return 'unresolved';
+      // report it again at every start, since core remembers reports only per process. A replay
+      // row stays parked: an uncertain row stops replay until its receipts are reconciled.
+      if (!options.closeUncertain || replaySourceCeiling(row) !== undefined) return 'unresolved';
+      const destination = await followUp(row, options.closeUncertain);
+      if (destination === null) return 'unresolved';
+      await options.closeUncertain.onClosed(row, destination);
+      return 'settled';
     },
     getReplaySourceEndMs: () => activeReplaySourceEndMs,
   };

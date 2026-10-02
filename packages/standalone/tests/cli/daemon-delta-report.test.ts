@@ -194,6 +194,7 @@ async function boot(
               deliverResponse: async () => {},
               recoverPendingResponses: async () => {},
               recentDeliveredMessageRefs: () => [],
+              answered: () => false,
               start: async () => {},
               stop: async () => {},
             }),
