@@ -6,6 +6,25 @@ const member = { id: 'm', fullName: 'Member A' };
 const card = { id: 'c', name: 'Card' };
 
 describe('trelloActionLine', () => {
+  it('names a label change only when the board labels are given', () => {
+    const action = {
+      type: 'updateCard',
+      data: { card: { ...card, idLabels: ['l2'] }, old: { idLabels: ['l1'] } },
+      memberCreator: member,
+    };
+    expect(trelloActionLine(action)).toBe('Card | labels changed | Member A');
+    expect(
+      trelloActionLine(
+        action,
+        new Map([
+          ['l1', 'First round'],
+          ['l2', 'Second round'],
+        ])
+      )
+    ).toBe('Card | labels First round -> Second round | Member A');
+    expect(trelloActionLine(action, new Map())).toBe('Card | labels l1 -> l2 | Member A');
+  });
+
   it('names the change of each card update shape', () => {
     const line = (old: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
       trelloActionLine({

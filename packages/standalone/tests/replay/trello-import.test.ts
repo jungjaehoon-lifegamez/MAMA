@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 
 import { RawStore } from '../../src/storage/source-archive.js';
 import { importTrelloActions } from '../../src/replay/trello-import.js';
+import { trelloActionItem } from '../../src/connectors/trello/actions.js';
 
 const roots: string[] = [];
 
@@ -28,6 +29,78 @@ function action(id: string, date: string) {
 }
 
 describe('collect-only Trello replay import', () => {
+  it('stores an action once when the poll lists an imported action again', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mama-replay-trello-'));
+    roots.push(root);
+    const configPath = join(root, 'connectors.json');
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        trello: {
+          enabled: true,
+          pollIntervalMinutes: 5,
+          channels: { 'board-key': { role: 'truth', boardId: 'board-a', name: 'Board A' } },
+          auth: { type: 'token' },
+        },
+      }),
+      'utf8'
+    );
+    const listed = {
+      id: 'action-once',
+      type: 'updateCard',
+      date: '2026-09-02T01:00:00.000Z',
+      data: {
+        card: { id: 'card-a', name: 'Still 01' },
+        listBefore: { id: 'l1', name: 'Submitted' },
+        listAfter: { id: 'l2', name: 'Delivered' },
+        old: { idList: 'l1' },
+      },
+      idMemberCreator: 'member-a',
+      memberCreator: { id: 'member-a', fullName: 'Member A' },
+    };
+    let calls = 0;
+    const raw = new RawStore(join(root, 'raw'));
+    try {
+      await importTrelloActions({
+        connectorsConfigPath: configPath,
+        rawStore: raw,
+        rawIndexSink: (connector: string, items: Array<{ sourceId: string }>) =>
+          items.map((item) => ({
+            sourceId: item.sourceId,
+            observationRef: `observation:${connector}:${item.sourceId}`,
+          })),
+        timeZone: 'Asia/Seoul',
+        fetchImpl: async () => Response.json(++calls === 1 ? [listed] : []),
+        credentials: { apiKey: 'key', token: 'token' },
+        observedAtMs: Date.parse('2026-09-06T00:00:00.000Z'),
+        fromMs: Date.parse('2026-09-01T00:00:00.000Z'),
+        untilMs: Date.parse('2026-09-06T00:00:00.000Z'),
+      });
+      const polled = trelloActionItem(
+        { key: 'board-key', boardId: 'board-a', name: 'Board A' },
+        listed
+      );
+      // The scheduler stamps the configured name and the poll time on every polled item.
+      expect(() =>
+        raw.save('trello', [
+          {
+            ...polled,
+            observedAt: Date.parse('2026-09-07T00:00:00.000Z'),
+            metadata: { ...polled.metadata, channelName: 'Board A' },
+          },
+        ])
+      ).not.toThrow();
+      expect(raw.query('trello', new Date(0))).toHaveLength(1);
+      expect(raw.query('trello', new Date(0))[0]).toMatchObject({
+        channel: 'board-key',
+        content: 'Still 01 | Delivered (from: Submitted) | Member A',
+        metadata: { channelName: 'Board A', actionType: 'updateCard' },
+      });
+    } finally {
+      raw.close();
+    }
+  });
+
   it('stores each action as a readable line and keeps the action in metadata', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mama-replay-trello-'));
     roots.push(root);

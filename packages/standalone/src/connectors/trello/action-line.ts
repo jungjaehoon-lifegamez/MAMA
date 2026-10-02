@@ -24,7 +24,14 @@ function name(value: unknown): string | undefined {
   return text(record(value)?.name);
 }
 
-function cardChange(data: Record<string, unknown>): string {
+function labelNames(ids: unknown, labels: ReadonlyMap<string, string>): string {
+  const names = Array.isArray(ids)
+    ? ids.filter((id): id is string => typeof id === 'string').map((id) => labels.get(id) ?? id)
+    : [];
+  return names.length > 0 ? names.join(', ') : 'none';
+}
+
+function cardChange(data: Record<string, unknown>, labels?: ReadonlyMap<string, string>): string {
   const card = record(data.card) ?? {};
   const old = record(data.old) ?? {};
   const before = name(data.listBefore);
@@ -41,7 +48,12 @@ function cardChange(data: Record<string, unknown>): string {
       parts.push(`due ${String(old.due ?? 'none')} -> ${String(card.due ?? 'none')}`);
     else if (key === 'dueComplete')
       parts.push(card.dueComplete === true ? 'due done' : 'due reopened');
-    else if (key === 'idLabels') parts.push('labels changed');
+    else if (key === 'idLabels')
+      parts.push(
+        labels === undefined
+          ? 'labels changed'
+          : `labels ${labelNames(old.idLabels, labels)} -> ${labelNames(card.idLabels, labels)}`
+      );
     else parts.push(`${key} changed`);
   }
   if (parts.length === 0 && 'pos' in old)
@@ -58,11 +70,11 @@ function listChange(data: Record<string, unknown>): string {
   return 'list updated';
 }
 
-function describe(action: TrelloActionLike): string {
+function describe(action: TrelloActionLike, labels?: ReadonlyMap<string, string>): string {
   const data = action.data;
   switch (action.type) {
     case 'updateCard':
-      return cardChange(data);
+      return cardChange(data, labels);
     case 'createCard':
       return `created in ${name(data.list) ?? 'a list'}`;
     case 'copyCard':
@@ -99,11 +111,15 @@ function describe(action: TrelloActionLike): string {
   }
 }
 
-export function trelloActionLine(action: TrelloActionLike): string {
+/** Without labels a label change reads "labels changed": stored lines depend on the action alone. */
+export function trelloActionLine(
+  action: TrelloActionLike,
+  labels?: ReadonlyMap<string, string>
+): string {
   const data = action.data;
   const subject =
     name(data.card) ?? name(data.list) ?? name(data.board) ?? text(action.type) ?? 'trello';
   const member = record(action.memberCreator);
   const actor = text(member?.fullName) ?? text(member?.username);
-  return [subject, describe(action), ...(actor === undefined ? [] : [actor])].join(' | ');
+  return [subject, describe(action, labels), ...(actor === undefined ? [] : [actor])].join(' | ');
 }

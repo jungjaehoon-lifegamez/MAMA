@@ -8,19 +8,12 @@ import {
 } from './import-manifest.js';
 import { existsSync } from 'node:fs';
 import { localDateKey } from '../runtime/timezone.js';
-import { trelloActionLine } from '../connectors/trello/action-line.js';
+import { TrelloApi } from '../connectors/trello/api.js';
+import { trelloActionItem, type TrelloBoardChannel } from '../connectors/trello/actions.js';
+
+export type { TrelloAction } from '../connectors/trello/actions.js';
 
 const IMPORT_FROM_MS = Date.parse('2026-09-01T00:00:00.000+09:00');
-const ACTION_PAGE_SIZE = 1_000;
-
-export interface TrelloAction {
-  id: string;
-  type: string;
-  date: string;
-  data: Record<string, unknown>;
-  idMemberCreator?: string;
-  memberCreator?: Record<string, unknown>;
-}
 
 export interface TrelloImportOptions {
   connectorsConfigPath: string;
@@ -43,62 +36,22 @@ export interface TrelloImportResult {
   pendingProjectionCount: number;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function actionTime(action: TrelloAction): number {
-  const value = Date.parse(action.date);
-  if (!Number.isSafeInteger(value) || value < 0) throw new Error('Trello action date is invalid');
-  return value;
-}
-
 function boardDay(timestampMs: number, timeZone: string): string {
   return localDateKey(timestampMs, timeZone);
 }
 
-function boardChannels(path: string): Array<{ key: string; boardId: string }> {
+function boardChannels(path: string): TrelloBoardChannel[] {
   const result = loadConnectorConfig(path);
   if (!result.ok) throw new Error(result.error.message);
   const trello = result.config.trello;
   if (!trello || !trello.enabled) return [];
   return Object.entries(trello.channels)
     .filter(([, channel]) => channel.role !== 'ignore' && channel.boardId)
-    .map(([key, channel]) => ({ key, boardId: channel.boardId! }));
-}
-
-function actionItem(
-  board: { key: string; boardId: string },
-  action: TrelloAction,
-  observedAtMs: number
-) {
-  const card = action.data.card;
-  const list = action.data.list;
-  const cardRecord =
-    card && typeof card === 'object' && !Array.isArray(card)
-      ? (card as Record<string, unknown>)
-      : undefined;
-  const cardId = typeof cardRecord?.id === 'string' ? cardRecord.id : board.boardId;
-  return {
-    source: 'trello' as const,
-    sourceId: action.id,
-    sourceEntityId: `${board.boardId}:${cardId}`,
-    channel: board.key,
-    author: 'trello',
-    content: trelloActionLine(action),
-    timestamp: new Date(actionTime(action)),
-    type: 'kanban_card' as const,
-    observedAt: observedAtMs,
-    metadata: {
-      actionType: action.type,
-      boardId: board.boardId,
-      cardId,
-      ...(list && typeof list === 'object' && !Array.isArray(list) ? { list } : {}),
-      ...(action.idMemberCreator === undefined ? {} : { idMemberCreator: action.idMemberCreator }),
-      ...(action.memberCreator === undefined ? {} : { memberCreator: action.memberCreator }),
-      data: action.data,
-    },
-  };
+    .map(([key, channel]) => ({
+      key,
+      boardId: channel.boardId!,
+      ...(channel.name === undefined ? {} : { name: channel.name }),
+    }));
 }
 
 export async function importTrelloActions(
@@ -132,74 +85,15 @@ export async function importTrelloActions(
       .map((connector) => [connector, options.rawStore.count(connector)] as const)
   );
   const importedByBoard: Record<string, number> = {};
-  const seenActionIds = new Set<string>();
+  const api = new TrelloApi(options.credentials, fetchImpl);
   for (const board of boards) {
-    let before: string | undefined = new Date(options.untilMs).toISOString();
-    let keepPaging = true;
-    while (keepPaging) {
-      const url = new URL(
-        `https://api.trello.com/1/boards/${encodeURIComponent(board.boardId)}/actions`
-      );
-      url.searchParams.set('filter', 'all');
-      url.searchParams.set('since', new Date(fromMs).toISOString());
-      url.searchParams.set('before', before);
-      url.searchParams.set('limit', String(ACTION_PAGE_SIZE));
-      url.searchParams.set('fields', 'id,type,date,data,idMemberCreator');
-      url.searchParams.set('memberCreator', 'true');
-      url.searchParams.set('memberCreator_fields', 'id,fullName,username');
-      url.searchParams.set('key', options.credentials.apiKey);
-      url.searchParams.set('token', options.credentials.token);
-      const response = await fetchImpl(url, { method: 'GET' });
-      if (!response.ok)
-        throw new Error(`Trello actions request failed with HTTP ${response.status}`);
-      let parsed: unknown;
-      try {
-        parsed = (await response.json()) as unknown;
-      } catch (error) {
-        throw new Error(`Trello actions response is not JSON: ${errorMessage(error)}`);
-      }
-      if (!Array.isArray(parsed)) throw new Error('Trello actions response must be an array');
-      const actions = parsed as TrelloAction[];
-      if (actions.length === 0) {
-        keepPaging = false;
-        continue;
-      }
-      const items = [];
-      let oldest: TrelloAction | undefined;
-      for (const action of actions) {
-        if (
-          typeof action.id !== 'string' ||
-          action.id.trim() === '' ||
-          typeof action.type !== 'string'
-        ) {
-          throw new Error('Trello action identity is invalid');
-        }
-        const timestamp = actionTime(action);
-        if (
-          oldest === undefined ||
-          timestamp < actionTime(oldest) ||
-          (timestamp === actionTime(oldest) && action.id < oldest.id)
-        ) {
-          oldest = action;
-        }
-        if (timestamp < fromMs || timestamp >= options.untilMs || seenActionIds.has(action.id))
-          continue;
-        seenActionIds.add(action.id);
-        items.push(actionItem(board, action, observedAtMs));
-        importedByBoard[board.key] = (importedByBoard[board.key] ?? 0) + 1;
-      }
-      if (items.length > 0) options.rawStore.save('trello', items, { collectOnly: true });
-      if (
-        actions.length < ACTION_PAGE_SIZE ||
-        oldest === undefined ||
-        actionTime(oldest) <= fromMs
-      ) {
-        break;
-      }
-      const nextBefore = oldest.id;
-      if (nextBefore === before) throw new Error('Trello action pagination made no progress');
-      before = nextBefore;
-    }
+    const actions = await api.boardActions(board.boardId, { fromMs, untilMs: options.untilMs });
+    const items = actions.map((action) => ({
+      ...trelloActionItem(board, action),
+      observedAt: observedAtMs,
+    }));
+    if (items.length > 0) options.rawStore.save('trello', items, { collectOnly: true });
+    importedByBoard[board.key] = (importedByBoard[board.key] ?? 0) + items.length;
   }
   const projectedCount = await drainRawProjections(options.rawStore, options.rawIndexSink);
   const afterTotal = options.rawStore
