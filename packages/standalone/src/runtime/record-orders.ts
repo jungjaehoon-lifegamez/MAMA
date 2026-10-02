@@ -377,19 +377,21 @@ export function createRecordOrders(options: RecordOrdersOptions): RecordOrders {
     if (!stopped) wait(batch, where);
   };
 
+  // The channel's waiting batches ride with its next delta, as Kagemusha's cursor re-reads them.
+  const enqueueFirst = (row: MailboxRow): void => {
+    const record = recordOrderPayload(row, 1);
+    if (record.observationRefs.length === 0)
+      throw new Error(`Live delta ${row.stimulusId} carries no observation to record`);
+    if (orderExists(options.adapter, recordOrderId(record.deltaStimulusId, 1))) return;
+    const key = channelKeyOf(record);
+    const carried = dueBatches([...(waiting.get(key)?.batches.values() ?? [])]).map(next);
+    enqueue(carried.length === 0 ? record : { ...record, carried });
+    // Taken only once the order is stored, so a refused accept leaves them waiting.
+    take(key);
+  };
+
   return {
-    // The channel's waiting batches ride with its next delta, as Kagemusha's cursor re-reads them.
-    enqueueFirst: (row) => {
-      const record = recordOrderPayload(row, 1);
-      if (record.observationRefs.length === 0)
-        throw new Error(`Live delta ${row.stimulusId} carries no observation to record`);
-      if (orderExists(options.adapter, recordOrderId(record.deltaStimulusId, 1))) return;
-      const key = channelKeyOf(record);
-      const carried = dueBatches([...(waiting.get(key)?.batches.values() ?? [])]).map(next);
-      enqueue(carried.length === 0 ? record : { ...record, carried });
-      // Taken only once the order is stored, so a refused accept leaves them waiting.
-      take(key);
-    },
+    enqueueFirst,
     // The check waits for child runs in the background so the owner's queue is never held.
     onResult: (row: MailboxRow, modelRunId: string | null) => {
       const record = parseRecordOrder(row.payload);
@@ -444,6 +446,25 @@ export function createRecordOrders(options: RecordOrdersOptions): RecordOrders {
             reason: `record check failed: ${error instanceof Error ? error.message : String(error)}`,
           });
       }
+    },
+    onDeltaLost: (row) => {
+      const record = recordOrderPayload(row, 1);
+      // Attempt 0: the batch never reached a record order.
+      const lost = (reason: string): 'lost' => {
+        options.onEvent?.({ type: 'lost', deltaStimulusId: row.stimulusId, attempt: 0, reason });
+        return 'lost';
+      };
+      if (record.observationRefs.length === 0)
+        return lost('the interrupted delta carries no observation to record');
+      if (batchRecorded(options.adapter, record)) {
+        options.onEvent?.({ type: 'recorded', deltaStimulusId: row.stimulusId, attempt: 0 });
+        return 'recorded';
+      }
+      // The same day recovery reads: an older batch would put stale facts back into the ledger.
+      if (Date.now() - row.createdAt > RECOVERY_WINDOW_MS)
+        return lost('the delta came in more than a day ago');
+      enqueueFirst(row);
+      return 'ordered';
     },
     recover: () => {
       for (const state of storedBatches(options.adapter).values()) {

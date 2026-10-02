@@ -124,6 +124,10 @@ export class SlackGateway extends BaseGateway {
   recentDeliveredMessageRefs(): string[] {
     return this.ledger.recentDeliveredMessageRefs();
   }
+
+  answered(sourceRef: string): boolean {
+    return this.ledger.get(sourceRef)?.state === 'delivered';
+  }
   async recoverPendingResponses(): Promise<void> {
     for (const entry of this.ledger.listUndelivered()) {
       try {
