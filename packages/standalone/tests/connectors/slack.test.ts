@@ -10,6 +10,7 @@ const slack = vi.hoisted(() => ({
   WebClient: vi.fn(),
   authTest: vi.fn(),
   history: vi.fn(),
+  replies: vi.fn(),
   usersInfo: vi.fn(),
   filesInfo: vi.fn(),
 }));
@@ -30,12 +31,13 @@ describe('SlackConnector', () => {
     process.env[envName] = 'fixture-slack-token';
     slack.WebClient.mockImplementation(() => ({
       auth: { test: slack.authTest },
-      conversations: { history: slack.history },
+      conversations: { history: slack.history, replies: slack.replies },
       users: { info: slack.usersInfo },
       files: { info: slack.filesInfo },
     }));
     slack.authTest.mockResolvedValue({ ok: true });
     slack.history.mockReset();
+    slack.replies.mockReset();
     slack.usersInfo.mockReset();
     slack.filesInfo.mockReset();
   });
@@ -70,12 +72,12 @@ describe('SlackConnector', () => {
     });
     expect(slack.history).toHaveBeenNthCalledWith(1, {
       channel: 'channel-key',
-      oldest: '15.000000',
+      oldest: '0.000000',
       limit: 200,
     });
     expect(slack.history).toHaveBeenNthCalledWith(2, {
       channel: 'channel-key',
-      oldest: '15.000000',
+      oldest: '0.000000',
       limit: 200,
       cursor: 'next-page',
     });
@@ -316,5 +318,117 @@ describe('SlackConnector', () => {
       lastPollCount: 0,
       error: 'room request failed',
     });
+  });
+
+  it('reads replies posted only in a thread that started before the poll window', async () => {
+    const since = new Date(40 * 24 * 60 * 60 * 1000);
+    const sinceSeconds = since.getTime() / 1000;
+    slack.history.mockResolvedValue({
+      messages: [
+        {
+          ts: String(sinceSeconds - 5 * 24 * 60 * 60),
+          user: 'user-key',
+          text: 'thread-parent',
+          thread_ts: String(sinceSeconds - 5 * 24 * 60 * 60),
+          reply_count: 3,
+          latest_reply: String(sinceSeconds + 20),
+        },
+      ],
+      response_metadata: { next_cursor: '' },
+    });
+    const parentTs = String(sinceSeconds - 5 * 24 * 60 * 60);
+    slack.replies.mockResolvedValue({
+      messages: [
+        { ts: parentTs, user: 'user-key', text: 'thread-parent', thread_ts: parentTs },
+        {
+          ts: String(sinceSeconds + 10),
+          user: 'user-key',
+          text: 'thread-reply',
+          thread_ts: parentTs,
+        },
+        {
+          ts: String(sinceSeconds + 20),
+          user: 'user-key',
+          text: 'bot-reply',
+          thread_ts: parentTs,
+          bot_id: 'bot-key',
+        },
+      ],
+      response_metadata: { next_cursor: '' },
+    });
+    slack.usersInfo.mockResolvedValue({ user: { real_name: 'actor-a' } });
+    const connector = new SlackConnector(config);
+    await connector.init();
+
+    const items = await connector.poll(since);
+
+    expect(slack.history).toHaveBeenCalledWith({
+      channel: 'channel-key',
+      oldest: (sinceSeconds - 30 * 24 * 60 * 60).toFixed(6),
+      limit: 200,
+    });
+    expect(slack.replies).toHaveBeenCalledWith({
+      channel: 'channel-key',
+      ts: parentTs,
+      oldest: sinceSeconds.toFixed(6),
+      limit: 200,
+    });
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      sourceId: `channel-key:${sinceSeconds + 10}`,
+      content: 'thread-reply',
+      author: 'actor-a',
+      metadata: { channelId: 'channel-key', threadTs: parentTs },
+    });
+  });
+
+  it('takes a reply also sent to the channel from history once and skips quiet threads', async () => {
+    slack.history.mockResolvedValue({
+      messages: [
+        {
+          ts: '10.000',
+          user: 'user-key',
+          text: 'quiet-parent',
+          reply_count: 1,
+          latest_reply: '12.000',
+        },
+        {
+          ts: '11.000',
+          user: 'user-key',
+          text: 'active-parent',
+          reply_count: 1,
+          latest_reply: '30.000',
+        },
+        {
+          ts: '30.000',
+          user: 'user-key',
+          text: 'broadcast-reply',
+          thread_ts: '11.000',
+          subtype: 'thread_broadcast',
+        },
+      ],
+      response_metadata: { next_cursor: '' },
+    });
+    slack.replies.mockResolvedValue({
+      messages: [
+        { ts: '11.000', user: 'user-key', text: 'active-parent', thread_ts: '11.000' },
+        {
+          ts: '30.000',
+          user: 'user-key',
+          text: 'broadcast-reply',
+          thread_ts: '11.000',
+          subtype: 'thread_broadcast',
+        },
+      ],
+      response_metadata: { next_cursor: '' },
+    });
+    const connector = new SlackConnector(config);
+    await connector.init();
+
+    const items = await connector.poll(new Date(15_000));
+
+    expect(items.map((item) => item.content)).toEqual(['broadcast-reply']);
+    expect(slack.replies).toHaveBeenCalledTimes(1);
+    expect(slack.replies).toHaveBeenCalledWith(expect.objectContaining({ ts: '11.000' }));
   });
 });

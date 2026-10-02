@@ -7,6 +7,7 @@ import type { WebClient } from '@slack/web-api';
 
 import type {
   AuthRequirement,
+  ChannelConfig,
   ConnectorConfig,
   ConnectorHealth,
   IConnector,
@@ -23,6 +24,25 @@ interface SlackMessageFile {
   id?: string;
   name?: string;
 }
+
+/** The message fields a poll reads, from conversations.history or conversations.replies. */
+interface SlackMessage {
+  ts?: string;
+  user?: string;
+  text?: string;
+  bot_id?: string;
+  subtype?: string;
+  thread_ts?: string;
+  files?: unknown;
+}
+
+/**
+ * How far back a poll looks for threads that received a new reply. A reply posted only in the
+ * thread is not a channel message, so it is found through its parent. Measured on live channels:
+ * the longest-running thread over 90 days stayed active for 24 days. A reply to an older thread is
+ * not read.
+ */
+const THREAD_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
 
 interface SlackFileInfo {
   id: string;
@@ -155,66 +175,57 @@ export class SlackConnector implements IConnector {
     const items: NormalizedItem[] = [];
     let hadError = false;
     const oldest = (since.getTime() / 1000).toFixed(6);
+    // History is read back THREAD_LOOKBACK_MS so a thread started before `since` still shows its
+    // newest reply time; only messages after `since` become items.
+    const historyOldest = (Math.max(0, since.getTime() - THREAD_LOOKBACK_MS) / 1000).toFixed(6);
 
     for (const [channelId, channelConfig] of Object.entries(this.config.channels)) {
       if (channelConfig.role === 'ignore') continue;
       try {
+        const activeThreads: string[] = [];
         let cursor: string | undefined;
         do {
           const result = await this.client.conversations.history({
             channel: channelId,
-            oldest,
+            oldest: historyOldest,
             limit: 200,
             ...(cursor === undefined ? {} : { cursor }),
           });
           for (const message of result.messages ?? []) {
-            const messageFiles = Array.isArray((message as { files?: unknown }).files)
-              ? ((message as { files: SlackMessageFile[] }).files ?? [])
-              : [];
             if (
-              message.bot_id ||
-              message.subtype === 'bot_message' ||
-              !message.user ||
-              (!message.text && messageFiles.length === 0)
+              typeof message.ts === 'string' &&
+              (message.reply_count ?? 0) > 0 &&
+              Number(message.latest_reply) * 1000 > since.getTime()
             ) {
-              continue;
+              activeThreads.push(message.ts);
             }
-            const timestamp = new Date(Number(message.ts) * 1000);
-            if (!Number.isFinite(timestamp.getTime()) || timestamp.getTime() <= since.getTime())
-              continue;
-            items.push({
-              source: 'slack',
-              sourceId: `${channelId}:${message.ts}`,
-              channel: channelConfig.name ?? channelId,
-              author: await this.resolveUserName(message.user),
-              content: message.text ?? '',
-              timestamp,
-              type: 'message',
-              metadata: {
-                channelId,
-                ts: message.ts,
-                ...(message.thread_ts === undefined ? {} : { threadTs: message.thread_ts }),
-                ...(messageFiles.length === 0
-                  ? {}
-                  : {
-                      slackFileIds: messageFiles
-                        .map((file) => file.id)
-                        .filter((id): id is string => typeof id === 'string' && id.trim() !== ''),
-                      slackFiles: messageFiles
-                        .filter(
-                          (file): file is SlackMessageFile & { id: string } =>
-                            typeof file.id === 'string' && file.id.trim() !== ''
-                        )
-                        .map((file) => ({
-                          fileId: file.id,
-                          ...(file.name ? { name: file.name } : {}),
-                        })),
-                    }),
-              },
-            });
+            const item = await this.messageItem(channelId, channelConfig, message, since);
+            if (item) items.push(item);
           }
           cursor = result.response_metadata?.next_cursor || undefined;
         } while (cursor !== undefined);
+
+        for (const threadTs of activeThreads) {
+          let replyCursor: string | undefined;
+          do {
+            const result = await this.client.conversations.replies({
+              channel: channelId,
+              ts: threadTs,
+              oldest,
+              limit: 200,
+              ...(replyCursor === undefined ? {} : { cursor: replyCursor }),
+            });
+            // The SDK's reply type omits `subtype`, which the API sends (e.g. thread_broadcast).
+            for (const reply of (result.messages ?? []) as SlackMessage[]) {
+              // The thread's first message is the parent, read from history. A reply also sent to
+              // the channel (thread_broadcast) is a channel message and comes from history too.
+              if (reply.ts === threadTs || reply.subtype === 'thread_broadcast') continue;
+              const item = await this.messageItem(channelId, channelConfig, reply, since);
+              if (item) items.push(item);
+            }
+            replyCursor = result.response_metadata?.next_cursor || undefined;
+          } while (replyCursor !== undefined);
+        }
       } catch (error) {
         hadError = true;
         this.lastError = error instanceof Error ? error.message : String(error);
@@ -227,6 +238,58 @@ export class SlackConnector implements IConnector {
     this.lastPollCount = items.length;
     this.lastError = undefined;
     return items;
+  }
+
+  /** One person's message after `since`, from history or a thread; null for anything else. */
+  private async messageItem(
+    channelId: string,
+    channelConfig: ChannelConfig,
+    message: SlackMessage,
+    since: Date
+  ): Promise<NormalizedItem | null> {
+    const messageFiles = Array.isArray(message.files) ? (message.files as SlackMessageFile[]) : [];
+    if (
+      message.bot_id ||
+      message.subtype === 'bot_message' ||
+      !message.user ||
+      (!message.text && messageFiles.length === 0)
+    ) {
+      return null;
+    }
+    const timestamp = new Date(Number(message.ts) * 1000);
+    if (!Number.isFinite(timestamp.getTime()) || timestamp.getTime() <= since.getTime()) {
+      return null;
+    }
+    return {
+      source: 'slack',
+      sourceId: `${channelId}:${message.ts}`,
+      channel: channelConfig.name ?? channelId,
+      author: await this.resolveUserName(message.user),
+      content: message.text ?? '',
+      timestamp,
+      type: 'message',
+      metadata: {
+        channelId,
+        ts: message.ts,
+        ...(message.thread_ts === undefined ? {} : { threadTs: message.thread_ts }),
+        ...(messageFiles.length === 0
+          ? {}
+          : {
+              slackFileIds: messageFiles
+                .map((file) => file.id)
+                .filter((id): id is string => typeof id === 'string' && id.trim() !== ''),
+              slackFiles: messageFiles
+                .filter(
+                  (file): file is SlackMessageFile & { id: string } =>
+                    typeof file.id === 'string' && file.id.trim() !== ''
+                )
+                .map((file) => ({
+                  fileId: file.id,
+                  ...(file.name ? { name: file.name } : {}),
+                })),
+            }),
+      },
+    };
   }
 
   async listAttachments(request: AttachmentListRequest): Promise<AttachmentDescriptor[]> {
