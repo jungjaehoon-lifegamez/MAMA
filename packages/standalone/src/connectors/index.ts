@@ -24,7 +24,6 @@ export const LOADABLE_CONNECTORS = [
 export type LoadableConnector = (typeof LOADABLE_CONNECTORS)[number];
 
 export interface ConnectorLoadPaths {
-  trelloStatePath?: string;
   kagemushaDbPath?: string;
   connectorStatePath?: string;
   imessageDbPath?: string;
@@ -95,10 +94,7 @@ const loaders: Record<
       config,
       paths?.claudeCodeProjectsPath
     ),
-  trello: async (config, paths) => {
-    if (paths?.trelloStatePath === undefined) throw new Error('Trello state file path is required');
-    return new (await import('./trello/index.js')).TrelloConnector(config, paths.trelloStatePath);
-  },
+  trello: async (config) => new (await import('./trello/index.js')).TrelloConnector(config),
   kagemusha: async (config, paths) => {
     if (paths?.kagemushaDbPath === undefined)
       throw new Error('Kagemusha source database path is required');

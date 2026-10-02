@@ -151,7 +151,6 @@ describe('connector runtime', () => {
     const configPath = join(root, 'connectors.json');
     const rawPath = join(root, 'raw');
     const statePath = join(root, 'state');
-    const trelloStatePath = join(root, 'trello-state.json');
     const kagemushaDbPath = join(root, 'kagemusha.db');
     writeFileSync(
       configPath,
@@ -199,7 +198,6 @@ describe('connector runtime', () => {
       configPath,
       rawPath,
       statePath,
-      trelloStatePath,
       kagemushaDbPath,
       clock: () => now,
       rawIndexSink: (_connector, items) =>
@@ -227,7 +225,6 @@ describe('connector runtime', () => {
     });
     expect([...calls.keys()]).toEqual(['slack', 'trello', 'kagemusha']);
     const expectedPaths = {
-      trelloStatePath,
       kagemushaDbPath,
       timeZone: { get: expect.any(Function), set: expect.any(Function) },
     };

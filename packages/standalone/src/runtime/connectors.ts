@@ -40,7 +40,6 @@ export interface ConnectorRuntimeOptions {
   wikiRoot?: string;
   rawPath: string;
   statePath: string;
-  trelloStatePath?: string;
   kagemushaDbPath?: string;
   clock?: () => number;
   rawStore?: RawStore;
@@ -203,7 +202,6 @@ export async function startConnectorRuntime(
         ? join(options.statePath, `${name}-state.json`)
         : undefined;
       const connector = await load(name, config.config[name], {
-        trelloStatePath: options.trelloStatePath,
         kagemushaDbPath: options.kagemushaDbPath,
         ...(connectorStatePath === undefined ? {} : { connectorStatePath }),
         timeZone: options.timeZone,

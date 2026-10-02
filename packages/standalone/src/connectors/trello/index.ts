@@ -1,18 +1,9 @@
 /**
- * TrelloConnector — polls Trello boards via native fetch.
- * API key and token are separate values read from the daemon environment.
- * Emits kanban_card NormalizedItems for new/moved/updated cards.
- *
- * A card's operational state is more than its list: production boards track the
- * assignee and the revision round (e.g. a "初稿" / "1回修正" label) on the card
- * itself. The poller therefore ingests labels and resolved member names, and a
- * label/member change on an unmoved card is a change worth emitting - owner
- * question "who owns this and which revision round is it in" must be answerable
- * from the raw store.
+ * TrelloConnector — stores every action of the configured boards. Each poll reads
+ * /boards/{id}/actions since the scheduler's cursor and returns the same item the history import
+ * stores (connectors/trello/actions.ts); the windows overlap and the raw store keeps an action
+ * once. The connector also serves trello.read, so the credentials stay here.
  */
-
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { dirname } from 'path';
 
 import type {
   AuthRequirement,
@@ -22,114 +13,41 @@ import type {
   NormalizedItem,
 } from '../framework/types.js';
 import { messageWithCauses } from '../../utils/error-message.js';
-
-interface TrelloLabel {
-  name: string;
-  color: string | null;
-}
-
-interface TrelloCard {
-  id: string;
-  name: string;
-  idMembers: string[];
-  labels?: TrelloLabel[];
-  dateLastActivity: string;
-}
-
-interface TrelloList {
-  id: string;
-  name: string;
-  cards: TrelloCard[];
-}
-
-interface TrelloBoardMember {
-  id: string;
-  fullName?: string;
-  username?: string;
-}
-
-/** Stored per-card state. Legacy entries are the plain list name; v2 entries
- *  carry the full fingerprint so label/assignee changes are detectable. */
-interface CardState {
-  list: string;
-  labels: string[];
-  members: string[];
-}
-
-const STATE_V2_PREFIX = 'v2:';
-
-function encodeCardState(state: CardState): string {
-  return `${STATE_V2_PREFIX}${JSON.stringify([state.list, state.labels, state.members])}`;
-}
-
-function decodeCardState(raw: string): { state: CardState; legacy: boolean } {
-  if (raw.startsWith(STATE_V2_PREFIX)) {
-    try {
-      const [list, labels, members] = JSON.parse(raw.slice(STATE_V2_PREFIX.length)) as [
-        string,
-        string[],
-        string[],
-      ];
-      return { state: { list, labels: labels ?? [], members: members ?? [] }, legacy: false };
-    } catch {
-      /* fall through to legacy interpretation */
-    }
-  }
-  // Legacy value: the bare list name (pre-label/member polling). Treated as
-  // list-only so the format upgrade never floods the raw store with a
-  // "changed" item for every open card.
-  return { state: { list: raw, labels: [], members: [] }, legacy: true };
-}
+import { TrelloApi } from './api.js';
+import { trelloActionItem, type TrelloBoardChannel } from './actions.js';
 
 export class TrelloConnector implements IConnector {
   readonly name = 'trello';
   readonly type = 'api' as const;
 
-  private config: ConnectorConfig;
-  private apiKey: string | null = null;
-  private token: string | null = null;
-  private readonly baseUrl = 'https://api.trello.com/1';
+  private client: TrelloApi | null = null;
   private lastPollTime: Date | null = null;
   private lastPollCount = 0;
   private lastError: string | undefined = undefined;
 
-  /** boardId → (cardId → encoded card state) */
-  private lastCardStates: Map<string, Map<string, string>> = new Map();
-  private pendingCardStates: Map<string, Map<string, string>> | null = null;
-  private pollCommitDeferred = false;
+  constructor(
+    private readonly config: ConnectorConfig,
+    private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init)
+  ) {}
 
-  private readonly stateFilePath: string;
-
-  constructor(config: ConnectorConfig, options: { stateFilePath: string } | string) {
-    this.config = config;
-    const stateFilePath = typeof options === 'string' ? options : options?.stateFilePath;
-    if (typeof stateFilePath !== 'string' || stateFilePath.trim() === '') {
-      throw new Error('Trello state file path is required');
-    }
-    this.stateFilePath = stateFilePath;
+  /** The configured boards; an ignored channel or one without a board is left out. */
+  boards(): TrelloBoardChannel[] {
+    return Object.entries(this.config.channels).flatMap(([key, channel]) =>
+      channel.role === 'ignore' || !channel.boardId
+        ? []
+        : [
+            {
+              key,
+              boardId: channel.boardId,
+              ...(channel.name === undefined ? {} : { name: channel.name }),
+            },
+          ]
+    );
   }
 
-  private loadState(): void {
-    if (existsSync(this.stateFilePath)) {
-      try {
-        const data = JSON.parse(readFileSync(this.stateFilePath, 'utf-8'));
-        for (const [board, cards] of Object.entries(data.lastCardStates ?? {})) {
-          this.lastCardStates.set(board, new Map(Object.entries(cards as Record<string, string>)));
-        }
-      } catch {
-        /* ignore corrupt state */
-      }
-    }
-  }
-
-  private saveState(states: Map<string, Map<string, string>> = this.lastCardStates): void {
-    const dir = dirname(this.stateFilePath);
-    mkdirSync(dir, { recursive: true });
-    const obj: Record<string, Record<string, string>> = {};
-    for (const [board, cards] of states) {
-      obj[board] = Object.fromEntries(cards);
-    }
-    writeFileSync(this.stateFilePath, JSON.stringify({ lastCardStates: obj }));
+  api(): TrelloApi {
+    if (!this.client) throw new Error('TrelloConnector not initialized');
+    return this.client;
   }
 
   async init(): Promise<void> {
@@ -140,22 +58,16 @@ export class TrelloConnector implements IConnector {
         'Trello credentials missing. Run mama secret set MAMA_TRELLO_KEY and mama secret set MAMA_TRELLO_TOKEN, then restart through ~/.mama/start.sh.'
       );
     }
-    this.apiKey = apiKey;
-    this.token = token;
-    this.loadState();
+    this.client = new TrelloApi({ apiKey, token }, this.fetchImpl);
   }
 
   async dispose(): Promise<void> {
-    this.apiKey = null;
-    this.token = null;
-    this.lastCardStates.clear();
-    this.pendingCardStates = null;
-    this.pollCommitDeferred = false;
+    this.client = null;
   }
 
   async healthCheck(): Promise<ConnectorHealth> {
     return {
-      healthy: this.token !== null && this.lastError === undefined,
+      healthy: this.client !== null && this.lastError === undefined,
       lastPollTime: this.lastPollTime,
       lastPollCount: this.lastPollCount,
       error: this.lastError,
@@ -179,218 +91,39 @@ export class TrelloConnector implements IConnector {
 
   async authenticate(): Promise<boolean> {
     try {
-      if (!this.apiKey || !this.token) return false;
-      const url = `${this.baseUrl}/members/me?key=${this.apiKey}&token=${this.token}`;
-      const res = await fetch(url);
+      const apiKey = process.env.MAMA_TRELLO_KEY;
+      const token = process.env[this.config.auth.tokenName ?? 'MAMA_TRELLO_TOKEN'];
+      if (!apiKey || !token) return false;
+      const res = await fetch(`https://api.trello.com/1/members/me?key=${apiKey}&token=${token}`);
       return res.ok;
     } catch {
       return false;
     }
   }
 
-  private async fetchWithTimeout(url: string): Promise<Response> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
-    try {
-      return await fetch(url, { signal: controller.signal });
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  /** id → display name for a board's members. Failure degrades to raw ids
-   *  (name resolution is enrichment, never a reason to drop a poll). */
-  private async fetchMemberNames(boardId: string): Promise<Map<string, string>> {
-    const names = new Map<string, string>();
-    try {
-      const res = await this.fetchWithTimeout(
-        `${this.baseUrl}/boards/${boardId}/members?fields=fullName,username&key=${this.apiKey}&token=${this.token}`
-      );
-      if (!res.ok) return names;
-      const members = (await res.json()) as TrelloBoardMember[];
-      for (const m of members) {
-        const name = m.fullName || m.username;
-        if (name) names.set(m.id, name);
-      }
-    } catch {
-      /* degrade to ids */
-    }
-    return names;
-  }
-
+  /** One failing board fails the poll, so the scheduler keeps its cursor and retries the window. */
   async poll(since: Date): Promise<NormalizedItem[]> {
-    if (!this.apiKey || !this.token) throw new Error('TrelloConnector not initialized');
-
+    const api = this.api();
+    const boards = this.boards();
     const items: NormalizedItem[] = [];
-    const failedBoards = new Set<string>();
-    let polledBoards = 0;
-    const pendingCardStates = new Map(
-      [...this.lastCardStates].map(([boardId, states]) => [boardId, new Map(states)])
-    );
-
-    for (const [channelKey, channelCfg] of Object.entries(this.config.channels)) {
-      if (channelCfg.role === 'ignore') continue;
-      if (!channelCfg.boardId) continue;
-      polledBoards += 1;
-
-      const channelName = channelCfg.name ?? channelKey;
-      const boardId = channelCfg.boardId;
-
+    let failed = 0;
+    for (const board of boards) {
       try {
-        const url =
-          `${this.baseUrl}/boards/${boardId}/lists` +
-          `?cards=open&card_fields=name,idMembers,labels,dateLastActivity` +
-          `&key=${this.apiKey}&token=${this.token}`;
-
-        const res = await this.fetchWithTimeout(url);
-
-        if (!res.ok) {
-          failedBoards.add(boardId);
-          this.lastError = `Board ${boardId}: HTTP ${res.status}`;
-          continue;
-        }
-
-        const lists = (await res.json()) as TrelloList[];
-        // Lazy: boards whose open cards carry no members need no roster call.
-        const anyMembers = lists.some((l) => l.cards.some((c) => c.idMembers.length > 0));
-        const memberNames = anyMembers ? await this.fetchMemberNames(boardId) : new Map();
-
-        // Get or init previous card states for this board
-        if (!this.lastCardStates.has(boardId)) {
-          this.lastCardStates.set(boardId, new Map());
-        }
-        const prevCardState = this.lastCardStates.get(boardId)!;
-        const newCardState = new Map<string, string>();
-
-        for (const list of lists) {
-          for (const card of list.cards) {
-            const activityTime = Date.parse(card.dateLastActivity);
-            if (!Number.isFinite(activityTime)) {
-              failedBoards.add(boardId);
-              this.lastError = 'Trello board item has an invalid activity timestamp';
-              const previousState = prevCardState.get(card.id);
-              if (previousState !== undefined) {
-                newCardState.set(card.id, previousState);
-              }
-              continue;
-            }
-            const labels = (card.labels ?? []).map((l) => l.name).filter(Boolean);
-            const assignees = card.idMembers.map((id) => memberNames.get(id) ?? id);
-            const current: CardState = { list: list.name, labels, members: assignees };
-            newCardState.set(card.id, encodeCardState(current));
-
-            // The first snapshot is bounded by the frozen bootstrap window. Keep the
-            // state fingerprint for older cards so a later change is still observable,
-            // but do not emit an old open card as a new source item.
-            if (activityTime <= since.getTime()) continue;
-
-            const prevRaw = prevCardState.get(card.id);
-            const isNew = prevRaw === undefined;
-            const prev = prevRaw !== undefined ? decodeCardState(prevRaw) : undefined;
-            const isMoved = prev !== undefined && prev.state.list !== list.name;
-            // Label/assignee deltas only fire against v2 state: a legacy entry
-            // carries no labels/members, so comparing against it would emit a
-            // one-time "changed" flood across every open card on upgrade.
-            const isUpdated =
-              prev !== undefined &&
-              !prev.legacy &&
-              !isMoved &&
-              (prev.state.labels.join('\u0000') !== labels.join('\u0000') ||
-                prev.state.members.join('\u0000') !== assignees.join('\u0000'));
-
-            if (isNew || isMoved || isUpdated) {
-              let content = `${card.name} | ${list.name}`;
-              if (isMoved) {
-                content += ` (from: ${prev!.state.list})`;
-              }
-              if (isUpdated && prev!.state.labels.join('\u0000') !== labels.join('\u0000')) {
-                content += ` (labels: ${prev!.state.labels.join(', ') || 'none'} -> ${labels.join(', ') || 'none'})`;
-              }
-              if (isUpdated && prev!.state.members.join('\u0000') !== assignees.join('\u0000')) {
-                content += ` (assignees changed)`;
-              }
-              if (labels.length > 0) {
-                content += ` | labels: ${labels.join(', ')}`;
-              }
-              if (assignees.length > 0) {
-                content += ` | assignees: ${assignees.join(', ')}`;
-              }
-
-              items.push({
-                source: 'trello',
-                sourceId: `${boardId}:${card.id}:${activityTime}`,
-                sourceEntityId: `${boardId}:${card.id}`,
-                channel: channelName,
-                author: 'trello',
-                content,
-                // Source time is the provider version's stable timestamp. Host capture
-                // freshness is recorded separately as observation observedAt by the scheduler.
-                timestamp: new Date(activityTime),
-                type: 'kanban_card',
-                metadata: {
-                  lastActivityAt: card.dateLastActivity,
-                  boardId,
-                  cardId: card.id,
-                  listName: list.name,
-                  // Omit when absent: the canonical raw-ref serializer rejects
-                  // undefined values ("undefined is not serializable at $.prevListName").
-                  ...(prev !== undefined ? { prevListName: prev.state.list } : {}),
-                  cardName: card.name,
-                  members: card.idMembers,
-                  memberNames: assignees,
-                  labels,
-                },
-              });
-            }
-          }
-        }
-
-        // Update card state snapshot for this board
-        pendingCardStates.set(boardId, newCardState);
+        const actions = await api.boardActions(board.boardId, { fromMs: since.getTime() });
+        items.push(...actions.map((action) => trelloActionItem(board, action)));
       } catch (err) {
-        failedBoards.add(boardId);
-        this.lastError = `Board ${boardId}: ${messageWithCauses(err)}`;
+        failed += 1;
+        this.lastError = `Board ${board.boardId}: ${messageWithCauses(err)}`;
       }
     }
-
-    if (failedBoards.size > 0) {
-      this.pendingCardStates = null;
-      this.pollCommitDeferred = false;
+    if (failed > 0) {
       throw new Error(
-        `Trello poll failed for ${failedBoards.size} of ${polledBoards} configured boards; last error: ${this.lastError}`
+        `Trello poll failed for ${failed} of ${boards.length} configured boards; last error: ${this.lastError}`
       );
-    }
-
-    this.pendingCardStates = pendingCardStates;
-    if (!this.pollCommitDeferred) {
-      this.commitPoll();
     }
     this.lastPollTime = new Date();
     this.lastPollCount = items.length;
     this.lastError = undefined;
-
     return items;
-  }
-
-  commitPoll(): void {
-    if (this.pendingCardStates === null) {
-      throw new Error('Trello poll state is unavailable to commit');
-    }
-    this.saveState(this.pendingCardStates);
-    this.lastCardStates = this.pendingCardStates;
-    this.pendingCardStates = null;
-    this.pollCommitDeferred = false;
-  }
-
-  beginPollHandoff(): void {
-    if (this.pollCommitDeferred || this.pendingCardStates !== null) {
-      throw new Error('Trello poll handoff is already active');
-    }
-    this.pollCommitDeferred = true;
-  }
-
-  abortPollHandoff(): void {
-    this.pendingCardStates = null;
-    this.pollCommitDeferred = false;
   }
 }
