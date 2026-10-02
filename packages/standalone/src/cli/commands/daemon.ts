@@ -230,14 +230,9 @@ export function validateDeliveryRoutes(config: W1Config): void {
       config.slack.allowed_channels.includes(config.slack.owner_channel_id)
     ),
   };
-  const routes = config.delivery ?? {
-    reports: 'telegram',
-    notifications: 'telegram',
-    security_alerts: 'telegram',
-  };
-  for (const [purpose, messenger] of Object.entries(routes) as Array<
-    [keyof typeof routes, MessengerName]
-  >) {
+  // Only the routes name a messenger; delivery also holds text such as interrupted_notice.
+  for (const purpose of ['reports', 'notifications', 'security_alerts'] as const) {
+    const messenger: MessengerName = config.delivery?.[purpose] ?? 'telegram';
     if (!active[messenger])
       throw new Error(
         `delivery.${purpose} targets ${messenger}, which is disabled or has no allowlisted owner channel`
