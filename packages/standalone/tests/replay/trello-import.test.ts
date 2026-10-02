@@ -241,7 +241,7 @@ describe('collect-only Trello replay import', () => {
       ).toMatchObject({
         source: 'trello',
         sourceId: 'action-0',
-        sourceEntityId: 'board-a:card-a',
+        sourceEntityId: 'action-0',
         channel: 'board-canonical',
         type: 'kanban_card',
       });

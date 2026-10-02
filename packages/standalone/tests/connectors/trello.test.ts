@@ -57,7 +57,7 @@ describe('TrelloConnector', () => {
     expect(items).toEqual([
       expect.objectContaining({
         sourceId: 'action-move',
-        sourceEntityId: 'board-a:card-a',
+        sourceEntityId: 'action-move',
         channel: 'board-key',
         content: 'Still 01 | Delivered (from: Submitted) | Member A',
         metadata: expect.objectContaining({ actionType: 'updateCard', channelName: 'Board A' }),
