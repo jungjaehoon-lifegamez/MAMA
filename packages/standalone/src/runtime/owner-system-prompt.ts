@@ -150,6 +150,9 @@ export function ownerHelpTopics(
       '- Find the existing work first with work.list (items narrowed by text, stage, status, due or changedBefore; detail for history, evidence and long text).',
       '- Relate new information to the existing work it answers: revise the existing commitment with work.revise instead of creating a duplicate, and choose the link relation that fits: derived_from for the observation it rests on, supersedes, amends or refines for a correction, contradicts for a reversal, builds_on or synthesizes for an extension, blocks or next_action_for between work items.',
       "- Other systems' task rows or cards are evidence to cite, not the owner's work ledger; the ledger is work.list.",
+      wikiEnabled
+        ? "- A work item's project is one project page's name, written exactly: list the projects/ pages with manage.wiki.read and read the one that fits. A page lists the other names its project goes by (client, channel, board). A channel name says where a message came from, not which project it is about, and one channel can carry several projects."
+        : "- A work item's project is a name the ledger already uses for that project, written exactly: find it with work.list items before writing a new one. A channel name says where a message came from, not which project it is about, and one channel can carry several projects.",
       '- When recording who did what, keep the assignee and roles and link them to the observations they rest on. The person who delivered the work files or handled the feedback is the worker even when no one announced it.',
       '- Keep observations distinct from entrusted work; acknowledgements and chatter need no record.',
       '- Work through many items one at a time: settle an item and record it before the next, so a long turn keeps what it finished.',

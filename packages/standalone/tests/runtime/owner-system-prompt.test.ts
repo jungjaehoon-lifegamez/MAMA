@@ -93,6 +93,10 @@ describe('owner standing prompt', () => {
       'do the comparing inside the script: narrow by fields and text, judge the rest with judge'
     );
     expect(ownerHelpTopics('codex', false)).not.toHaveProperty('wiki');
+    // A project is named from its project page, not from the channel the message came in.
+    expect(topics.record).toContain("one project page's name, written exactly");
+    expect(topics.record).toContain('not which project it is about');
+    expect(ownerHelpTopics('codex', false).record).toContain('a name the ledger already uses');
     expect(topics.sources).toContain('instead of guessing how its name is spelled');
     expect(topics.sources).not.toContain('judge');
     expect(ownerHelpTopics('codex', false, true).sources).toContain(
