@@ -1,8 +1,11 @@
 /**
  * The one stored shape of a Trello board action. The history import and the poller both store
  * this item, so an action imported and later polled (the poll windows overlap on purpose) is the
- * same row: the raw store refuses a re-listed action whose stored payload differs. The item
- * depends only on the action and the board's configured name.
+ * same row. The item depends only on the action and the board's configured name. Each action is
+ * its own entity, as an imported chat message is: Trello edits a comment in place on the same
+ * action, and the raw store records a re-listed action that changed as its next revision (an
+ * entity keyed by the card would make it an immutable version and refuse the change, stopping
+ * every later poll). The card stays in metadata.cardId.
  */
 import type { NormalizedItem } from '../framework/types.js';
 import { trelloActionLine } from './action-line.js';
@@ -37,7 +40,7 @@ export function trelloActionItem(board: TrelloBoardChannel, action: TrelloAction
   return {
     source: 'trello',
     sourceId: action.id,
-    sourceEntityId: `${board.boardId}:${cardId}`,
+    sourceEntityId: action.id,
     channel: board.key,
     author: 'trello',
     content: trelloActionLine(action),

@@ -224,6 +224,17 @@ export class TrelloConnector implements IConnector {
       filter: 'open',
       fields: 'name',
     });
+    const listNames = new Map(lists.map((list) => [list.id, list.name]));
+    // A list id names its own board's cards, so it is read only when it is on the granted board.
+    if (listId !== undefined && !listNames.has(listId)) {
+      const error = new Error(
+        `List ${listId} is not an open list of board ${board.key}; lists: ${lists
+          .map((list) => `${list.id} ${list.name}`)
+          .join(', ')}`
+      );
+      error.name = 'invalid_input';
+      throw error;
+    }
     const members = await api.get<Array<{ id: string; fullName?: string; username?: string }>>(
       `${boardPath}/members`,
       { fields: 'fullName,username' }
@@ -234,7 +245,6 @@ export class TrelloConnector implements IConnector {
         : `/lists/${encodeURIComponent(listId)}/cards`,
       { fields: CARD_FIELDS }
     );
-    const listNames = new Map(lists.map((list) => [list.id, list.name]));
     if (cards.length > 100) {
       const counts = new Map<string, number>();
       for (const card of cards) counts.set(card.idList, (counts.get(card.idList) ?? 0) + 1);

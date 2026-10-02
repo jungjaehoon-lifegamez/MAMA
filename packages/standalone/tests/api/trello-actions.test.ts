@@ -35,6 +35,7 @@ function trelloFixture(url: URL): unknown {
   if (path === '/boards/board-a/cards/open')
     return [card('c1', 'l1'), card('c2', 'l1'), card('c3', 'l2')];
   if (path === '/lists/l2/cards') return [card('c3', 'l2')];
+  if (path === '/lists/lb1/cards') return [{ ...card('cb1', 'lb1'), idBoard: 'board-b' }];
   if (path === '/boards/board-a/labels')
     return [
       { id: 'lab1', name: 'First round' },
@@ -277,6 +278,22 @@ describe('trello.read', () => {
       status: 'failed',
       error: { code: 'invalid_input', message: expect.stringContaining('board-key') },
     });
+  });
+
+  it('refuses a list that is not on the named board', async () => {
+    const { dispatch, member, owner } = await setup();
+    for (const access of [member, owner]) {
+      expect(
+        await dispatch(
+          { action: 'trello.read', input: { view: 'cards', board: 'board-key', list: 'lb1' } },
+          { access }
+        )
+      ).toMatchObject({
+        status: 'failed',
+        error: { code: 'invalid_input', message: expect.stringContaining('lb1') },
+      });
+    }
+    expect(requested.some((url) => url.pathname === '/1/lists/lb1/cards')).toBe(false);
   });
 
   it('refuses a query over twenty terms and a page over one hundred cards', async () => {
