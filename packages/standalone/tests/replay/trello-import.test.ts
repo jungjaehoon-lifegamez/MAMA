@@ -28,6 +28,87 @@ function action(id: string, date: string) {
 }
 
 describe('collect-only Trello replay import', () => {
+  it('stores each action as a readable line and keeps the action in metadata', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mama-replay-trello-'));
+    roots.push(root);
+    const configPath = join(root, 'connectors.json');
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        trello: {
+          enabled: true,
+          pollIntervalMinutes: 5,
+          channels: { 'board-canonical': { role: 'truth', boardId: 'board-a' } },
+          auth: { type: 'token' },
+        },
+      }),
+      'utf8'
+    );
+    const move = {
+      id: 'action-move',
+      type: 'updateCard',
+      date: '2026-09-02T01:00:00.000Z',
+      data: {
+        board: { id: 'board-a', name: 'Board' },
+        card: { id: 'card-a', name: 'Still 01' },
+        listBefore: { id: 'list-a', name: 'Submitted' },
+        listAfter: { id: 'list-b', name: 'Month-end delivery' },
+        old: { idList: 'list-a' },
+      },
+      idMemberCreator: 'member-a',
+      memberCreator: { id: 'member-a', fullName: 'Member A' },
+    };
+    const comment = {
+      id: 'action-comment',
+      type: 'commentCard',
+      date: '2026-09-02T02:00:00.000Z',
+      data: {
+        board: { id: 'board-a' },
+        card: { id: 'card-a', name: 'Still 01' },
+        text: 'Fixed\nthanks',
+      },
+      idMemberCreator: 'member-a',
+      memberCreator: { id: 'member-a', fullName: 'Member A' },
+    };
+    let calls = 0;
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1;
+      return new Response(JSON.stringify(calls === 1 ? [comment, move] : []), { status: 200 });
+    };
+    const raw = new RawStore(join(root, 'raw'));
+    try {
+      await importTrelloActions({
+        connectorsConfigPath: configPath,
+        rawStore: raw,
+        rawIndexSink: (connector: string, items: Array<{ sourceId: string }>) =>
+          items.map((item) => ({
+            sourceId: item.sourceId,
+            observationRef: `observation:${connector}:${item.sourceId}`,
+          })),
+        timeZone: 'Asia/Seoul',
+        fetchImpl,
+        credentials: { apiKey: 'key', token: 'token' },
+        observedAtMs: Date.parse('2026-09-06T00:00:00.000Z'),
+        fromMs: Date.parse('2026-09-01T00:00:00.000Z'),
+        untilMs: Date.parse('2026-09-06T00:00:00.000Z'),
+      });
+      const stored = new Map(raw.query('trello', new Date(0)).map((item) => [item.sourceId, item]));
+      expect(stored.get('action-move')?.content).toBe(
+        'Still 01 | Month-end delivery (from: Submitted) | Member A'
+      );
+      expect(stored.get('action-comment')?.content).toBe(
+        'Still 01 | comment: Fixed / thanks | Member A'
+      );
+      expect(stored.get('action-move')?.metadata).toMatchObject({
+        actionType: 'updateCard',
+        data: move.data,
+        memberCreator: move.memberCreator,
+      });
+    } finally {
+      raw.close();
+    }
+  });
+
   it('pages beyond 1,000 actions and keeps stable action identities', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mama-replay-trello-'));
     roots.push(root);
