@@ -91,15 +91,6 @@ export interface OperatorTaskDetail {
   revisions: OperatorTaskRevision[];
 }
 
-export interface TaskPatch {
-  status?: TaskStatus;
-  priority?: TaskPriority;
-  assignee?: string | null;
-  due_date?: string | null;
-  due_at?: string | null;
-  confirmed?: boolean;
-}
-
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { 'content-type': 'application/json' },
@@ -123,11 +114,6 @@ export const api = {
   },
   getTaskDetail: (commitmentId: string) =>
     request<OperatorTaskDetail>(`/api/viewer/tasks/${encodeURIComponent(commitmentId)}`),
-  updateTask: (id: number, patch: TaskPatch) =>
-    request<{ ok: true; task: OperatorTask }>(`/api/operator/tasks/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(patch),
-    }),
 };
 
 /**

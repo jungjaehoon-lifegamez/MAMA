@@ -1,15 +1,6 @@
-import type { OperatorTask, TaskPatch, TaskStatus } from '../api/client';
+import type { OperatorTask, TaskStatus } from '../api/client';
 import { presentTaskTemporal, type TaskTemporalCategory } from '../lib/task-temporal';
 import { formatRelativeTime } from '../lib/time';
-
-const TASK_STATUSES: TaskStatus[] = [
-  'pending',
-  'in_progress',
-  'review',
-  'blocked',
-  'done',
-  'cancelled',
-];
 
 const STATUS_CLASSES: Record<TaskStatus, string> = {
   pending: 'bg-surface-secondary text-text-secondary',
@@ -37,13 +28,6 @@ const TEMPORAL_CLASSES: Record<TaskTemporalCategory, string> = {
 interface TaskRowProps {
   task: OperatorTask;
   now: number;
-  pending: boolean;
-  error?: string;
-  onPatch: (task: OperatorTask, patch: TaskPatch) => void;
-  /**
-   * Opening the detail drawer is a dedicated action, never a side effect of
-   * clicking the row: an owner mutation must not ride on a navigation click.
-   */
   onOpenDetails: (task: OperatorTask, opener: HTMLElement) => void;
 }
 
@@ -51,14 +35,7 @@ function statusLabel(status: TaskStatus): string {
   return status.replace('_', ' ');
 }
 
-export default function TaskRow({
-  task,
-  now,
-  pending,
-  error,
-  onPatch,
-  onOpenDetails,
-}: TaskRowProps) {
+export default function TaskRow({ task, now, onOpenDetails }: TaskRowProps) {
   const unconfirmed = task.auto_created && !task.confirmed;
   const temporal = presentTaskTemporal({
     temporalState: task.temporal_state,
@@ -83,19 +60,11 @@ export default function TaskRow({
         )}
       </td>
       <td className="px-3 py-3 whitespace-nowrap">
-        <select
-          aria-label={`Status for task ${task.id}`}
-          value={task.status}
-          disabled={pending}
-          onChange={(event) => onPatch(task, { status: event.target.value as TaskStatus })}
-          className={`rounded-full border-0 px-2 py-1 text-xs font-medium disabled:opacity-50 ${STATUS_CLASSES[task.status]}`}
+        <span
+          className={`rounded-full px-2 py-1 text-xs font-medium ${STATUS_CLASSES[task.status]}`}
         >
-          {TASK_STATUSES.map((status) => (
-            <option key={status} value={status}>
-              {statusLabel(status)}
-            </option>
-          ))}
-        </select>
+          {statusLabel(task.status)}
+        </span>
       </td>
       <td className="px-3 py-3 whitespace-nowrap">
         <span
@@ -134,25 +103,7 @@ export default function TaskRow({
           >
             View details
           </button>
-          {unconfirmed && (
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() => onPatch(task, { confirmed: true })}
-              className="rounded-lg bg-agent px-2.5 py-1.5 text-xs font-medium text-on-agent hover:bg-agent-hover disabled:opacity-50 focus:ring-2 focus:ring-agent-strong"
-            >
-              {pending ? 'Saving...' : 'Approve'}
-            </button>
-          )}
         </div>
-        {error && (
-          <div
-            role="alert"
-            className="mt-1 max-w-48 whitespace-normal text-[11px] text-warning-text"
-          >
-            {error}
-          </div>
-        )}
       </td>
     </tr>
   );
