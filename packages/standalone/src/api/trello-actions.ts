@@ -58,7 +58,7 @@ function boardNamed(
   const configured = connector.boards();
   if (!configured.some((board) => board.key === key)) {
     throw invalid(
-      `trello.read board ${key} is not configured; boards: ${configured.map((board) => board.key).join(', ')}`
+      `trello.read board ${key} is not configured; boards: ${permitted.map((board) => board.key).join(', ')}`
     );
   }
   const board = permitted.find((candidate) => candidate.key === key);

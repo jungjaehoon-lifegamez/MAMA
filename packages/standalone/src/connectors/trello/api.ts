@@ -92,7 +92,9 @@ export class TrelloApi {
       if (
         page.length < ACTION_PAGE_SIZE ||
         oldest === undefined ||
-        actionTime(oldest) <= window.fromMs
+        // A full page whose oldest action sits exactly at the start can have same-millisecond
+        // actions on the next page; only an older one proves the window is read.
+        actionTime(oldest) < window.fromMs
       ) {
         break;
       }
