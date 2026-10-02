@@ -241,6 +241,13 @@ describe('W1 runtime configuration', () => {
         delivery: { ...telegram.delivery!, notifications: 'discord' },
       })
     ).toThrow(/delivery.notifications targets discord/);
+    // The notice text is not a route: a configured notice must not fail startup.
+    expect(() =>
+      validateDeliveryRoutes({
+        ...telegram,
+        delivery: { ...telegram.delivery!, interrupted_notice: 'Interrupted; please resend.' },
+      })
+    ).not.toThrow();
   });
 
   it('loads YAML from an explicit path and fails on a missing required section', () => {
