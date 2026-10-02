@@ -95,6 +95,8 @@ export interface OwnerRuntimeOptions {
   onStimulusFailed?: StimulusDeliveryOptions['onFailed'];
   onStimulusUncertain?: StimulusDeliveryOptions['onUncertain'];
   onStimulusDead?: StimulusDeliveryOptions['onDead'];
+  /** Live only: closes rows parked uncertain once their remaining duty has a place. */
+  closeUncertain?: StimulusDeliveryOptions['closeUncertain'];
   /** Record-order outcomes (recorded, retry, lost); the daemon logs them. */
   onRecordOrderEvent?: (event: RecordOrderEvent) => void;
   /** Lesson recall for a turn; defaults to memory.search over the owner's guidance. */
@@ -388,6 +390,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         : { onUncertain: options.onStimulusUncertain }),
       ...(options.onStimulusDead === undefined ? {} : { onDead: options.onStimulusDead }),
       ...(options.onStimulusSkipped === undefined ? {} : { onSkipped: options.onStimulusSkipped }),
+      ...(options.closeUncertain === undefined ? {} : { closeUncertain: options.closeUncertain }),
       sessionStart: (row) =>
         readSessionStartInput({
           mailbox: intakeRuntime.mailbox!,

@@ -274,6 +274,67 @@ describe('record orders', () => {
     expect(accepted).toEqual([]);
   });
 
+  it('takes over an interrupted live delta: recorded, ordered within the day, lost after it', async () => {
+    // The shape a live collector stored before this change, with its extra fields.
+    const legacy = {
+      stimulusId: 'source_delta:legacy',
+      channelKey: 'source:calendar:primary',
+      payload: {
+        channel: 'primary',
+        coalesceKey: 'calendar:primary',
+        collector: 'calendar',
+        kind: 'calendar',
+        preview: ['event moved'],
+        refs: [
+          {
+            connector: 'calendar',
+            contentHash: 'hash-1',
+            metadata: { status: 'confirmed' },
+            observationRef: 'obs-legacy',
+            observedAt: new Date().toISOString(),
+            sourceAt: new Date(Date.now() + 30 * DAY).toISOString(),
+            sourceEntityId: 'event-1',
+            sourceId: 'event-1:v2',
+          },
+        ],
+      },
+    };
+    const interrupted = (source: typeof delta | typeof legacy, createdAt: number) =>
+      ({ ...(deltaRow(source as typeof delta) as object), createdAt }) as never;
+
+    const fresh = orders(await database());
+    expect(fresh.port.onDeltaLost(interrupted(legacy, Date.now()))).toBe('ordered');
+    expect(fresh.accepted.map((stimulus) => stimulus.id)).toEqual([
+      `record:${legacy.stimulusId}:1`,
+    ]);
+
+    const citedAdapter = await database();
+    revise(citedAdapter, 'obs-1');
+    const cited = orders(citedAdapter);
+    expect(cited.port.onDeltaLost(interrupted(delta, Date.now()))).toBe('recorded');
+    expect(cited.accepted).toEqual([]);
+    expect(cited.events).toEqual([
+      { type: 'recorded', deltaStimulusId: delta.stimulusId, attempt: 0 },
+    ]);
+
+    // An older batch is not recorded now: its facts would come back stale.
+    const old = orders(await database());
+    expect(old.port.onDeltaLost(interrupted(delta, Date.now() - DAY - 1))).toBe('lost');
+    expect(old.accepted).toEqual([]);
+    expect(old.events[0]).toMatchObject({
+      type: 'lost',
+      reason: 'the delta came in more than a day ago',
+    });
+
+    const empty = orders(await database());
+    const bare = { ...delta, payload: { refs: [{ contentPreview: 'a' }] } };
+    expect(empty.port.onDeltaLost(interrupted(bare as typeof delta, Date.now()))).toBe('lost');
+    expect(empty.events[0]).toMatchObject({
+      type: 'lost',
+      reason: 'the interrupted delta carries no observation to record',
+    });
+  });
+
   it('refuses a live delta with no observation to record', async () => {
     const { port } = orders(await database());
     expect(() =>

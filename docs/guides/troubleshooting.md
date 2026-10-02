@@ -90,6 +90,13 @@ entries. Native parent and child tool traces carry their owning model run.
 `delta report route=` and `record order recorded|waiting|retry|lost` distinguish stages. A stored task proves a write, not a sent
 reply; inspect the delivery receipt and the owner-visible result separately.
 
+A turn cut off midway (a timeout or a restart) is never run again, because its
+effects cannot be proven safe to repeat. It is logged as `stimulus parked uncertain`.
+The owner gets a notice for an interrupted message, and an interrupted source change
+goes to the record check, unless it came in more than a day ago. Once its follow-up
+has a place the input closes with `stimulus closed after uncertain ... follow_up=`.
+To retry an interrupted request, send it again.
+
 If delivery is uncertain, check its original operation before sending again. Keep
 IDs in private diagnostics and provide a redacted error plus the reproduction
 steps when reporting a defect.
