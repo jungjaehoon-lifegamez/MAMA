@@ -11,6 +11,15 @@ import {
 import { dirname } from 'node:path';
 import type { TelegramChunkFormat } from './telegram-format.js';
 
+/**
+ * Told to the owner when a turn on their message was cut off. The turn is not rerun, since its
+ * effects cannot be proven safe to repeat; `delivery.interrupted_notice` gives it in the owner's words.
+ */
+export const DEFAULT_INTERRUPTED_NOTICE =
+  'The previous processing attempt was interrupted. It was not rerun because its external ' +
+  'side effects could not be proven safe to repeat. Please send a new message if you want to ' +
+  'retry it.';
+
 export type OwnerMessageState = 'processing' | 'ready' | 'delivered' | 'failed';
 
 export interface OwnerMessageLedgerEntry {

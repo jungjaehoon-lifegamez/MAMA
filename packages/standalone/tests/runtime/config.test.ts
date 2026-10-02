@@ -218,6 +218,13 @@ describe('W1 runtime configuration', () => {
         delivery: { reports: 'email', notifications: 'telegram', security_alerts: 'telegram' },
       })
     ).toThrow(/delivery.reports/);
+    expect(
+      parseConfig({ ...base, delivery: { interrupted_notice: 'Interrupted; please resend.' } })
+        .delivery
+    ).toMatchObject({ reports: 'telegram', interrupted_notice: 'Interrupted; please resend.' });
+    expect(() => parseConfig({ ...base, delivery: { interrupted_notice: ' ' } })).toThrow(
+      /delivery.interrupted_notice/
+    );
   });
 
   it('fails startup when a delivery route names a disabled or unconfigured messenger', () => {

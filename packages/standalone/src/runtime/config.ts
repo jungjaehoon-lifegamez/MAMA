@@ -39,6 +39,8 @@ export interface W1DeliveryConfig {
   reports: MessengerName;
   notifications: MessengerName;
   security_alerts: MessengerName;
+  /** What the owner is told when a turn on their message was cut off, in the owner's words. */
+  interrupted_notice?: string;
 }
 
 export interface W1WikiConfig {
@@ -331,18 +333,28 @@ function parseMessenger(
 
 function parseDelivery(value: unknown, state: ParseState): W1DeliveryConfig {
   const raw = value === undefined ? {} : object(value, 'delivery');
-  collectIgnoredKeys(raw, ['reports', 'notifications', 'security_alerts'], 'delivery', state);
-  const route = (key: keyof W1DeliveryConfig): MessengerName => {
+  collectIgnoredKeys(
+    raw,
+    ['reports', 'notifications', 'security_alerts', 'interrupted_notice'],
+    'delivery',
+    state
+  );
+  const route = (key: 'reports' | 'notifications' | 'security_alerts'): MessengerName => {
     const selected = raw[key] ?? 'telegram';
     if (selected !== 'telegram' && selected !== 'discord' && selected !== 'slack') {
       throw new ConfigError(`delivery.${key} must be telegram, discord, or slack`);
     }
     return selected;
   };
+  const notice = raw.interrupted_notice;
+  if (notice !== undefined && (typeof notice !== 'string' || notice.trim() === '')) {
+    throw new ConfigError('delivery.interrupted_notice must be nonblank text');
+  }
   return {
     reports: route('reports'),
     notifications: route('notifications'),
     security_alerts: route('security_alerts'),
+    ...(notice === undefined ? {} : { interrupted_notice: notice }),
   };
 }
 

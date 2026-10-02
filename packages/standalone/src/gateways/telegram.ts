@@ -21,6 +21,7 @@ import {
   TelegramMessageLedger,
   type OwnerMessageLedger,
   type TelegramMessageLedgerEntry,
+  DEFAULT_INTERRUPTED_NOTICE,
 } from './telegram-message-ledger.js';
 import { TelegramResponsePresenter } from './telegram-response-presenter.js';
 import {
@@ -34,10 +35,6 @@ import { downloadTelegramFiles, telegramFiles } from './telegram-attachments.js'
 
 const TELEGRAM_MAX_LENGTH = 4096;
 const MESSAGE_DEDUP_TTL_MS = 60_000;
-const INTERRUPTED_RESPONSE =
-  'The previous processing attempt was interrupted. It was not rerun because its external ' +
-  'side effects could not be proven safe to repeat. Please send a new message if you want to ' +
-  'retry it.';
 
 type TelegramMessage = NonNullable<Context['message']>;
 type TelegramApi = Bot['api'];
@@ -62,6 +59,8 @@ export interface TelegramGatewayOptions {
   downloadsDir?: string;
   log?: (line: string) => void;
   onFatalError?: (error: unknown) => void;
+  /** What the owner is told when a turn on their message was cut off. */
+  interruptedNotice?: string;
 }
 
 function entityOptions<T>(entities: TelegramFormattedText['entities']): T {
@@ -145,6 +144,7 @@ export class TelegramGateway extends BaseGateway {
   private readonly filesRoot?: string;
   private readonly downloadsDir?: string;
   private readonly log: (line: string) => void;
+  private readonly interruptedNotice: string;
   private readonly onFatalError: (error: unknown) => void;
   private readonly messageLedger: TelegramMessageLedger;
   private readonly chatTails = new Map<string, Promise<void>>();
@@ -183,6 +183,7 @@ export class TelegramGateway extends BaseGateway {
         });
       });
     this.log = options.log ?? ((line) => console.log(line));
+    this.interruptedNotice = options.interruptedNotice ?? DEFAULT_INTERRUPTED_NOTICE;
     const ledgerPath = options.messageLedgerPath ?? process.env.MAMA_TELEGRAM_MESSAGE_LEDGER_PATH;
     if (!options.messageLedger && !ledgerPath?.trim()) {
       throw new Error('Telegram message ledger path is required');
@@ -390,7 +391,7 @@ export class TelegramGateway extends BaseGateway {
     if (durable?.state === 'processing' && this.activePresenters.has(ref)) return;
     if (durable?.state === 'processing' && this.intake.isPending?.(ref)) return;
     if (durable?.state === 'processing') {
-      this.messageLedger.markReady(ref, INTERRUPTED_RESPONSE, 'html-v1');
+      this.messageLedger.markReady(ref, this.interruptedNotice, 'html-v1');
       await this.deliverReadyEntry(ref);
       return;
     }
@@ -530,7 +531,7 @@ export class TelegramGateway extends BaseGateway {
           continue;
         }
         if (entry.state === 'processing' && !this.intake.isPending?.(entry.key)) {
-          this.messageLedger.markReady(entry.key, INTERRUPTED_RESPONSE, 'html-v1');
+          this.messageLedger.markReady(entry.key, this.interruptedNotice, 'html-v1');
           await this.deliverReadyEntry(entry.key);
         }
       } catch (error) {

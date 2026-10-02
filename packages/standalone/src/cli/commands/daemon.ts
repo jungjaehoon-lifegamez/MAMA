@@ -632,6 +632,9 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         },
         messageLedgerPath: ledgerPath,
         messageLedger,
+        ...(config.delivery?.interrupted_notice === undefined
+          ? {}
+          : { interruptedNotice: config.delivery.interrupted_notice }),
         log: (line) => logger.info(line),
         onFatalError: (error) => {
           logger.error(`telegram fatal polling error=${stimulusFailureReason(error)}`);
@@ -660,6 +663,9 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         },
         messageLedgerPath: ledgerPath,
         messageLedger,
+        ...(config.delivery?.interrupted_notice === undefined
+          ? {}
+          : { interruptedNotice: config.delivery.interrupted_notice }),
         filesRoot,
         downloadsDir: paths.downloadsDir,
         log: (line) => logger.info(line),
@@ -686,6 +692,9 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         },
         messageLedgerPath: ledgerPath,
         messageLedger,
+        ...(config.delivery?.interrupted_notice === undefined
+          ? {}
+          : { interruptedNotice: config.delivery.interrupted_notice }),
         filesRoot,
         downloadsDir: paths.downloadsDir,
         log: (line) => logger.info(line),

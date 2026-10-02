@@ -5,7 +5,7 @@ import { AttachmentBuilder, Client, Events, GatewayIntentBits, Partials } from '
 import { BaseGateway } from './base-gateway.js';
 import type { JsonValue } from '@jungjaehoon/mama-core/knowledge';
 import type { OwnerMessageInput, TurnIntake } from './turn-contract.js';
-import { OwnerMessageLedger } from './telegram-message-ledger.js';
+import { DEFAULT_INTERRUPTED_NOTICE, OwnerMessageLedger } from './telegram-message-ledger.js';
 import { splitForDiscord } from './message-splitter.js';
 import { openWorkspaceFile, workspaceFileIdentity } from '../api/file-delivery.js';
 import type { OwnerFileDeliveryResult } from '../api/file-delivery.js';
@@ -26,6 +26,8 @@ export interface DiscordGatewayOptions {
   downloadsDir?: string;
   filesRoot?: string;
   log?: (line: string) => void;
+  /** What the owner is told when a turn on their message was cut off. */
+  interruptedNotice?: string;
 }
 
 /** Owner-only Discord transport. It accepts messages into the shared owner turn contract. */
@@ -34,12 +36,14 @@ export class DiscordGateway extends BaseGateway {
   private readonly client: Client;
   private readonly ledger: OwnerMessageLedger;
   private readonly log: (line: string) => void;
+  private readonly interruptedNotice: string;
   private readonly activeInputs = new Set<string>();
   private readonly deliveryTails = new Map<string, Promise<void>>();
 
   constructor(private readonly options: DiscordGatewayOptions) {
     super({ intake: options.intake });
     this.log = options.log ?? console.log;
+    this.interruptedNotice = options.interruptedNotice ?? DEFAULT_INTERRUPTED_NOTICE;
     this.ledger =
       options.messageLedger ?? new OwnerMessageLedger(options.messageLedgerPath, { log: this.log });
     this.client = new Client({
@@ -104,8 +108,8 @@ export class DiscordGateway extends BaseGateway {
           continue;
         }
         if (source && entry.state === 'processing' && !this.intake.isPending?.(entry.key)) {
-          this.ledger.markReady(entry.key, INTERRUPTED_RESPONSE);
-          await this.deliverResponse(entry.key, INTERRUPTED_RESPONSE);
+          this.ledger.markReady(entry.key, this.interruptedNotice);
+          await this.deliverResponse(entry.key, this.interruptedNotice);
         } else if (entry.state === 'ready' && entry.response !== undefined) {
           if (source) await this.deliverResponse(entry.key, entry.response);
           else
@@ -334,8 +338,6 @@ export class DiscordGateway extends BaseGateway {
     if (!this.connected) throw new Error('Discord gateway not connected');
   }
 }
-const INTERRUPTED_RESPONSE =
-  'The previous processing attempt was interrupted. It was not rerun because its external side effects could not be proven safe to repeat. Please send a new message if you want to retry it.';
 function hash(kind: string, value: string): string {
   return createHash('sha256').update(`${kind}\0${value}`).digest('hex');
 }
