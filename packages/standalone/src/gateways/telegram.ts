@@ -248,6 +248,10 @@ export class TelegramGateway extends BaseGateway {
     return this.messageLedger.recentDeliveredMessageRefs();
   }
 
+  answered(sourceRef: string): boolean {
+    return this.messageLedger.get(sourceRef)?.state === 'delivered';
+  }
+
   /** Final response callback used by the owner runtime after a native turn settles. */
   async deliverResponse(sourceRef: string, response: string): Promise<void> {
     const chatId = chatIdFromSourceMessageRef(sourceRef);

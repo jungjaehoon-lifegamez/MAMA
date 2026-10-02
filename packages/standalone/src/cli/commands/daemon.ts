@@ -69,6 +69,8 @@ export interface DaemonLogger {
 
 export interface DaemonGateway {
   recentDeliveredMessageRefs(): string[];
+  /** This owner message has a delivered answer, an interruption notice included. */
+  answered(sourceRef: string): boolean;
   recoverPendingResponses(): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -481,6 +483,14 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
               if (!selected)
                 throw new Error('Owner messenger is not available for an interrupted response');
               await selected.recoverPendingResponses();
+            },
+            closeUncertain: {
+              ownerAnswered: (row) =>
+                gateways.get(sourceForRef(row.stimulusId))?.answered(row.stimulusId) ?? false,
+              onClosed: (row, followUp) =>
+                logger.info(
+                  `stimulus closed after uncertain kind=${row.kind ?? 'unknown'} mailbox_id=${row.id} follow_up=${followUp}`
+                ),
             },
             onSourceResult: deliverSourceResponse,
             onScheduledResult: async (row, result) => {
