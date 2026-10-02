@@ -6,7 +6,7 @@ import { WebClient } from '@slack/web-api';
 import { BaseGateway } from './base-gateway.js';
 import type { JsonValue } from '@jungjaehoon/mama-core/knowledge';
 import type { OwnerMessageInput, TurnIntake } from './turn-contract.js';
-import { OwnerMessageLedger } from './telegram-message-ledger.js';
+import { DEFAULT_INTERRUPTED_NOTICE, OwnerMessageLedger } from './telegram-message-ledger.js';
 import { splitForSlack } from './message-splitter.js';
 import { openWorkspaceFile, workspaceFileIdentity } from '../api/file-delivery.js';
 import type { OwnerFileDeliveryResult } from '../api/file-delivery.js';
@@ -46,6 +46,8 @@ export interface SlackGatewayOptions {
   downloadsDir?: string;
   filesRoot?: string;
   log?: (line: string) => void;
+  /** What the owner is told when a turn on their message was cut off. */
+  interruptedNotice?: string;
 }
 
 /** Owner-only Slack Socket Mode transport. */
@@ -55,12 +57,14 @@ export class SlackGateway extends BaseGateway {
   private readonly api: WebClient;
   private readonly ledger: OwnerMessageLedger;
   private readonly log: (line: string) => void;
+  private readonly interruptedNotice: string;
   private readonly activeInputs = new Set<string>();
   private readonly deliveryTails = new Map<string, Promise<void>>();
 
   constructor(private readonly options: SlackGatewayOptions) {
     super({ intake: options.intake });
     this.log = options.log ?? console.log;
+    this.interruptedNotice = options.interruptedNotice ?? DEFAULT_INTERRUPTED_NOTICE;
     this.socket = new SocketModeClient({ appToken: options.appToken });
     this.api = new WebClient(options.token);
     this.ledger =
@@ -139,8 +143,8 @@ export class SlackGateway extends BaseGateway {
           continue;
         }
         if (source && entry.state === 'processing' && !this.intake.isPending?.(entry.key)) {
-          this.ledger.markReady(entry.key, INTERRUPTED_RESPONSE);
-          await this.deliverResponse(entry.key, INTERRUPTED_RESPONSE);
+          this.ledger.markReady(entry.key, this.interruptedNotice);
+          await this.deliverResponse(entry.key, this.interruptedNotice);
         } else if (entry.state === 'ready' && entry.response !== undefined) {
           if (source) await this.deliverResponse(entry.key, entry.response);
           else
@@ -365,8 +369,6 @@ export class SlackGateway extends BaseGateway {
     if (!this.connected) throw new Error('Slack gateway not connected');
   }
 }
-const INTERRUPTED_RESPONSE =
-  'The previous processing attempt was interrupted. It was not rerun because its external side effects could not be proven safe to repeat. Please send a new message if you want to retry it.';
 function sourceRefChannel(value: string): string {
   if (!value.startsWith('slack:')) throw new Error('Slack source message reference is invalid');
   const parts = value.split(':');

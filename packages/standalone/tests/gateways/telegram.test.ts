@@ -82,7 +82,8 @@ function intakeFor(received: OwnerMessageInput[]): TurnIntake {
 async function gatewayFor(
   intake: TurnIntake,
   ledgerPath?: string,
-  filesRoot?: string
+  filesRoot?: string,
+  interruptedNotice?: string
 ): Promise<TelegramGateway> {
   const root = mkdtempSync(join(tmpdir(), 'mama-telegram-fixture-'));
   temporaryRoots.push(root);
@@ -98,6 +99,7 @@ async function gatewayFor(
       polling: false,
     },
     ...(filesRoot === undefined ? {} : { filesRoot }),
+    ...(interruptedNotice === undefined ? {} : { interruptedNotice }),
   });
   await gateway.start();
   return gateway;
@@ -513,6 +515,24 @@ describe('TelegramGateway', () => {
     expect(received).toHaveLength(1);
     expect(seams.api.sendMessage).toHaveBeenCalledTimes(1);
     expect(seams.api.editMessageText).toHaveBeenCalledTimes(1);
+    await gateway.stop();
+  });
+
+  it("tells the owner about an interrupted turn in the configured words, in the request's reply slot", async () => {
+    const received: OwnerMessageInput[] = [];
+    const gateway = await gatewayFor(intakeFor(received), undefined, undefined, 'Cut off; resend.');
+    const handler = seams.handlers.get('message');
+    await handler!({ message: message() });
+
+    // The runtime no longer holds the message (no isPending): recovery sends the notice.
+    await gateway.recoverPendingResponses();
+
+    expect(seams.api.sendMessage).toHaveBeenCalledTimes(1);
+    expect(seams.api.editMessageText).toHaveBeenCalledWith(
+      7,
+      expect.any(Number),
+      'Cut off; resend.'
+    );
     await gateway.stop();
   });
 
