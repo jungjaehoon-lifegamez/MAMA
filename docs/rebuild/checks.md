@@ -1471,3 +1471,21 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Live: the daemon restarted on main `ccafa34c2` at 13:42 KST and logged no "parked uncertain" line (11 at each start before) and no error; the 11 rows stay `uncertain` in the database.
 - Released mama-core 5.2.0, mama-os 0.61.1 and plugin 2.1.4 (run 36817003414, tag `v0.61.1`). On this machine `claude plugin update` moved to 2.1.4; its SessionStart, run as a new session would run it on a copy of the development memory, installed mama-core 5.2.0 into the plugin data folder and exited 0 (2.6 s); PreToolUse exited 2 with related decisions and PreCompact 0 with its `systemMessage`; no abort line.
 - Still open: an `uncertain` row has no exit except a stored result (11 rows stay parked; settling them is an administration decision). The Chatwork failures themselves are not diagnosed yet; the next one names its cause.
+
+### W32 done: past months pushed as complete history (2026-10-02)
+
+- Result: `mama backfill` (#374) pushed the six months the reference data covers (March to August) into the testbed, newest month first, each read from the chats and the work board, judged by the development session and pushed through the owner actions. Continuing items keep their later state (`appliesUntil`); `work.list` with `asOf` answers inside each period.
+- Evidence: every month was pushed to a copy first and read back (continuing items unchanged now and correct at the month end, new titles found once, edges and lessons counted), then live with a clean `daemon.log`. All 477 revisions of the last month cite evidence and none cites a line later than itself. Plans, files and numbers stay in the testbed (`~/.mama/runtime/backfill/`).
+- Still fails: the months were read in reverse, so a deliverable's FIX that happened in the next month was never attached (found by the closing pass below). No owner question has been asked against the backfilled months yet.
+
+### Work left open by the backfill closed by the owner's rules (2026-10-02)
+
+- Result: the owner set two rules: a month-scoped item closes at that month's last day, and an item whose time has passed is closed (a check result may be missing from the source); the same task is continued if it comes up again. 82 items were closed with `work.revise` carrying `eventDatetime`, so `asOf` reads stay right; FIX and delivery moves found on the work board were cited at their own time.
+- Evidence: a copy first, then live; each close read back through `work.list` detail with `asOf` one minute before (open) and after (done); open items fell from 112 to 35, none with a last event before September except one plan whose period has not ended.
+- Still open: the live agent follows the rule only once the owner states it in an owner chat turn.
+
+### Imported Trello history reads as lines (#381) and a listed channel works as a filter (#382) (2026-10-02)
+
+- Result: imported Trello actions are stored as `card | list (from: previous) | who`, the poller's shape, with the whole action kept in metadata; the replay day window shows that line instead of parsing JSON. `source.recent` and `source.search` return the stored channel value as `channel`, the display name as `channelName`, and `source.recent` keeps `key` for its own input.
+- Evidence: tests that fail on the old code (an imported move and comment, the replay window, a real-database round trip from `source.recent` to `source.search`); a remote review found the replay window's JSON parse, fixed before merge. Live after both merges (main `50fe779ce`, daemon restarted with a clean `daemon.log`): the testbed's 10,359 imported rows were rewritten in place with the daemon stopped (content only; hashes, observation ids and index sequence maxima unchanged); on a copy of the live databases `source.read` of a cited action passed its hash check and read as a line, the Slack channel the 2026-10-01 turn could not filter returned its hits when passed from `source.recent`, and the replay day window read a backfilled day.
+- Still open: the live poller and the import still write two Trello shapes (snapshot changes and actions), and the agent has no Trello read of its own; how Trello state should be kept is the owner's next decision.
