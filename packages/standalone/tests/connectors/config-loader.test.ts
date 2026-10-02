@@ -78,7 +78,6 @@ describe('connector config loader', () => {
     const root = mkdtempSync(join(tmpdir(), 'connector-factory-'));
     roots.push(root);
     const paths = {
-      trelloStatePath: join(root, 'trello-state.json'),
       kagemushaDbPath: join(root, 'kagemusha.db'),
       connectorStatePath: join(root, 'connector-state.json'),
       imessageDbPath: join(root, 'chat.db'),

@@ -94,7 +94,6 @@ export interface DaemonPaths {
   credentialPath: string;
   connectorsConfigPath: string;
   connectorsRoot: string;
-  trelloStatePath: string;
   kagemushaDbPath: string;
   ownerMessageLedgerPath: string;
 }
@@ -264,7 +263,6 @@ function pathsFor(configPath: string, config: W1Config): DaemonPaths {
     credentialPath: sessionCredentialPath(mamaRoot),
     connectorsConfigPath: join(mamaRoot, 'connectors.json'),
     connectorsRoot,
-    trelloStatePath: join(connectorsRoot, 'trello-state.json'),
     // Kagemusha's own database, read-only (archive connector: ~/.kagemusha/kagemusha.db).
     kagemushaDbPath: join(dirname(mamaRoot), '.kagemusha', 'kagemusha.db'),
     ownerMessageLedgerPath: join(runtimeRoot, 'owner-message-ledger.json'),
@@ -608,7 +606,6 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         : {}),
       rawPath: paths.connectorsRoot,
       statePath: paths.connectorsRoot,
-      trelloStatePath: paths.trelloStatePath,
       kagemushaDbPath: paths.kagemushaDbPath,
       coreAdapter: owner.database?.adapter,
       acceptSourceDelta,
