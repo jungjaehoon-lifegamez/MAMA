@@ -10,6 +10,7 @@ import {
   type ReplaySourceEvent,
 } from '../../src/replay/replay-source-catalog.js';
 import type { WindowQueue } from '../../src/replay/window-queue.js';
+import { trelloActionLine } from '../../src/connectors/trello/action-line.js';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
 
 const HOUR = 60 * 60 * 1_000;
@@ -191,16 +192,16 @@ describe('ReplaySourceCatalog', () => {
       ...overrides,
     });
     const longText = 'x'.repeat(900);
-    const trelloAction = JSON.stringify({
+    const trelloAction = {
       type: 'updateCard',
       memberCreator: { fullName: 'board member' },
       data: {
         board: { name: 'board-name' },
-        card: { name: 'asset-card', due: '2026-09-30T07:00:00.000Z' },
+        card: { name: 'asset-card' },
         listBefore: { name: 'waiting' },
         listAfter: { name: 'submitted' },
       },
-    });
+    };
     const adapter = {
       prepare: () => ({
         all: () => [
@@ -218,8 +219,12 @@ describe('ReplaySourceCatalog', () => {
             observation_ref: 'obs-2',
             channel_key: 'board-1',
             author: 'trello',
-            content: trelloAction,
-            metadata_json: JSON.stringify({ actionType: 'updateCard' }),
+            content: trelloActionLine(trelloAction),
+            metadata_json: JSON.stringify({
+              actionType: trelloAction.type,
+              data: trelloAction.data,
+              memberCreator: trelloAction.memberCreator,
+            }),
           }),
           row({
             connector: 'trello',
@@ -245,7 +250,7 @@ describe('ReplaySourceCatalog', () => {
     expect(action).toMatchObject({
       channelName: 'client board',
       author: 'board member',
-      contentPreview: 'updateCard · card "asset-card" · list waiting → submitted · due 2026-09-30',
+      contentPreview: 'asset-card | submitted (from: waiting) | board member',
     });
   });
 });

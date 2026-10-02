@@ -141,37 +141,6 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-/**
- * A Trello action is stored as its API JSON; the day window shows what happened to which
- * card (type, card, list before → after, due, attachment, member, comment). The JSON stays
- * in the raw store, one source.read away.
- */
-function trelloActionLine(content: string): { line: string; actor: string } {
-  const action = record(JSON.parse(content) as unknown);
-  const data = record(action.data);
-  const card = record(data.card);
-  const parts = [text(action.type) || 'action'];
-  const cardName = text(card.name);
-  if (cardName) parts.push(`card "${cardName}"`);
-  const before = text(record(data.listBefore).name);
-  const after = text(record(data.listAfter).name);
-  if (before || after) parts.push(`list ${before || '?'} → ${after || '?'}`);
-  else if (text(record(data.list).name)) parts.push(`list ${text(record(data.list).name)}`);
-  if (typeof card.due === 'string') parts.push(`due ${card.due.slice(0, 10)}`);
-  if (card.dueComplete === true) parts.push('due complete');
-  const attachment = text(record(data.attachment).name);
-  if (attachment) parts.push(`attachment ${attachment}`);
-  const member = text(record(data.member).name);
-  if (member) parts.push(`member ${member}`);
-  const source = text(record(data.cardSource).name);
-  if (source) parts.push(`copied from "${source}"`);
-  const changed = Object.keys(record(data.old));
-  if (changed.length > 0 && !(before || after)) parts.push(`changed ${changed.join(',')}`);
-  const comment = text(data.text);
-  if (comment) parts.push(`comment: ${comment}`);
-  return { line: parts.join(' · '), actor: text(record(action.memberCreator).fullName) };
-}
-
 function channelNameFor(
   connector: string,
   channelKey: string,
@@ -209,11 +178,10 @@ function rowToEvent(
   }
   if (row.observed_at_ms !== null) assertEpochMs(row.observed_at_ms, 'observedAtMs');
   const metadata = parseMetadata(row.metadata_json);
-  const trello =
-    row.connector === 'trello' && typeof metadata?.actionType === 'string'
-      ? trelloActionLine(row.content)
-      : null;
-  const author = trello?.actor || row.author;
+  // An imported Trello action is stored as a readable line under the connector's name; the
+  // person who acted is in the action the metadata keeps.
+  const actor = row.connector === 'trello' ? text(record(metadata?.memberCreator).fullName) : '';
+  const author = actor || row.author;
   const channelName = channelNameFor(row.connector, row.channel_key, channelNames);
   const event: ReplaySourceEvent = {
     connector: row.connector,
@@ -224,7 +192,7 @@ function rowToEvent(
     rawRowId: row.raw_row_id,
     ...(author ? { author } : {}),
     ...(channelName === undefined ? {} : { channelName }),
-    contentPreview: trello?.line ?? row.content,
+    contentPreview: row.content,
     ...(row.observed_at_ms === null ? {} : { observedAtMs: row.observed_at_ms }),
     ...(row.source_entity_id === null ? {} : { sourceEntityId: row.source_entity_id }),
     contentHash: hashText(row.content_hash),
