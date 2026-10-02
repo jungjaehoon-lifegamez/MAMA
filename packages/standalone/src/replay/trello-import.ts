@@ -1,6 +1,5 @@
 import type { RawIndexSink, RawStore } from '../storage/source-archive.js';
 import { loadConnectorConfig } from '../connectors/config-loader.js';
-import { canonicalizeJSON } from '@jungjaehoon/mama-core/canonicalize';
 import {
   assertRawProjectionQueuesEmpty,
   drainRawProjections,
@@ -9,6 +8,7 @@ import {
 } from './import-manifest.js';
 import { existsSync } from 'node:fs';
 import { localDateKey } from '../runtime/timezone.js';
+import { trelloActionLine } from '../connectors/trello/action-line.js';
 
 const IMPORT_FROM_MS = Date.parse('2026-09-01T00:00:00.000+09:00');
 const ACTION_PAGE_SIZE = 1_000;
@@ -85,7 +85,7 @@ function actionItem(
     sourceEntityId: `${board.boardId}:${cardId}`,
     channel: board.key,
     author: 'trello',
-    content: canonicalizeJSON(action),
+    content: trelloActionLine(action),
     timestamp: new Date(actionTime(action)),
     type: 'kanban_card' as const,
     observedAt: observedAtMs,
