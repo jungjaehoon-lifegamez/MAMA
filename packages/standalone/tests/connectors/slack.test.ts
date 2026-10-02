@@ -26,6 +26,12 @@ const config: ConnectorConfig = {
 };
 const roots: string[] = [];
 
+// A realistic poll time: history is read from 30 days before it.
+const SINCE = new Date(Date.UTC(2026, 0, 31));
+const SINCE_S = SINCE.getTime() / 1000;
+const LOOKBACK_S = 30 * 24 * 60 * 60;
+const ts = (offsetSeconds: number): string => (SINCE_S + offsetSeconds).toFixed(6);
+
 describe('SlackConnector', () => {
   beforeEach(() => {
     process.env[envName] = 'fixture-slack-token';
@@ -52,18 +58,18 @@ describe('SlackConnector', () => {
   it('polls paginated history through the SDK and resolves authors', async () => {
     slack.history
       .mockResolvedValueOnce({
-        messages: [{ ts: '20.000', user: 'user-key', text: 'source-content' }],
+        messages: [{ ts: ts(5), user: 'user-key', text: 'source-content' }],
         response_metadata: { next_cursor: 'next-page' },
       })
       .mockResolvedValueOnce({
-        messages: [{ ts: '21.000', user: 'user-key', text: 'second-content' }],
+        messages: [{ ts: ts(6), user: 'user-key', text: 'second-content' }],
         response_metadata: { next_cursor: '' },
       });
     slack.usersInfo.mockResolvedValue({ user: { real_name: 'actor-a' } });
     const connector = new SlackConnector(config);
     await connector.init();
     expect(slack.WebClient).toHaveBeenCalledWith('fixture-slack-token');
-    const items = await connector.poll(new Date(15_000));
+    const items = await connector.poll(SINCE);
     expect(items).toHaveLength(2);
     expect(items[0]).toMatchObject({
       source: 'slack',
@@ -72,12 +78,12 @@ describe('SlackConnector', () => {
     });
     expect(slack.history).toHaveBeenNthCalledWith(1, {
       channel: 'channel-key',
-      oldest: '0.000000',
+      oldest: (SINCE_S - LOOKBACK_S).toFixed(6),
       limit: 200,
     });
     expect(slack.history).toHaveBeenNthCalledWith(2, {
       channel: 'channel-key',
-      oldest: '0.000000',
+      oldest: (SINCE_S - LOOKBACK_S).toFixed(6),
       limit: 200,
       cursor: 'next-page',
     });
@@ -321,38 +327,26 @@ describe('SlackConnector', () => {
   });
 
   it('reads replies posted only in a thread that started before the poll window', async () => {
-    const since = new Date(40 * 24 * 60 * 60 * 1000);
-    const sinceSeconds = since.getTime() / 1000;
+    const parent = ts(-5 * 24 * 60 * 60);
     slack.history.mockResolvedValue({
       messages: [
         {
-          ts: String(sinceSeconds - 5 * 24 * 60 * 60),
+          ts: parent,
           user: 'user-key',
           text: 'thread-parent',
-          thread_ts: String(sinceSeconds - 5 * 24 * 60 * 60),
+          thread_ts: parent,
           reply_count: 3,
-          latest_reply: String(sinceSeconds + 20),
+          latest_reply: ts(20),
         },
       ],
       response_metadata: { next_cursor: '' },
     });
-    const parentTs = String(sinceSeconds - 5 * 24 * 60 * 60);
     slack.replies.mockResolvedValue({
       messages: [
-        { ts: parentTs, user: 'user-key', text: 'thread-parent', thread_ts: parentTs },
-        {
-          ts: String(sinceSeconds + 10),
-          user: 'user-key',
-          text: 'thread-reply',
-          thread_ts: parentTs,
-        },
-        {
-          ts: String(sinceSeconds + 20),
-          user: 'user-key',
-          text: 'bot-reply',
-          thread_ts: parentTs,
-          bot_id: 'bot-key',
-        },
+        { ts: parent, user: 'user-key', text: 'thread-parent', thread_ts: parent },
+        { ts: ts(-10), user: 'user-key', text: 'reply-before-window', thread_ts: parent },
+        { ts: ts(10), user: 'user-key', text: 'thread-reply', thread_ts: parent },
+        { ts: ts(20), user: 'user-key', text: 'bot-reply', thread_ts: parent, bot_id: 'bot-key' },
       ],
       response_metadata: { next_cursor: '' },
     });
@@ -360,50 +354,75 @@ describe('SlackConnector', () => {
     const connector = new SlackConnector(config);
     await connector.init();
 
-    const items = await connector.poll(since);
+    const items = await connector.poll(SINCE);
 
     expect(slack.history).toHaveBeenCalledWith({
       channel: 'channel-key',
-      oldest: (sinceSeconds - 30 * 24 * 60 * 60).toFixed(6),
+      oldest: (SINCE_S - LOOKBACK_S).toFixed(6),
       limit: 200,
     });
     expect(slack.replies).toHaveBeenCalledWith({
       channel: 'channel-key',
-      ts: parentTs,
-      oldest: sinceSeconds.toFixed(6),
+      ts: parent,
+      oldest: SINCE_S.toFixed(6),
       limit: 200,
     });
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({
-      sourceId: `channel-key:${sinceSeconds + 10}`,
+      sourceId: `channel-key:${ts(10)}`,
       content: 'thread-reply',
       author: 'actor-a',
-      metadata: { channelId: 'channel-key', threadTs: parentTs },
+      metadata: { channelId: 'channel-key', threadTs: parent },
     });
+  });
+
+  it('takes a thread started inside the window once, with its replies', async () => {
+    slack.history.mockResolvedValue({
+      messages: [
+        { ts: ts(5), user: 'user-key', text: 'new-parent', reply_count: 1, latest_reply: ts(8) },
+      ],
+      response_metadata: { next_cursor: '' },
+    });
+    slack.replies.mockResolvedValue({
+      messages: [
+        { ts: ts(5), user: 'user-key', text: 'new-parent', thread_ts: ts(5) },
+        { ts: ts(8), user: 'user-key', text: 'new-reply', thread_ts: ts(5) },
+      ],
+      response_metadata: { next_cursor: '' },
+    });
+    const connector = new SlackConnector(config);
+    await connector.init();
+
+    const items = await connector.poll(SINCE);
+
+    expect(items.map((item) => item.sourceId)).toEqual([
+      `channel-key:${ts(5)}`,
+      `channel-key:${ts(8)}`,
+    ]);
   });
 
   it('takes a reply also sent to the channel from history once and skips quiet threads', async () => {
     slack.history.mockResolvedValue({
       messages: [
         {
-          ts: '10.000',
+          ts: ts(-20),
           user: 'user-key',
           text: 'quiet-parent',
           reply_count: 1,
-          latest_reply: '12.000',
+          latest_reply: ts(-2),
         },
         {
-          ts: '11.000',
+          ts: ts(-10),
           user: 'user-key',
           text: 'active-parent',
           reply_count: 1,
-          latest_reply: '30.000',
+          latest_reply: ts(30),
         },
         {
-          ts: '30.000',
+          ts: ts(30),
           user: 'user-key',
           text: 'broadcast-reply',
-          thread_ts: '11.000',
+          thread_ts: ts(-10),
           subtype: 'thread_broadcast',
         },
       ],
@@ -411,12 +430,12 @@ describe('SlackConnector', () => {
     });
     slack.replies.mockResolvedValue({
       messages: [
-        { ts: '11.000', user: 'user-key', text: 'active-parent', thread_ts: '11.000' },
+        { ts: ts(-10), user: 'user-key', text: 'active-parent', thread_ts: ts(-10) },
         {
-          ts: '30.000',
+          ts: ts(30),
           user: 'user-key',
           text: 'broadcast-reply',
-          thread_ts: '11.000',
+          thread_ts: ts(-10),
           subtype: 'thread_broadcast',
         },
       ],
@@ -425,10 +444,62 @@ describe('SlackConnector', () => {
     const connector = new SlackConnector(config);
     await connector.init();
 
-    const items = await connector.poll(new Date(15_000));
+    const items = await connector.poll(SINCE);
 
     expect(items.map((item) => item.content)).toEqual(['broadcast-reply']);
     expect(slack.replies).toHaveBeenCalledTimes(1);
-    expect(slack.replies).toHaveBeenCalledWith(expect.objectContaining({ ts: '11.000' }));
+    expect(slack.replies).toHaveBeenCalledWith(expect.objectContaining({ ts: ts(-10) }));
+  });
+
+  it("pages through a thread's replies", async () => {
+    slack.history.mockResolvedValue({
+      messages: [
+        { ts: ts(-10), user: 'user-key', text: 'parent', reply_count: 2, latest_reply: ts(12) },
+      ],
+      response_metadata: { next_cursor: '' },
+    });
+    slack.replies
+      .mockResolvedValueOnce({
+        messages: [
+          { ts: ts(-10), user: 'user-key', text: 'parent', thread_ts: ts(-10) },
+          { ts: ts(11), user: 'user-key', text: 'first-reply', thread_ts: ts(-10) },
+        ],
+        response_metadata: { next_cursor: 'reply-page' },
+      })
+      .mockResolvedValueOnce({
+        messages: [{ ts: ts(12), user: 'user-key', text: 'second-reply', thread_ts: ts(-10) }],
+        response_metadata: { next_cursor: '' },
+      });
+    const connector = new SlackConnector(config);
+    await connector.init();
+
+    const items = await connector.poll(SINCE);
+
+    expect(items.map((item) => item.content)).toEqual(['first-reply', 'second-reply']);
+    expect(slack.replies).toHaveBeenNthCalledWith(2, {
+      channel: 'channel-key',
+      ts: ts(-10),
+      oldest: SINCE_S.toFixed(6),
+      limit: 200,
+      cursor: 'reply-page',
+    });
+  });
+
+  it('fails the poll when a thread read fails, as a history failure does', async () => {
+    slack.history.mockResolvedValue({
+      messages: [
+        { ts: ts(-10), user: 'user-key', text: 'parent', reply_count: 1, latest_reply: ts(12) },
+      ],
+      response_metadata: { next_cursor: '' },
+    });
+    slack.replies.mockRejectedValue(new Error('thread request failed'));
+    const connector = new SlackConnector(config);
+    await connector.init();
+
+    await expect(connector.poll(SINCE)).rejects.toThrow(/one or more configured channels/i);
+    expect(await connector.healthCheck()).toMatchObject({
+      lastPollTime: null,
+      error: 'thread request failed',
+    });
   });
 });

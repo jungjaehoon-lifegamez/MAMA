@@ -177,7 +177,7 @@ export class SlackConnector implements IConnector {
     const oldest = (since.getTime() / 1000).toFixed(6);
     // History is read back THREAD_LOOKBACK_MS so a thread started before `since` still shows its
     // newest reply time; only messages after `since` become items.
-    const historyOldest = (Math.max(0, since.getTime() - THREAD_LOOKBACK_MS) / 1000).toFixed(6);
+    const historyOldest = ((since.getTime() - THREAD_LOOKBACK_MS) / 1000).toFixed(6);
 
     for (const [channelId, channelConfig] of Object.entries(this.config.channels)) {
       if (channelConfig.role === 'ignore') continue;
