@@ -99,7 +99,7 @@ function recentAction(ports: ReportReadPorts): ActionRegistration {
     contract: {
       name: 'source.recent',
       summary:
-        'See which channels changed since a time, then read the ones that matter. Without channels it lists every granted channel that changed: its key, change count and latest line; with channels (keys from that list) it returns their latest perChannel lines with observation refs to open with source.read. since takes epoch milliseconds, an ISO time or a duration such as "24h ago", and defaults to 24 hours. failedConnectors names sources whose last poll failed, so a failure is not read as no change. It reads the stored index, not the live provider; more channels than cap or more than 20,000 changes fails as invalid input, so narrow since.',
+        'See which channels changed since a time, then read the ones that matter. Without channels it lists every granted channel that changed: channel (the stored value source.search filters on), channelName when the source names it, key, change count and latest line; with channels (keys from that list) it returns their latest perChannel lines with observation refs to open with source.read. since takes epoch milliseconds, an ISO time or a duration such as "24h ago", and defaults to 24 hours. failedConnectors names sources whose last poll failed, so a failure is not read as no change. It reads the stored index, not the live provider; more channels than cap or more than 20,000 changes fails as invalid input, so narrow since.',
       inputSchema: {
         type: 'object',
         additionalProperties: false,
@@ -117,7 +117,8 @@ function recentAction(ports: ReportReadPorts): ActionRegistration {
             minItems: 1,
             maxItems: 10,
             items: { type: 'string', minLength: 1 },
-            description: 'Channel keys from the list to read lines from, e.g. ["chat:room-a"].',
+            description:
+              'Channel keys (key, not channel) from the list to read lines from, e.g. ["chat:room-a"].',
           },
           perChannel: {
             type: 'integer',
@@ -182,6 +183,7 @@ function recentAction(ports: ReportReadPorts): ActionRegistration {
         {
           source: string;
           channel: string;
+          channelName?: string;
           key: string;
           count: number;
           latest: Record<string, unknown> | null;
@@ -191,13 +193,18 @@ function recentAction(ports: ReportReadPorts): ActionRegistration {
       for (const row of visible) {
         const metadata = decodeMetadata(row.metadata_json);
         const source = String(row.source_connector);
+        // channel is the stored value that grants and source.search filter on; the display name
+        // rides beside it, so a listed channel can be passed to source.search as it is.
         const channelKey = String(row.channel ?? '');
-        const label =
-          typeof metadata.channelName === 'string' ? metadata.channelName : channelKey || source;
+        const channelName =
+          typeof metadata.channelName === 'string' && metadata.channelName !== channelKey
+            ? metadata.channelName
+            : undefined;
         const key = `${source}:${channelKey}`;
         const group = groups.get(key) ?? {
           source,
-          channel: label,
+          channel: channelKey,
+          ...(channelName === undefined ? {} : { channelName }),
           key,
           count: 0,
           latest: null,
@@ -285,7 +292,9 @@ function recentAction(ports: ReportReadPorts): ActionRegistration {
           `source.recent found changes in ${groups.size} channels, more than cap ${cap}; narrow since or cap`
         );
       const sorted = [...groups.values()].sort(
-        (a, b) => a.source.localeCompare(b.source) || a.channel.localeCompare(b.channel)
+        (a, b) =>
+          a.source.localeCompare(b.source) ||
+          (a.channelName ?? a.channel).localeCompare(b.channelName ?? b.channel)
       );
       return {
         since: new Date(since).toISOString(),
@@ -293,18 +302,20 @@ function recentAction(ports: ReportReadPorts): ActionRegistration {
         scanned: visible.length,
         channels:
           requested === null
-            ? sorted.map(({ source, channel, key, count, latest }) => ({
+            ? sorted.map(({ source, channel, channelName, key, count, latest }) => ({
                 source,
                 channel,
+                ...(channelName === undefined ? {} : { channelName }),
                 key,
                 count,
                 latest,
               }))
             : sorted
                 .filter((group) => requested.has(group.key))
-                .map(({ source, channel, key, count, lines }) => ({
+                .map(({ source, channel, channelName, key, count, lines }) => ({
                   source,
                   channel,
+                  ...(channelName === undefined ? {} : { channelName }),
                   key,
                   count,
                   lines,

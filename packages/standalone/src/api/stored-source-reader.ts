@@ -203,6 +203,9 @@ export function createStoredSourceReader(options: StoredSourceReaderOptions): St
                 raw_id: hit.raw_id,
                 source_id: hit.source_id,
                 channel_id: hit.channel_id,
+                ...(typeof hit.metadata?.channelName === 'string'
+                  ? { channel_name: hit.metadata.channelName }
+                  : {}),
                 author_label: hit.author_label,
                 source_at: hit.source_at,
                 observed_at: hit.observed_at,

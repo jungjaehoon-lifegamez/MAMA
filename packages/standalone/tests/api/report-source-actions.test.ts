@@ -144,7 +144,9 @@ describe('report source reads', () => {
         channels: [
           {
             source: 'chat',
-            channel: 'Room A',
+            channel: 'room-a',
+            channelName: 'Room A',
+            key: 'chat:room-a',
             count: 1,
             latest: {
               author: 'Writer',
