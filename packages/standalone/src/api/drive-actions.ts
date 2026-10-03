@@ -74,6 +74,8 @@ export function driveId(value: unknown, field: string): string {
     if (/^[\w-]+$/.test(text)) return text;
     throw invalid(`${field} must be a Drive id or link`);
   }
+  if (/\/d\/e\//.test(text))
+    throw invalid(`${field} is a published link, which carries no file id`);
   const found =
     /\/(?:d|folders)\/([\w-]+)/.exec(text)?.[1] ?? /[?&]id=([\w-]+)/.exec(text)?.[1] ?? null;
   if (found === null) throw invalid(`${field} names no Drive file: ${text}`);
@@ -102,24 +104,41 @@ function fileView(file: DriveFile) {
 
 export function driveActionRegistrations(ports: DriveActionPorts): ActionRegistration[] {
   const gws = ports.gws ?? execGwsAsync;
-  const list = async (params: Record<string, unknown>): Promise<DriveFile[]> => {
-    const result = (await gws(
-      [
-        'drive',
-        'files',
-        'list',
-        '--params',
-        JSON.stringify({
-          ...params,
-          corpora: 'allDrives',
-          supportsAllDrives: true,
-          includeItemsFromAllDrives: true,
-          fields: `files(${FILE_FIELDS})`,
-        }),
-      ],
-      { maxBuffer: LIST_BUFFER }
-    )) as { files?: DriveFile[] };
-    return result.files ?? [];
+  /**
+   * Pages until `max` entries or the end, because Drive may return short or empty pages before
+   * the end. `incomplete` is Drive's own incompleteSearch: some drives were not searched.
+   */
+  const list = async (
+    params: Record<string, unknown>,
+    max: number
+  ): Promise<{ files: DriveFile[]; more: boolean; incomplete: boolean }> => {
+    const files: DriveFile[] = [];
+    let incomplete = false;
+    let pageToken: string | undefined;
+    do {
+      const page = (await gws(
+        [
+          'drive',
+          'files',
+          'list',
+          '--params',
+          JSON.stringify({
+            ...params,
+            pageSize: max - files.length,
+            ...(pageToken === undefined ? {} : { pageToken }),
+            corpora: 'allDrives',
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true,
+            fields: `nextPageToken,incompleteSearch,files(${FILE_FIELDS})`,
+          }),
+        ],
+        { maxBuffer: LIST_BUFFER }
+      )) as { files: DriveFile[]; nextPageToken?: string; incompleteSearch?: boolean };
+      files.push(...page.files);
+      incomplete ||= page.incompleteSearch === true;
+      pageToken = page.nextPageToken;
+    } while (pageToken !== undefined && files.length < max);
+    return { files, more: pageToken !== undefined, incomplete };
   };
   const metadata = async (id: string): Promise<DriveFile> =>
     (await gws([
@@ -136,7 +155,7 @@ export function driveActionRegistrations(ports: DriveActionPorts): ActionRegistr
         name: 'drive.read',
         readsConnector: { fixed: 'drive' },
         summary:
-          'Read Google Drive live. drives lists the shared drives; browse lists a folder (folder: a folder id, a shared drive id, a folder link or "root" for My Drive; path walks subfolders by name; name narrows by text), at most 100 entries; file reads one file by id or Drive/Docs link (name, type, size, modified time and editor, link); search finds files by name or content across all drives (text; limit up to 50), newest first. Nothing is stored; fetch a file with drive.download.',
+          'Read Google Drive live. drives lists the shared drives; browse lists a folder (folder: a folder id, a shared drive id, a folder link or "root" for My Drive; path walks subfolders by name; name keeps entries with a word in their name starting with it), at most 100 entries; file reads one file by id or Drive/Docs link (name, type, size, modified time and editor, link); search finds files by name or content across all drives (text; limit up to 50), newest first, with more when further results exist. incomplete means Drive did not search every drive. Nothing is stored; fetch a file with drive.download.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -156,7 +175,8 @@ export function driveActionRegistrations(ports: DriveActionPorts): ActionRegistr
             name: {
               type: 'string',
               minLength: 1,
-              description: 'Text the entry names contain, e.g. "draft".',
+              description:
+                'The start of a word in the entry names (Drive matches word beginnings), e.g. "draft".',
             },
             file: {
               type: 'string',
@@ -166,7 +186,8 @@ export function driveActionRegistrations(ports: DriveActionPorts): ActionRegistr
             text: {
               type: 'string',
               minLength: 1,
-              description: 'Words in a file name or content, e.g. "feedback".',
+              description:
+                'The start of a word in a file name, or words in its content, e.g. "feedback".',
             },
             limit: {
               type: 'integer',
@@ -187,50 +208,79 @@ export function driveActionRegistrations(ports: DriveActionPorts): ActionRegistr
         const values = input as Record<string, unknown>;
         switch (values.view) {
           case 'drives': {
-            const result = (await gws([
-              'drive',
-              'drives',
-              'list',
-              '--params',
-              JSON.stringify({ pageSize: 100, fields: 'drives(id,name)' }),
-            ])) as { drives?: Array<{ id: string; name: string }> };
-            return { drives: result.drives ?? [] };
+            const drives: Array<{ id: string; name: string }> = [];
+            let pageToken: string | undefined;
+            do {
+              const page = (await gws([
+                'drive',
+                'drives',
+                'list',
+                '--params',
+                JSON.stringify({
+                  pageSize: 100,
+                  ...(pageToken === undefined ? {} : { pageToken }),
+                  fields: 'nextPageToken,drives(id,name)',
+                }),
+              ])) as { drives: Array<{ id: string; name: string }>; nextPageToken?: string };
+              drives.push(...page.drives);
+              pageToken = page.nextPageToken;
+            } while (pageToken !== undefined);
+            return { drives };
           }
           case 'browse': {
             let folder = driveId(values.folder, 'folder');
             const path = typeof values.path === 'string' ? values.path : undefined;
             for (const segment of (path ?? '').split('/').filter(Boolean)) {
-              const [next] = await list({
-                q: `${quoted(folder)} in parents and name = ${quoted(segment)} and mimeType = '${FOLDER}' and trashed = false`,
-                pageSize: 1,
-              });
-              if (next === undefined) throw invalid(`No folder named "${segment}" in ${folder}`);
-              folder = next.id;
+              const { files: found } = await list(
+                {
+                  q: `${quoted(folder)} in parents and name = ${quoted(segment)} and mimeType = '${FOLDER}' and trashed = false`,
+                },
+                2
+              );
+              if (found.length === 0) throw invalid(`No folder named "${segment}" in ${folder}`);
+              if (found.length > 1) {
+                throw invalid(
+                  `Two folders named "${segment}" in ${folder} (${found.map((entry) => entry.id).join(', ')}); browse ${folder} and choose one`
+                );
+              }
+              folder = found[0].id;
             }
             const name = typeof values.name === 'string' ? values.name : undefined;
-            const entries = await list({
-              q: `${quoted(folder)} in parents and trashed = false${name === undefined ? '' : ` and name contains ${quoted(name)}`}`,
-              pageSize: BROWSE_MAX + 1,
-              orderBy: 'folder,name',
-            });
-            if (entries.length > BROWSE_MAX) {
+            const listed = await list(
+              {
+                q: `${quoted(folder)} in parents and trashed = false${name === undefined ? '' : ` and name contains ${quoted(name)}`}`,
+                orderBy: 'folder,name',
+              },
+              BROWSE_MAX + 1
+            );
+            if (listed.files.length > BROWSE_MAX) {
               throw invalid(
                 `Folder ${folder} has more than ${BROWSE_MAX} entries; narrow it with name or path`
               );
             }
-            return { folder, entries: entries.map(fileView) };
+            return {
+              folder,
+              entries: listed.files.map(fileView),
+              incomplete: listed.incomplete,
+            };
           }
           case 'file':
             return { file: fileView(await metadata(driveId(values.file, 'file'))) };
           case 'search': {
             if (typeof values.text !== 'string') throw invalid('drive.read search needs text');
             const text = quoted(values.text);
-            const files = await list({
-              q: `(name contains ${text} or fullText contains ${text}) and trashed = false`,
-              pageSize: values.limit === undefined ? 20 : Number(values.limit),
-              orderBy: 'modifiedTime desc',
-            });
-            return { files: files.map(fileView) };
+            const found = await list(
+              {
+                q: `(name contains ${text} or fullText contains ${text}) and trashed = false`,
+                orderBy: 'modifiedTime desc',
+              },
+              values.limit === undefined ? 20 : Number(values.limit)
+            );
+            return {
+              files: found.files.map(fileView),
+              more: found.more,
+              incomplete: found.incomplete,
+            };
           }
           default:
             throw invalid('drive.read view must be drives, browse, file or search');
@@ -294,13 +344,18 @@ export function driveActionRegistrations(ports: DriveActionPorts): ActionRegistr
               ],
           { timeoutMs: 120_000 }
         );
+        const size = statSync(targetPath).size;
+        // An export has no size of its own to compare; a stored file must arrive whole.
+        if (exported === undefined && file.size !== undefined && size !== Number(file.size)) {
+          throw new Error(`Downloaded ${file.id} is ${size} bytes; Drive lists ${file.size}`);
+        }
         return {
           file: file.id,
           name: file.name,
           type: file.mimeType,
           exportedAs: exported?.mimeType ?? null,
           path: targetPath,
-          size: statSync(targetPath).size,
+          size,
         };
       },
     },
