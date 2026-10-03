@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createCatalog, createDispatcher, type ActionContext } from '@jungjaehoon/mama-core';
@@ -22,6 +22,7 @@ const files: Record<string, Record<string, unknown>> = {
     webViewLink: 'https://drive.google.com/file/d/bin1/view',
   },
   short1: { id: 'short1', name: 'cut.pdf', mimeType: 'application/pdf', size: '9' },
+  stop1: { id: 'stop1', name: 'stopped.pdf', mimeType: 'application/pdf', size: '4' },
   slash1: { id: 'slash1', name: 'a/b.pdf', mimeType: 'application/pdf', size: '4' },
   sheet1: { id: 'sheet1', name: 'Tracker', mimeType: SHEET },
   sheet2: { id: 'sheet2', name: 'Plan.XLSX', mimeType: SHEET },
@@ -56,7 +57,8 @@ const fakeGws: GwsCall = async (args, options) => {
     return file;
   }
   if (command === 'drive files get' || command === 'drive files export') {
-    writeFileSync(args[args.indexOf('--output') + 1], 'data');
+    writeFileSync(args[args.indexOf('--output') + 1], params.fileId === 'stop1' ? 'da' : 'data');
+    if (params.fileId === 'stop1') throw new Error('gws drive files get timed out after 120000 ms');
     return { status: 'success' };
   }
   throw new Error(`unexpected ${command}`);
@@ -254,7 +256,7 @@ describe('drive.read and drive.download', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it('fetches a stored file with alt=media into the downloads directory and checks its size', async () => {
+  it('fetches a stored file with alt=media into the downloads directory, checks its size and leaves no partial file', async () => {
     const dispatch = dispatcher();
     const result = await dispatch(
       { action: 'drive.download', input: { file: 'https://drive.google.com/open?id=bin1' } },
@@ -280,6 +282,11 @@ describe('drive.read and drive.download', () => {
       status: 'failed',
       error: { message: expect.stringContaining('Drive lists 9') },
     });
+    expect(existsSync(join(home, 'drive', 'short1_cut.pdf'))).toBe(false);
+    expect(
+      await dispatch({ action: 'drive.download', input: { file: 'stop1' } }, { access: owner })
+    ).toMatchObject({ status: 'failed', error: { message: expect.stringContaining('timed out') } });
+    expect(existsSync(join(home, 'drive', 'stop1_stopped.pdf'))).toBe(false);
   });
 
   it('exports a Google spreadsheet as xlsx and refuses folders and other native types', async () => {
