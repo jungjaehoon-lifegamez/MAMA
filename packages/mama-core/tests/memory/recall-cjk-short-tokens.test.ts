@@ -12,7 +12,12 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { closeDB, getAdapter, initDB } from '../../src/db-manager.js';
-import { getLexicalQueryTokens, recallMemory, saveJudgmentRecord } from '../../src/memory/api.js';
+import {
+  getLexicalQueryTokens,
+  recallMemory,
+  saveJudgmentRecord,
+  topicAffinityBoost,
+} from '../../src/memory/api.js';
 import type { MemoryScopeRef } from '../../src/memory/types.js';
 
 // Korean text lives in a fixture: the pre-commit guard keeps it out of .ts files.
@@ -36,6 +41,17 @@ describe('lexical query tokens', () => {
 
   it('keeps two-character Japanese and Chinese words and letter-digit tokens', () => {
     expect(getLexicalQueryTokens('修正 FB v2')).toEqual(['修正', 'fb', 'v2']);
+  });
+
+  it('drops two-character tokens that carry punctuation or are one character', () => {
+    // '#修' would reach FTS5 MATCH unquoted and raise a syntax error; '𠮷' is one character
+    // written as two UTF-16 code units.
+    expect(getLexicalQueryTokens('#修 正/ @資 𠮷')).toEqual([]);
+  });
+
+  it('matches a short Latin token against whole topic words only', () => {
+    expect(topicAffinityBoost('project_plan', ['pr'], 'pr')).toBe(0);
+    expect(topicAffinityBoost('pr_review', ['pr'], 'pr')).toBeGreaterThan(0);
   });
 
   it('still drops two-letter English words and single characters', () => {

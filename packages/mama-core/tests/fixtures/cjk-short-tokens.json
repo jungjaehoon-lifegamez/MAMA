@@ -1,5 +1,5 @@
 {
-  "_note": "Korean text for the CJK lexical tests; the pre-commit guard keeps Korean out of .ts files. Synthetic, no owner data.",
+  "_note": "Korean text for the CJK lexical tests; the pre-commit guard keeps Korean out of .ts files. Generic phrases modelled on an owner-turn query, with no names or other owner data.",
   "roundQuery": "경과 정리 클라이언트 피드백(FB) 4회 FIX",
   "roundQueryTokens": ["경과", "정리", "클라이언트", "피드백", "fb", "4회", "fix"],
   "roundRecords": {
@@ -9,5 +9,6 @@
   },
   "singleCharacterQuery": "여러 번 a 5",
   "singleCharacterTokens": ["여러"],
-  "longKoreanQuery": "클라이언트 수정 요청이 계속 돌아온 작업 사례"
+  "longKoreanQuery": "클라이언트 수정 요청이 계속 돌아온 작업 사례",
+  "particleText": "클라이언트 FB가 두 번 왔다."
 }

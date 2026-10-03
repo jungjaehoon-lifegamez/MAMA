@@ -10,13 +10,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 // Korean text lives in a fixture: the pre-commit guard keeps it out of .ts files.
-const { longKoreanQuery } = JSON.parse(
+const { longKoreanQuery, particleText } = JSON.parse(
   fs.readFileSync(new URL('../fixtures/cjk-short-tokens.json', import.meta.url), 'utf8')
-) as { longKoreanQuery: string };
+) as { longKoreanQuery: string; particleText: string };
 
 const generateEmbeddingMock = vi.fn();
 const vectorSearchMock = vi.fn();
 const fts5SearchMock = vi.fn();
+let decisionRows: Array<Record<string, unknown>> = [];
 
 vi.mock('../../src/embedding/embedder.js', () => ({
   generateEmbedding: generateEmbeddingMock,
@@ -27,8 +28,13 @@ vi.mock('../../src/embedding/embedder.js', () => ({
 vi.mock('../../src/db-manager.js', () => ({
   initDB: vi.fn(async () => {}),
   getAdapter: vi.fn(() => ({
-    prepare() {
-      return { all: () => [], get: () => undefined };
+    prepare(sql: string) {
+      return {
+        // Rows for the in-memory lexical scan; nothing else is stored.
+        all: () =>
+          sql.includes('FROM decisions') && !sql.includes("'$.amended'") ? decisionRows : [],
+        get: () => undefined,
+      };
     },
   })),
   insertDecisionWithEmbedding: vi.fn(),
@@ -59,6 +65,7 @@ describe('lexical confirmation for CJK queries', () => {
       }))
     );
     fts5SearchMock.mockResolvedValue([]);
+    decisionRows = [];
   });
 
   it('runs lexical search for a long Korean query when vector search returned enough rows', async () => {
@@ -79,5 +86,46 @@ describe('lexical confirmation for CJK queries', () => {
     });
 
     expect(fts5SearchMock).not.toHaveBeenCalled();
+  });
+
+  it('runs lexical search for an English query whose short tokens are acronyms or versions', async () => {
+    const { recallMemory } = await import('../../src/memory/api.js');
+
+    // Kept short tokens raise the count to five; without them it is three, as before the change.
+    await recallMemory(getAdapter(), 'fix FB login bug v2', { includeRelated: false });
+
+    expect(fts5SearchMock).toHaveBeenCalled();
+  });
+
+  it('matches a short Latin token as a whole word in the in-memory scan', async () => {
+    vectorSearchMock.mockResolvedValue([]);
+    const row = (id: string, topic: string, text: string) => ({
+      id,
+      topic,
+      decision: text,
+      reasoning: text,
+      confidence: 0.8,
+      created_at: 100,
+      updated_at: 100,
+      trust_context: null,
+      kind: 'decision',
+      status: 'active',
+      summary: text,
+    });
+    decisionRows = [
+      row('mail-note', 'mail_notes', 'Email about the lunch order.'),
+      row('ai-policy', 'usage_policy', 'AI usage policy for the team.'),
+      // A Korean particle follows the acronym directly; it still counts as the word.
+      row('fb-particle', 'notes', particleText),
+    ];
+    const { recallMemory } = await import('../../src/memory/api.js');
+
+    const ai = await recallMemory(getAdapter(), 'AI policy', { includeRelated: false });
+    const fb = await recallMemory(getAdapter(), 'FB policy', { includeRelated: false });
+
+    const aiIds = ai.memories.map((memory) => memory.id);
+    expect(aiIds).toContain('ai-policy');
+    expect(aiIds).not.toContain('mail-note');
+    expect(fb.memories.map((memory) => memory.id)).toContain('fb-particle');
   });
 });
