@@ -35,6 +35,13 @@ describe('owner standing prompt', () => {
     );
   });
 
+  it('tells the agent Google Drive is read live through drive.read and drive.download', () => {
+    const files = ownerHelpTopics('claude', true).files;
+    expect(files).toContain(
+      '- Google Drive is read live: a Drive or Docs link in a message or card is read with drive.read (view file) and fetched with drive.download into the same downloads directory; a file known only by its name is found with drive.read (view search), and folders are listed with drive.read (view browse).'
+    );
+  });
+
   it('holds messenger syntax, boundaries, step-by-step work, continuity and tools; procedures are topics', () => {
     const prompt = ownerPrompt('codex');
     const topics = ownerHelpTopics('codex', true);
