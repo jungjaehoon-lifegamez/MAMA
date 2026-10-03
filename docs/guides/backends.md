@@ -21,9 +21,11 @@ variables from the daemon environment.
 
 ## Adjust a run
 
-`agent.effort`, `agent.max_turns`, `agent.timeout` (milliseconds), and
-`agent.run_token_budget` control the run. Setup writes `medium`, `100`, `300000`,
-and `0` respectively; a zero token budget imposes no run token cap. Supported
+`agent.effort`, `agent.max_turns`, `agent.timeout`, `agent.max_turn_ms` and
+`agent.run_token_budget` control the run. Setup writes `medium`, `100`, `600000`,
+`3600000` and `0` respectively. `agent.timeout` is how long a turn may go without progress
+(milliseconds; each step restarts it), `agent.max_turn_ms` is the longest a turn may run in
+all, and a zero token budget imposes no run token cap. Supported
 effort values depend on the selected backend and model. See the
 [configuration reference](../reference/configuration.md).
 

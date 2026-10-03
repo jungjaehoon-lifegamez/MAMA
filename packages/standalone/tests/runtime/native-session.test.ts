@@ -224,6 +224,7 @@ describe('one owner native session', () => {
       actionSurface: surface(),
       maxTurns: 41,
       timeout: 300_000,
+      maxTurnMs: 3_600_000,
       createAgent: (options) => {
         received = options;
         return model;
@@ -238,6 +239,7 @@ describe('one owner native session', () => {
       allowLoginShell: false,
       shellEnvironment: { PATH: process.env.PATH },
       requestTimeout: 300_000,
+      requestMaxMs: 3_600_000,
     });
     expect(received?.createSubagentBridge).toEqual(expect.any(Function));
     expect(received?.shellEnvironment).toEqual({ PATH: process.env.PATH });

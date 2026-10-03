@@ -97,8 +97,9 @@ describe('owner-only onboarding', () => {
     await runInit(options(p.adapter));
     const config = loadConfig({ home });
     expect(config.timezone).toBe('America/Los_Angeles');
-    // Kagemusha's turn limit; Jev stays off unless the owner chooses it.
-    expect(config.agent.timeout).toBe(900_000);
+    // 10 minutes without progress or an hour in all (owner, 2026-10-03); Jev stays off
+    // unless the owner chooses it.
+    expect(config.agent).toMatchObject({ timeout: 600_000, max_turn_ms: 3_600_000 });
     expect(config.jev.enabled).toBe(false);
     expect(existsSync(join(root, 'jev-key'))).toBe(false);
   });

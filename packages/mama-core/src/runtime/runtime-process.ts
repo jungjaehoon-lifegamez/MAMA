@@ -36,6 +36,8 @@ export interface CodexRuntimeProcessOptions {
   cwd?: string;
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   requestTimeout?: number;
+  /** The longest one turn may run in all, in ms (absent = no limit). */
+  requestMaxMs?: number;
   codexHome?: string;
   isolatedHome?: string;
   registryRoot?: string;
@@ -115,6 +117,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
       sandbox: options.sandbox ?? 'workspace-write',
       command: options.command,
       requestTimeout: options.requestTimeout,
+      ...(options.requestMaxMs === undefined ? {} : { requestMaxMs: options.requestMaxMs }),
       codexHome: options.codexHome,
       isolatedHome: options.isolatedHome,
       registryRoot: options.registryRoot,

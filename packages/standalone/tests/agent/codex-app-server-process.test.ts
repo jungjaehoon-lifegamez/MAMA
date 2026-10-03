@@ -2334,6 +2334,24 @@ describe('Story: Codex app-server process', () => {
     }
   });
 
+  it('stops a turn that keeps making progress once it runs past the whole-turn limit', async () => {
+    // Progress restarts the idle limit, so only requestMaxMs ends a turn that never stops.
+    const item = fixture('progress-reasoning');
+    const runner = new CodexAppServerProcess({
+      hostRootDir: '/tmp/mama-test-host',
+      ...item.options,
+      requestTimeout: 2_000,
+      requestMaxMs: 120,
+    });
+    try {
+      await expect(runner.prompt('endless reasoning')).rejects.toThrow(
+        'turn ran longer than 120ms'
+      );
+    } finally {
+      await runner.stop();
+    }
+  });
+
   it('serializes overlapping turns for the same session on the shared app-server', async () => {
     const item = fixture();
     const runtime = new CodexRuntimeProcess(item.options);

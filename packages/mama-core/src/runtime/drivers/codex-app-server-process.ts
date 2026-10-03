@@ -55,7 +55,10 @@ export interface CodexAppServerProcessOptions {
   cwd: string;
   sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
   command?: string;
+  /** How long a turn may go without progress, in ms; progress restarts it. */
   requestTimeout?: number;
+  /** The longest one turn may run in all, in ms (absent = no limit). */
+  requestMaxMs?: number;
   codexHome?: string;
   isolatedHome?: string;
   registryRoot?: string;
@@ -195,6 +198,8 @@ interface PendingTurn {
   agentMessagePhases: Map<string, 'commentary' | 'final_answer' | null>;
   usage: PromptResult['usage'];
   timer: NodeJS.Timeout;
+  /** The whole-turn limit; progress does not restart it. */
+  maxTimer?: NodeJS.Timeout;
   requestTimeout: number;
   queuedNotifications: Array<{ method: string; params: unknown }>;
   queuedToolRequests: ServerToolRequest[];
@@ -588,6 +593,7 @@ export class CodexAppServerProcess {
       | 'registryRoot'
     >
   > & {
+    requestMaxMs?: number;
     mcpConfigPath?: string;
     authSourcePath?: string;
     policyFingerprint?: string;
@@ -1376,12 +1382,22 @@ export class CodexAppServerProcess {
         this.timeoutTurn(threadId, error, requestTimeout);
       }, requestTimeout);
       timer.unref();
+      const maxMs = Math.max(0, this.options.requestMaxMs ?? 0);
+      const maxTimer =
+        maxMs > 0
+          ? setTimeout(() => {
+              const error = new Error(`Codex app-server turn ran longer than ${maxMs}ms`);
+              this.timeoutTurn(threadId, error, requestTimeout);
+            }, maxMs)
+          : undefined;
+      maxTimer?.unref();
       const pendingTurn: PendingTurn = {
         threadId,
         agentMessagePhases: new Map(),
         usage: { input_tokens: 0, output_tokens: 0 },
         runTokenBudget,
         timer,
+        ...(maxTimer === undefined ? {} : { maxTimer }),
         requestTimeout,
         queuedNotifications: [],
         queuedToolRequests: [],
@@ -1865,6 +1881,7 @@ export class CodexAppServerProcess {
     }
     this.turns.delete(turn.threadId);
     clearTimeout(turn.timer);
+    clearTimeout(turn.maxTimer);
     this.clearTurnCallbacks(turn);
     turn.resolve({
       response: turn.finalText ?? '',
@@ -2793,6 +2810,7 @@ export class CodexAppServerProcess {
     }
     this.turns.delete(threadId);
     clearTimeout(turn.timer);
+    clearTimeout(turn.maxTimer);
     turn.abortController.abort(error);
     turn.queuedNotifications.length = 0;
     turn.queuedToolRequests.length = 0;
