@@ -56,6 +56,30 @@ function runner(backend: 'codex' | 'claude'): IModelRunner {
 }
 
 describe('one owner native session', () => {
+  it("writes the host's sandbox proxy ports into the Claude workspace settings", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'native-proxy-workspace-'));
+    try {
+      const session = createNativeSession({
+        backend: 'claude',
+        model: 'test-model',
+        workspaceDir: workspace,
+        runtimeRoot: join(workspace, 'runtime'),
+        actionSurface: surface(),
+        agent: runner('claude'),
+        maxTurns: 10,
+        timeout: 1_000,
+        sandboxNetworkProxy: { httpProxyPort: 41001, socksProxyPort: 41002 },
+      });
+      const settings = JSON.parse(
+        readFileSync(join(workspace, '.claude', 'settings.json'), 'utf8')
+      );
+      expect(settings.sandbox.network).toEqual({ httpProxyPort: 41001, socksProxyPort: 41002 });
+      await session.stop();
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
   it.each(['codex', 'claude'] as const)(
     'exposes the same owner catalog actions for %s',
     async (backend) => {

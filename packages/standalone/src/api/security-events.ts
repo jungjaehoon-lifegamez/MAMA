@@ -137,19 +137,32 @@ export interface OutboundAttemptEvent {
   callId: string | null;
 }
 
+// The command or request comes from the agent: a line break in it must not start a line of the
+// alert that looks like the host's own.
+const oneLine = (value: string | null): string =>
+  value === null
+    ? '(not recorded)'
+    : [...value]
+        .map((char) => {
+          const code = char.charCodeAt(0);
+          if (code >= 0x20 && code !== 0x7f) return char;
+          return char === '\n' ? ' \u23ce ' : ' ';
+        })
+        .join('');
+
 function outboundAlertText(event: OutboundAttemptEvent, suppressed: number, local: string): string {
   const sends = event.sendsData === null ? 'unknown' : event.sendsData ? 'yes' : 'no';
   const lines =
     event.class === 'outbound_connect'
       ? [
           'Agent outbound connection (refused by the sandbox proxy)',
-          `Request: ${event.summary ?? '(not recorded)'}`,
+          `Request: ${oneLine(event.summary)}`,
           `Sends data: ${sends}`,
         ]
       : [
           'Agent outbound attempt',
           `Tool: ${event.tool}`,
-          `Command: ${event.summary ?? '(not recorded)'}`,
+          `Command: ${oneLine(event.summary)}`,
           `Sends data: ${sends}`,
           `Run: ${event.modelRunId ?? 'unknown'}`,
         ];
@@ -158,15 +171,18 @@ function outboundAlertText(event: OutboundAttemptEvent, suppressed: number, loca
 
 export function createOutboundEventRecorder(options: SecurityEventOptions) {
   const path = options.path ?? join(homedir(), '.mama', 'logs', 'security-events.jsonl');
-  const gate = createAlertGate<OutboundAttemptEvent['class']>(OUTBOUND_ALERT_WINDOW_MS);
+  const gate = createAlertGate<string>(OUTBOUND_ALERT_WINDOW_MS);
   return {
     path,
     record(observed: OutboundAttemptEvent): void {
-      // An attempt known to send data always alerts; the others are grouped in a burst.
+      // A command that sends data always alerts. Proxy connections are grouped per destination, so
+      // one destination cannot hide another; other commands are grouped in a burst.
       const { alert, suppressed } =
-        observed.sendsData === true
+        observed.class === 'outbound_send'
           ? { alert: !options.replay, suppressed: 0 }
-          : gate(observed.class, !options.replay);
+          : observed.class === 'outbound_connect'
+            ? gate(`outbound_connect ${observed.summary ?? ''}`, !options.replay)
+            : gate(observed.class, !options.replay);
       const event = { eventId: randomUUID(), ...observed, suppressedSinceLastAlert: suppressed };
       if (!appendSecurityEvent(path, event)) console.error('[agent] security_event_write_failed');
       if (!alert) return;

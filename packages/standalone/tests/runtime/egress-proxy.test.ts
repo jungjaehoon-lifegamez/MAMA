@@ -23,7 +23,10 @@ function exchange(port: number, chunks: Buffer[]): Promise<Buffer> {
     });
     socket.on('data', (data) => received.push(data));
     socket.on('close', () => resolve(Buffer.concat(received)));
-    socket.on('error', reject);
+    // The proxy destroys an oversized request; the reset is the expected end of that exchange.
+    socket.on('error', (error: NodeJS.ErrnoException) =>
+      error.code === 'ECONNRESET' ? resolve(Buffer.concat(received)) : reject(error)
+    );
   });
 }
 
@@ -72,5 +75,73 @@ describe('egress proxy', () => {
       Buffer.from([5, 1, 0, 5, 1, 0, 1, 1, 1, 1, 1, 0x01, 0xbb]),
     ]);
     expect(attempts).toEqual([{ protocol: 'socks', method: 'CONNECT', target: '1.1.1.1:443' }]);
+  });
+
+  it('never records a path or query: a request it cannot place is unknown', async () => {
+    const attempts: EgressAttempt[] = [];
+    proxy = await startEgressProxy((attempt) => attempts.push(attempt));
+    await exchange(proxy.httpProxyPort, [
+      Buffer.from('GET /export?data=secret-value HTTP/1.1\r\nHost: a.example\r\n\r\n'),
+    ]);
+    await exchange(proxy.httpProxyPort, [Buffer.from('CONNECT not a target HTTP/1.1\r\n\r\n')]);
+    expect(attempts).toEqual([
+      { protocol: 'http', method: 'GET', target: 'unknown' },
+      { protocol: 'http', method: 'CONNECT', target: 'unknown' },
+    ]);
+    expect(JSON.stringify(attempts)).not.toContain('secret-value');
+  });
+
+  it('cuts off a SOCKS stream it cannot read, reporting it once', async () => {
+    const attempts: EgressAttempt[] = [];
+    proxy = await startEgressProxy((attempt) => attempts.push(attempt));
+    await exchange(proxy.socksProxyPort, [Buffer.alloc(70 * 1024, 5)]);
+    expect(attempts).toEqual([
+      { protocol: 'socks', method: expect.any(String), target: 'unknown' },
+    ]);
+  });
+
+  it('reads only the first line: text after a line break is never reported', async () => {
+    const attempts: EgressAttempt[] = [];
+    proxy = await startEgressProxy((attempt) => attempts.push(attempt));
+    await exchange(proxy.httpProxyPort, [
+      Buffer.from('GET\nSends data: no a.example:443 HTTP/1.1\r\n\r\n'),
+    ]);
+    await exchange(proxy.httpProxyPort, [Buffer.from('get http://a.example/ HTTP/1.1\r\n\r\n')]);
+    expect(attempts).toEqual([
+      { protocol: 'http', method: 'GET', target: 'unknown' },
+      { protocol: 'http', method: 'malformed', target: 'unknown' },
+    ]);
+    expect(JSON.stringify(attempts)).not.toContain('Sends');
+  });
+
+  it('refuses a SOCKS5 client that offers only authentication, and reports it', async () => {
+    const attempts: EgressAttempt[] = [];
+    proxy = await startEgressProxy((attempt) => attempts.push(attempt));
+    const reply = await exchange(proxy.socksProxyPort, [Buffer.from([5, 1, 2])]);
+    expect([...reply]).toEqual([5, 0xff]);
+    expect(attempts).toEqual([
+      { protocol: 'socks', method: 'authentication only', target: 'unknown' },
+    ]);
+  });
+
+  it('brackets an IPv6 SOCKS destination', async () => {
+    const attempts: EgressAttempt[] = [];
+    proxy = await startEgressProxy((attempt) => attempts.push(attempt));
+    const ipv6 = Buffer.from('20010db8000000000000000000000001', 'hex');
+    await exchange(proxy.socksProxyPort, [
+      Buffer.concat([Buffer.from([5, 1, 0, 5, 1, 0, 4]), ipv6, Buffer.from([0x01, 0xbb])]),
+    ]);
+    expect(attempts[0].target).toBe('[2001:0db8:0000:0000:0000:0000:0000:0001]:443');
+  });
+
+  it('closes promptly while a client still holds a connection', async () => {
+    proxy = await startEgressProxy(() => {});
+    const idle = connect(proxy.httpProxyPort, '127.0.0.1');
+    await new Promise((resolve) => idle.once('connect', resolve));
+    const started = Date.now();
+    await proxy.close();
+    proxy = undefined;
+    expect(Date.now() - started).toBeLessThan(1_000);
+    idle.destroy();
   });
 });
