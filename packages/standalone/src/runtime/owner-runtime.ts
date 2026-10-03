@@ -70,6 +70,7 @@ export interface OwnerRuntimeOptions {
   modelRun?: NativeModelRunPort;
   effort?: RuntimeEffort;
   timeout: number;
+  maxTurnMs?: number;
   runTokenBudget?: number;
   codexHome?: string;
   replayKeyFile?: string;
@@ -351,6 +352,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         ownerPolicyProvider,
         ...(options.effort === undefined ? {} : { effort: options.effort }),
         timeout: options.timeout,
+        ...(options.maxTurnMs === undefined ? {} : { maxTurnMs: options.maxTurnMs }),
         maxTurns: options.maxTurns,
         ...(options.runTokenBudget === undefined ? {} : { runTokenBudget: options.runTokenBudget }),
         ...(options.codexHome === undefined ? {} : { codexHome: options.codexHome }),

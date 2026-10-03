@@ -350,8 +350,10 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
         model,
         effort: 'medium',
         max_turns: 100,
-        // Kagemusha's turn limit; a full report on 2026-09-29 was cut off at 300 s.
-        timeout: 900_000,
+        // A turn is stopped after 10 minutes without progress, or after an hour in all
+        // (owner, 2026-10-03); a full report on 2026-09-29 was cut off at 300 s while working.
+        timeout: 600_000,
+        max_turn_ms: 3_600_000,
         run_token_budget: 0,
       },
       database: { path: join(root, 'memory.db') },

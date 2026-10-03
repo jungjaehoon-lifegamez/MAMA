@@ -63,6 +63,7 @@ export interface NativeDriverOptions {
   deniedReadPaths: string[];
   allowLoginShell?: boolean;
   requestTimeout: number;
+  requestMaxMs?: number;
   effort: RuntimeEffort;
   codexHome?: string;
   pluginDir?: string;
@@ -89,7 +90,10 @@ export interface NativeSessionOptions {
   ownerSystemPrompt?: string;
   ownerPolicyProvider?: OwnerPolicyProvider;
   effort?: RuntimeEffort;
+  /** How long a turn may go without progress, in ms. */
   timeout: number;
+  /** The longest one turn may run in all, in ms. */
+  maxTurnMs?: number;
   maxTurns: number;
   runTokenBudget?: number;
   codexHome?: string;
@@ -200,6 +204,7 @@ function driverOptions(
         }
       : { permissionMode: 'dontAsk' as const }),
     requestTimeout: options.timeout,
+    ...(options.maxTurnMs === undefined ? {} : { requestMaxMs: options.maxTurnMs }),
     effort: options.effort ?? 'medium',
     ...(options.codexHome === undefined ? {} : { codexHome: options.codexHome }),
     ...(options.pluginDir === undefined ? {} : { pluginDir: options.pluginDir }),
@@ -226,6 +231,9 @@ function createDriver(
       deniedReadPaths: nativeOptions.deniedReadPaths,
       allowLoginShell: nativeOptions.allowLoginShell,
       requestTimeout: nativeOptions.requestTimeout,
+      ...(nativeOptions.requestMaxMs === undefined
+        ? {}
+        : { requestMaxMs: nativeOptions.requestMaxMs }),
       codexHome: options.codexHome,
       effort: nativeOptions.effort,
       createSubagentBridge: bridge,
@@ -252,6 +260,9 @@ function createDriver(
     env: { CLAUDE_CODE_TMPDIR: join(options.workspaceDir, '.tmp') },
     pluginDir: nativeOptions.pluginDir,
     requestTimeout: nativeOptions.requestTimeout,
+    ...(nativeOptions.requestMaxMs === undefined
+      ? {}
+      : { requestMaxMs: nativeOptions.requestMaxMs }),
     effort: nativeOptions.effort,
   });
 }

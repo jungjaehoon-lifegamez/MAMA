@@ -434,6 +434,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       effort: config.agent.effort,
       maxTurns: config.agent.max_turns,
       timeout: config.agent.timeout,
+      maxTurnMs: config.agent.max_turn_ms,
       runTokenBudget: config.agent.run_token_budget,
       ...(config.agent.codex_home === undefined ? {} : { codexHome: config.agent.codex_home }),
       codexSandbox: config.agent.codex_sandbox ?? 'workspace-write',

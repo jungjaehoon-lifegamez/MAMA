@@ -12,7 +12,10 @@ export interface W1AgentConfig {
   model: string;
   effort: RuntimeEffort;
   max_turns: number;
+  /** How long a turn may go without progress, in ms; progress restarts it. */
   timeout: number;
+  /** The longest one turn may run in all, in ms. */
+  max_turn_ms: number;
   run_token_budget: number;
   codex_home?: string;
   codex_cwd?: string;
@@ -120,6 +123,7 @@ const AGENT_KEYS = [
   'effort',
   'max_turns',
   'timeout',
+  'max_turn_ms',
   'run_token_budget',
   'codex_home',
   'codex_cwd',
@@ -268,6 +272,9 @@ function parseAgent(value: unknown, home: string, state: ParseState): W1AgentCon
     effort: effort as RuntimeEffort,
     max_turns: integer(raw.max_turns, 'agent.max_turns', 1),
     timeout: integer(raw.timeout, 'agent.timeout', 1),
+    // A turn that keeps working runs on; this caps its cost while run_token_budget is off
+    // (owner, 2026-10-03: the longest owner turn so far took 645 s).
+    max_turn_ms: integer(raw.max_turn_ms ?? 3_600_000, 'agent.max_turn_ms', 1),
     run_token_budget: integer(raw.run_token_budget ?? 0, 'agent.run_token_budget'),
     ...(codexHome === undefined ? {} : { codex_home: configPath(codexHome, home) }),
     ...(codexCwd === undefined ? {} : { codex_cwd: configPath(codexCwd, home) }),

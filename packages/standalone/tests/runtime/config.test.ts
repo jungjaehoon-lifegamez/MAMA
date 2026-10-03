@@ -26,6 +26,7 @@ function validConfig(): W1Config {
       effort: 'high',
       max_turns: 30,
       timeout: 30_000,
+      max_turn_ms: 3_600_000,
       run_token_budget: 100,
       codex_home: '/tmp/codex-home',
       codex_cwd: '/tmp/codex-workspace',
@@ -58,6 +59,18 @@ function validConfig(): W1Config {
 }
 
 describe('W1 runtime configuration', () => {
+  it('reads agent.max_turn_ms, defaulting to an hour, and refuses zero', () => {
+    const base = validConfig();
+    const { max_turn_ms: _unset, ...agent } = base.agent;
+    expect(parseConfig({ ...base, agent }).agent.max_turn_ms).toBe(3_600_000);
+    expect(
+      parseConfig({ ...base, agent: { ...agent, max_turn_ms: 1_200_000 } }).agent
+    ).toMatchObject({ timeout: 30_000, max_turn_ms: 1_200_000 });
+    expect(() => parseConfig({ ...base, agent: { ...agent, max_turn_ms: 0 } })).toThrow(
+      'agent.max_turn_ms must be an integer >= 1'
+    );
+  });
+
   it.each(['fixture-obsolete', '', null])(
     'rejects telegram.token without echoing it %#',
     (token) => {

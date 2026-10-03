@@ -69,8 +69,10 @@ export interface ClaudeCLIWrapperOptions {
   permissionMode?: 'default' | 'acceptEdits' | 'dontAsk' | 'plan';
   /** If true, use GatewayToolExecutor instead of MCP (default: false) */
   useGatewayTools?: boolean;
-  /** Request timeout in ms (default: 120000). Increase for complex/long tasks. */
+  /** How long a request may go without output, in ms (default: 120000); output restarts it. */
   requestTimeout?: number;
+  /** The longest one request may run in all, in ms (absent = no limit). */
+  requestMaxMs?: number;
   /** Override built-in tool set (--tools CLI flag). Use "" to disable all tools. */
   tools?: string;
   /** Override plugin directory (--plugin-dir CLI flag). Use empty dir to disable plugins. */

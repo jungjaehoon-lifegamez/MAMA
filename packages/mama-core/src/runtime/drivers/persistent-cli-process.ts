@@ -105,8 +105,13 @@ export interface PersistentProcessOptions {
   /** Noninteractive consumers use dontAsk with explicit permission rules. */
   permissionMode?: 'default' | 'acceptEdits' | 'dontAsk' | 'plan';
   useGatewayTools?: boolean;
-  /** Timeout for each request in ms (default: 120000) */
+  /**
+   * How long a request may go without any output from the CLI, in ms (default: 120000; 0 = no
+   * limit). Every event the CLI prints restarts it, so a request that keeps working is not cut.
+   */
   requestTimeout?: number;
+  /** The longest one request may run in all, in ms (absent or 0 = no limit). */
+  requestMaxMs?: number;
   /** Idle timeout for pooled persistent processes in ms (default: session_ms) */
   idleTimeoutMs?: number;
   /** Cleanup interval for pooled persistent processes in ms (default: session_cleanup_ms) */
@@ -330,6 +335,7 @@ export class PersistentClaudeProcess extends EventEmitter {
   private currentInputUuid: string | null = null;
   private inputAcknowledged = false;
   private requestTimeoutHandle: NodeJS.Timeout | null = null;
+  private requestMaxHandle: NodeJS.Timeout | null = null;
   private toolUseBlocks: ToolUseBlock[] = [];
   private readonly promptToolExchanges = new Map<string, PromptToolExchangeState>();
   private completedToolExchanges: CompletedToolExchange[] = [];
@@ -638,13 +644,7 @@ export class PersistentClaudeProcess extends EventEmitter {
       this.currentResolve = resolve;
       this.currentReject = reject;
 
-      // Set request timeout (0 = unlimited, skip timeout entirely)
-      const timeoutMs = this._getRequestTimeoutMs();
-      if (timeoutMs > 0) {
-        this.requestTimeoutHandle = setTimeout(() => {
-          this.handleTimeout();
-        }, timeoutMs);
-      }
+      this.armRequestTimeouts();
 
       // Strip lone surrogates to prevent API 400 errors
       const safeContent = content.replace(LONE_SURROGATE_RE, '');
@@ -732,13 +732,7 @@ export class PersistentClaudeProcess extends EventEmitter {
       this.currentResolve = resolve;
       this.currentReject = reject;
 
-      // Set request timeout (0 = unlimited, skip timeout entirely)
-      const timeoutMs = this._getRequestTimeoutMs();
-      if (timeoutMs > 0) {
-        this.requestTimeoutHandle = setTimeout(() => {
-          this.handleTimeout();
-        }, timeoutMs);
-      }
+      this.armRequestTimeouts();
 
       // Strip lone surrogates from tool results to prevent API 400 errors
       const message = {
@@ -810,6 +804,8 @@ export class PersistentClaudeProcess extends EventEmitter {
    * Process a parsed event from stdout
    */
   private processEvent(event: StreamMessage): void {
+    // Output is progress: a request that keeps printing keeps running.
+    this.refreshRequestIdleTimeout();
     switch (event.type) {
       case 'system':
         if (event.subtype === 'init') {
@@ -1466,11 +1462,13 @@ export class PersistentClaudeProcess extends EventEmitter {
   /**
    * Handle request timeout
    */
-  private handleTimeout(): void {
-    console.error(`[PersistentCLI] Request timeout — killing process to prevent zombie`);
+  private handleTimeout(reason: string): void {
+    console.error(
+      `[PersistentCLI] Request timeout (${reason}) — killing process to prevent zombie`
+    );
 
     if (this.currentReject) {
-      this.currentReject(new Error('Request timeout'));
+      this.currentReject(new Error(`Request timeout: ${reason}`));
       this.resetRequestState();
     }
 
@@ -1501,6 +1499,34 @@ export class PersistentClaudeProcess extends EventEmitter {
     this.emit('idle'); // F7: Trigger message queue drain (after cleanup)
   }
 
+  /** A request stops after `requestTimeout` without output, or after `requestMaxMs` in all. */
+  private armRequestTimeouts(): void {
+    const idleMs = this._getRequestTimeoutMs();
+    if (idleMs > 0) {
+      this.requestTimeoutHandle = setTimeout(
+        () => this.handleTimeout(`no output for ${idleMs} ms`),
+        idleMs
+      );
+    }
+    const maxMs = Math.max(0, this.options.requestMaxMs ?? 0);
+    if (maxMs > 0) {
+      this.requestMaxHandle = setTimeout(
+        () => this.handleTimeout(`running longer than ${maxMs} ms`),
+        maxMs
+      );
+    }
+  }
+
+  private refreshRequestIdleTimeout(): void {
+    if (this.requestTimeoutHandle === null) return;
+    clearTimeout(this.requestTimeoutHandle);
+    const idleMs = this._getRequestTimeoutMs();
+    this.requestTimeoutHandle = setTimeout(
+      () => this.handleTimeout(`no output for ${idleMs} ms`),
+      idleMs
+    );
+  }
+
   /**
    * Clear request timeout
    */
@@ -1508,6 +1534,10 @@ export class PersistentClaudeProcess extends EventEmitter {
     if (this.requestTimeoutHandle) {
       clearTimeout(this.requestTimeoutHandle);
       this.requestTimeoutHandle = null;
+    }
+    if (this.requestMaxHandle) {
+      clearTimeout(this.requestMaxHandle);
+      this.requestMaxHandle = null;
     }
   }
 

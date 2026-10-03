@@ -88,6 +88,7 @@ export class PersistentCLIAdapter extends EventEmitter implements IModelRunner {
       processEnv: options.processEnv,
       useGatewayTools: options.useGatewayTools,
       requestTimeout: options.requestTimeout,
+      requestMaxMs: options.requestMaxMs,
       tools: options.tools,
       // Adaptive thinking effort (agent.effort) reaches the CLI as --effort.
       effort: options.effort,
