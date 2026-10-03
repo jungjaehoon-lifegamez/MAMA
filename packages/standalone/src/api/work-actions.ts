@@ -153,11 +153,10 @@ const WORK_LIST_DEFAULT_TEXT_LIMIT = 1_000;
 const WORK_LIST_REVISION_SUMMARY_LIMIT = 300;
 const WORK_LIST_EVENT_REVISIONS = 20;
 const WORK_LIST_MAX_TEXT_LIMIT = 2_000;
+/** The statuses of open work: everything but done and cancelled. */
+export const OPEN_WORK_STATUSES = ['pending', 'in_progress', 'review', 'blocked'] as const;
 const WORK_LIST_STATUSES: readonly PublicWorkStatus[] = [
-  'pending',
-  'in_progress',
-  'review',
-  'blocked',
+  ...OPEN_WORK_STATUSES,
   'done',
   'cancelled',
 ];

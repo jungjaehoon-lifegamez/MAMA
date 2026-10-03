@@ -32,6 +32,7 @@ import {
   viewerRequestAudit,
 } from './viewer-request-security.js';
 import type { ReportStore } from './report-handler.js';
+import { OPEN_WORK_STATUSES } from './work-actions.js';
 import {
   listWikiPages,
   readWikiPages,
@@ -243,8 +244,6 @@ function graphRef(value: string): { kind: string; id: string } | null {
   if (!GRAPH_KINDS.has(kind)) return null;
   return { kind, id: value.slice(split + 1) };
 }
-
-const OPEN_WORK_STATUSES = ['pending', 'in_progress', 'review', 'blocked'] as const;
 
 /** The ledger records "unconfirmed" when no observation points to an assignee. */
 function confirmedAssignee(value: unknown): boolean {
