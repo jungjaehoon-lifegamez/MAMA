@@ -5,6 +5,76 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.62.0] - 2026-10-04
+
+### Added
+
+- Backfill a past period as complete history. `mama-backfill/1` is the file format: items with
+  their revisions in event order, each citing exact source ids, plus mentions grouped by their
+  stated reason, links (also from existing work), lessons and wiki pages. `mama backfill <file>`
+  pushes it through the owner actions with the daemon stopped and judges nothing; a re-run replays
+  its receipts and an edited payload is refused. Existing work is bounded by its first revision
+  after the period, so the later state stays current and `asOf` inside the period answers from the
+  backfill. An existing wiki page takes section appends and keeps its evidence ids. Guide:
+  `docs/guides/backfill.md`.
+- `work.revise` accepts `appliesUntil`. The full report picks changes by event time and names
+  work written since the last report about earlier events as late recordings. `mama replay` takes
+  `--from` and `--until`.
+- `trello.read` reads the current Trello state live, from granted boards only: boards, cards (a
+  board or one list), one card with its checklists and latest actions, and search. A Trello failure
+  is the action's error; nothing is cached.
+- `drive.read` reads Google Drive live (shared drives, browse, a file by id or link, name and
+  content search) and `drive.download` saves a file, exporting Docs, Sheets and Slides as docx,
+  xlsx and pptx. Nothing from Drive is stored and the Drive change poller stays off.
+- `delivery.interrupted_notice` gives the notice for a cut-off owner turn in the owner's words.
+  Telegram posts it as a reply to the message that was cut off.
+- `agent.max_turn_ms` (default one hour) caps a whole owner turn.
+
+### Changed
+
+- An owner turn stops only after `agent.timeout` without progress (default ten minutes) or after
+  `agent.max_turn_ms` in all. Every CLI event and tool use counts as progress, and a long turn keeps
+  its session. It used to stop at a fixed limit however much work was still arriving.
+- The Trello poller stores every board action, in the same shape as the history import, instead of
+  diffing open-card snapshots, so comments, attachments, due dates, copies and archive reach the
+  history. An edited comment becomes its action's next revision. The snapshot state file is gone.
+- Imported Trello actions are stored as readable lines (card, list, who and what changed) instead
+  of their JSON. The whole action stays in the item metadata. The replay window shows the stored
+  line.
+- `source.recent` and `source.search` return the stored channel value as `channel` and the
+  display name as `channelName`, so a listed channel works as the `source.search` filter.
+- The record procedure takes a work item's project name from its project page, written exactly; a
+  channel says where a message came from, not which project it is about.
+- The Tasks page is read-only, as the viewer is: it shows the status as a badge and says that
+  changes go through the messenger.
+- Memory search keeps short Korean, Japanese and Chinese words, counts and acronyms, and ranks the
+  strongest text match first (mama-core 5.3.0). It used to drop every word of two characters or
+  fewer and list its weakest text matches first.
+
+### Fixed
+
+- Slack replies posted only in a thread are collected. The poll read the channel history only, so
+  such a reply was never seen. It now reads replies for threads with new activity in the last 30
+  days.
+- An input parked uncertain after a cut-off turn is closed once what it still owes has a place:
+  an answer delivered for an owner message, a record check for a delta or record order, the next
+  report tick for a report. It used to stay claimed forever.
+- Startup no longer fails when `delivery.interrupted_notice` is set. Route validation treated
+  every key under `delivery` as a messenger route.
+
+### Security
+
+- An agent's outbound attempts reach the owner as security alerts. A shell call that runs a
+  network client, a package install, a git remote operation, an upload tool or an HTTP or socket
+  script is recorded in `security-events.jsonl` and sent through `delivery.security_alerts`. A send
+  always alerts; plain attempts within a minute are grouped. Nothing is blocked, and web fetch and
+  web search stay open.
+- The Claude owner's shell sandbox network goes through a proxy MAMA runs on loopback. It refuses
+  every connection, as the empty sandbox allowlist did, and reports each attempt with its
+  destination. A direct socket that ignores the proxy is still refused by the sandbox, and only the
+  command layer reports it. `docs/rebuild/egress-alerts.md` lists each path out and what sees it.
+- `mama replay` and `mama backfill` refuse to run while the daemon runs.
+
 ## [0.61.2] - 2026-10-01
 
 No changes. The release tag follows the mama-os version, and v0.61.1 exists; this release ships

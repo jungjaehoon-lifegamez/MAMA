@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [5.3.0] - 2026-10-04
 
 ### Changed
 
@@ -16,6 +16,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its subtype; it used to leave the request waiting with its timers cleared.
 - `SessionPool.releaseSession` records the release as the session's last activity, so expiry
   counts from the end of a turn.
+- Lexical search keeps a two-character token of letters and digits when it has Korean, Japanese
+  or Chinese text, mixes a digit with a letter (a count, `v2`) or is an all-caps acronym. Every
+  token of two characters or fewer used to be dropped, which removed most Korean and Japanese words
+  and every count. A short Latin token matches whole words only in the in-memory scan and the topic
+  boost, so `ai` no longer matches `email`.
+- Recall ranks the strongest FTS5 match first. BM25 was normalised as `1 - |rank| / max`, but
+  FTS5 `bm25()` is more negative for a better match, so the lexical channel, which the fusion ranks
+  first, listed its weakest matches first. Benchmark figures measured before this release used the
+  reversed order.
+- A query with CJK text always runs lexical confirmation. The three-token cutoff still counts
+  only tokens longer than two characters, so an acronym or a version does not change it for an
+  English query.
+- `readWork` no longer adds the `asOf` note to `coverage.reasons`. A bounded read is the whole
+  answer for its instant, and a consumer that counted reasons as incompleteness failed every
+  `asOf` read.
 
 ### Added
 
@@ -23,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (turn) may run in all, never restarted by progress. Absent means no limit.
 - `SessionPool.touchSession`: a turn that is still working keeps its session; native turns call
   it on every tool use.
+- `WorkCommand.appliesUntil`: when a commitment revision stops applying. Once the read time
+  reaches it, the current fold and `asOf` leave the revision out, while history and the chain keep
+  it (`CommitmentRevision.appliesUntil`, `CommitmentChainEntry.appliesUntil`). A backfill that adds
+  an earlier period to work revised later bounds those revisions by the first later one, so the
+  later state stays current. It must follow the revision's `eventDatetime`.
 
 ## [5.2.0] - 2026-10-01
 

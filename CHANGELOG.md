@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.62.0] / mama-core [5.3.0] - 2026-10-04
+
+A past period can be backfilled as complete history. Trello and Google Drive are read live, an
+agent's outbound attempts reach the owner as alerts, and memory search handles short CJK words.
+The package changelogs list every change.
+
+### Added
+
+- `mama-backfill/1` and `mama backfill <file>`: a past period written as complete history through
+  the owner actions, with the daemon stopped. Existing work stays current through
+  `appliesUntil` (mama-core `WorkCommand.appliesUntil`). Guide: `docs/guides/backfill.md`.
+- `trello.read` and `drive.read` / `drive.download` read the current state live, from granted
+  boards and the owner's Drive; nothing from Drive is stored.
+- `delivery.interrupted_notice` and `agent.max_turn_ms`.
+
+### Changed
+
+- An owner turn stops after ten minutes without progress or an hour in all, not at a fixed limit
+  (mama-core `requestTimeout` now restarts on progress; `requestMaxMs` caps a request).
+- The Trello poller stores every board action as a readable line, the same shape as the import.
+- Memory search keeps two-character Korean, Japanese and Chinese words, counts and acronyms, and
+  ranks the strongest text match first. The lexical order was reversed before; benchmark figures
+  measured earlier used it.
+
+### Fixed
+
+- Slack replies posted only in a thread are collected.
+- A parked uncertain input closes once its follow-up has a place.
+- Startup accepts `delivery.interrupted_notice`.
+
+### Security
+
+- Shell calls that reach the network are reported to the owner (`delivery.security_alerts`), and
+  the Claude shell sandbox's network goes through a deny-all proxy that reports each destination.
+
 ## mama-os [0.61.2] / plugin [2.1.5] - 2026-10-01
 
 ### Changed
