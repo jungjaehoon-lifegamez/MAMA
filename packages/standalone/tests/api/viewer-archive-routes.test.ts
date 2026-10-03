@@ -432,6 +432,233 @@ describe('archive-compatible viewer routes', () => {
     );
   });
 
+  // The memory view is a history of what was saved: day first, then kind, then the item a work
+  // revision belongs to.
+  it('groups what was written by day, kind and item, across pages', async () => {
+    const at = (iso: string) => Date.parse(iso);
+    const row = (
+      id: string,
+      kind: string,
+      createdAt: string,
+      extra: Record<string, unknown> = {}
+    ) => ({
+      id,
+      kind,
+      recordKind: 'judgment',
+      status: 'active',
+      topic: `topic ${id}`,
+      summary: `summary ${id}`,
+      createdAt: at(createdAt),
+      eventDatetime: null,
+      sourceMessageRef: null,
+      commitmentId: null,
+      revision: null,
+      operation: null,
+      itemTitle: null,
+      ...extra,
+    });
+    const revision = (id: string, commitmentId: string, n: number, createdAt: string) =>
+      row(id, 'decision', createdAt, {
+        recordKind: 'commitment',
+        commitmentId,
+        revision: n,
+        operation: n === 1 ? 'create' : 'revise',
+        itemTitle: `Item ${commitmentId}`,
+        topic: `work/${commitmentId}`,
+      });
+    const pages: Record<string, unknown> = {
+      first: {
+        records: [
+          row('rule', 'workflow', '2026-10-04T01:00:00Z', { sourceMessageRef: 'telegram:7:4558' }),
+          revision('c1_r4', 'c1', 4, '2026-10-04T00:50:00Z'),
+          row('lesson', 'lesson', '2026-10-04T00:30:00Z', { sourceMessageRef: 'source_delta:ab' }),
+        ],
+        nextCursor: 'p2',
+      },
+      p2: {
+        records: [
+          revision('c1_r3', 'c1', 3, '2026-10-04T00:10:00Z'),
+          row('fact', 'fact', '2026-10-03T10:00:00Z'),
+          revision('c2_r1', 'c2', 1, '2026-10-03T09:00:00Z'),
+        ],
+        nextCursor: null,
+      },
+    };
+    await withServer(
+      async (call) => {
+        expect(call.action).toBe('memory.read:timeline');
+        const input = call.input as { cursor?: string };
+        return { status: 'completed', data: pages[input.cursor ?? 'first'] } as ActionResult;
+      },
+      async (server, calls) => {
+        const response = await makeRequest(
+          server,
+          '/api/memory/timeline?from=2026-10-03&to=2026-10-04'
+        );
+        expect(response.status).toBe(200);
+        expect(calls.map((call) => call.input)).toEqual([
+          { since: at('2026-10-03T00:00:00Z'), until: at('2026-10-05T00:00:00Z'), limit: 500 },
+          {
+            since: at('2026-10-03T00:00:00Z'),
+            until: at('2026-10-05T00:00:00Z'),
+            limit: 500,
+            cursor: 'p2',
+          },
+        ]);
+        const body = JSON.parse(response.body);
+        expect(body).toMatchObject({
+          from: '2026-10-03',
+          to: '2026-10-04',
+          total: 6,
+          counts: { owner_rule: 1, learned: 1, fact: 1, decision: 0, work: 3 },
+        });
+        expect(body.days.map((day: { day: string }) => day.day)).toEqual([
+          '2026-10-04',
+          '2026-10-03',
+        ]);
+        const [today, yesterday] = body.days;
+        expect(today.groups.map((group: { group: string }) => group.group)).toEqual([
+          'owner_rule',
+          'learned',
+          'work',
+        ]);
+        expect(today.groups[0].records[0]).toMatchObject({ id: 'memory:rule', via: 'owner_chat' });
+        expect(today.groups[1].records[0]).toMatchObject({
+          id: 'memory:lesson',
+          via: 'source_delta',
+        });
+        expect(today.groups[2].items).toEqual([
+          expect.objectContaining({
+            commitmentId: 'c1',
+            title: 'Item c1',
+            revisions: [
+              expect.objectContaining({ id: 'memory:c1_r4', revision: 4 }),
+              expect.objectContaining({ id: 'memory:c1_r3', revision: 3 }),
+            ],
+          }),
+        ]);
+        expect(yesterday.groups.map((group: { group: string }) => group.group)).toEqual([
+          'fact',
+          'work',
+        ]);
+        expect(yesterday.groups[0].records[0]).toMatchObject({ id: 'memory:fact', via: null });
+        expect(yesterday.groups[1].items[0]).toMatchObject({
+          commitmentId: 'c2',
+          revisions: [expect.objectContaining({ operation: 'create' })],
+        });
+
+        const searched = JSON.parse(
+          (await makeRequest(server, '/api/memory/timeline?from=2026-10-03&to=2026-10-04&q=RULE'))
+            .body
+        );
+        expect(searched.total).toBe(1);
+        expect(searched.days[0].groups[0].records[0].id).toBe('memory:rule');
+
+        // Kind chips keep their counts while one kind is shown.
+        const workOnly = JSON.parse(
+          (
+            await makeRequest(
+              server,
+              '/api/memory/timeline?from=2026-10-03&to=2026-10-04&groups=work'
+            )
+          ).body
+        );
+        expect(workOnly.total).toBe(3);
+        expect(workOnly.counts).toMatchObject({ owner_rule: 1, learned: 1, fact: 1, work: 3 });
+        expect(
+          workOnly.days.map((day: { groups: Array<{ group: string }> }) =>
+            day.groups.map((group) => group.group)
+          )
+        ).toEqual([['work'], ['work']]);
+      }
+    );
+  });
+
+  it('draws one record with what it links to, one step out', async () => {
+    const memory = (id: string, recordKind: string) => ({
+      ref: { kind: 'memory', id },
+      resolvedRef: { kind: 'memory', id },
+      label: id,
+      data: {
+        kind: 'memory',
+        recordKind,
+        memoryKind: 'lesson',
+        topic: `topic ${id}`,
+        summary: `summary ${id}`,
+        recordedAt: 1,
+        appliesFrom: 1,
+        appliesUntil: null,
+        stateAtSnapshot: 'current',
+        replaces: [],
+        payload: {},
+        work: null,
+        content: { complete: true, nextRead: null },
+      },
+    });
+    await withServer(
+      async (call) => {
+        expect(call).toMatchObject({
+          action: 'graph.query',
+          input: {
+            view: 'neighbors',
+            seeds: [{ kind: 'memory', id: 'm1' }],
+            maxDepth: 1,
+            history: 'all',
+          },
+        });
+        return completed(
+          graphPage({
+            nodes: [memory('m1', 'judgment'), memory('m0', 'judgment')] as never,
+            edges: [
+              {
+                id: 'e1',
+                from: { kind: 'memory', id: 'm1' },
+                to: { kind: 'memory', id: 'm0' },
+                resolvedFrom: { kind: 'memory', id: 'm1' },
+                resolvedTo: { kind: 'memory', id: 'm0' },
+                relation: 'supersedes',
+                attrs: {},
+              },
+            ] as never,
+          })
+        );
+      },
+      async (server) => {
+        const response = await makeRequest(server, '/api/graph/neighbors?id=memory:m1');
+        expect(response.status).toBe(200);
+        expect(JSON.parse(response.body)).toMatchObject({
+          nodes: [{ id: 'memory:m1' }, { id: 'memory:m0' }],
+          edges: [{ from: 'memory:m1', to: 'memory:m0', relationship: 'supersedes' }],
+        });
+        expect((await makeRequest(server, '/api/graph/neighbors?id=m1')).status).toBe(400);
+      }
+    );
+  });
+
+  it('reads a named period in the owner time zone and refuses a malformed window', async () => {
+    await withServer(
+      async () =>
+        ({ status: 'completed', data: { records: [], nextCursor: null } }) as ActionResult,
+      async (server, calls) => {
+        const today = new Date().toISOString().slice(0, 10);
+        const week = JSON.parse((await makeRequest(server, '/api/memory/timeline?period=7d')).body);
+        expect(week.to).toBe(today);
+        expect(Date.parse(`${week.to}T00:00:00Z`) - Date.parse(`${week.from}T00:00:00Z`)).toBe(
+          6 * 86_400_000
+        );
+        expect(calls[0]?.input).toMatchObject({
+          since: Date.parse(`${week.from}T00:00:00Z`),
+          until: Date.parse(`${week.to}T00:00:00Z`) + 86_400_000,
+        });
+
+        for (const query of ['from=2026-10-04&to=2026-10-03', 'from=10/03', 'period=year']) {
+          const refused = await makeRequest(server, `/api/memory/timeline?${query}`);
+          expect(refused.status).toBe(400);
+        }
+      }
+    );
+  });
+
   it('does not serve mutating graph routes', async () => {
     await withServer(
       async () => {

@@ -26,6 +26,7 @@ import {
   readDecisionListing,
   readProjectDecisions,
   readProjectRollups,
+  readSavedTimeline,
 } from '../memory/dashboard-read.js';
 import { countGraphNodes, readGraphEdges, readGraphNodes } from '../memory/graph-read.js';
 import { sanitizeRecallBundle, sanitizeRecallText } from '../memory/recall-sanitize.js';
@@ -252,6 +253,16 @@ export const recordLinkSchema: ActionSchemaObject = {
 /** Fields every work command shares; required-ness lives on each action. */
 
 /** The lifecycle fields a reclassification states; callers may not repeat them. */
+
+/** A timeline bound: epoch ms, or an ISO time that carries its offset (a bare local time is ambiguous). */
+function timelineBound(value: number | string, field: 'since' | 'until'): number {
+  if (typeof value === 'number') return value;
+  const parsed = Date.parse(value);
+  if (!/(?:Z|[+-]\d{2}:?\d{2})$/.test(value) || !Number.isFinite(parsed)) {
+    throw new Error(`memory.read:timeline ${field} must be epoch ms or an ISO time with offset`);
+  }
+  return parsed;
+}
 
 function requiredOperationId(context: ActionContext, action: string): string {
   if (typeof context.operationId !== 'string' || context.operationId.trim().length === 0) {
@@ -1318,6 +1329,58 @@ export function coreActionRegistrations(
           };
         });
         return { decisions: compact, count: compact.length };
+      },
+    },
+    {
+      contract: {
+        name: 'memory.read:timeline',
+        summary:
+          'What was written when: memory records under the admitted scopes, newest written first, optionally inside a window on the time they were saved (since inclusive, until exclusive; epoch ms or an ISO time with offset). Each record gives its kind, status, topic, summary, write time and event time; a work revision names its commitmentId, revision, operation (create, revise or withdraw) and itemTitle, the item title as it stands now, and sourceMessageRef names the owner message, delta or report turn that wrote it when a turn did. Pages of 200 (500 max) with cursor.',
+        inputSchema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            since: {
+              oneOf: [
+                { type: 'integer', minimum: 0 },
+                { type: 'string', minLength: 1 },
+              ],
+              description: 'Window start on write time, e.g. "2026-10-01T00:00:00+09:00".',
+            },
+            until: {
+              oneOf: [
+                { type: 'integer', minimum: 0 },
+                { type: 'string', minLength: 1 },
+              ],
+              description: 'Window end on write time, exclusive, e.g. 1760000000000.',
+            },
+            cursor: { type: 'string', minLength: 1, description: 'nextCursor from the last page.' },
+            limit: {
+              type: 'integer',
+              minimum: 1,
+              maximum: 500,
+              description: 'Records per page, e.g. 200.',
+            },
+          },
+        },
+        examples: [
+          { title: 'What was written today', input: { since: '2026-10-04T00:00:00+09:00' } },
+        ],
+      },
+      exec: async (input, context) => {
+        const query = input as {
+          since?: number | string;
+          until?: number | string;
+          cursor?: string;
+          limit?: number;
+        };
+        const page = await readSavedTimeline(adapter, boundReadScopesFor(context.access), {
+          ...(query.since === undefined ? {} : { since: timelineBound(query.since, 'since') }),
+          ...(query.until === undefined ? {} : { until: timelineBound(query.until, 'until') }),
+          ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+          ...(query.limit === undefined ? {} : { limit: query.limit }),
+        });
+        return page;
       },
     },
     {

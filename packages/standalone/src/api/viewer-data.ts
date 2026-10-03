@@ -5,6 +5,8 @@ import type {
 } from '@jungjaehoon/mama-core/knowledge';
 import type { WorkGraphPage } from '@jungjaehoon/mama-core';
 import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
+import { isOwnerChatRef, RULE_KINDS } from '../runtime/owner-authority.js';
+import { localDateKey } from '../runtime/timezone.js';
 
 export interface ViewerMemoryStats {
   total: number;
@@ -343,6 +345,191 @@ export function shapeMemorySearch(data: unknown): ViewerMemorySearchResult {
     throw new Error('memory.search returned no bounded result list');
   }
   return { count: result.count as number, results: result.results };
+}
+
+/** One record as memory.read:timeline returns it. */
+interface SavedTimelineRecord {
+  id: string;
+  kind: string | null;
+  status: string | null;
+  topic: string;
+  summary: string;
+  createdAt: number;
+  sourceMessageRef: string | null;
+  commitmentId: string | null;
+  revision: number | null;
+  operation: string | null;
+  itemTitle: string | null;
+}
+
+export interface SavedTimelinePage {
+  records: SavedTimelineRecord[];
+  nextCursor: string | null;
+}
+
+export function savedTimelinePage(data: unknown): SavedTimelinePage {
+  const page = objectValue(data);
+  if (
+    !Array.isArray(page.records) ||
+    !(page.nextCursor === null || typeof page.nextCursor === 'string')
+  ) {
+    throw new Error('memory.read:timeline returned no record page');
+  }
+  return page as unknown as SavedTimelinePage;
+}
+
+export interface ViewerTimelineRecord {
+  id: string;
+  kind: string | null;
+  status: string | null;
+  topic: string;
+  summary: string;
+  time: string;
+  /** The ref kind of the turn that wrote it (owner_chat for the owner's own conversation). */
+  via: string | null;
+}
+
+export interface ViewerTimelineItem {
+  commitmentId: string;
+  title: string | null;
+  topic: string;
+  revisions: Array<{
+    id: string;
+    revision: number | null;
+    operation: string | null;
+    status: string | null;
+    summary: string;
+    time: string;
+  }>;
+}
+
+export type ViewerTimelineGroup =
+  | { group: string; count: number; records: ViewerTimelineRecord[] }
+  | { group: 'work'; count: number; items: ViewerTimelineItem[] };
+
+export interface ViewerSavedTimeline {
+  from: string;
+  to: string;
+  timeZone: string;
+  total: number;
+  /** Per group, after the text filter and before the group filter, so every chip keeps its count. */
+  counts: Record<string, number>;
+  days: Array<{ day: string; total: number; groups: ViewerTimelineGroup[] }>;
+}
+
+/** The groups the memory view names first; any other kind follows under its own name, then work. */
+const TIMELINE_GROUPS = ['owner_rule', 'learned', 'decision', 'fact'];
+
+/**
+ * A work revision belongs to its item; a rule is the owner's when the owner's own conversation
+ * wrote it (owner-authority.ts) and learned otherwise; any other record goes by its kind.
+ */
+function savedTimelineGroup(record: SavedTimelineRecord): string {
+  if (record.commitmentId !== null) return 'work';
+  if ((RULE_KINDS as readonly string[]).includes(record.kind ?? '')) {
+    return isOwnerChatRef(record.sourceMessageRef) ? 'owner_rule' : 'learned';
+  }
+  return record.kind ?? 'none';
+}
+
+function groupRank(group: string): number {
+  if (group === 'work') return TIMELINE_GROUPS.length + 1;
+  const known = TIMELINE_GROUPS.indexOf(group);
+  return known === -1 ? TIMELINE_GROUPS.length : known;
+}
+
+function turnKind(ref: string | null): string | null {
+  if (ref === null) return null;
+  return isOwnerChatRef(ref) ? 'owner_chat' : ref.split(':')[0];
+}
+
+/**
+ * What was written when, for a person reading it: by local day, newest first, then by group, and
+ * work revisions under the item they revised. Records arrive newest written first.
+ */
+export function shapeSavedTimeline(
+  records: readonly SavedTimelineRecord[],
+  window: { from: string; to: string; timeZone: string },
+  filter: { query: string | null; groups: ReadonlySet<string> | null }
+): ViewerSavedTimeline {
+  const clock = new Intl.DateTimeFormat('en-GB', {
+    timeZone: window.timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  });
+  const needle = filter.query === null ? null : filter.query.toLowerCase();
+  const counts: Record<string, number> = Object.fromEntries(
+    [...TIMELINE_GROUPS, 'work'].map((group) => [group, 0])
+  );
+  const days = new Map<string, Map<string, SavedTimelineRecord[]>>();
+  let total = 0;
+  for (const record of records) {
+    if (
+      needle !== null &&
+      ![record.topic, record.summary, record.itemTitle ?? ''].some((text) =>
+        text.toLowerCase().includes(needle)
+      )
+    ) {
+      continue;
+    }
+    const group = savedTimelineGroup(record);
+    counts[group] = (counts[group] ?? 0) + 1;
+    if (filter.groups !== null && !filter.groups.has(group)) continue;
+    total += 1;
+    const day = localDateKey(record.createdAt, window.timeZone);
+    const byGroup = days.get(day) ?? new Map<string, SavedTimelineRecord[]>();
+    days.set(day, byGroup);
+    byGroup.set(group, [...(byGroup.get(group) ?? []), record]);
+  }
+  return {
+    ...window,
+    total,
+    counts,
+    days: [...days].map(([day, byGroup]) => ({
+      day,
+      total: [...byGroup.values()].reduce((sum, rows) => sum + rows.length, 0),
+      groups: [...byGroup]
+        .sort(([left], [right]) => groupRank(left) - groupRank(right) || left.localeCompare(right))
+        .map(([group, rows]): ViewerTimelineGroup => {
+          if (group !== 'work') {
+            return {
+              group,
+              count: rows.length,
+              records: rows.map((record) => ({
+                id: `memory:${record.id}`,
+                kind: record.kind,
+                status: record.status,
+                topic: record.topic,
+                summary: record.summary,
+                time: clock.format(record.createdAt),
+                via: turnKind(record.sourceMessageRef),
+              })),
+            };
+          }
+          const items = new Map<string, ViewerTimelineItem>();
+          for (const record of rows) {
+            const commitmentId = record.commitmentId as string;
+            const item = items.get(commitmentId) ?? {
+              commitmentId,
+              title: record.itemTitle,
+              topic: record.topic,
+              revisions: [],
+            };
+            items.set(commitmentId, item);
+            item.revisions.push({
+              id: `memory:${record.id}`,
+              revision: record.revision,
+              operation: record.operation,
+              status: record.status,
+              summary: record.summary,
+              time: clock.format(record.createdAt),
+            });
+          }
+          return { group: 'work', count: rows.length, items: [...items.values()] };
+        }),
+    })),
+  };
 }
 
 export interface ArchiveOperatorTask {

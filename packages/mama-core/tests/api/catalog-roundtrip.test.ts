@@ -84,6 +84,7 @@ describe('Story R2: action catalog and dispatch roundtrip', () => {
       'memory.checkpoint.load',
       'memory.checkpoint.list',
       'memory.read:listing',
+      'memory.read:timeline',
       'memory.read:projects',
       'memory.read:graph',
       'memory.read:stats',
