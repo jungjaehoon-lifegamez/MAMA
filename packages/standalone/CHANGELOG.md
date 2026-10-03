@@ -72,7 +72,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Claude owner's shell sandbox network goes through a proxy MAMA runs on loopback. It refuses
   every connection, as the empty sandbox allowlist did, and reports each attempt with its
   destination. A direct socket that ignores the proxy is still refused by the sandbox, and only the
-  command layer reports it. `docs/rebuild/egress-alerts.md` lists each path out and what sees it.
+  command layer reports it: a script that opens a socket inside its own code, behind a command that
+  is not recognised as outbound, reaches the owner with no alert and no destination.
+  `docs/rebuild/egress-alerts.md` lists each path out and what sees it.
 - `mama replay` and `mama backfill` refuse to run while the daemon runs.
 
 ## [0.61.2] - 2026-10-01

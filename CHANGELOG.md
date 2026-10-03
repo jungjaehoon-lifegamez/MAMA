@@ -35,7 +35,10 @@ The package changelogs list every change.
 ### Security
 
 - Shell calls that reach the network are reported to the owner (`delivery.security_alerts`), and
-  the Claude shell sandbox's network goes through a deny-all proxy that reports each destination.
+  the Claude shell sandbox's network goes through a deny-all proxy that reports each destination it
+  sees. A direct socket that ignores the proxy is still refused by the sandbox, but it reaches the
+  owner only when the command itself is recognised as outbound; a script that opens a socket
+  inside its own code can go unreported.
 
 ## mama-os [0.61.2] / plugin [2.1.5] - 2026-10-01
 
