@@ -116,16 +116,16 @@ describe('lexical confirmation for CJK queries', () => {
       row('mail-note', 'mail_notes', 'Email about the lunch order.'),
       row('ai-policy', 'usage_policy', 'AI usage policy for the team.'),
       // A Korean particle follows the acronym directly; it still counts as the word.
-      row('fb-particle', 'notes', particleText),
+      row('qa-particle', 'notes', particleText),
     ];
     const { recallMemory } = await import('../../src/memory/api.js');
 
     const ai = await recallMemory(getAdapter(), 'AI policy', { includeRelated: false });
-    const fb = await recallMemory(getAdapter(), 'FB policy', { includeRelated: false });
+    const qa = await recallMemory(getAdapter(), 'QA policy', { includeRelated: false });
 
     const aiIds = ai.memories.map((memory) => memory.id);
     expect(aiIds).toContain('ai-policy');
     expect(aiIds).not.toContain('mail-note');
-    expect(fb.memories.map((memory) => memory.id)).toContain('fb-particle');
+    expect(qa.memories.map((memory) => memory.id)).toContain('qa-particle');
   });
 });

@@ -1,14 +1,14 @@
 {
-  "_note": "Korean text for the CJK lexical tests; the pre-commit guard keeps Korean out of .ts files. Generic phrases modelled on an owner-turn query, with no names or other owner data.",
-  "roundQuery": "경과 정리 클라이언트 피드백(FB) 4회 FIX",
-  "roundQueryTokens": ["경과", "정리", "클라이언트", "피드백", "fb", "4회", "fix"],
+  "_note": "Synthetic Korean text for the CJK lexical tests (the pre-commit guard keeps Korean out of .ts files). It exercises a two-syllable word, a digit with a counter and an acronym, and holds no owner data.",
+  "roundQuery": "주간 보고서 정리 고객 문의(QA) 4회 완료",
+  "roundQueryTokens": ["주간", "보고서", "정리", "고객", "문의", "qa", "4회", "완료"],
   "roundRecords": {
-    "four": "경과 정리: 클라이언트 피드백(FB) 4회 뒤 FIX.",
-    "one": "경과 정리: 클라이언트 피드백(FB) 1회 뒤 FIX.",
-    "two": "경과 정리: 클라이언트 피드백(FB) 2회 뒤 FIX."
+    "four": "주간 보고서 정리: 고객 문의(QA) 4회 뒤 완료.",
+    "one": "주간 보고서 정리: 고객 문의(QA) 1회 뒤 완료.",
+    "two": "주간 보고서 정리: 고객 문의(QA) 2회 뒤 완료."
   },
   "singleCharacterQuery": "여러 번 a 5",
   "singleCharacterTokens": ["여러"],
-  "longKoreanQuery": "클라이언트 수정 요청이 계속 돌아온 작업 사례",
-  "particleText": "클라이언트 FB가 두 번 왔다."
+  "longKoreanQuery": "회의 일정 변경 요청이 계속 들어온 프로젝트 사례",
+  "particleText": "고객 QA가 두 번 왔다."
 }
