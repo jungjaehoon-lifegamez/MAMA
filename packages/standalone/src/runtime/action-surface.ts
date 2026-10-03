@@ -34,6 +34,7 @@ import {
 import type { TimeZoneSetting } from './timezone.js';
 import { reportSourceActionRegistrations } from '../api/report-source-actions.js';
 import { trelloActionRegistrations } from '../api/trello-actions.js';
+import { driveActionRegistrations } from '../api/drive-actions.js';
 import {
   minimalWorkActionRegistrations,
   workListActionRegistrations,
@@ -51,6 +52,8 @@ const OWNER_ACTIONS = [
   'schedule.upcoming',
   'source.read',
   'trello.read',
+  'drive.read',
+  'drive.download',
   'judge',
   'owner.timezone.set',
   'owner.messages',
@@ -211,6 +214,13 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
         : { connectors: options.attachmentPorts.connectors }),
       adapter: options.adapter,
       ownerPrincipalId: options.ownerPrincipalId,
+    }),
+    // Drive has no running connector (its poller stays off), so drive.* call gws directly.
+    ...driveActionRegistrations({
+      ownerPrincipalId: options.ownerPrincipalId,
+      ...(options.attachmentPorts?.downloadsDir === undefined
+        ? {}
+        : { downloadsDir: options.attachmentPorts.downloadsDir }),
     }),
     ...workListActionRegistrations({ knowledge: options.knowledge, timeZone: options.timeZone }),
     ...minimalWorkActionRegistrations({

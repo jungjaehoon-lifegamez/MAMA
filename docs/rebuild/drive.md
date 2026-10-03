@@ -1,0 +1,62 @@
+# W34 — Google Drive: read it live, keep no copy
+
+Owner decisions, 2026-10-03:
+
+- **Drive is read live**, as Kagemusha reads it. Nothing from Drive is stored: the Drive change
+  poller stays off. Drive keeps its own modified times, last editors and revisions, and the
+  uploads that matter already reach the stored sources as links in chats and Trello attachments.
+- **Done** means an owner question answered right in Telegram from a file behind a Drive link (for
+  example what a client feedback sheet asked for).
+
+Evidence:
+
+- The agent has no Drive read. `tool_traces` holds no Drive call; the testbed's `drive` connector
+  is disabled and is a change poller only (`connectors/drive/index.ts`).
+- Files move as Drive links: the imported Trello months hold 1,121 attachments, and work revisions
+  cite submission links. Client feedback arrives as PDFs on a shared drive: a search for one asset
+  name across all drives returned its two feedback PDFs and its parts folder (2026-10-03).
+- The gws CLI the calendar connector already uses is authorised with the `drive` scope and a valid
+  token (`gws auth status`, 2026-10-03), so no new credential is needed.
+- A Google-native file fails `files.get alt=media` with `fileNotDownloadable` and downloads with
+  `files.export` (a spreadsheet as xlsx), checked 2026-10-03.
+- Kagemusha does not poll Drive. It has five code_act functions (`tools/drive-tool-registry.ts`):
+  `drive_list_drives`, `drive_browse` (a folder, optionally narrowed by name), `drive_find_folder`
+  (a path), `drive_download` and `drive_upload`.
+
+## Kagemusha and MAMA
+
+| Kagemusha                                     | MAMA                                                                                                     | Difference                                                                                                                                                                  |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `drive_list_drives`                           | `drive.read` `drives`                                                                                    | Same.                                                                                                                                                                       |
+| `drive_browse` (folder or drive, name filter) | `drive.read` `browse` (`folder`: a folder, shared drive, folder link or `root`; optional `path`, `name`) | One `folder` value takes a folder or a shared drive id, listed across all drives; the name filter is plain text, escaped into the query, instead of a checked query string. |
+| `drive_find_folder` (drive and path)          | `browse` with `path`                                                                                     | One view: the path is walked and the folder found is listed.                                                                                                                |
+| —                                             | `drive.read` `file` (`id` or a Drive/Docs link)                                                          | Added: the agent holds links (card attachments, cited messages), not ids. Returns the file's metadata.                                                                      |
+| —                                             | `drive.read` `search` (text across all drives)                                                           | Added: the agent knows an asset name, not the folder it sits in.                                                                                                            |
+| `drive_download` (`alt=media` only)           | `drive.download` (`id` or link)                                                                          | Google Docs, Sheets and Slides are exported as docx, xlsx and pptx, because `alt=media` refuses them. Saved under the daemon downloads directory.                           |
+| `drive_upload`                                | — (W8, `deliver.drive`)                                                                                  | Writing to Drive stays with W8.                                                                                                                                             |
+| `gwsExecSync` with the account's credentials  | `execGwsAsync` (`connectors/framework/gws-utils.ts`)                                                     | Same credential (the gws keyring); asynchronous so the daemon does not block.                                                                                               |
+
+`trello.read` reaches Trello through its registered connector. Drive has no running connector
+(the poller is off), so `drive.read` and `drive.download` call gws directly through a port that
+defaults to `execGwsAsync`; tests replace the port.
+
+## Work
+
+| #     | What changes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Done when                                                                                                                                                                                                                                         |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| W34.1 | **`drive.read`.** `api/drive-actions.ts`, one action with four views: `drives` (shared drives: id, name); `browse` (`folder`: a folder id, a shared drive id, a folder link or `root` for My Drive; optional `path` walked folder by folder, optional `name` filter; at most 100 entries, then the action says to narrow); `file` (`id` or a Drive/Docs link: name, type, size, modified time and last editor, parents, drive, link); `search` (`text` matched against names and content across all drives, not trashed; `limit` up to 50). Every free-text value is escaped (`\` and `'`) before it enters a Drive query. `readsConnector: { fixed: 'drive' }`; the owner reads what the authorised account reads; any other principal is refused, because no non-owner Drive grant exists yet. A gws failure is the action's error. Added to `OWNER_ACTIONS`. | Tests with a mocked gws port: each view's arguments and shape; link forms parsed (file, open?id, folders, docs/sheets/slides); quotes escaped; a path segment that does not exist names it; non-owner refused; a gws error is the action's error. |
+| W34.2 | **`drive.download`.** `id` or link; saved as `<downloadsDir>/drive/<id>_<name>`. Google Docs, Sheets and Slides are exported as docx, xlsx and pptx; folders, shortcuts and other Google-native types are refused naming the type. Returns the path, size, the file's type and the exported type. Same access as W34.1.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Tests: a binary file uses `alt=media`, a spreadsheet uses export with the xlsx type, a folder is refused, the saved path is inside the downloads directory and the size is read back.                                                             |
+| W34.3 | **The agent is told where Drive lives.** The `files` help topic (`runtime/owner-system-prompt.ts`) adds: a Drive or Docs link in a message or card is read with `drive.read` (`file`) and fetched with `drive.download`; a file known only by name is found with `drive.read` `search`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | An `owner-system-prompt` test reads the line.                                                                                                                                                                                                     |
+| W34.4 | **Cutover in the testbed** (outside the repo): deploy; the Drive poller stays disabled.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | `daemon.log` clean; the owner question answered right in Telegram from a file behind a Drive link.                                                                                                                                                |
+
+## Known limits
+
+- Drive exports Google-native files only up to 10 MB; a larger export fails with Drive's error.
+- Downloads take at most two minutes; a larger file fails with the timeout.
+- Search reads what the authorised account can see; files shared only with someone else are not found.
+
+## Out of scope
+
+- Storing Drive changes or a copy of any Drive state.
+- Uploading (W8).
+- The Gmail and Sheets connectors.

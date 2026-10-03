@@ -43,6 +43,8 @@ describe('W1 action surface', () => {
       'deliver.discord.file',
       'deliver.slack.file',
       'deliver.telegram.file',
+      'drive.download',
+      'drive.read',
       'graph.query',
       'help',
       'judge',
