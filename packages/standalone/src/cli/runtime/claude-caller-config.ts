@@ -5,10 +5,17 @@ export function resolveCallerHookPath(): string {
   return join(__dirname, '..', '..', 'runtime', 'claude-caller-hook.js');
 }
 
+/** The host's logging proxy the shell sandbox's network goes through (W35.4). */
+export interface SandboxNetworkProxy {
+  httpProxyPort: number;
+  socksProxyPort: number;
+}
+
 /** Owner workspace project settings; the CLI still reads project,local only. */
 export function ensureClaudeCallerHook(
   workspaceDir: string,
-  deniedReadPaths: readonly string[] = []
+  deniedReadPaths: readonly string[] = [],
+  networkProxy?: SandboxNetworkProxy
 ): void {
   workspaceDir = resolve(workspaceDir);
   const directory = join(workspaceDir, '.claude');
@@ -29,6 +36,8 @@ export function ensureClaudeCallerHook(
         denyRead: [...deniedReadPaths],
         denyWrite: [directory],
       },
+      // Shell network goes to the host's deny-all proxy, which reports each attempt (W35.4).
+      ...(networkProxy === undefined ? {} : { network: { ...networkProxy } }),
     },
     env: {
       CLAUDE_CODE_TMPDIR: join(workspaceDir, '.tmp'),

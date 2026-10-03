@@ -593,7 +593,7 @@ async function fetchSecurityEvents() {
       const time = new Date(event.time).toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' });
       // Agent outbound attempts (W35) carry the traced command instead of an HTTP request.
       const values = event.tool
-        ? [time, event.class, event.tool + ' ' + (event.summary || ''), event.sendsData ? 'sends data' : 'attempt', 'agent']
+        ? [time, event.class, event.tool + ' ' + (event.summary || ''), (event.sendsData === true ? 'sends data' : event.sendsData === null ? 'connection' : 'attempt'), 'agent']
         : [time, event.class, event.method + ' ' + event.path, event.status, event.country || 'unknown'];
       for (const value of values) {
         const cell = document.createElement('td');

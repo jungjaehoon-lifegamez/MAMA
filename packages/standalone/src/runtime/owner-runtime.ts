@@ -27,6 +27,7 @@ import type { RuntimeBackend, RuntimeEffort, RuntimeSandbox } from './config.js'
 import { openCoreDatabase, type CoreDatabase } from './core-db.js';
 import { createActionSurface, type ActionSurface } from './action-surface.js';
 import type { OutboundAttemptEvent } from '../api/security-events.js';
+import type { SandboxNetworkProxy } from '../cli/runtime/claude-caller-config.js';
 import { ownerRuleIds, RULE_KINDS } from './owner-authority.js';
 import { createNativeSession, type NativeSession } from './native-session.js';
 import type { ActionDispatcher } from '@jungjaehoon/mama-core/api/dispatch';
@@ -77,6 +78,8 @@ export interface OwnerRuntimeOptions {
   runTokenBudget?: number;
   codexHome?: string;
   replayKeyFile?: string;
+  /** The host's logging proxy for the Claude shell sandbox's network (W35.4). */
+  sandboxNetworkProxy?: SandboxNetworkProxy;
   /** Jev key and vocabulary paths when the owner enabled Jev; with them the agent can call judge. */
   jev?: { keyFile: string; vocabFile: string };
   codexSandbox?: RuntimeSandbox;
@@ -351,6 +354,9 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         workspaceDir: options.workspaceDir,
         runtimeRoot: options.runtimeRoot,
         replayKeyFile: options.replayKeyFile,
+        ...(options.sandboxNetworkProxy === undefined
+          ? {}
+          : { sandboxNetworkProxy: options.sandboxNetworkProxy }),
         actionSurface: surface,
         // The standing text is the session's system prompt: sent on a new thread and
         // re-supplied when a durable thread resumes after a restart.

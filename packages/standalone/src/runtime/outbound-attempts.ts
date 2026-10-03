@@ -55,6 +55,14 @@ function commandText(input: Record<string, unknown>): string | null {
   return null;
 }
 
+/** The command as tool_traces shows it (bounded, secrets masked), as plain text. */
+function commandSummary(command: string): string | null {
+  const traced = traceSummary(command);
+  if (traced === null) return null;
+  // A summary cut at its bound ends in "..." outside the JSON string; keep it as cut.
+  return traced.endsWith('"') ? (JSON.parse(traced) as string) : traced;
+}
+
 /** The outbound attempt a native tool call makes, or null for any other call. */
 export function outboundAttempt(
   name: string,
@@ -69,7 +77,7 @@ export function outboundAttempt(
     time: new Date().toISOString(),
     class: sendsData ? 'outbound_send' : 'outbound_attempt',
     tool: name,
-    summary: traceSummary({ command }),
+    summary: commandSummary(command),
     sendsData,
     modelRunId,
     callId: typeof input.nativeToolUseId === 'string' ? input.nativeToolUseId : null,

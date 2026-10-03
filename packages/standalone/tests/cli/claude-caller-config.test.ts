@@ -21,6 +21,17 @@ function fixture() {
 }
 
 describe('owner Claude workspace settings', () => {
+  it("sends the shell sandbox's network to the host proxy when the host gives one", () => {
+    const { workspace, path } = fixture();
+    ensureClaudeCallerHook(workspace, [], { httpProxyPort: 41001, socksProxyPort: 41002 });
+    expect(JSON.parse(readFileSync(path, 'utf8')).sandbox.network).toEqual({
+      httpProxyPort: 41001,
+      socksProxyPort: 41002,
+    });
+    ensureClaudeCallerHook(workspace);
+    expect(JSON.parse(readFileSync(path, 'utf8')).sandbox.network).toBeUndefined();
+  });
+
   it('removes stale grants from both host-owned scopes; permission rules go on the CLI', () => {
     const { workspace, path } = fixture();
     const localPath = join(workspace, '.claude', 'settings.local.json');

@@ -40,7 +40,10 @@ import {
   type ClaudeToolRole,
 } from '../agent/claude-native-tool-policy.js';
 import { ensureMamaMcpConfig } from '../cli/runtime/action-mcp-config.js';
-import { ensureClaudeCallerHook } from '../cli/runtime/claude-caller-config.js';
+import {
+  ensureClaudeCallerHook,
+  type SandboxNetworkProxy,
+} from '../cli/runtime/claude-caller-config.js';
 import type { RuntimeBackend, RuntimeEffort, RuntimeSandbox } from './config.js';
 import type { ActionSurface } from './action-surface.js';
 import type { OwnerPolicyProvider, OwnerPolicySnapshot } from './owner-policy.js';
@@ -98,6 +101,8 @@ export interface NativeSessionOptions {
   runTokenBudget?: number;
   codexHome?: string;
   replayKeyFile?: string;
+  /** The host's logging proxy for the Claude shell sandbox's network (W35.4). */
+  sandboxNetworkProxy?: SandboxNetworkProxy;
   pluginDir?: string;
   codexSandbox?: RuntimeSandbox;
   mcpConfigPath?: string;
@@ -294,7 +299,8 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
   if (options.backend === 'claude')
     ensureClaudeCallerHook(
       options.workspaceDir,
-      credentialReadPaths(options.runtimeRoot, options.codexHome, options.replayKeyFile)
+      credentialReadPaths(options.runtimeRoot, options.codexHome, options.replayKeyFile),
+      options.sandboxNetworkProxy
     );
   const tools = actionToolDefinitions(options.actionSurface);
   const runnerRef: { current?: NativeSessionRunner<HostExecutionContext> } = {};
