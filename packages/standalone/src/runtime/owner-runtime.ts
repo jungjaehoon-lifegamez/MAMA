@@ -26,6 +26,7 @@ import { RawStore } from '../storage/source-archive.js';
 import type { RuntimeBackend, RuntimeEffort, RuntimeSandbox } from './config.js';
 import { openCoreDatabase, type CoreDatabase } from './core-db.js';
 import { createActionSurface, type ActionSurface } from './action-surface.js';
+import type { OutboundAttemptEvent } from '../api/security-events.js';
 import { ownerRuleIds, RULE_KINDS } from './owner-authority.js';
 import { createNativeSession, type NativeSession } from './native-session.js';
 import type { ActionDispatcher } from '@jungjaehoon/mama-core/api/dispatch';
@@ -52,6 +53,8 @@ import {
 } from './stimulus-delivery.js';
 
 export interface OwnerRuntimeOptions {
+  /** Native shell commands that open a network connection, reported as they start (W35). */
+  outboundAttempts?: (event: OutboundAttemptEvent) => void;
   backend: RuntimeBackend;
   model: string;
   databasePath: string;
@@ -282,6 +285,9 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       : {};
     const surface = createActionSurface({
       adapter: database.adapter,
+      ...(options.outboundAttempts === undefined
+        ? {}
+        : { outboundAttempts: options.outboundAttempts }),
       knowledge,
       ownerPrincipalId: options.ownerPrincipalId,
       agentId: options.agentId,

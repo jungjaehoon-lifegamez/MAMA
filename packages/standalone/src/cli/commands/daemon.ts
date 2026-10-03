@@ -57,6 +57,7 @@ import { readViewerMemoryStats } from '../../api/viewer-data.js';
 import type { OwnerFileDeliveryResult } from '../../api/file-delivery.js';
 import { createReportScheduler, type ReportScheduler } from '../../runtime/report-scheduler.js';
 import { createTimeZoneSetting } from '../../runtime/timezone.js';
+import { createOutboundEventRecorder } from '../../api/security-events.js';
 
 const OWNER_PRINCIPAL_ID = 'owner';
 const OWNER_AGENT_ID = 'owner-agent';
@@ -414,6 +415,18 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       if (!selected) throw new Error('Notification delivery messenger is not available');
       await selected.sendToOwner(content, row.stimulusId);
     };
+    // Outbound attempts are seen, not blocked (W35): the security log and the security alert
+    // route, resolved when an alert is sent because the messengers start after the owner runtime.
+    const outboundEvents = createOutboundEventRecorder({
+      path: join(paths.mamaRoot, 'logs', 'security-events.jsonl'),
+      replay: options.mode === 'replay',
+      timeZone,
+      sendToOwner: async (text, key) => {
+        const selected = gateways.get(config.delivery?.security_alerts ?? 'telegram');
+        if (!selected) throw new Error('Security alert delivery messenger is not available');
+        await selected.sendToOwner(text, key);
+      },
+    });
     const ownerFactory = dependencies.createOwnerRuntime ?? createOwnerRuntime;
     owner = await ownerFactory({
       backend: config.agent.backend,
@@ -428,6 +441,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       workspaceDir: paths.workspaceDir,
       ownerPrincipalId: OWNER_PRINCIPAL_ID,
       agentId: OWNER_AGENT_ID,
+      outboundAttempts: (event) => outboundEvents.record(event),
       scopes: OWNER_MEMORY_SCOPES,
       connectors: OWNER_CONNECTORS,
       rawPath: paths.connectorsRoot,

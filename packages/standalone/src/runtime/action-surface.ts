@@ -1,5 +1,7 @@
 import { traceSummary } from '@jungjaehoon/mama-core/runtime/trace-summary';
 import { createNativeToolTraceObserver } from '@jungjaehoon/mama-core/runtime/native-tool-trace-observer';
+import type { OutboundAttemptEvent } from '../api/security-events.js';
+import { withOutboundAttempts } from './outbound-attempts.js';
 import {
   appendOperationToolTrace,
   appendToolTrace,
@@ -91,6 +93,8 @@ export interface HostToolDefinition {
 
 export interface ActionSurfaceOptions {
   adapter: DatabaseInstance;
+  /** Native shell commands that open a network connection, reported as they start (W35). */
+  outboundAttempts?: (event: OutboundAttemptEvent) => void;
   knowledge: Knowledge;
   ownerPrincipalId: string;
   agentId: string;
@@ -300,8 +304,12 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
   };
 
   return {
-    createNativeEffectObserver: (modelRunId) =>
-      createNativeToolTraceObserver(options.adapter, modelRunId),
+    createNativeEffectObserver: (modelRunId) => {
+      const traces = createNativeToolTraceObserver(options.adapter, modelRunId);
+      return options.outboundAttempts === undefined
+        ? traces
+        : withOutboundAttempts(traces, modelRunId, options.outboundAttempts);
+    },
     catalog,
     dispatch,
     ownerAccess,
