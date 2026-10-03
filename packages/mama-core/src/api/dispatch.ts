@@ -401,7 +401,7 @@ export function validateInput(
   if (schema.type !== undefined) {
     const mismatch = typeMismatch(schema.type, value);
     if (mismatch !== null) {
-      return `${path} ${mismatch}.`;
+      return `${path} ${mismatch}.${described(schema)}`;
     }
   }
   if (schema.oneOf !== undefined) {
@@ -410,8 +410,7 @@ export function validateInput(
       // A refusal names what is allowed: "(0 matched)" alone once left a caller dropping the
       // field and the write with it.
       const shapes = schema.oneOf.map(shapeName).join(', ');
-      const described = schema.description === undefined ? '' : ` ${schema.description}`;
-      return `${path} must match exactly one of: ${shapes} (${matches} matched).${described}`;
+      return `${path} must match exactly one of: ${shapes} (${matches} matched).${described(schema)}`;
     }
   }
   if (typeof value === 'number') {
@@ -450,22 +449,26 @@ export function validateInput(
     !Array.isArray(value)
   ) {
     const objectValue = value as Record<string, unknown>;
-    for (const key of schema.required ?? []) {
-      if (objectValue[key] === undefined) {
-        return `${path}.${key} is required.`;
+    const properties = schema.properties ?? {};
+    // A misnamed field comes first: a caller that carried `text` over from a sibling action is
+    // told the allowed names, not only that the real field is missing.
+    if (schema.additionalProperties === false) {
+      for (const [key, propertyValue] of Object.entries(objectValue)) {
+        // undefined is absent — JSON cannot carry it
+        if (propertyValue !== undefined && properties[key] === undefined) {
+          return `${path}.${key} is not an allowed property. Allowed: ${Object.keys(properties).join(', ')}.`;
+        }
       }
     }
-    const properties = schema.properties ?? {};
-    for (const [key, propertyValue] of Object.entries(objectValue)) {
-      // undefined is absent — JSON cannot carry it
-      if (propertyValue === undefined) {
-        continue;
+    for (const key of schema.required ?? []) {
+      if (objectValue[key] === undefined) {
+        const required = properties[key];
+        return `${path}.${key} is required.${required === undefined ? '' : described(required)}`;
       }
+    }
+    for (const [key, propertyValue] of Object.entries(objectValue)) {
       const propertySchema = properties[key];
-      if (propertySchema === undefined) {
-        if (schema.additionalProperties === false) {
-          return `${path}.${key} is not an allowed property.`;
-        }
+      if (propertyValue === undefined || propertySchema === undefined) {
         continue;
       }
       const nested = validateInput(propertySchema, propertyValue, `${path}.${key}`);
@@ -499,6 +502,10 @@ export function validateInput(
     }
   }
   return null;
+}
+
+function described(schema: ActionSchemaObject): string {
+  return schema.description === undefined ? '' : ` ${schema.description}`;
 }
 
 function shapeName(schema: ActionSchemaObject): string {
