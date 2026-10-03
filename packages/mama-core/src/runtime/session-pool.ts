@@ -192,6 +192,15 @@ export class SessionPool {
   }
 
   /**
+   * A turn that is still working keeps its session: cleanup measures idleness from the last
+   * progress, so a long turn is neither force-released as stuck nor expired while it runs.
+   */
+  touchSession(channelKey: string): void {
+    const existing = this.sessions.get(channelKey);
+    if (existing?.inUse) existing.lastActive = Date.now();
+  }
+
+  /**
    * Release a session after use
    * This allows the session to be reused by future requests
    */
@@ -199,6 +208,8 @@ export class SessionPool {
     const existing = this.sessions.get(channelKey);
     if (existing && (!expectedSessionId || existing.sessionId === expectedSessionId)) {
       existing.inUse = false;
+      // Expiry counts from the end of the last turn, not from when it began.
+      existing.lastActive = Date.now();
       console.log(`[SessionPool] Released session for ${channelKey}: ${existing.sessionId}`);
     }
   }

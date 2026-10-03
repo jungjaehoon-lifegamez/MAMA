@@ -1143,6 +1143,7 @@ export class NativeSessionRunner<TToolContext extends HostExecutionContext = Hos
         callerObserver?.onSubagentStart?.(info);
       },
       onToolUse: (name, input) => {
+        host.sessionPool.touchSession(channelKey);
         if (host.backend === 'claude') {
           if (
             name === 'Agent' &&

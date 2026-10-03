@@ -35,11 +35,13 @@ function readyProcess(options: { requestTimeout: number; requestMaxMs?: number }
   };
   internal.process = child;
   internal.state = 'idle';
+  const emit = (event: Record<string, unknown>) =>
+    internal.handleStdout(Buffer.from(`${JSON.stringify(event)}\n`));
   const print = () =>
     internal.handleStdout(
       Buffer.from(`${JSON.stringify({ type: 'system', subtype: 'status' })}\n`)
     );
-  return { proc, child, print };
+  return { proc, child, print, emit };
 }
 
 describe('persistent CLI request timeout', () => {
@@ -96,5 +98,23 @@ describe('persistent CLI request timeout', () => {
     vi.advanceTimersByTime(400);
     await expect(result).rejects.toThrow('Request timeout: running longer than 3000 ms');
     expect(child.signals).toEqual(['SIGTERM']);
+  });
+
+  it('clears the whole-request limit when the request ends', async () => {
+    vi.useFakeTimers();
+    const { proc, child, emit } = readyProcess({ requestTimeout: 1_000, requestMaxMs: 3_000 });
+    const result = proc.sendMessage('short work');
+    emit({ type: 'result', subtype: 'success', result: 'done', usage: {} });
+    await expect(result).resolves.toMatchObject({ response: 'done' });
+    vi.advanceTimersByTime(10_000);
+    expect(child.signals).toEqual([]);
+  });
+
+  it('ends a request on a result that is neither success nor flagged as an error', async () => {
+    vi.useFakeTimers();
+    const { proc, emit } = readyProcess({ requestTimeout: 1_000, requestMaxMs: 3_000 });
+    const result = proc.sendMessage('work');
+    emit({ type: 'result', subtype: 'error_max_turns', is_error: false });
+    await expect(result).rejects.toThrow('Claude CLI ended the turn: error_max_turns');
   });
 });
