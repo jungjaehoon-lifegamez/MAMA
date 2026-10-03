@@ -3,6 +3,17 @@
 import { ConfigError } from '../runtime/config.js';
 import { CliInputError } from './prompt.js';
 
+/**
+ * replay and backfill open the daemon's database and rewrite its workspace settings, the shell
+ * sandbox's proxy ports among them, so they run only while the daemon is stopped.
+ */
+async function requireDaemonStopped(command: string): Promise<void> {
+  const { daemonStatus } = await import('./commands/daemon.js');
+  if (daemonStatus() === 'running') {
+    throw new CliInputError(`Stop the daemon before mama ${command}: run mama stop`);
+  }
+}
+
 async function main(): Promise<void> {
   const command = process.argv[2];
   if (command === 'init') {
@@ -22,11 +33,13 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'replay') {
+    await requireDaemonStopped('replay');
     const { runReplay } = await import('./commands/replay.js');
     await runReplay();
     return;
   }
   if (command === 'backfill') {
+    await requireDaemonStopped('backfill');
     const { runBackfill } = await import('./commands/backfill.js');
     await runBackfill(process.argv.slice(3));
     return;

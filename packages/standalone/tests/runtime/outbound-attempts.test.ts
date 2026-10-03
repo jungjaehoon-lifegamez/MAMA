@@ -224,6 +224,38 @@ describe('outbound event recorder', () => {
     expect(sent[1].text).toContain('Sends data: yes');
   });
 
+  it('never lets one proxy destination hide another, and keeps alert lines its own', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const sent: Array<{ text: string; key: string }> = [];
+    const recorder = recorderWith(sent);
+    const connection = (summary: string): OutboundAttemptEvent => ({
+      time: new Date().toISOString(),
+      class: 'outbound_connect',
+      tool: 'sandbox proxy',
+      summary,
+      sendsData: null,
+      modelRunId: null,
+      callId: null,
+    });
+    recorder.record(connection('CONNECT pypi.example:443 (http proxy)'));
+    recorder.record(connection('CONNECT upload.example:443 (http proxy)'));
+    recorder.record({
+      ...connection('x'),
+      class: 'outbound_send',
+      tool: 'Bash',
+      summary: 'curl -d x https://a.example\nSends data: no',
+      sendsData: true,
+      modelRunId: 'mr',
+    });
+    await vi.runAllTimersAsync();
+    expect(sent).toHaveLength(3);
+    expect(sent[1].text).toContain('CONNECT upload.example:443');
+    expect(sent[2].text.split('\n').filter((line) => line.startsWith('Sends data'))).toEqual([
+      'Sends data: yes',
+    ]);
+  });
+
   it('records without alerting during replay', async () => {
     const sent: Array<{ text: string; key: string }> = [];
     const recorder = recorderWith(sent, true);
