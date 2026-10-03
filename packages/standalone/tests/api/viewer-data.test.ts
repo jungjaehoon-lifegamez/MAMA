@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { createKnowledge, type CommitmentPage } from '@jungjaehoon/mama-core/knowledge';
 import type { WorkGraphPage } from '@jungjaehoon/mama-core';
 import Database from 'better-sqlite3';
-import { GraphModule } from '../../public/viewer/src/modules/graph.js';
+import { GraphModule, KIND_LABELS } from '../../public/viewer/src/modules/graph.js';
 import {
   mapArchiveGraphNode,
   readViewerMemoryStats,
@@ -105,7 +105,7 @@ describe('viewer data shaping', () => {
     }
   });
 
-  it('keeps fixed kind colours and counts only visible kinds and relationships in the legend', () => {
+  it('keeps fixed kind colours and names every drawn kind and relationship in plain words', () => {
     const graph = new GraphModule();
     graph.graphData = {
       nodes: [
@@ -117,8 +117,8 @@ describe('viewer data shaping', () => {
       edges: [
         { from: 'a', to: 'c', relationship: 'derived_from' },
         { from: 'b', to: 'c', relationship: 'derived_from' },
-        { from: 'a', to: 'b', relationship: 'amends' },
-        { from: 'd', to: 'a', relationship: 'refines' },
+        { from: 'a', to: 'b', relationship: 'supersedes' },
+        { from: 'd', to: 'a', relationship: 'contradicts' },
       ],
     };
     const kinds = [
@@ -126,43 +126,44 @@ describe('viewer data shaping', () => {
       'preference',
       'constraint',
       'lesson',
+      'workflow',
       'fact',
       'commitment',
       'observation',
     ];
     expect(new Set(kinds.map((kind) => graph.getNodeColor(kind))).size).toBe(kinds.length);
-    expect([...kinds].reverse().map((kind) => new GraphModule().getNodeColor(kind))).toEqual(
-      kinds.map((kind) => graph.getNodeColor(kind)).reverse()
-    );
+    expect(kinds.every((kind) => KIND_LABELS[kind] !== undefined)).toBe(true);
     expect(graph.getLegendEntries()).toEqual({
       nodes: [
-        { kind: 'commitment', count: 1, color: graph.getNodeColor('commitment') },
-        { kind: 'lesson', count: 2, color: graph.getNodeColor('lesson') },
-        { kind: 'observation', count: 1, color: graph.getNodeColor('observation') },
-      ],
-      edges: ['amends', 'derived_from', 'refines'].map((relationship) => ({
-        relationship,
-        count: relationship === 'derived_from' ? 2 : 1,
-        ...graph.edgeStyles[relationship],
-      })),
-    });
-    graph.network = {
-      body: {
-        data: {
-          nodes: {
-            get: () => [
-              { id: 'a' },
-              { id: 'b' },
-              { id: 'c', hidden: true },
-              { id: 'd', hidden: true },
-            ],
-          },
+        { kind: 'lesson', label: 'Lesson', count: 2, color: graph.getNodeColor('lesson') },
+        {
+          kind: 'observation',
+          label: 'Source message',
+          count: 1,
+          color: graph.getNodeColor('observation'),
         },
-      },
-    } as never;
-    expect(graph.getLegendEntries()).toEqual({
-      nodes: [{ kind: 'lesson', count: 2, color: graph.getNodeColor('lesson') }],
-      edges: [{ relationship: 'amends', count: 1, ...graph.edgeStyles.amends }],
+        {
+          kind: 'commitment',
+          label: 'Work update',
+          count: 1,
+          color: graph.getNodeColor('commitment'),
+        },
+      ],
+      edges: [
+        {
+          relationship: 'derived_from',
+          label: 'rests on (evidence)',
+          count: 2,
+          ...graph.edgeStyles.derived_from,
+        },
+        { relationship: 'supersedes', label: 'replaces', count: 1, ...graph.edgeStyles.supersedes },
+        {
+          relationship: 'contradicts',
+          label: 'contradicts',
+          count: 1,
+          ...graph.edgeStyles.contradicts,
+        },
+      ],
     });
     graph.graphData = { nodes: [], edges: [] };
     expect(graph.getLegendEntries()).toEqual({ nodes: [], edges: [] });

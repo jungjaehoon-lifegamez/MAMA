@@ -117,6 +117,7 @@ describe('one owner native session', () => {
         'memory.checkpoint.save',
         'memory.read:provenance',
         'memory.read:record',
+        'memory.read:timeline',
         'memory.retire',
         'memory.save',
         'memory.search',

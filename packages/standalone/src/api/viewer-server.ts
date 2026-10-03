@@ -25,7 +25,7 @@ import {
 } from './auth-middleware.js';
 import { logCfAccessConfiguration } from './cf-access.js';
 import { createSecurityEventRecorder, type SecurityEventOptions } from './security-events.js';
-import type { TimeZoneSetting } from '../runtime/timezone.js';
+import { epochAtLocalDateTime, localDateKey, type TimeZoneSetting } from '../runtime/timezone.js';
 import {
   isAllowedViewerHost,
   logViewerInternalError,
@@ -40,13 +40,16 @@ import {
 } from '../wiki/wiki-read.js';
 import {
   mapArchiveGraphNode,
+  savedTimelinePage,
   shapeArchiveGraph,
   shapeGraphPage,
   shapeMemorySearch,
   shapeOperatorTasksFromItems,
+  shapeSavedTimeline,
   shapeWorkListDetail,
   shapeWorkListItems,
   type RevisionGraphRead,
+  type SavedTimelinePage,
   type ViewerEvidence,
   type ArchiveGraphResponse,
   type ViewerMemoryStats,
@@ -245,6 +248,48 @@ function graphRef(value: string): { kind: string; id: string } | null {
 }
 
 const OPEN_WORK_STATUSES = ['pending', 'in_progress', 'review', 'blocked'] as const;
+
+/** The memory view's named periods, in local days ending today. */
+const TIMELINE_PERIOD_DAYS = new Map([
+  ['today', 1],
+  ['7d', 7],
+  ['30d', 30],
+]);
+
+function shiftLocalDate(day: string, days: number): string {
+  return new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+function isLocalDate(value: string | null): value is string {
+  return (
+    value !== null &&
+    /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+    Number.isFinite(Date.parse(`${value}T00:00:00Z`)) &&
+    shiftLocalDate(value, 0) === value
+  );
+}
+
+/** The local days a memory timeline covers: from and to as given, or a named period ending today. */
+function timelineDays(params: URLSearchParams, timeZone: string): { from: string; to: string } {
+  const from = params.get('from');
+  const to = params.get('to');
+  if (from !== null || to !== null) {
+    if (!isLocalDate(from) || !isLocalDate(to) || from > to) {
+      throw new ViewerHttpError(
+        400,
+        'INVALID_TIMELINE_WINDOW',
+        'from and to must be local dates (YYYY-MM-DD), from on or before to'
+      );
+    }
+    return { from, to };
+  }
+  const days = TIMELINE_PERIOD_DAYS.get(params.get('period') ?? '7d');
+  if (days === undefined) {
+    throw new ViewerHttpError(400, 'INVALID_TIMELINE_PERIOD', 'period must be today, 7d or 30d');
+  }
+  const today = localDateKey(Date.now(), timeZone);
+  return { from: shiftLocalDate(today, 1 - days), to: today };
+}
 
 /** The ledger records "unconfirmed" when no observation points to an assignee. */
 function confirmedAssignee(value: unknown): boolean {
@@ -721,6 +766,53 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
     );
   };
 
+  // The memory view draws one record and what it links to, never the whole graph at once.
+  const graphNeighbors = async (params: URLSearchParams): Promise<ArchiveGraphResponse> => {
+    const started = Date.now();
+    const ref = graphRef(params.get('id') ?? '');
+    if (!ref) throw new ViewerHttpError(400, 'INVALID_ID', 'id must be a graph reference');
+    const page = (await callAction('graph.query', {
+      view: 'neighbors',
+      seeds: [ref],
+      maxDepth: 1,
+      history: 'all',
+    })) as WorkGraphPage;
+    return shapeArchiveGraph(page, Date.now() - started, [], options.timeZone.get());
+  };
+
+  // What was saved when, read whole for the chosen days: the view groups by day, kind and item,
+  // so it needs every record in the window rather than one page of them.
+  const memoryTimeline = async (params: URLSearchParams): Promise<unknown> => {
+    const timeZone = options.timeZone.get();
+    const window = timelineDays(params, timeZone);
+    const since = epochAtLocalDateTime(`${window.from}T00:00:00`, timeZone);
+    const until = epochAtLocalDateTime(`${shiftLocalDate(window.to, 1)}T00:00:00`, timeZone);
+    const records: SavedTimelinePage['records'] = [];
+    let cursor: string | null = null;
+    do {
+      const page = savedTimelinePage(
+        await callAction('memory.read:timeline', {
+          since,
+          until,
+          limit: 500,
+          ...(cursor === null ? {} : { cursor }),
+        })
+      );
+      records.push(...page.records);
+      cursor = page.nextCursor;
+    } while (cursor !== null);
+    const query = params.get('q')?.trim() ?? '';
+    const groups = params.get('groups');
+    return shapeSavedTimeline(
+      records,
+      { ...window, timeZone },
+      {
+        query: query === '' ? null : query,
+        groups: groups === null ? null : new Set(groups.split(',').filter((group) => group !== '')),
+      }
+    );
+  };
+
   const graphDetail = async (params: URLSearchParams): Promise<unknown> => {
     const id = params.get('id');
     if (!id) throw new ViewerHttpError(400, 'MISSING_ID', 'Missing required parameter: id');
@@ -934,6 +1026,10 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
       let result: unknown;
       if (url.pathname === '/graph' || url.pathname === '/api/graph') {
         result = await graph(url.searchParams);
+      } else if (url.pathname === '/api/graph/neighbors') {
+        result = await graphNeighbors(url.searchParams);
+      } else if (url.pathname === '/api/memory/timeline') {
+        result = await memoryTimeline(url.searchParams);
       } else if (url.pathname === '/graph/detail' || url.pathname === '/api/graph/detail') {
         result = await graphDetail(url.searchParams);
       } else if (url.pathname === '/graph/similar' || url.pathname === '/api/graph/similar') {
