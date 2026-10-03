@@ -50,22 +50,45 @@ export interface GraphDetailResponse {
   [key: string]: unknown;
 }
 
-export interface SimilarDecision {
-  id?: string | number;
-  topic?: string;
-  decision?: string;
-  reasoning?: string;
-  relationship?: string;
-  similarity?: number;
-  [key: string]: unknown;
+export interface TimelineRecord {
+  id: string;
+  kind: string | null;
+  status: string | null;
+  topic: string;
+  summary: string;
+  time: string;
+  via: string | null;
 }
 
-export interface SimilarDecisionsResponse {
-  similar: SimilarDecision[];
-  [key: string]: unknown;
+export interface TimelineItem {
+  commitmentId: string;
+  title: string | null;
+  topic: string;
+  revisions: Array<{
+    id: string;
+    revision: number | null;
+    operation: string | null;
+    status: string | null;
+    summary: string;
+    time: string;
+  }>;
 }
 
-export type GraphSimilarResponse = GraphResponse & SimilarDecisionsResponse;
+export interface TimelineGroup {
+  group: string;
+  count: number;
+  records?: TimelineRecord[];
+  items?: TimelineItem[];
+}
+
+export interface MemoryTimelineResponse {
+  from: string;
+  to: string;
+  timeZone: string;
+  total: number;
+  counts: Record<string, number>;
+  days: Array<{ day: string; total: number; groups: TimelineGroup[] }>;
+}
 
 export interface CheckpointSummary {
   id?: string;
@@ -660,45 +683,18 @@ export class API {
   // Graph API
   // =============================================
 
-  /**
-   * Get graph data
-   * @param {Object} params - Query parameters
-   * @returns {Promise<Object>} Graph data
-   */
-  static async getGraph(params: QueryParams = {}): Promise<GraphResponse> {
-    // cluster: false by default to avoid slow embedding calculations
-    return this.get<GraphResponse>('/graph', { cluster: 'false', ...params });
+  /** One record and the records and source messages it links to directly. */
+  static async getGraphNeighbors(id: string): Promise<GraphResponse> {
+    return this.get<GraphResponse>('/api/graph/neighbors', { id });
+  }
+
+  /** What was saved in a period, by day, kind and item. */
+  static async getMemoryTimeline(params: QueryParams): Promise<MemoryTimelineResponse> {
+    return this.get<MemoryTimelineResponse>('/api/memory/timeline', params);
   }
 
   static async getGraphDetail(nodeId: string): Promise<GraphDetailResponse> {
     return this.get<GraphDetailResponse>('/graph/detail', { id: nodeId });
-  }
-
-  /**
-   * Get similar decisions for a node
-   * @param {string} nodeId - Node ID
-   * @returns {Promise<Object>} Similar decisions
-   */
-  static async getSimilarDecisions(nodeId: string): Promise<GraphSimilarResponse> {
-    return this.get<GraphSimilarResponse>('/graph/similar', { id: nodeId });
-  }
-
-  /**
-   * Update decision outcome
-   * @param {string} id - Decision ID
-   * @param {string} outcome - Outcome value
-   * @param {string} reason - Optional reason
-   * @returns {Promise<Object>} Update result
-   */
-  static async updateOutcome(
-    id: string,
-    outcome: string,
-    reason: string | null = null
-  ): Promise<JsonRecord> {
-    return this.post<JsonRecord, { id: string; outcome: string; reason: string | null }>(
-      '/graph/update',
-      { id, outcome, reason }
-    );
   }
 
   // =============================================

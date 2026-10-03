@@ -79,7 +79,7 @@ declare global {
 
   interface VisNetwork {
     on(
-      event: 'click' | 'stabilized' | 'stabilizationIterationsDone',
+      event: 'click' | 'doubleClick' | 'stabilized' | 'stabilizationIterationsDone',
       handler: (params: { nodes: Array<string | number> }) => void
     ): void;
     on(event: 'hoverNode' | 'blurNode', handler: (params: { node: string | number }) => void): void;

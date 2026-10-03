@@ -72,6 +72,7 @@ const OWNER_ACTIONS = [
   'memory.search',
   'memory.read:provenance',
   'memory.read:record',
+  'memory.read:timeline',
   'memory.retire',
   'report.read',
   'report.publish',
@@ -156,6 +157,8 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
         // authority: a fact found by memory.search is traced to its evidence in one call.
         'memory.read:provenance',
         'memory.read:record',
+        // What was written when: the owner looks back over what was saved, in chat or the viewer.
+        'memory.read:timeline',
         'memory.retire',
         'memory.checkpoint.list',
         // The agent's hand-off for a later session, shown in its [session_start] as Kagemusha's is.
