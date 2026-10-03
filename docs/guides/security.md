@@ -163,8 +163,13 @@ What can leave the machine from an owner turn, checked on the Claude backend on
 - Drive is read through the gws CLI and its own credential store (`drive.read`,
   `drive.download`); the daemon makes the calls and the agent receives the results.
 - Every call is recorded in `tool_traces`, native Bash, web fetch and web search
-  included, with a bounded input summary. An outbound attempt raises no owner alert
-  yet, a refused one included; alerts for these attempts are work item W35.
+  included, with a bounded input summary.
+- A native shell command that opens a network connection (a network client, a
+  package install, a git remote operation or a script calling an HTTP or socket
+  library) is a security event: it is appended to `security-events.jsonl` and sent
+  to the owner through `delivery.security_alerts`, refused or not. Attempts within a
+  minute of an alert are counted on the next one. Nothing is blocked. Detection
+  reads the command, so a client it does not name is missed.
 
 The Codex backend keeps its own sandbox's network setting; it was not checked here.
 
