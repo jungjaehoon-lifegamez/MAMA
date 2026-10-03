@@ -465,7 +465,16 @@ function textHasToken(text: string, token: string): boolean {
   if (!SHORT_LATIN_TOKEN.test(token)) {
     return text.includes(token);
   }
-  return new RegExp(`(?:^|[^a-z0-9])${token}(?:$|[^a-z0-9])`).test(text);
+  for (let at = text.indexOf(token); at !== -1; at = text.indexOf(token, at + 1)) {
+    if (!isAsciiAlnum(text[at - 1]) && !isAsciiAlnum(text[at + token.length])) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isAsciiAlnum(char: string | undefined): boolean {
+  return char !== undefined && /[a-z0-9]/.test(char);
 }
 
 /** FTS5 bm25 is more negative for a better match; this maps the best row of a result set to 1. */
