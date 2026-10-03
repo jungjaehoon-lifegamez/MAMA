@@ -424,11 +424,32 @@ function stemToken(token: string): string {
   return token;
 }
 
+const CJK_TEXT = /[\p{Script=Hangul}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+
+/**
+ * Two characters carry a whole word in Korean, Japanese and Chinese, a count of rounds (a digit and
+ * a Korean counter) and an acronym such as "FB"; two Latin letters are mostly English function
+ * words. Dropping every short token lost the one word that told four feedback rounds from one
+ * (owner ledger, 2026-10-03).
+ */
+function isMeaningfulShortToken(raw: string): boolean {
+  return (
+    raw.length === 2 &&
+    (CJK_TEXT.test(raw) || (/\p{N}/u.test(raw) && /\p{L}/u.test(raw)) || /^[A-Z]{2}$/.test(raw))
+  );
+}
+
 export function getLexicalQueryTokens(query: string): string[] {
   return query
-    .toLowerCase()
     .split(/[\s,.!?;:()[\]{}"']+/)
-    .filter((token) => token.length > 2 && !LEXICAL_STOPWORDS.has(token));
+    .filter((raw) => raw.length > 2 || isMeaningfulShortToken(raw))
+    .map((raw) => raw.toLowerCase())
+    .filter((token) => !LEXICAL_STOPWORDS.has(token));
+}
+
+/** FTS5 bm25 is more negative for a better match; this maps the best row of a result set to 1. */
+function bm25Relevance(rank: number, maxAbsRank: number): number {
+  return maxAbsRank > 0 ? Math.abs(rank) / maxAbsRank : 0.5;
 }
 
 function queryTokenCount(query: string): number {
@@ -437,10 +458,6 @@ function queryTokenCount(query: string): number {
     return lexicalTokens.length;
   }
   return query.trim().split(/\s+/).filter(Boolean).length;
-}
-
-function looksMixedKoreanEnglish(query: string): boolean {
-  return /[\uac00-\ud7a3]/.test(query) && /[a-z]/i.test(query);
 }
 
 function looksEntityLike(query: string): boolean {
@@ -1171,7 +1188,9 @@ export async function recallMemory(
     searchOptions.strictness !== 'recall' ||
     searchOptions.minLexicalSupport ||
     queryTokenCount(query) <= 3 ||
-    looksMixedKoreanEnglish(query) ||
+    // The vector channel ranks Korean, Japanese and Chinese text by writing style more than by
+    // content, so lexical search runs for such a query however many tokens it has.
+    CJK_TEXT.test(query) ||
     looksEntityLike(query);
   const needsLexical =
     isAggregation ||
@@ -1236,7 +1255,6 @@ export async function recallMemory(
           source_type: 'fts5',
         };
 
-        // Normalize BM25 ranks (negative values, closer to 0 = better match)
         const maxRank = Math.max(...ftsResults.map((r) => Math.abs(r.rank)));
 
         for (const ftsRow of ftsResults) {
@@ -1276,7 +1294,7 @@ export async function recallMemory(
             if (!scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`))) continue;
           }
 
-          const bm25Score = maxRank > 0 ? 1 - Math.abs(ftsRow.rank) / maxRank : 0.5;
+          const bm25Score = bm25Relevance(ftsRow.rank, maxRank);
           lexicalCandidates.push({ memory: record, score: bm25Score });
         }
       }
@@ -2957,11 +2975,8 @@ export async function suggestInAdapter(
         try {
           const ftsResults = await fts5Search(adapter, userQuestion, rerankPoolLimit * 2, kind);
           if (ftsResults.length > 0) {
-            // Normalize FTS5 ranks (BM25 returns negative values, closer to 0 = better)
             const maxRank = Math.max(...ftsResults.map((r) => Math.abs(r.rank)));
-            const ftsMap = new Map(
-              ftsResults.map((r) => [r.id, maxRank > 0 ? 1 - Math.abs(r.rank) / maxRank : 0.5])
-            );
+            const ftsMap = new Map(ftsResults.map((r) => [r.id, bm25Relevance(r.rank, maxRank)]));
 
             // Tunable hybrid weights (env: MAMA_VECTOR_WEIGHT, MAMA_FTS5_WEIGHT)
             const vectorWeight = parseFloat(process.env.MAMA_VECTOR_WEIGHT || '0.6');
