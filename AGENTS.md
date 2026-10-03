@@ -122,6 +122,12 @@ retry), a workspace-only `Edit(//<workspace>/**)` rule passed with `--allowedToo
 WebFetch/WebSearch, MAMA MCP tools and Agent. Subagents inherit the same boundary and run inside
 the owner turn (background tasks off). Any other widening needs an owner decision recorded here.
 
+Owner decision 2026-10-03 (W35.4): the Claude owner's Bash sandbox network goes to MAMA's own
+deny-all proxy (`sandbox.network.httpProxyPort`/`socksProxyPort` in the workspace settings, ports
+chosen at daemon start). It refuses every connection, as the empty sandbox allowlist did, and
+reports each attempt with its destination as a security alert. Shell egress stays closed; this is
+observation, not widening.
+
 ## Owner credential boundary — 2026-09-27
 
 - Scope (owner decision 2026-09-27): the boundary covers MAMA's own credentials — auth.env,

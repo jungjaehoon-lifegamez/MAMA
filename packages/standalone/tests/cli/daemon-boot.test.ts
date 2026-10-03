@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import type { StimulusReceipt } from '@jungjaehoon/mama-core/runtime/runtime';
 import type { TurnIntake } from '../../src/gateways/turn-contract.js';
@@ -460,6 +461,7 @@ describe('daemon bootstrap', () => {
       sendFile: vi.fn(async () => ({ sentAs: 'document' as const, size: 0 })),
     };
     let report: ((event: OutboundAttemptEvent) => void) | undefined;
+    let proxyPorts: { httpProxyPort: number; socksProxyPort: number } | undefined;
     const daemon = await bootDaemon({
       home: root,
       configPath: join(mamaRoot, 'config.yaml'),
@@ -468,6 +470,7 @@ describe('daemon bootstrap', () => {
       dependencies: {
         createOwnerRuntime: vi.fn(async (options) => {
           report = options.outboundAttempts;
+          proxyPorts = options.sandboxNetworkProxy;
           return ownerDouble([]) as never;
         }),
         createViewerServer: vi.fn(() => viewerDouble([]) as never),
@@ -493,6 +496,27 @@ describe('daemon bootstrap', () => {
     );
     expect(readFileSync(join(mamaRoot, 'logs', 'security-events.jsonl'), 'utf8')).toContain(
       'mr_daemon'
+    );
+
+    // The sandbox proxy the owner runtime was given refuses a tunnel and reports it.
+    expect(proxyPorts).toEqual({
+      httpProxyPort: expect.any(Number),
+      socksProxyPort: expect.any(Number),
+    });
+    const reply = await new Promise<string>((resolve, reject) => {
+      const socket = connect(proxyPorts!.httpProxyPort, '127.0.0.1');
+      let text = '';
+      socket.on('connect', () => socket.write('CONNECT upload.example:443 HTTP/1.1\r\n\r\n'));
+      socket.on('data', (data) => (text += data.toString()));
+      socket.on('close', () => resolve(text));
+      socket.on('error', reject);
+    });
+    expect(reply).toMatch(/^HTTP\/1\.1 403/);
+    await vi.waitFor(() =>
+      expect(gateway.sendToOwner).toHaveBeenCalledWith(
+        expect.stringContaining('Request: CONNECT upload.example:443 (http proxy)'),
+        expect.stringMatching(/^agent-outbound:/)
+      )
     );
     await daemon.stop();
   });

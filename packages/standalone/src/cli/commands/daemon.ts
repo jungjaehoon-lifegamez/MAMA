@@ -58,6 +58,7 @@ import type { OwnerFileDeliveryResult } from '../../api/file-delivery.js';
 import { createReportScheduler, type ReportScheduler } from '../../runtime/report-scheduler.js';
 import { createTimeZoneSetting } from '../../runtime/timezone.js';
 import { createOutboundEventRecorder } from '../../api/security-events.js';
+import { startEgressProxy, type EgressProxy } from '../../runtime/egress-proxy.js';
 
 const OWNER_PRINCIPAL_ID = 'owner';
 const OWNER_AGENT_ID = 'owner-agent';
@@ -333,6 +334,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   let gateway: DaemonGateway | null = null;
   const gateways = new Map<MessengerName, DaemonGateway>();
   let reportScheduler: ReportScheduler | undefined;
+  let egressProxy: EgressProxy | undefined;
   let stopped = false;
   let deliveryReady = options.mode === 'replay';
   const startedAt = Date.now();
@@ -347,6 +349,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
     if (connectors) await stopOne(logger, 'connectors', () => connectors!.stop(), errors);
     if (viewer) await stopOne(logger, 'viewer', () => viewer!.stop(), errors);
     if (owner) await stopOne(logger, 'owner_runtime', () => owner!.stop(), errors);
+    // After the owner: a turn still finishing may try the network and must still be refused.
+    if (egressProxy) await stopOne(logger, 'egress_proxy', () => egressProxy!.close(), errors);
     // The owner drains active result writers before their delivery port closes.
     for (const [name, active] of gateways) await stopOne(logger, name, () => active.stop(), errors);
     if (errors.length > 0) throw new AggregateError(errors, 'Daemon shutdown failed');
@@ -429,6 +433,20 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       timeZone,
       sendToOwner: sendSecurityAlert,
     });
+    // The Claude shell sandbox's network goes through this deny-all proxy, which reports each
+    // connection the way it reports a command (W35.4); the ports reach the workspace settings.
+    egressProxy = await startEgressProxy((attempt) =>
+      outboundEvents.record({
+        time: new Date().toISOString(),
+        class: 'outbound_connect',
+        tool: 'sandbox proxy',
+        summary: `${attempt.method} ${attempt.target} (${attempt.protocol} proxy)`,
+        sendsData:
+          attempt.method === 'CONNECT' ? null : ['POST', 'PUT', 'PATCH'].includes(attempt.method),
+        modelRunId: null,
+        callId: null,
+      })
+    );
     const ownerFactory = dependencies.createOwnerRuntime ?? createOwnerRuntime;
     owner = await ownerFactory({
       backend: config.agent.backend,
@@ -444,6 +462,10 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       ownerPrincipalId: OWNER_PRINCIPAL_ID,
       agentId: OWNER_AGENT_ID,
       outboundAttempts: (event) => outboundEvents.record(event),
+      sandboxNetworkProxy: {
+        httpProxyPort: egressProxy.httpProxyPort,
+        socksProxyPort: egressProxy.socksProxyPort,
+      },
       scopes: OWNER_MEMORY_SCOPES,
       connectors: OWNER_CONNECTORS,
       rawPath: paths.connectorsRoot,

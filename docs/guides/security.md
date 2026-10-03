@@ -148,10 +148,12 @@ What can leave the machine from an owner turn, checked on the Claude backend on
 2026-10-03:
 
 - The model provider receives everything the agent reads, as with any hosted model.
-- Bash runs in the workspace sandbox with no allowed network hosts, so a shell command
-  that opens a connection is refused at the sandbox proxy: a GET and a POST with an
-  empty body both received 403. `allowUnsandboxedCommands` is off, so a refused
-  command is not retried outside the sandbox.
+- Bash runs in the workspace sandbox, and its network goes to a proxy the daemon runs on
+  two loopback ports (HTTP and SOCKS5). The proxy refuses every connection and reports each
+  one with its destination; a tunnel's content stays encrypted, so whether it carried data is
+  unknown. `allowUnsandboxedCommands` is off, so a refused command is not retried outside the
+  sandbox. A program that opens a socket directly is refused by the operating system sandbox
+  instead; that refusal reaches only the kernel log.
 - Native web fetch and web search stay available; the owner's work needs them. They
   run outside the shell sandbox, so a requested URL and a search query leave the
   machine. Web fetch reads a page and sends no body, but text placed in a URL travels

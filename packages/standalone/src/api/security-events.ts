@@ -114,18 +114,46 @@ export function createSecurityEventRecorder(options: SecurityEventOptions) {
   };
 }
 
-/** A native shell command that opens a network connection (W35): seen and reported, never blocked. */
+/**
+ * An agent's outbound attempt, seen and reported, never blocked: a native shell command that opens
+ * a network connection (W35), or a connection the shell sandbox's proxy refused (W35.4).
+ */
 export interface OutboundAttemptEvent {
   time: string;
-  /** `outbound_send` when the command sends data, `outbound_attempt` otherwise. */
-  class: 'outbound_attempt' | 'outbound_send';
+  /**
+   * `outbound_send` when the command sends data, `outbound_attempt` for another command,
+   * `outbound_connect` for a connection the sandbox proxy refused.
+   */
+  class: 'outbound_attempt' | 'outbound_send' | 'outbound_connect';
+  /** The native tool, or `sandbox proxy`. */
   tool: string;
-  /** The command as traced: bounded, secret-shaped values masked. */
+  /** The command as traced (bounded, secrets masked), or the proxy request and destination. */
   summary: string | null;
-  sendsData: boolean;
-  modelRunId: string;
+  /** null when it cannot be known: an encrypted tunnel carries whatever it carries. */
+  sendsData: boolean | null;
+  /** The run the command came from; the proxy does not know it, the time correlates. */
+  modelRunId: string | null;
   /** The tool call's id, `gateway_call_id` of its `tool_traces` row. */
   callId: string | null;
+}
+
+function outboundAlertText(event: OutboundAttemptEvent, suppressed: number, local: string): string {
+  const sends = event.sendsData === null ? 'unknown' : event.sendsData ? 'yes' : 'no';
+  const lines =
+    event.class === 'outbound_connect'
+      ? [
+          'Agent outbound connection (refused by the sandbox proxy)',
+          `Request: ${event.summary ?? '(not recorded)'}`,
+          `Sends data: ${sends}`,
+        ]
+      : [
+          'Agent outbound attempt',
+          `Tool: ${event.tool}`,
+          `Command: ${event.summary ?? '(not recorded)'}`,
+          `Sends data: ${sends}`,
+          `Run: ${event.modelRunId ?? 'unknown'}`,
+        ];
+  return [...lines, `Suppressed since previous alert: ${suppressed}`, `Time: ${local}`].join('\n');
 }
 
 export function createOutboundEventRecorder(options: SecurityEventOptions) {
@@ -134,8 +162,9 @@ export function createOutboundEventRecorder(options: SecurityEventOptions) {
   return {
     path,
     record(observed: OutboundAttemptEvent): void {
+      // An attempt known to send data always alerts; the others are grouped in a burst.
       const { alert, suppressed } =
-        observed.class === 'outbound_send'
+        observed.sendsData === true
           ? { alert: !options.replay, suppressed: 0 }
           : gate(observed.class, !options.replay);
       const event = { eventId: randomUUID(), ...observed, suppressedSinceLastAlert: suppressed };
@@ -143,15 +172,7 @@ export function createOutboundEventRecorder(options: SecurityEventOptions) {
       if (!alert) return;
       const timeZone = options.timeZone.get();
       const localTime = new Date(event.time).toLocaleString('ko-KR', { timeZone });
-      const text = [
-        'Agent outbound attempt',
-        `Tool: ${event.tool}`,
-        `Command: ${event.summary ?? '(not recorded)'}`,
-        `Sends data: ${event.sendsData ? 'yes' : 'no'}`,
-        `Run: ${event.modelRunId}`,
-        `Suppressed since previous alert: ${suppressed}`,
-        `Time: ${localTime} (${timeZone})`,
-      ].join('\n');
+      const text = outboundAlertText(event, suppressed, `${localTime} (${timeZone})`);
       void (async () => {
         try {
           if (!options.sendToOwner) throw new Error('Owner alert delivery is unavailable');
