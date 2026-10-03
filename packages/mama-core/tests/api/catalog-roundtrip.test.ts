@@ -552,4 +552,34 @@ describe('Story R2: action catalog and dispatch roundtrip', () => {
       'input.mode must match exactly one of: "fast", "slow" | "off" (0 matched).'
     );
   });
+
+  // A caller carries a field name over from a sibling action (a list's `text` into a search that
+  // takes `query`) or passes a sentence where an object belongs. The refusal names what is allowed,
+  // so the next call can be right without reading the action's help first.
+  it('a refusal names the allowed properties and the expected shape', () => {
+    const schema = {
+      type: 'object' as const,
+      required: ['query', 'source'],
+      additionalProperties: false,
+      properties: {
+        query: { type: 'string' as const, description: 'Words to search for, e.g. "deploy".' },
+        limit: { type: 'integer' as const },
+        source: {
+          type: 'object' as const,
+          description:
+            'Origin metadata, e.g. {"package":"owner-agent","source_type":"memory.save"}.',
+          properties: { package: { type: 'string' as const } },
+        },
+      },
+    };
+    expect(validateInput(schema, { text: 'deploy', source: {} }, 'input')).toBe(
+      'input.text is not an allowed property. Allowed: query, limit, source.'
+    );
+    expect(validateInput(schema, { source: {} }, 'input')).toBe(
+      'input.query is required. Words to search for, e.g. "deploy".'
+    );
+    expect(validateInput(schema, { query: 'deploy', source: 'owner chat today' }, 'input')).toBe(
+      'input.source must be an object. Origin metadata, e.g. {"package":"owner-agent","source_type":"memory.save"}.'
+    );
+  });
 });
