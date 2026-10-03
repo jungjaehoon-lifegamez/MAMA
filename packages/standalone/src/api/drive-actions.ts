@@ -4,7 +4,7 @@
  * is stored. Drive has no running connector (its change poller stays off), so the gws call is a
  * port instead of the connector registry trello.read uses.
  */
-import { mkdirSync, statSync } from 'node:fs';
+import { mkdirSync, rmSync, statSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import type { ActionContext, ActionRegistration } from '@jungjaehoon/mama-core';
 
@@ -322,41 +322,47 @@ export function driveActionRegistrations(ports: DriveActionPorts): ActionRegistr
             ? file.name
             : `${file.name}${exported.extension}`;
         const targetPath = join(targetDir, `${safeFileName(file.id)}_${safeFileName(name)}`);
-        await gws(
-          exported === undefined
-            ? [
-                'drive',
-                'files',
-                'get',
-                '--params',
-                JSON.stringify({ fileId: file.id, alt: 'media', supportsAllDrives: true }),
-                '--output',
-                targetPath,
-              ]
-            : [
-                'drive',
-                'files',
-                'export',
-                '--params',
-                JSON.stringify({ fileId: file.id, mimeType: exported.mimeType }),
-                '--output',
-                targetPath,
-              ],
-          { timeoutMs: 120_000 }
-        );
-        const size = statSync(targetPath).size;
-        // An export has no size of its own to compare; a stored file must arrive whole.
-        if (exported === undefined && file.size !== undefined && size !== Number(file.size)) {
-          throw new Error(`Downloaded ${file.id} is ${size} bytes; Drive lists ${file.size}`);
+        try {
+          await gws(
+            exported === undefined
+              ? [
+                  'drive',
+                  'files',
+                  'get',
+                  '--params',
+                  JSON.stringify({ fileId: file.id, alt: 'media', supportsAllDrives: true }),
+                  '--output',
+                  targetPath,
+                ]
+              : [
+                  'drive',
+                  'files',
+                  'export',
+                  '--params',
+                  JSON.stringify({ fileId: file.id, mimeType: exported.mimeType }),
+                  '--output',
+                  targetPath,
+                ],
+            { timeoutMs: 120_000 }
+          );
+          const size = statSync(targetPath).size;
+          // An export has no size of its own to compare; a stored file must arrive whole.
+          if (exported === undefined && file.size !== undefined && size !== Number(file.size)) {
+            throw new Error(`Downloaded ${file.id} is ${size} bytes; Drive lists ${file.size}`);
+          }
+          return {
+            file: file.id,
+            name: file.name,
+            type: file.mimeType,
+            exportedAs: exported?.mimeType ?? null,
+            path: targetPath,
+            size,
+          };
+        } catch (error) {
+          // A failed, cut-off or short download must not stay where a whole file would be.
+          rmSync(targetPath, { force: true });
+          throw error;
         }
-        return {
-          file: file.id,
-          name: file.name,
-          type: file.mimeType,
-          exportedAs: exported?.mimeType ?? null,
-          path: targetPath,
-          size,
-        };
       },
     },
   ];
