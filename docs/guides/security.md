@@ -142,6 +142,32 @@ Slack file requests attach the bot credential only to an approved HTTPS file
 origin and do not forward it through automatic redirects to another origin.
 These checks protect disk/memory use and prevent credential disclosure.
 
+## Outbound paths
+
+What can leave the machine from an owner turn, checked on the Claude backend on
+2026-10-03:
+
+- The model provider receives everything the agent reads, as with any hosted model.
+- Bash runs in the workspace sandbox with no allowed network hosts, so a shell command
+  that opens a connection is refused at the sandbox proxy: a GET and a POST with an
+  empty body both received 403. `allowUnsandboxedCommands` is off, so a refused
+  command is not retried outside the sandbox.
+- Native web fetch and web search stay available; the owner's work needs them. They
+  run outside the shell sandbox, so a requested URL and a search query leave the
+  machine. Web fetch reads a page and sends no body, but text placed in a URL travels
+  with it.
+- The agent writes outward only through owner actions: files to the configured owner
+  messengers (`deliver.<messenger>.file`; a messenger that is not enabled refuses), and
+  the board and wiki, which the viewer serves behind the access controls above. Drive,
+  Trello, Chatwork and Slack are read only.
+- Drive is read through the gws CLI and its own credential store (`drive.read`,
+  `drive.download`); the daemon makes the calls and the agent receives the results.
+- Every call is recorded in `tool_traces`, native Bash, web fetch and web search
+  included, with a bounded input summary. An outbound attempt raises no owner alert
+  yet, a refused one included; alerts for these attempts are work item W35.
+
+The Codex backend keeps its own sandbox's network setting; it was not checked here.
+
 ## Limits of this threat model
 
 - A compromised owner account or stolen bearer credential carries the owner's
