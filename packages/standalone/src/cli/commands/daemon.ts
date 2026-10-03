@@ -415,17 +415,19 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       if (!selected) throw new Error('Notification delivery messenger is not available');
       await selected.sendToOwner(content, row.stimulusId);
     };
-    // Outbound attempts are seen, not blocked (W35): the security log and the security alert
-    // route, resolved when an alert is sent because the messengers start after the owner runtime.
+    // Viewer and agent security alerts take the security route, resolved when an alert is sent
+    // because the messengers start after the owner runtime.
+    const sendSecurityAlert = async (text: string, key: string): Promise<void> => {
+      const selected = gateways.get(config.delivery?.security_alerts ?? 'telegram');
+      if (!selected) throw new Error('Security alert delivery messenger is not available');
+      await selected.sendToOwner(text, key);
+    };
+    // Outbound attempts are seen, not blocked (W35).
     const outboundEvents = createOutboundEventRecorder({
       path: join(paths.mamaRoot, 'logs', 'security-events.jsonl'),
       replay: options.mode === 'replay',
       timeZone,
-      sendToOwner: async (text, key) => {
-        const selected = gateways.get(config.delivery?.security_alerts ?? 'telegram');
-        if (!selected) throw new Error('Security alert delivery messenger is not available');
-        await selected.sendToOwner(text, key);
-      },
+      sendToOwner: sendSecurityAlert,
     });
     const ownerFactory = dependencies.createOwnerRuntime ?? createOwnerRuntime;
     owner = await ownerFactory({
@@ -543,11 +545,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         path: join(paths.mamaRoot, 'logs', 'security-events.jsonl'),
         replay: options.mode === 'replay',
         timeZone,
-        sendToOwner: async (text, key) => {
-          const selected = gateways.get(config.delivery?.security_alerts ?? 'telegram');
-          if (!selected) throw new Error('Security alert delivery messenger is not available');
-          await selected.sendToOwner(text, key);
-        },
+        sendToOwner: sendSecurityAlert,
       },
       getMemoryStats: () => readViewerMemoryStats(owner!.database.adapter),
       getRuntimeStatus: () => ({

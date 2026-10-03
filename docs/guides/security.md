@@ -167,9 +167,10 @@ What can leave the machine from an owner turn, checked on the Claude backend on
 - A native shell command that opens a network connection (a network client, a
   package install, a git remote operation or a script calling an HTTP or socket
   library) is a security event: it is appended to `security-events.jsonl` and sent
-  to the owner through `delivery.security_alerts`, refused or not. Attempts within a
-  minute of an alert are counted on the next one. Nothing is blocked. Detection
-  reads the command, so a client it does not name is missed.
+  to the owner through `delivery.security_alerts`, refused or not. An attempt that
+  sends data always alerts; other attempts within a minute of an alert are counted
+  on the next one. Nothing is blocked. Detection reads the command, so a client it
+  does not name, or a script file written first and run after, is missed.
 
 The Codex backend keeps its own sandbox's network setting; it was not checked here.
 

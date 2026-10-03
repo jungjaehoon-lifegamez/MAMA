@@ -2,8 +2,9 @@
  * Outbound attempts from native tools are seen, not blocked (W35; owner, 2026-10-03). A shell
  * command that opens a network connection becomes a security event the owner is told about,
  * whether the sandbox refuses it or not. Web fetch and web search stay open and stay recorded in
- * tool_traces only. The patterns name network clients, not URL literals: a script that reads a
- * sheet full of links is not an attempt. They are a heuristic; a client they do not name is missed.
+ * tool_traces only. The patterns name network clients in command position, not URL literals: a
+ * script that reads a sheet full of links is not an attempt. They are a heuristic: a client they do
+ * not name, or a script file written first and run after, is missed.
  */
 import type { NativeEffectObserver } from '@jungjaehoon/mama-core/runtime/native-effect-observer';
 import { traceSummary } from '@jungjaehoon/mama-core/runtime/trace-summary';
@@ -19,26 +20,38 @@ const SHELL_TOOLS = new Set([
   'execute_command',
 ]);
 
-const WORD_START = String.raw`(?:^|[\s;&|(\x60$])`;
+// A command word: at the start, after a line break, a separator or an opening quote (Codex sends a shell call as
+// `/bin/zsh -c "..."`), behind sudo, env, time, xargs, nohup, exec or command and their flags, with
+// an optional directory (`/usr/bin/curl`). `grep curl` or `man ssh` does not put a client there.
+const AT_COMMAND = String.raw`(?:^|[\n;&|(\x60'"]|\$\()\s*(?:(?:sudo|env|time|xargs|nohup|exec|command)\s+(?:-\S+\s+|[A-Za-z_]\w*=\S*\s+)*)*(?:[\w.~-]*\/)*`;
+const atCommand = (words: string) => new RegExp(`${AT_COMMAND}(?:${words})(?=\\s|$|['"])`);
+
 const NETWORK = [
-  new RegExp(`${WORD_START}(?:curl|wget|nc|ncat|netcat|telnet|ftp|sftp|scp|ssh|rsync)(?=\\s|$)`),
-  /\b(?:pip3?|npm|pnpm|yarn|brew|gem|cargo)\s+(?:install|add)\b/,
-  /\bgit\s+(?:push|clone|fetch|pull)\b/,
-  /\b(?:python3?|node|ruby|perl)\b[\s\S]*(?:\brequests\.|\burllib\b|\bhttp\.client\b|\bsocket\.|\bfetch\(|\baxios\b|\bnet\/http\b)/,
+  atCommand('curl|wget|nc|ncat|netcat|telnet|ftp|sftp|scp|ssh|rsync|http|https|xh|rclone|gsutil'),
+  atCommand(String.raw`(?:pip3?|npm|pnpm|yarn|brew|gem|cargo|apt|apt-get)\s+(?:install|add|i|ci)`),
+  atCommand(String.raw`git(?:\s+-C\s+\S+)?\s+(?:push|clone|fetch|pull)`),
+  atCommand(String.raw`gh\s+(?:api|gist|release\s+upload)`),
+  atCommand(String.raw`aws\s+s3\s+(?:cp|sync|mv)`),
+  /\b(?:python3?|node|ruby|perl)\b[\s\S]*(?:\brequests\.|\burllib\.request\b|\burlopen\(|\bhttp\.client\b|\bsocket\.|\bfetch\(|\baxios\b|\bnet\/http\b)/,
 ];
+// Case-sensitive: `curl -D` dumps headers, `-d` sends data.
 const SENDS_DATA = [
-  /\bcurl\b[\s\S]*(?:\s-d\b|\s--data|\s-F\b|\s--form|\s-T\b|\s--upload-file|\s-X\s*(?:POST|PUT|PATCH)\b|\s--request\s+(?:POST|PUT|PATCH)\b)/i,
+  /\bcurl\b[\s\S]*?(?:\s(?:-d|--data(?:-\w+)?|-F|--form|-T|--upload-file|--json)(?:\s|=|@|'|"|$)|\s-X\s*(?:POST|PUT|PATCH)\b|\s--request[\s=](?:POST|PUT|PATCH)\b)/,
   /\bwget\b[\s\S]*--post-(?:data|file)/,
-  new RegExp(`${WORD_START}(?:scp|sftp|nc|ncat|netcat)(?=\\s|$)`),
+  atCommand('scp|sftp|nc|ncat|netcat'),
   /\brsync\b[\s\S]*\s\S+:\S*/,
-  /\bgit\s+push\b/,
-  /\brequests\.(?:post|put|patch)\b|\bmethod\s*[:=]\s*['"](?:POST|PUT|PATCH)['"]/i,
+  /\bgit\b(?:\s+-C\s+\S+)?\s+push\b/,
+  /\b(?:http|https|xh)\s+(?:POST|PUT|PATCH)\b/,
+  /\bgh\s+(?:gist\s+create|release\s+upload)\b|\bgh\s+api\b[\s\S]*(?:-X\s*(?:POST|PUT|PATCH)|--method[\s=](?:POST|PUT|PATCH)|\s-[fF]\s)/,
+  /\baws\s+s3\s+(?:cp|sync|mv)\b|\bgsutil\s+cp\b|\brclone\s+(?:copy|sync|move)\b/,
+  /\brequests\.(?:post|put|patch)\b|\bmethod\s*[:=]\s*['"](?:POST|PUT|PATCH)['"]|\burlopen\([^)]*,\s*data/,
 ];
 
 function commandText(input: Record<string, unknown>): string | null {
   const command = input.command;
   if (typeof command === 'string') return command;
-  if (Array.isArray(command)) return command.map(String).join(' ');
+  // argv elements stay apart, so the script of `bash -lc '...'` starts a command of its own.
+  if (Array.isArray(command)) return command.map(String).join('\n');
   return null;
 }
 
@@ -51,18 +64,22 @@ export function outboundAttempt(
   if (!SHELL_TOOLS.has(name.toLowerCase())) return null;
   const command = commandText(input);
   if (command === null || !NETWORK.some((pattern) => pattern.test(command))) return null;
+  const sendsData = SENDS_DATA.some((pattern) => pattern.test(command));
   return {
     time: new Date().toISOString(),
-    class: 'outbound_attempt',
+    class: sendsData ? 'outbound_send' : 'outbound_attempt',
     tool: name,
     summary: traceSummary({ command }),
-    sendsData: SENDS_DATA.some((pattern) => pattern.test(command)),
+    sendsData,
     modelRunId,
     callId: typeof input.nativeToolUseId === 'string' ? input.nativeToolUseId : null,
   };
 }
 
-/** Wraps a run's trace observer; a call reported twice is reported to the owner once. */
+/**
+ * Wraps a run's trace observer. A runtime can announce one call twice, so the trace observer drops
+ * a repeated call id; the owner is told once per call the same way.
+ */
 export function withOutboundAttempts(
   inner: NativeEffectObserver,
   modelRunId: string,

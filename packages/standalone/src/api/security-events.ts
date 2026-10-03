@@ -33,8 +33,9 @@ export interface SecurityEventOptions {
 }
 
 const ALERT_WINDOW_MS = 10 * 60 * 1000;
-// Agent attempts are rare and each one matters to the owner; only a burst (a script retrying
-// within a minute) is grouped.
+// Agent attempts are rare and each one matters to the owner: an attempt that sends data is never
+// grouped (a harmless request first must not hide an upload after it); other attempts are grouped
+// only in a burst, a script retrying within a minute.
 const OUTBOUND_ALERT_WINDOW_MS = 60 * 1000;
 
 /** One alert per class per window; later events in the window are counted on the next alert. */
@@ -116,7 +117,8 @@ export function createSecurityEventRecorder(options: SecurityEventOptions) {
 /** A native shell command that opens a network connection (W35): seen and reported, never blocked. */
 export interface OutboundAttemptEvent {
   time: string;
-  class: 'outbound_attempt';
+  /** `outbound_send` when the command sends data, `outbound_attempt` otherwise. */
+  class: 'outbound_attempt' | 'outbound_send';
   tool: string;
   /** The command as traced: bounded, secret-shaped values masked. */
   summary: string | null;
@@ -132,7 +134,10 @@ export function createOutboundEventRecorder(options: SecurityEventOptions) {
   return {
     path,
     record(observed: OutboundAttemptEvent): void {
-      const { alert, suppressed } = gate(observed.class, !options.replay);
+      const { alert, suppressed } =
+        observed.class === 'outbound_send'
+          ? { alert: !options.replay, suppressed: 0 }
+          : gate(observed.class, !options.replay);
       const event = { eventId: randomUUID(), ...observed, suppressedSinceLastAlert: suppressed };
       if (!appendSecurityEvent(path, event)) console.error('[agent] security_event_write_failed');
       if (!alert) return;
