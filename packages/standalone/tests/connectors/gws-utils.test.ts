@@ -31,9 +31,25 @@ describe('execGwsAsync', () => {
     );
   });
 
+  it('finds the error JSON after a line that only mentions a brace', async () => {
+    fakeGws('echo "note: {braces} in text"\necho \'{"error":{"reason":"notFound"}}\'\nexit 1');
+    await expect(execGwsAsync(['drive', 'files', 'get'])).rejects.toThrow(
+      'gws CLI returned an error: {"reason":"notFound"}'
+    );
+  });
+
   it('keeps the exit error when stdout holds no error JSON', async () => {
     fakeGws('echo "boom" >&2\nexit 3');
     await expect(execGwsAsync(['drive', 'files', 'get'])).rejects.toThrow('Command failed');
+    fakeGws('echo \'{"status":"partial"}\'\nexit 2');
+    await expect(execGwsAsync(['drive', 'files', 'get'])).rejects.toThrow('Command failed');
+  });
+
+  it('names the timeout when gws runs past it', async () => {
+    fakeGws('sleep 5');
+    await expect(
+      execGwsAsync(['drive', 'files', 'get', '--output', 'x'], { timeoutMs: 200 })
+    ).rejects.toThrow('gws drive files get timed out after 200 ms');
   });
 
   it('parses the JSON a successful call prints', async () => {
