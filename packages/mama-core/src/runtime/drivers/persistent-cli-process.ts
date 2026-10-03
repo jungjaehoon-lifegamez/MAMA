@@ -1026,8 +1026,10 @@ export class PersistentClaudeProcess extends EventEmitter {
           this.currentResolve?.(result);
           this.resetRequestState();
           this.emit('idle'); // F7: Trigger message queue drain (after resolve/cleanup)
-        } else if (event.is_error) {
-          const error = new Error(event.error || 'Unknown error');
+        } else {
+          // Every result ends the request: one that is neither success nor flagged as an error
+          // would otherwise leave it waiting with its timers already cleared.
+          const error = new Error(event.error || `Claude CLI ended the turn: ${event.subtype}`);
           this.currentCallbacks?.onError?.(error);
           this.state = 'idle';
           this.awaitingToolResults = false;

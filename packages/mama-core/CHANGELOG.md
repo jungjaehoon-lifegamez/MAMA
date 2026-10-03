@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `PersistentProcessOptions.requestTimeout` (Claude persistent driver) is now how long a request
+  may go without output: every event the CLI prints restarts it. It was a hard cap on the whole
+  request. A consumer that relied on it as its only stop sets the new `requestMaxMs`.
+- A Claude `result` that is neither `success` nor flagged `is_error` now rejects the request with
+  its subtype; it used to leave the request waiting with its timers cleared.
+- `SessionPool.releaseSession` records the release as the session's last activity, so expiry
+  counts from the end of a turn.
+
+### Added
+
+- `requestMaxMs` on the Claude persistent driver and the Codex runtime: the longest one request
+  (turn) may run in all, never restarted by progress. Absent means no limit.
+- `SessionPool.touchSession`: a turn that is still working keeps its session; native turns call
+  it on every tool use.
+
 ## [5.2.0] - 2026-10-01
 
 ### Added
