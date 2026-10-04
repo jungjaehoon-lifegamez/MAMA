@@ -1,9 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   closeSync,
   existsSync,
   fstatSync,
   openSync,
+  readdirSync,
   readFileSync,
   readSync,
   statSync,
@@ -160,8 +161,39 @@ function resolveApiPort(value: string | undefined): number {
 }
 
 function json(res: ServerResponse, status: number, value: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    // A transient error, such as a module missing for the seconds a build takes, must not be kept
+    // by the tunnel's edge or the browser.
+    ...(status >= 400 ? { 'Cache-Control': 'no-store' } : {}),
+  });
   res.end(JSON.stringify(value));
+}
+
+/** The built files the page loads. Their URLs carry a stamp of their content. */
+const STAMPED_FILES = ['js', 'operator', 'viewer.css'];
+const STAMPED_REFERENCE = /(['"])\/viewer\/(js\/|operator\/|viewer\.css)/g;
+const STAMPED_PATH = /^\/viewer\/b\/[0-9a-f]{12}\//;
+
+/**
+ * A short hash of the built files the page loads. The tunnel's edge gives cacheable files a
+ * four-hour browser lifetime whatever the viewer sends, so a rebuilt file is reachable only under a
+ * new URL. Relative imports inside the modules resolve under the same stamped prefix. A file that
+ * is not built contributes nothing.
+ */
+function buildStamp(root: string): string {
+  const hash = createHash('sha256');
+  const visit = (relativePath: string): void => {
+    const path = join(root, relativePath);
+    if (!existsSync(path)) return;
+    if (statSync(path).isDirectory()) {
+      for (const name of readdirSync(path).sort()) visit(join(relativePath, name));
+      return;
+    }
+    hash.update(relativePath).update('\0').update(readFileSync(path)).update('\0');
+  };
+  for (const path of STAMPED_FILES) visit(path);
+  return hash.digest('hex').slice(0, 12);
 }
 
 function requestError(error: unknown): { status: number; code: string; message: string } {
@@ -993,6 +1025,10 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
       filePath = resolve(root, '..', 'favicon.ico');
     } else if (pathname === '/viewer' || pathname === '/viewer/') {
       filePath = resolve(root, 'viewer.html');
+    } else if (pathname.startsWith('/viewer/b/')) {
+      const stamped = STAMPED_PATH.exec(pathname);
+      if (stamped === null) return false;
+      filePath = resolve(root, pathname.slice(stamped[0].length));
     } else if (pathname.startsWith('/viewer/')) {
       filePath = resolve(root, pathname.slice('/viewer/'.length));
     }
@@ -1005,7 +1041,13 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
     }
     try {
       if (!statSync(filePath).isFile()) return false;
-      const content = readFileSync(filePath);
+      const content =
+        filePath === resolve(root, 'viewer.html')
+          ? readFileSync(filePath, 'utf8').replace(
+              STAMPED_REFERENCE,
+              `$1/viewer/b/${buildStamp(root)}/$2`
+            )
+          : readFileSync(filePath);
       res.writeHead(200, {
         'Content-Type': CONTENT_TYPES[extname(filePath)] ?? 'application/octet-stream',
         'Cache-Control': 'no-cache',
