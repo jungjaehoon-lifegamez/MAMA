@@ -6,7 +6,7 @@
  * real dispatcher — not the executor's tool names.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCatalog, createDispatcher, type ActionContext } from '@jungjaehoon/mama-core';
@@ -533,24 +533,21 @@ describe('manage.wiki.move', () => {
     }
   });
 
-  it('puts earlier moves back when a later rename fails', async () => {
+  it('puts earlier moves back when a later move fails', async () => {
     const root = vault();
-    const locked = join(root, 'locked');
     try {
       pages(root, 'daily/a.md', 'daily/b.md');
-      mkdirSync(locked);
-      chmodSync(locked, 0o500);
+      // The first move makes moved/q.md a page, so the second cannot make it a folder.
       const result = await move(root, [
-        { from: 'daily/a.md', to: 'moved/a.md' },
-        { from: 'daily/b.md', to: 'locked/b.md' },
+        { from: 'daily/a.md', to: 'moved/q.md' },
+        { from: 'daily/b.md', to: 'moved/q.md/b.md' },
       ]);
       expect(result).toMatchObject({ status: 'failed' });
-      expect(JSON.stringify(result)).toContain('daily/b.md');
+      expect(JSON.stringify(result)).toContain('moving daily/b.md to moved/q.md/b.md failed');
       expect(readWikiPageContent(root, 'daily/a.md')?.content).toBe('# daily/a.md');
-      expect(readWikiPageContent(root, 'moved/a.md')).toBeNull();
+      expect(readWikiPageContent(root, 'moved/q.md')).toBeNull();
       expect(readWikiPageContent(root, 'daily/b.md')?.content).toBe('# daily/b.md');
     } finally {
-      chmodSync(locked, 0o700);
       rmSync(root, { recursive: true, force: true });
     }
   });
