@@ -157,9 +157,13 @@ What can leave the machine from an owner turn, checked on the Claude backend on
 - Native web fetch and web search stay available; the owner's work needs them. They
   run outside the shell sandbox, so a requested URL and a search query leave the
   machine. Web fetch reads a page and sends no body, but text placed in a URL travels
-  with it.
+  with it, so each web fetch is a security event with its URL: appended to
+  `security-events.jsonl` and sent to the owner through `delivery.security_alerts`,
+  grouped per host within a minute (owner, 2026-10-05). A search query goes to the search
+  provider only and stays in `tool_traces`.
 - The agent writes outward only through owner actions: files to the configured owner
-  messengers (`deliver.<messenger>.file`; a messenger that is not enabled refuses), and
+  messengers (`deliver.<messenger>.file`, offered only for an enabled messenger whose
+  `file_delivery` is on), and
   the board and wiki, which the viewer serves behind the access controls above. Drive,
   Trello, Chatwork and Slack are read only.
 - Drive is read through the gws CLI and its own credential store (`drive.read`,
