@@ -76,6 +76,7 @@ const OWNER_ACTIONS = [
   'memory.retire',
   'report.read',
   'report.publish',
+  'manage.wiki.move',
   'manage.wiki.publish',
   'manage.wiki.read',
   'manage.wiki.update',
