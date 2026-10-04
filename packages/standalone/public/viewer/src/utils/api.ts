@@ -81,6 +81,11 @@ export interface TimelineGroup {
   items?: TimelineItem[];
 }
 
+export interface MemoryLinks {
+  edges: Array<{ from: string; to: string; relation: string }>;
+  nodes: Record<string, { kind: string; label: string; commitmentId: string | null }>;
+}
+
 export interface MemoryTimelineResponse {
   from: string;
   to: string;
@@ -683,9 +688,9 @@ export class API {
   // Graph API
   // =============================================
 
-  /** One record and the records and source messages it links to directly. */
-  static async getGraphNeighbors(id: string): Promise<GraphResponse> {
-    return this.get<GraphResponse>('/api/graph/neighbors', { id });
+  /** Every link between records, with each end's kind, label and work item. */
+  static async getMemoryLinks(): Promise<MemoryLinks> {
+    return this.get<MemoryLinks>('/api/memory/links');
   }
 
   /** What was saved in a period, by day, kind and item. */

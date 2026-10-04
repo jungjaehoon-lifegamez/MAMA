@@ -47,7 +47,7 @@ const OPERATION_LABELS: Record<string, string> = {
   withdraw: 'withdrawn',
 };
 
-function groupInfo(group: string): { label: string; hint: string; color: string } {
+export function groupInfo(group: string): { label: string; hint: string; color: string } {
   return GROUPS[group] ?? { label: group, hint: `Records of kind ${group}`, color: '#CBD5E1' };
 }
 
@@ -71,7 +71,14 @@ export class MemoryTimelineModule {
   private bound = false;
   private debouncedLoad = debounce(() => void this.load(), 300);
 
-  constructor(private readonly onSelect: (id: string) => void) {}
+  constructor(
+    private readonly hooks: {
+      /** A listed record was picked. */
+      onSelect: (id: string) => void;
+      /** The list now shows this answer; the graph draws the same records. */
+      onRender: (data: MemoryTimelineResponse) => void;
+    }
+  ) {}
 
   /** Wire the controls once, then read the current period. */
   async init(): Promise<void> {
@@ -127,7 +134,7 @@ export class MemoryTimelineModule {
     document
       .querySelector(`#memory-timeline [data-record-id="${CSS.escape(id)}"]`)
       ?.classList.add('selected');
-    this.onSelect(id);
+    this.hooks.onSelect(id);
   }
 
   private params(): Record<string, string> {
@@ -148,6 +155,7 @@ export class MemoryTimelineModule {
       // A slower earlier read must not overwrite the answer to the latest filter.
       if (request !== this.request) return;
       this.render(data);
+      this.hooks.onRender(data);
     } catch (error) {
       if (request !== this.request) return;
       list.innerHTML = `<div class="mt-empty mt-error">Could not read what was saved: ${escapeHtml(
