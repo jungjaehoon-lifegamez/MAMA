@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.63.0] / mama-core [5.4.0] - 2026-10-04
+
+The memory view shows what was saved and when, and a refused tool call says what the action
+accepts. The package changelogs list every change.
+
+### Added
+
+- The viewer's memory tab is a timeline: a period, then day, kind and work item, with filters that
+  change the list and a legend in plain words. Picking a record draws only its direct links.
+- `memory.read:timeline` (mama-core) reads records by write time; the owner agent has it too.
+
+### Changed
+
+- A refused action call lists the allowed properties and carries the property description
+  (mama-core). The owner's turn reminder names open work by the statuses `work.list` accepts.
+
+### Removed
+
+- The memory tab's whole-graph view, its non-working filters, and the Save outcome and Export
+  controls.
+
 ## mama-os [0.62.0] / mama-core [5.3.0] - 2026-10-04
 
 A past period can be backfilled as complete history. Trello and Google Drive are read live, an

@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.4.0] - 2026-10-04
+
+### Added
+
+- `memory.read:timeline`: memory records by the time they were written, under the caller's
+  scopes, newest first, a page at a time (200 per page, 500 at most, with a cursor), optionally
+  inside a `since` / `until` window. A work revision names its item (`commitmentId`), `revision`,
+  `operation` (create, revise or withdraw) and the item's current `itemTitle`; `sourceMessageRef`
+  names the turn that wrote a record.
+
+### Changed
+
+- A refused action call names what the contract allows. An unknown property is reported first and
+  lists the allowed properties; a missing or mistyped value carries the property's description.
+  The unknown property used to be reported only after a missing required one, without the names.
+
 ## [5.3.0] - 2026-10-04
 
 ### Changed
