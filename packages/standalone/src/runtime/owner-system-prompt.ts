@@ -190,9 +190,9 @@ export function ownerHelpTopics(
             '- The wiki holds what the sources and the ledger do not show on their own: knowledge that stays true and has to be gathered from many messages. What happened (who sent what, when) stays in the sources, and current state and history stay in the ledger; neither is copied into the wiki.',
             '- A page is one project, client or long-running topic, in these sections, each rewritten when its knowledge changes and never appended to by date: overview (what it is, the client, the people and their roles, terms such as prices and scope, file specifications); decisions and specifications that stand; terms and what they mean; how the client and the people work (what they often ask to change, who decides). No current-state section and no dated entries.',
             '- Change a page only when a message or the owner settles such knowledge, and only its section: read the page with manage.wiki.read and replace the section with manage.wiki.update. Most messages settle none.',
-            '- Home.md lists every page with one line on what it covers, not its state. The host writes log.md; do not write it. Create a page only when none fits, then add it to Home.md.',
+            '- Home.md lists every page except the daily pages with one line on what it covers, not its state. The host writes log.md; do not write it. Create a page only when none fits, then add it to Home.md.',
             '- Move or rename pages with manage.wiki.move; it rewrites no links, so update the pages that link to them (Home.md) in the same turn.',
-            "- Daily pages (daily/YYYY-MM/YYYY-MM-DD.md, one folder per month) are written by the daily order only; help({topic: 'daily'}).",
+            "- Daily pages (daily/YYYY-MM/YYYY-MM-DD.md, one folder per month) are written by the daily order only and are not listed in Home.md; help({topic: 'daily'}).",
             'Wiki pages are read by people: sentences a reader understands alone, no ids in their text; a page keeps its evidence ids in sourceIds and sourceRefs.',
           ].join('\n'),
           daily: [
