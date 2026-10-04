@@ -14,40 +14,9 @@ import {
 import { join, dirname, basename, posix, relative } from 'path';
 import type { WikiPage } from './types.js';
 import { normalizeWikiPagePath } from './path-safety.js';
-import { readWikiPageVersion, wikiContentVersion, WIKI_HUMAN_MARKER } from './wiki-read.js';
+import { readWikiPageVersion, WIKI_HUMAN_MARKER } from './wiki-read.js';
 
 const FRONTMATTER_LIST_UNSAFE_PATTERN = /[\r\n]/;
-
-function indexEntry(page: WikiPage): { link: string; line: string } {
-  const link = normalizeWikiPagePath(page.path).replace(/\.md$/, '');
-  const title = page.title.replace(/[\r\n]+/g, ' ');
-  return {
-    link,
-    line: `- [[${link}|${title}]] — ${page.type}, confidence: ${page.confidence}`,
-  };
-}
-
-/** Incremental publication must not erase links written by an earlier batch. */
-function mergeIndex(current: string | null, pages: readonly WikiPage[]): string {
-  const original = current ?? '# Wiki Index\n\nAuto-compiled by MAMA.\n\n## Pages\n';
-  const updates = pages.map(indexEntry);
-  const seen = new Set<string>();
-  const lines = original.split(/\r?\n/).flatMap((line) => {
-    const match = updates.find(
-      (entry) => line.startsWith(`- [[${entry.link}|`) || line.startsWith(`- [[${entry.link}]]`)
-    );
-    if (!match) return [line];
-    if (seen.has(match.link)) return [];
-    seen.add(match.link);
-    return [match.line];
-  });
-  const missing = updates.filter((entry) => !seen.has(entry.link));
-  if (missing.length > 0) {
-    if (!lines.some((line) => line.trim() === '## Pages')) lines.push('', '## Pages');
-    lines.push('', '### Published', ...missing.map((entry) => entry.line));
-  }
-  return `${lines.join('\n').replace(/\n*$/, '')}\n`;
-}
 
 function frontmatterScalar(value: string, field: string): string {
   if (value.includes('\0')) {
@@ -176,9 +145,8 @@ export class ObsidianWriter {
       const dir = join(this.wikiPath, sub);
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     }
-    // index.md/log.md are NOT bootstrapped here: in the v5 layout the agent owns
-    // the root (Home.md). updateIndex()/appendLog() create them on demand when
-    // the manage.wiki.publish fallback path is actually used.
+    // The agent owns the root and its table of contents (Home.md); the host writes
+    // no index. log.md is created on demand by appendLog().
   }
 
   writePage(page: WikiPage, options?: { exactPath?: boolean }): string {
@@ -297,31 +265,6 @@ export class ObsidianWriter {
       }
 
       const pagePaths = prepared.map((entry) => entry.path);
-      const indexPath = join(this.wikiPath, 'index.md');
-      const indexVersion = readWikiPageVersion(this.wikiPath, 'index.md');
-      const currentIndex = indexVersion === null ? null : readFileSync(indexPath, 'utf8');
-      if (currentIndex !== null && wikiContentVersion(currentIndex) !== indexVersion) {
-        throw new Error('Wiki index changed while preparing publication');
-      }
-      const mergedIndex = mergeIndex(currentIndex, pages);
-      if (mergedIndex !== currentIndex) {
-        const staged = join(stagingRoot, 'index.md');
-        const backup = join(stagingRoot, '.backup', 'index.md');
-        writeFileSync(staged, mergedIndex, 'utf8');
-        if (currentIndex !== null) {
-          mkdirSync(dirname(backup), { recursive: true });
-          copyFileSync(indexPath, backup);
-        }
-        prepared.push({
-          path: 'index.md',
-          target: indexPath,
-          staged,
-          backup,
-          existed: currentIndex !== null,
-          expectedContentVersion: indexVersion,
-        });
-      }
-
       for (const entry of prepared) {
         const currentVersion = readWikiPageVersion(this.wikiPath, entry.path);
         if (currentVersion !== entry.expectedContentVersion) {
@@ -386,54 +329,6 @@ export class ObsidianWriter {
     const date = new Date().toISOString().split('T')[0];
     const entry = `## [${date}] ${action} | ${message}\n\n`;
     appendFileSync(logPath, entry, 'utf8');
-  }
-
-  updateIndex(pages: WikiPage[]): void {
-    const indexPath = join(this.wikiPath, 'index.md');
-    const lines = ['# Wiki Index\n', 'Auto-compiled by MAMA.\n', '## Pages\n'];
-
-    const byType = new Map<string, WikiPage[]>();
-    for (const p of pages) {
-      const safePage = { ...p, path: normalizeWikiPagePath(p.path) };
-      const list = byType.get(safePage.type) || [];
-      list.push(safePage);
-      byType.set(safePage.type, list);
-    }
-
-    for (const [type, typePages] of byType) {
-      lines.push(`### ${type.charAt(0).toUpperCase() + type.slice(1)}\n`);
-      for (const p of typePages) {
-        const link = p.path.replace(/\.md$/, '');
-        lines.push(`- [[${link}|${p.title}]] — ${p.type}, confidence: ${p.confidence}`);
-      }
-      lines.push('');
-    }
-
-    writeFileSync(indexPath, lines.join('\n'), 'utf8');
-  }
-
-  /** Merge an agent's partial publish without replacing the generated index. */
-  updateIndexIncrementally(pages: readonly WikiPage[]): void {
-    if (pages.length === 0) return;
-    const indexPath = join(this.wikiPath, 'index.md');
-    const version = readWikiPageVersion(this.wikiPath, 'index.md');
-    const current = version === null ? null : readFileSync(indexPath, 'utf8');
-    if (current !== null && wikiContentVersion(current) !== version) {
-      throw new Error('Wiki index changed while preparing publication');
-    }
-    const merged = mergeIndex(current, pages);
-    if (merged === current) return;
-    const stage = mkdtempSync(join(this.wikiPath, '.mama-index-'));
-    try {
-      const staged = join(stage, 'index.md');
-      writeFileSync(staged, merged, 'utf8');
-      if (readWikiPageVersion(this.wikiPath, 'index.md') !== version) {
-        throw new Error('Wiki index changed before activation');
-      }
-      renameSync(staged, indexPath);
-    } finally {
-      rmSync(stage, { recursive: true, force: true });
-    }
   }
 
   getWikiPath(): string {

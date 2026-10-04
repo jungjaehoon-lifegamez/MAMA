@@ -180,11 +180,11 @@ export class WikiModule {
 
     document.getElementById('wiki-new-btn')?.addEventListener('click', () => this.promptNewPage());
 
-    // Auto-open index page only on initial load (no page selected yet)
+    // Auto-open the agent's table of contents only on initial load (no page selected yet)
     if (!this.currentPath) {
-      const indexNode = tree.find((n) => n.name === 'index.md');
-      if (!mobile && indexNode) {
-        this.openPage(indexNode.path);
+      const homeNode = tree.find((n) => n.name === 'Home.md');
+      if (!mobile && homeNode) {
+        this.openPage(homeNode.path);
       }
     }
   }

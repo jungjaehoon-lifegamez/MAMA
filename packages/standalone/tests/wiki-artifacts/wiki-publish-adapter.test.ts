@@ -112,7 +112,6 @@ describe('Story PR4.2: Wiki Publish Adapter', () => {
         'projects/../index.md',
         'projects/../../outside.md',
         '/tmp/outside.md',
-        'index.md',
         'log.md',
         './',
         'projects',

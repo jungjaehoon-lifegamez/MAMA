@@ -94,13 +94,9 @@ describe('Wiki writer round-trip', () => {
     for (const page of pages) {
       writer.writePage(page);
     }
-    writer.updateIndex(pages);
 
-    const index = readFileSync(join(tempDir, 'wiki', 'index.md'), 'utf8');
-    expect(index).toContain('Alpha');
-    expect(index).toContain('Beta');
-    expect(index).toContain('Testing Matters');
-    expect(index).toContain('### Entity');
-    expect(index).toContain('### Lesson');
+    for (const page of pages) {
+      expect(readFileSync(join(tempDir, 'wiki', page.path), 'utf8')).toContain(page.title);
+    }
   });
 });

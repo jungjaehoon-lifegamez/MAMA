@@ -1,7 +1,7 @@
 import { isAbsolute, posix } from 'path';
 
 const WINDOWS_DRIVE_PATH_PATTERN = /^[A-Za-z]:/;
-const RESERVED_ROOT_PATHS = new Set(['index.md', 'log.md']);
+const RESERVED_ROOT_PATHS = new Set(['log.md']);
 const RESERVED_ROOT_DIRECTORIES = new Set(['projects', 'lessons', 'synthesis']);
 
 function normalizeWikiPath(value: unknown, field: string, allowReservedRead: boolean): string {
@@ -44,7 +44,7 @@ export function normalizeWikiPagePath(value: unknown, field: string = 'wiki page
   return normalizeWikiPath(value, field, false);
 }
 
-/** Generated index/log files are readable but remain reserved against writes. */
+/** The host-written log is readable but reserved against writes. */
 export function normalizeWikiReadPath(value: unknown, field: string = 'wiki read path'): string {
   return normalizeWikiPath(value, field, true);
 }

@@ -474,7 +474,7 @@ describe('manage.wiki.move', () => {
   it.each([
     ['a page already at the target', [{ from: 'daily/a.md', to: 'Home.md' }], 'already exists'],
     ['a missing page', [{ from: 'daily/none.md', to: 'x/none.md' }], 'does not exist'],
-    ['the generated index', [{ from: 'daily/a.md', to: 'index.md' }], 'reserved'],
+    ['the host log', [{ from: 'daily/a.md', to: 'log.md' }], 'reserved'],
     ['a parent traversal', [{ from: 'daily/a.md', to: '../a.md' }], 'traversal'],
     ['a non-page target', [{ from: 'daily/a.md', to: 'daily/a.txt' }], '.md'],
     ['a page moved onto itself', [{ from: 'daily/a.md', to: 'daily/a.md' }], 'same path'],
