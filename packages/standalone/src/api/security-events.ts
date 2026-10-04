@@ -116,18 +116,19 @@ export function createSecurityEventRecorder(options: SecurityEventOptions) {
 
 /**
  * An agent's outbound attempt, seen and reported, never blocked: a native shell command that opens
- * a network connection (W35), or a connection the shell sandbox's proxy refused (W35.4).
+ * a network connection (W35), a connection the shell sandbox's proxy refused (W35.4), or a web
+ * fetch (owner, 2026-10-05).
  */
 export interface OutboundAttemptEvent {
   time: string;
   /**
    * `outbound_send` when the command sends data, `outbound_attempt` for another command,
-   * `outbound_connect` for a connection the sandbox proxy refused.
+   * `outbound_connect` for a connection the sandbox proxy refused, `web_fetch` for a page fetch.
    */
-  class: 'outbound_attempt' | 'outbound_send' | 'outbound_connect';
+  class: 'outbound_attempt' | 'outbound_send' | 'outbound_connect' | 'web_fetch';
   /** The native tool, or `sandbox proxy`. */
   tool: string;
-  /** The command as traced (bounded, secrets masked), or the proxy request and destination. */
+  /** The command or URL as traced (bounded, secrets masked), or the proxy request and destination. */
   summary: string | null;
   /** null when it cannot be known: an encrypted tunnel carries whatever it carries. */
   sendsData: boolean | null;
@@ -152,6 +153,15 @@ const oneLine = (value: string | null): string =>
 
 function outboundAlertText(event: OutboundAttemptEvent, suppressed: number, local: string): string {
   const sends = event.sendsData === null ? 'unknown' : event.sendsData ? 'yes' : 'no';
+  if (event.class === 'web_fetch') {
+    return [
+      'Agent web fetch',
+      `URL: ${oneLine(event.summary)}`,
+      `Run: ${event.modelRunId ?? 'unknown'}`,
+      `Suppressed since previous alert: ${suppressed}`,
+      `Time: ${local}`,
+    ].join('\n');
+  }
   const lines =
     event.class === 'outbound_connect'
       ? [
@@ -169,20 +179,32 @@ function outboundAlertText(event: OutboundAttemptEvent, suppressed: number, loca
   return [...lines, `Suppressed since previous alert: ${suppressed}`, `Time: ${local}`].join('\n');
 }
 
+/** The host a fetched URL names, or the traced text itself when it does not parse as a URL. */
+function fetchHost(summary: string | null): string {
+  if (summary === null) return '';
+  try {
+    return new URL(summary).host;
+  } catch {
+    return summary;
+  }
+}
+
 export function createOutboundEventRecorder(options: SecurityEventOptions) {
   const path = options.path ?? join(homedir(), '.mama', 'logs', 'security-events.jsonl');
   const gate = createAlertGate<string>(OUTBOUND_ALERT_WINDOW_MS);
   return {
     path,
     record(observed: OutboundAttemptEvent): void {
-      // A command that sends data always alerts. Proxy connections are grouped per destination, so
-      // one destination cannot hide another; other commands are grouped in a burst.
+      // A command that sends data always alerts. Proxy connections and web fetches are grouped per
+      // destination, so one destination cannot hide another; other commands are grouped in a burst.
       const { alert, suppressed } =
         observed.class === 'outbound_send'
           ? { alert: !options.replay, suppressed: 0 }
           : observed.class === 'outbound_connect'
             ? gate(`outbound_connect ${observed.summary ?? ''}`, !options.replay)
-            : gate(observed.class, !options.replay);
+            : observed.class === 'web_fetch'
+              ? gate(`web_fetch ${fetchHost(observed.summary)}`, !options.replay)
+              : gate(observed.class, !options.replay);
       const event = { eventId: randomUUID(), ...observed, suppressedSinceLastAlert: suppressed };
       if (!appendSecurityEvent(path, event)) console.error('[agent] security_event_write_failed');
       if (!alert) return;

@@ -1,8 +1,10 @@
 /**
  * Outbound attempts from native tools are seen, not blocked (W35; owner, 2026-10-03). A shell
  * command that opens a network connection becomes a security event the owner is told about,
- * whether the sandbox refuses it or not. Web fetch and web search stay open and stay recorded in
- * tool_traces only. The patterns name network clients in command position, not URL literals: a
+ * whether the sandbox refuses it or not. A web fetch is reported with its URL too (owner,
+ * 2026-10-05): it stays open, but text placed in a URL reaches whatever host it names. Web search
+ * goes to the search provider only and stays in tool_traces. The shell patterns name network
+ * clients in command position, not URL literals: a
  * script that reads a sheet full of links is not an attempt. They are a heuristic: a client they do
  * not name, or a script file written first and run after, is missed.
  */
@@ -10,6 +12,8 @@ import type { NativeEffectObserver } from '@jungjaehoon/mama-core/runtime/native
 import { traceSummary } from '@jungjaehoon/mama-core/runtime/trace-summary';
 
 import type { OutboundAttemptEvent } from '../api/security-events.js';
+
+const WEB_FETCH_TOOLS = new Set(['webfetch']);
 
 const SHELL_TOOLS = new Set([
   'bash',
@@ -69,6 +73,20 @@ export function outboundAttempt(
   input: Record<string, unknown>,
   modelRunId: string
 ): OutboundAttemptEvent | null {
+  const callId = typeof input.nativeToolUseId === 'string' ? input.nativeToolUseId : null;
+  if (WEB_FETCH_TOOLS.has(name.toLowerCase())) {
+    if (typeof input.url !== 'string') return null;
+    return {
+      time: new Date().toISOString(),
+      class: 'web_fetch',
+      tool: name,
+      summary: commandSummary(input.url),
+      // A page read sends no body, but its URL can carry text; which is not knowable here.
+      sendsData: null,
+      modelRunId,
+      callId,
+    };
+  }
   if (!SHELL_TOOLS.has(name.toLowerCase())) return null;
   const command = commandText(input);
   if (command === null || !NETWORK.some((pattern) => pattern.test(command))) return null;
@@ -80,7 +98,7 @@ export function outboundAttempt(
     summary: commandSummary(command),
     sendsData,
     modelRunId,
-    callId: typeof input.nativeToolUseId === 'string' ? input.nativeToolUseId : null,
+    callId,
   };
 }
 

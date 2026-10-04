@@ -128,6 +128,10 @@ chosen at daemon start). It refuses every connection, as the empty sandbox allow
 reports each attempt with its destination as a security alert. Shell egress stays closed; this is
 observation, not widening.
 
+Owner decision 2026-10-05: each WebFetch call raises the same kind of security alert, naming its
+URL and grouped per host within a minute, because text placed in a URL reaches any host. WebFetch
+stays allowed; WebSearch stays recorded in `tool_traces` only. This is observation, not narrowing.
+
 ## Owner credential boundary — 2026-09-27
 
 - Scope (owner decision 2026-09-27): the boundary covers MAMA's own credentials — auth.env,

