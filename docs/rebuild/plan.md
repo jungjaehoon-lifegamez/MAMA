@@ -1,6 +1,6 @@
 # MAMA rebuild — carry, keep, drop
 
-Status: operating layer in Kagemusha's structure is live; Trello and Drive read live (W33, W34); after a restart, C1 and C3 passed and C4's board matched the ledger; C2 nearly passed; C5 and C6 still open · 2026-10-05
+Status: operating layer in Kagemusha's structure is live; Trello and Drive read live (W33, W34); after a restart, C1 passed once (production scope), C3 twice and C4's board matched the ledger; C2 nearly passed; C5 and C6 still open · 2026-10-05
 Purpose: [INTENT.md](../../INTENT.md) v8. This file is a work list. It edits rows in place; it
 does not grow dated sections. Evidence and open acceptance: [checks.md](checks.md).
 Reports and backend parity: [R1–R10](owner-reports.md); replay: [window pipeline](window-pipeline.md).
