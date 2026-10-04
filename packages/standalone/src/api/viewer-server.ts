@@ -254,6 +254,7 @@ const TIMELINE_PERIOD_DAYS = new Map([
   ['7d', 7],
   ['30d', 30],
 ]);
+const TIMELINE_MAX_DAYS = 31;
 
 function shiftLocalDate(day: string, days: number): string {
   return new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
@@ -278,6 +279,14 @@ function timelineDays(params: URLSearchParams, timeZone: string): { from: string
         400,
         'INVALID_TIMELINE_WINDOW',
         'from and to must be local dates (YYYY-MM-DD), from on or before to'
+      );
+    }
+    // Every search or kind change re-reads the whole window, and the view asks for 30 days at most.
+    if (shiftLocalDate(from, TIMELINE_MAX_DAYS - 1) < to) {
+      throw new ViewerHttpError(
+        400,
+        'INVALID_TIMELINE_WINDOW',
+        `a timeline window covers at most ${TIMELINE_MAX_DAYS} days`
       );
     }
     return { from, to };
