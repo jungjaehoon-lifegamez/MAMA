@@ -1,4 +1,7 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import type {
@@ -183,6 +186,69 @@ describe('archive-compatible viewer routes', () => {
     }
   });
 
+  // The tunnel's edge stamps cacheable files with a four-hour browser lifetime whatever the
+  // viewer sends, so a deploy is visible only if every built file the page loads has a new URL.
+  it('serves the built files under a stamp of the build, and errors as never stored', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mama-viewer-stamp-'));
+    try {
+      mkdirSync(join(dir, 'js', 'modules'), { recursive: true });
+      mkdirSync(join(dir, 'operator'), { recursive: true });
+      writeFileSync(
+        join(dir, 'viewer.html'),
+        [
+          '<link rel="stylesheet" href="/viewer/viewer.css" />',
+          '<link rel="stylesheet" href="/viewer/operator/operator.css" />',
+          '<link rel="manifest" href="/viewer/manifest.json" />',
+          '<script type="module">import { a } from \'/viewer/js/modules/a.js\';',
+          "await import('/viewer/operator/operator.js');</script>",
+        ].join('\n')
+      );
+      writeFileSync(join(dir, 'viewer.css'), 'body {}');
+      writeFileSync(join(dir, 'manifest.json'), '{}');
+      writeFileSync(join(dir, 'js', 'modules', 'a.js'), "export const a = 'first';");
+      writeFileSync(join(dir, 'operator', 'operator.js'), 'export {};');
+      writeFileSync(join(dir, 'operator', 'operator.css'), '');
+      await withServer(
+        async () => {
+          throw new Error('static routes must not dispatch actions');
+        },
+        async (server) => {
+          const stampOf = (body: string) => /\/viewer\/b\/([0-9a-f]{12})\/js\//.exec(body)?.[1];
+          const first = (await makeRequest(server, '/viewer')).body;
+          const stamp = stampOf(first);
+          expect(stamp).toEqual(expect.any(String));
+          for (const path of [
+            'viewer.css',
+            'operator/operator.css',
+            'js/modules/a.js',
+            'operator/operator.js',
+          ]) {
+            expect(first).toContain(`/viewer/b/${stamp}/${path}`);
+            const asset = await makeRequest(server, `/viewer/b/${stamp}/${path}`);
+            expect(asset.status, path).toBe(200);
+          }
+          expect(first).not.toMatch(/['"]\/viewer\/(?:js|operator)\//);
+          expect(first).toContain('/viewer/manifest.json');
+          expect((await makeRequest(server, `/viewer/b/${stamp}/js/modules/a.js`)).body).toContain(
+            'first'
+          );
+
+          writeFileSync(join(dir, 'js', 'modules', 'a.js'), "export const a = 'second';");
+          const rebuilt = stampOf((await makeRequest(server, '/viewer')).body);
+          expect(rebuilt).not.toBe(stamp);
+
+          const missing = await makeRequest(server, `/viewer/b/${rebuilt}/js/modules/b.js`);
+          expect(missing.status).toBe(404);
+          expect(missing.headers['cache-control']).toBe('no-store');
+          expect((await makeRequest(server, '/viewer/b/not-a-stamp/viewer.css')).status).toBe(404);
+        },
+        { viewerDirectory: dir }
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('redirects the root and serves the carried operator shell', async () => {
     await withServer(
       async () => {
@@ -197,7 +263,7 @@ describe('archive-compatible viewer routes', () => {
         expect(viewer.status).toBe(200);
         expect(viewer.headers['content-type']).toContain('text/html');
         expect(viewer.body).toContain('operator-mount');
-        expect(viewer.body).toContain('/viewer/operator/operator.js');
+        expect(viewer.body).toMatch(/\/viewer\/b\/[0-9a-f]{12}\/operator\/operator\.js/);
         expect(viewer.body).not.toContain('operator/triggers');
         for (const asset of [
           '/viewer/manifest.json',
