@@ -227,6 +227,27 @@ describe('ObsidianWriter', () => {
     expect(sepContent).toContain('September movement.');
   });
 
+  it('never fuzzy-dedups a daily page in a month folder against the day before', () => {
+    // "2026-10-05 daily log" shares 4 of 5 title words with "2026-10-04 daily log".
+    const writer = new ObsidianWriter(tempDir, 'wiki');
+    writer.ensureDirectories();
+    const day = (date: string): WikiPage => ({
+      path: `daily/2026-10/${date}.md`,
+      title: `${date} daily log`,
+      type: 'daily',
+      content: `## Log\n\n${date} movement.`,
+      sourceIds: [],
+      compiledAt: `${date}T12:00:00Z`,
+      confidence: 'high',
+    });
+    writer.writePage(day('2026-10-04'));
+    const first = join(wikiDir, 'daily', '2026-10', '2026-10-04.md');
+    const before = readFileSync(first, 'utf8');
+
+    expect(writer.writePage(day('2026-10-05'))).toBe('daily/2026-10/2026-10-05.md');
+    expect(readFileSync(first, 'utf8')).toBe(before);
+  });
+
   it('still fuzzy-dedups non-daily pages that share most of their title words', () => {
     const writer = new ObsidianWriter(tempDir, 'wiki');
     writer.ensureDirectories();

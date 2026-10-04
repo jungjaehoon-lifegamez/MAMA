@@ -23,7 +23,8 @@ export interface ReportSchedulerOptions {
   intake: Pick<StimulusIntake, 'acceptScheduled'>;
   /**
    * Write a daily wiki page at reports.daily_hour; only with the wiki enabled. `written` says
-   * whether daily/<day>.md was written at or after `since`: the day counts as done only then.
+   * whether a <day>.md under daily/ was written at or after `since`: the day counts as done only
+   * then.
    */
   dailyPages?: { written(day: string, since: number): boolean };
   /** Includes queued/retrying inputs across restarts, excludes uncertain failed turns. */
@@ -144,7 +145,7 @@ export function createReportScheduler(options: ReportSchedulerOptions) {
       if (!text) throw new Error('Scheduled report returned empty output');
       // An [ack] without the page would leave the day unwritten for good; failing the turn retries it.
       if (report === 'daily' && options.dailyPages?.written(day!, row.occurredAt) !== true)
-        throw new Error(`The daily order ended without writing daily/${day}.md`);
+        throw new Error(`The daily order ended without writing ${day}.md under daily/`);
       // A reminder with nothing that needs the owner ends with [ack] and is not sent; the last
       // marker decides, as for delta replies. A daily page goes to the wiki, never to the owner.
       const lastMarker = text.slice(
