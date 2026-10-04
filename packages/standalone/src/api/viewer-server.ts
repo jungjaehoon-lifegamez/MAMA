@@ -10,12 +10,13 @@ import {
 } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join, relative, resolve } from 'node:path';
-import type {
-  ActionCall,
-  ActionContext,
-  ActionDispatcher,
-  ActionResult,
-  WorkGraphPage,
+import {
+  TWIN_EDGE_TYPES,
+  type ActionCall,
+  type ActionContext,
+  type ActionDispatcher,
+  type ActionResult,
+  type WorkGraphPage,
 } from '@jungjaehoon/mama-core';
 import type { JudgmentAccess } from '@jungjaehoon/mama-core/knowledge';
 import {
@@ -247,6 +248,11 @@ function graphRef(value: string): { kind: string; id: string } | null {
   if (!GRAPH_KINDS.has(kind)) return null;
   return { kind, id: value.slice(split + 1) };
 }
+
+/** Every relation between records; evidence lines to source messages are listed in a record's detail. */
+const LINK_RELATIONS = TWIN_EDGE_TYPES.filter(
+  (relation) => relation !== 'derived_from' && relation !== 'mentions'
+);
 
 /** The memory view's named periods, in local days ending today. */
 const TIMELINE_PERIOD_DAYS = new Map([
@@ -774,18 +780,44 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
     );
   };
 
-  // The memory view draws one record and what it links to, never the whole graph at once.
-  const graphNeighbors = async (params: URLSearchParams): Promise<ArchiveGraphResponse> => {
-    const started = Date.now();
-    const ref = graphRef(params.get('id') ?? '');
-    if (!ref) throw new ViewerHttpError(400, 'INVALID_ID', 'id must be a graph reference');
-    const page = (await callAction('graph.query', {
-      view: 'neighbors',
-      seeds: [ref],
-      maxDepth: 1,
-      history: 'all',
-    })) as WorkGraphPage;
-    return shapeArchiveGraph(page, Date.now() - started, [], options.timeZone.get());
+  // The lines between records, read whole: the memory graph draws whatever the filters select
+  // and composes it on the page. Evidence lines to source messages are left out; they are tens of
+  // thousands, and the detail of a record lists its own.
+  const memoryLinks = async (): Promise<{
+    edges: Array<{ from: string; to: string; relation: string }>;
+    nodes: Record<string, { kind: string; label: string; commitmentId: string | null }>;
+  }> => {
+    const timeZone = options.timeZone.get();
+    const edges: Array<{ from: string; to: string; relation: string }> = [];
+    const nodes: Record<string, { kind: string; label: string; commitmentId: string | null }> = {};
+    let cursor: string | null = null;
+    do {
+      const page = (await callAction('graph.query', {
+        view: 'browse',
+        relations: LINK_RELATIONS,
+        history: 'all',
+        limit: 500,
+        ...(cursor === null ? {} : { cursor }),
+      })) as WorkGraphPage;
+      for (const node of page.nodes) {
+        const mapped = mapArchiveGraphNode(node, timeZone);
+        nodes[graphNodeKey(node)] = {
+          kind: mapped.kind,
+          label: mapped.decision_preview,
+          commitmentId: node.data.kind === 'memory' ? (node.data.work?.commitmentId ?? null) : null,
+        };
+      }
+      // Keyed like the nodes (browse returns both ends of every edge), not by resolved refs.
+      for (const edge of page.edges) {
+        edges.push({
+          from: `${edge.from.kind}:${edge.from.id}`,
+          to: `${edge.to.kind}:${edge.to.id}`,
+          relation: edge.relation,
+        });
+      }
+      cursor = page.nextCursor;
+    } while (cursor !== null);
+    return { edges, nodes };
   };
 
   // What was saved when, read whole for the chosen days: the view groups by day, kind and item,
@@ -1034,8 +1066,8 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
       let result: unknown;
       if (url.pathname === '/graph' || url.pathname === '/api/graph') {
         result = await graph(url.searchParams);
-      } else if (url.pathname === '/api/graph/neighbors') {
-        result = await graphNeighbors(url.searchParams);
+      } else if (url.pathname === '/api/memory/links') {
+        result = await memoryLinks();
       } else if (url.pathname === '/api/memory/timeline') {
         result = await memoryTimeline(url.searchParams);
       } else if (url.pathname === '/graph/detail' || url.pathname === '/api/graph/detail') {

@@ -520,9 +520,7 @@
                   ></div>
 
                   <div class="absolute inset-0 flex items-center justify-center" id="graph-empty">
-                    <span class="graph-empty-text"
-                      >Pick a saved record on the left to see what it rests on and links to.</span
-                    >
+                    Reading what was saved...
                   </div>
 
                   <div
@@ -1069,15 +1067,17 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
 
       const memory = new MemoryModule();
       const graph = new GraphModule();
-      const timeline = new MemoryTimelineModule((id) => {
-        graph.showRecord(id).catch((error) => {
-          console.error('[MAMA] Failed to draw the record:', error);
-          const empty = document.getElementById('graph-empty');
-          if (empty) {
-            empty.style.display = '';
-            empty.textContent = `Could not read this record's links: ${error.message}`;
-          }
-        });
+      const timeline = new MemoryTimelineModule({
+        onSelect: (id) => graph.focusRecord(id),
+        onRender: (data) =>
+          graph.showSelection(data).catch((error) => {
+            console.error('[MAMA] Failed to draw the memory graph:', error);
+            const empty = document.getElementById('graph-empty');
+            if (empty) {
+              empty.style.display = '';
+              empty.textContent = `Could not read the links between records: ${error.message}`;
+            }
+          }),
       });
       const wiki = new WikiModule();
 

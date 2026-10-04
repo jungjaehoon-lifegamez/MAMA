@@ -476,8 +476,8 @@ button:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]) { padding: 6px
   flex-shrink: 0;
 }
 
-.graph-empty-text {
-  max-width: 320px;
+#graph-empty {
+  padding: 0 24px;
   text-align: center;
   font-size: 14px;
   color: #8a847c;

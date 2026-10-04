@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os';
 import { createKnowledge, type CommitmentPage } from '@jungjaehoon/mama-core/knowledge';
 import type { WorkGraphPage } from '@jungjaehoon/mama-core';
 import Database from 'better-sqlite3';
-import { GraphModule, KIND_LABELS } from '../../public/viewer/src/modules/graph.js';
+import {
+  GraphModule,
+  RELATION_LABELS,
+  composeFilterGraph,
+} from '../../public/viewer/src/modules/graph.js';
 import {
   mapArchiveGraphNode,
   readViewerMemoryStats,
@@ -105,68 +109,186 @@ describe('viewer data shaping', () => {
     }
   });
 
-  it('keeps fixed kind colours and names every drawn kind and relationship in plain words', () => {
+  it('names every drawn group and relationship in plain words, with counts', () => {
     const graph = new GraphModule();
-    graph.graphData = {
+    const node = (id: string, group: string, outside = false) => ({
+      id,
+      group,
+      kind: null,
+      label: id,
+      detailId: id,
+      updates: 0,
+      outside,
+    });
+    graph.graph = {
       nodes: [
-        { id: 'a', kind: 'lesson' },
-        { id: 'b', kind: 'lesson' },
-        { id: 'c', kind: 'observation' },
-        { id: 'd', kind: 'commitment' },
+        node('a', 'owner_rule'),
+        node('b', 'owner_rule'),
+        node('c', 'work'),
+        node('d', 'outside', true),
       ],
       edges: [
-        { from: 'a', to: 'c', relationship: 'derived_from' },
-        { from: 'b', to: 'c', relationship: 'derived_from' },
-        { from: 'a', to: 'b', relationship: 'supersedes' },
-        { from: 'd', to: 'a', relationship: 'contradicts' },
+        { from: 'a', to: 'c', relation: 'builds_on' },
+        { from: 'b', to: 'c', relation: 'builds_on' },
+        { from: 'c', to: 'd', relation: 'supersedes' },
       ],
+      recordNode: {},
     };
-    const kinds = [
-      'decision',
-      'preference',
-      'constraint',
-      'lesson',
-      'workflow',
-      'fact',
-      'commitment',
-      'observation',
-    ];
-    expect(new Set(kinds.map((kind) => graph.getNodeColor(kind))).size).toBe(kinds.length);
-    expect(kinds.every((kind) => KIND_LABELS[kind] !== undefined)).toBe(true);
+    expect(Object.keys(RELATION_LABELS)).toHaveLength(13);
     expect(graph.getLegendEntries()).toEqual({
       nodes: [
-        { kind: 'lesson', label: 'Lesson', count: 2, color: graph.getNodeColor('lesson') },
+        { group: 'owner_rule', label: 'Owner rules', count: 2, color: expect.any(String) },
+        { group: 'work', label: 'Work updates', count: 1, color: expect.any(String) },
         {
-          kind: 'observation',
-          label: 'Source message',
+          group: 'outside',
+          label: 'Linked, outside this filter',
           count: 1,
-          color: graph.getNodeColor('observation'),
-        },
-        {
-          kind: 'commitment',
-          label: 'Work update',
-          count: 1,
-          color: graph.getNodeColor('commitment'),
+          color: expect.any(String),
         },
       ],
       edges: [
-        {
-          relationship: 'derived_from',
-          label: 'rests on (evidence)',
-          count: 2,
-          ...graph.edgeStyles.derived_from,
-        },
+        { relationship: 'builds_on', label: 'builds on', count: 2, ...graph.edgeStyles.builds_on },
         { relationship: 'supersedes', label: 'replaces', count: 1, ...graph.edgeStyles.supersedes },
-        {
-          relationship: 'contradicts',
-          label: 'contradicts',
-          count: 1,
-          ...graph.edgeStyles.contradicts,
-        },
       ],
     });
-    graph.graphData = { nodes: [], edges: [] };
+    graph.graph = { nodes: [], edges: [], recordNode: {} };
     expect(graph.getLegendEntries()).toEqual({ nodes: [], edges: [] });
+  });
+
+  // The graph draws what the filters select: one dot per record, one per work item for its
+  // updates, and the records they link to outside the filter, faded.
+  it('composes the filtered records, their items and the records they link to', () => {
+    const record = (id: string, topic: string) => ({
+      id: `memory:${id}`,
+      kind: null,
+      status: 'active',
+      topic,
+      summary: `summary ${id}`,
+      time: '10:00',
+      via: null,
+    });
+    const revision = (id: string) => ({
+      id: `memory:${id}`,
+      revision: 1,
+      operation: 'revise',
+      status: 'active',
+      summary: `summary ${id}`,
+      time: '09:00',
+    });
+    const timeline = {
+      from: '2026-10-03',
+      to: '2026-10-04',
+      timeZone: 'UTC',
+      total: 5,
+      counts: { owner_rule: 1, fact: 1, work: 3 },
+      days: [
+        {
+          day: '2026-10-04',
+          total: 3,
+          groups: [
+            { group: 'owner_rule', count: 1, records: [record('r1', 'rule topic')] },
+            {
+              group: 'work',
+              count: 2,
+              items: [
+                {
+                  commitmentId: 'c1',
+                  title: 'Item one',
+                  topic: 'work/one',
+                  revisions: [revision('v2'), revision('v1')],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          day: '2026-10-03',
+          total: 2,
+          groups: [
+            { group: 'fact', count: 1, records: [record('f1', 'fact topic')] },
+            {
+              group: 'work',
+              count: 1,
+              items: [
+                {
+                  commitmentId: 'c1',
+                  title: 'Item one',
+                  topic: 'work/one',
+                  revisions: [revision('v0')],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const links = {
+      edges: [
+        { from: 'memory:r1', to: 'memory:v1', relation: 'builds_on' },
+        { from: 'memory:r1', to: 'memory:v1', relation: 'builds_on' },
+        { from: 'memory:v2', to: 'memory:v0', relation: 'builds_on' },
+        { from: 'memory:f1', to: 'memory:x9', relation: 'supersedes' },
+        { from: 'memory:r1', to: 'memory:w7', relation: 'contradicts' },
+        { from: 'memory:y5', to: 'memory:z6', relation: 'amends' },
+      ],
+      // Browse names both ends of every edge.
+      nodes: {
+        'memory:r1': { kind: 'workflow', label: 'rule', commitmentId: null },
+        'memory:v0': { kind: 'commitment', label: 'update 0', commitmentId: 'c1' },
+        'memory:v1': { kind: 'commitment', label: 'update 1', commitmentId: 'c1' },
+        'memory:v2': { kind: 'commitment', label: 'update 2', commitmentId: 'c1' },
+        'memory:f1': { kind: 'fact', label: 'fact', commitmentId: null },
+        'memory:x9': { kind: 'fact', label: 'replaced fact', commitmentId: null },
+        'memory:w7': { kind: 'commitment', label: 'other item update', commitmentId: 'c9' },
+        'memory:y5': { kind: 'lesson', label: 'unrelated', commitmentId: null },
+        'memory:z6': { kind: 'lesson', label: 'unrelated', commitmentId: null },
+      },
+    };
+
+    const graph = composeFilterGraph(timeline, links);
+
+    expect(graph.nodes).toEqual([
+      expect.objectContaining({
+        id: 'memory:r1',
+        group: 'owner_rule',
+        label: 'rule topic',
+        detailId: 'memory:r1',
+        outside: false,
+      }),
+      expect.objectContaining({
+        id: 'item:c1',
+        group: 'work',
+        label: 'Item one',
+        detailId: 'memory:v2',
+        updates: 3,
+        outside: false,
+      }),
+      expect.objectContaining({ id: 'memory:f1', group: 'fact', outside: false }),
+      expect.objectContaining({
+        id: 'memory:x9',
+        group: 'outside',
+        label: 'replaced fact',
+        detailId: 'memory:x9',
+        outside: true,
+      }),
+      expect.objectContaining({
+        id: 'item:c9',
+        group: 'outside',
+        label: 'other item update',
+        detailId: 'memory:w7',
+        outside: true,
+      }),
+    ]);
+    expect(graph.edges).toEqual([
+      { from: 'memory:r1', to: 'item:c1', relation: 'builds_on' },
+      { from: 'memory:f1', to: 'memory:x9', relation: 'supersedes' },
+      { from: 'memory:r1', to: 'item:c9', relation: 'contradicts' },
+    ]);
+    expect(graph.recordNode).toMatchObject({
+      'memory:r1': 'memory:r1',
+      'memory:v2': 'item:c1',
+      'memory:v0': 'item:c1',
+    });
   });
 
   it('counts all stored memories and creation times in the last seven days, including replaced records', () => {

@@ -827,7 +827,7 @@ function preview(value: string): string {
 export function mapArchiveGraphNode(
   node: WorkGraphPage['nodes'][number],
   timeZone: string
-): ArchiveGraphNode {
+): ArchiveGraphNode & { kind: string; label: string; decision_preview: string } {
   const data = node.data;
   const memory = data.kind === 'memory' ? data : null;
   // An observation's label is its source id; show when and where instead (the text is read

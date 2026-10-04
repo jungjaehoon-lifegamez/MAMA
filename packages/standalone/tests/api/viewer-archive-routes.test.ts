@@ -574,14 +574,17 @@ describe('archive-compatible viewer routes', () => {
     );
   });
 
-  it('draws one record with what it links to, one step out', async () => {
-    const memory = (id: string, recordKind: string) => ({
+  // The memory graph draws whatever the filters select; the lines between records are few and
+  // independent of the filter, so the page reads them once. Evidence lines to source messages are
+  // left out: the detail of a record lists them.
+  it('reads every link between records, across pages, without evidence lines', async () => {
+    const memory = (id: string, extra: Record<string, unknown> = {}) => ({
       ref: { kind: 'memory', id },
       resolvedRef: { kind: 'memory', id },
       label: id,
       data: {
         kind: 'memory',
-        recordKind,
+        recordKind: 'judgment',
         memoryKind: 'lesson',
         topic: `topic ${id}`,
         summary: `summary ${id}`,
@@ -593,44 +596,70 @@ describe('archive-compatible viewer routes', () => {
         payload: {},
         work: null,
         content: { complete: true, nextRead: null },
+        ...extra,
       },
     });
+    const edge = (id: string, from: string, to: string, relation: string) => ({
+      id,
+      relation,
+      from: { kind: 'memory', id: from },
+      to: { kind: 'memory', id: to },
+      resolvedFrom: { kind: 'memory', id: from },
+      resolvedTo: { kind: 'memory', id: to },
+      attrs: {},
+    });
+    const pages: Record<string, WorkGraphPage> = {
+      first: graphPage({
+        nodes: [
+          memory('m1'),
+          memory('r2', {
+            recordKind: 'commitment',
+            memoryKind: 'decision',
+            work: {
+              commitmentId: 'c1',
+              rowId: 1,
+              revision: 2,
+              latestJudgmentRef: { kind: 'memory', id: 'r2' },
+            },
+          }),
+        ] as never,
+        edges: [edge('e1', 'm1', 'r2', 'builds_on')] as never,
+        nextCursor: 'p2',
+      }),
+      p2: graphPage({
+        nodes: [memory('m3'), memory('m1')] as never,
+        edges: [edge('e2', 'm3', 'm1', 'supersedes')] as never,
+      }),
+    };
     await withServer(
       async (call) => {
-        expect(call).toMatchObject({
-          action: 'graph.query',
-          input: {
-            view: 'neighbors',
-            seeds: [{ kind: 'memory', id: 'm1' }],
-            maxDepth: 1,
-            history: 'all',
+        expect(call.action).toBe('graph.query');
+        const input = call.input as { cursor?: string };
+        return completed(pages[input.cursor ?? 'first']);
+      },
+      async (server, calls) => {
+        const response = await makeRequest(server, '/api/memory/links');
+        expect(response.status).toBe(200);
+        const relations = (calls[0]?.input as { relations: string[] }).relations;
+        expect(relations).toContain('builds_on');
+        expect(relations).not.toContain('derived_from');
+        expect(relations).not.toContain('mentions');
+        expect(calls.map((call) => call.input)).toEqual([
+          { view: 'browse', relations, history: 'all', limit: 500 },
+          { view: 'browse', relations, history: 'all', limit: 500, cursor: 'p2' },
+        ]);
+        expect(JSON.parse(response.body)).toEqual({
+          edges: [
+            { from: 'memory:m1', to: 'memory:r2', relation: 'builds_on' },
+            { from: 'memory:m3', to: 'memory:m1', relation: 'supersedes' },
+          ],
+          nodes: {
+            'memory:m1': { kind: 'lesson', label: 'summary m1', commitmentId: null },
+            'memory:r2': { kind: 'commitment', label: 'summary r2', commitmentId: 'c1' },
+            'memory:m3': { kind: 'lesson', label: 'summary m3', commitmentId: null },
           },
         });
-        return completed(
-          graphPage({
-            nodes: [memory('m1', 'judgment'), memory('m0', 'judgment')] as never,
-            edges: [
-              {
-                id: 'e1',
-                from: { kind: 'memory', id: 'm1' },
-                to: { kind: 'memory', id: 'm0' },
-                resolvedFrom: { kind: 'memory', id: 'm1' },
-                resolvedTo: { kind: 'memory', id: 'm0' },
-                relation: 'supersedes',
-                attrs: {},
-              },
-            ] as never,
-          })
-        );
-      },
-      async (server) => {
-        const response = await makeRequest(server, '/api/graph/neighbors?id=memory:m1');
-        expect(response.status).toBe(200);
-        expect(JSON.parse(response.body)).toMatchObject({
-          nodes: [{ id: 'memory:m1' }, { id: 'memory:m0' }],
-          edges: [{ from: 'memory:m1', to: 'memory:m0', relationship: 'supersedes' }],
-        });
-        expect((await makeRequest(server, '/api/graph/neighbors?id=m1')).status).toBe(400);
+        expect((await makeRequest(server, '/api/graph/neighbors?id=memory:m1')).status).toBe(404);
       }
     );
   });
