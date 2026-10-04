@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadConfig, parseConfig, type W1Config } from '../../src/runtime/config.js';
+import {
+  fileDeliveryMessengers,
+  loadConfig,
+  parseConfig,
+  type W1Config,
+} from '../../src/runtime/config.js';
 import { validateDeliveryRoutes } from '../../src/cli/commands/daemon.js';
 
 let testHome: string;
@@ -40,9 +45,10 @@ function validConfig(): W1Config {
       allowed_chats: ['chat-test'],
       owner_user_ids: ['owner-test'],
       polling: false,
+      file_delivery: true,
     },
-    discord: { enabled: false, allowed_channels: [], owner_user_ids: [] },
-    slack: { enabled: false, allowed_channels: [], owner_user_ids: [] },
+    discord: { enabled: false, allowed_channels: [], owner_user_ids: [], file_delivery: true },
+    slack: { enabled: false, allowed_channels: [], owner_user_ids: [], file_delivery: true },
     delivery: { reports: 'telegram', notifications: 'telegram', security_alerts: 'telegram' },
     jev: {
       enabled: false,
@@ -181,6 +187,40 @@ describe('W1 runtime configuration', () => {
       parseConfig({ ...base, telegram: { ...telegramWithoutPolling, polling: false } }).telegram
         .polling
     ).toBe(false);
+  });
+
+  it('keeps file delivery on unless a messenger section turns it off', () => {
+    const base = validConfig();
+    const { file_delivery: _fileDelivery, ...telegram } = base.telegram;
+    expect(parseConfig({ ...base, telegram }).telegram.file_delivery).toBe(true);
+    expect(
+      parseConfig({ ...base, telegram: { ...telegram, file_delivery: false } }).telegram
+        .file_delivery
+    ).toBe(false);
+    expect(() =>
+      parseConfig({ ...base, slack: { ...base.slack, file_delivery: 'off' } as never })
+    ).toThrow(/slack\.file_delivery must be boolean/);
+  });
+
+  it('delivers files only through enabled messengers that keep file delivery on', () => {
+    const base = validConfig();
+    const discord = {
+      enabled: true,
+      owner_channel_id: 'c',
+      allowed_channels: ['c'],
+      owner_user_ids: ['u'],
+    };
+    const telegram = { ...base.telegram, enabled: true, owner_chat_id: 'chat-test' };
+    expect(fileDeliveryMessengers(parseConfig(base))).toEqual([]);
+    expect(fileDeliveryMessengers(parseConfig({ ...base, telegram, discord }))).toEqual([
+      'telegram',
+      'discord',
+    ]);
+    expect(
+      fileDeliveryMessengers(
+        parseConfig({ ...base, telegram, discord: { ...discord, file_delivery: false } })
+      )
+    ).toEqual(['telegram']);
   });
 
   it('requires an allowlisted owner chat when Telegram is enabled', () => {
