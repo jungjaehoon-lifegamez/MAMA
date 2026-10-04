@@ -487,6 +487,19 @@ describe('manage.wiki.move', () => {
       'twice',
     ],
     [
+      'two targets that differ only in case',
+      [
+        { from: 'daily/a.md', to: 'x/A.md' },
+        { from: 'daily/b.md', to: 'x/a.md' },
+      ],
+      'twice',
+    ],
+    [
+      'a hidden folder the wiki does not list',
+      [{ from: 'daily/a.md', to: '.obsidian/a.md' }],
+      'hidden',
+    ],
+    [
       'a target that another move empties',
       [
         { from: 'daily/a.md', to: 'x/a.md' },
