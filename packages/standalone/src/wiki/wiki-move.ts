@@ -1,5 +1,5 @@
 /** Moves pages inside the configured wiki root, all or none. */
-import { existsSync, mkdirSync, realpathSync, renameSync } from 'fs';
+import { existsSync, linkSync, mkdirSync, realpathSync, unlinkSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 
 import { normalizeWikiPagePath } from './path-safety.js';
@@ -31,7 +31,7 @@ const message = (error: unknown): string =>
 
 /**
  * Check every move before the first rename: each from is a page, each to is free, and no
- * path is used twice. A rename that still fails puts the earlier ones back.
+ * path is used twice. A move that still fails puts the earlier ones back.
  */
 export function moveWikiPages(root: string, moves: readonly WikiMove[]): WikiMove[] {
   if (!Array.isArray(moves) || moves.length === 0 || moves.length > WIKI_MOVE_MAX) {
@@ -65,20 +65,24 @@ export function moveWikiPages(root: string, moves: readonly WikiMove[]): WikiMov
   });
 
   const done: typeof sources = [];
+  let current = 0;
   try {
-    for (const move of sources) {
-      // renameSync replaces an existing file silently; a name the disk aliases must not.
-      if (existsSync(move.target)) throw new Error(`${move.to} already exists`);
+    for (; current < sources.length; current += 1) {
+      const move = sources[current]!;
       mkdirSync(dirname(move.target), { recursive: true });
-      renameSync(move.source, move.target);
+      // linkSync refuses a target that exists, where renameSync would replace it: a page another
+      // writer created after the checks, or a name the disk aliases, is never overwritten.
+      linkSync(move.source, move.target);
       done.push(move);
+      unlinkSync(move.source);
     }
   } catch (error) {
-    const failed = sources[done.length]!;
+    const failed = sources[current]!;
     const stuck: string[] = [];
     for (const move of done.reverse()) {
       try {
-        renameSync(move.target, move.source);
+        if (!existsSync(move.source)) linkSync(move.target, move.source);
+        unlinkSync(move.target);
       } catch (undo) {
         stuck.push(`${move.from} is still at ${move.to} (${message(undo)})`);
       }
