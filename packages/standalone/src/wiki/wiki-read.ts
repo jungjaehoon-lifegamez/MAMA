@@ -96,8 +96,8 @@ export function listWikiPages(input: {
   };
 }
 
-/** Markdown files under the real root, sorted; dot entries and symlinks are not followed. */
-function collectWikiMarkdownPaths(root: string): string[] {
+/** Markdown files under the real root (or one folder of it), sorted; dot entries and symlinks are not followed. */
+function collectWikiMarkdownPaths(root: string, folder: string = ''): string[] {
   const paths: string[] = [];
   let inspected = 0;
   const visit = (absolute: string, relative: string, depth: number): void => {
@@ -122,14 +122,22 @@ function collectWikiMarkdownPaths(root: string): string[] {
       directory.closeSync();
     }
   };
-  visit(root, '', 0);
+  if (folder === '') visit(root, '', 0);
+  else visit(join(root, folder), `${folder}/`, 1);
   return paths.sort();
 }
 
-/** The day's daily pages: files named <day>.md under daily/, in a month folder or flat. */
+/**
+ * The day's daily pages: files named <day>.md under daily/, in a month folder or flat. Only
+ * daily/ is read, so nothing elsewhere in the wiki can fail the scheduler's check.
+ */
 export function findDailyPages(root: string, day: string): string[] {
-  return collectWikiMarkdownPaths(realpathSync(resolve(root))).filter(
-    (path) => path.startsWith('daily/') && posix.basename(path) === `${day}.md`
+  const rootReal = realpathSync(resolve(root));
+  if (lstatSync(join(rootReal, 'daily'), { throwIfNoEntry: false })?.isDirectory() !== true) {
+    return [];
+  }
+  return collectWikiMarkdownPaths(rootReal, 'daily').filter(
+    (path) => posix.basename(path) === `${day}.md`
   );
 }
 

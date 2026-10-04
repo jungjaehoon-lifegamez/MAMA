@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { findDailyPages } from '../../src/wiki/wiki-read.js';
@@ -44,6 +44,17 @@ describe('findDailyPages', () => {
       expect(findDailyPages(root, '2026-10-04')).toEqual([]);
     } finally {
       rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('reads only the daily folder, so the rest of the wiki cannot fail the check', () => {
+    page('daily/2026-10/2026-10-04.md');
+    mkdirSync(join(root, 'projects'));
+    chmodSync(join(root, 'projects'), 0o000);
+    try {
+      expect(findDailyPages(root, '2026-10-04')).toEqual(['daily/2026-10/2026-10-04.md']);
+    } finally {
+      chmodSync(join(root, 'projects'), 0o700);
     }
   });
 
