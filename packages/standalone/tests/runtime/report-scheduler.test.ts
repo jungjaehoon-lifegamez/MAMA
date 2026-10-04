@@ -355,7 +355,7 @@ describe('KST report scheduler', () => {
     const now = new Date('2026-09-29T14:00:00Z');
     scheduler.tick(now);
     await expect(scheduler.onResult(ctx.result(), { response: '[ack]' })).rejects.toThrow(
-      'The daily order ended without writing daily/2026-09-29.md'
+      'The daily order ended without writing 2026-09-29.md under daily/'
     );
     expect(checked).toEqual([['2026-09-29', now.getTime()]]);
     expect(existsSync(ctx.statePath)).toBe(false);
@@ -420,7 +420,9 @@ describe('KST report scheduler', () => {
     expect(order).toContain(
       `eventSince ${Date.parse('2026-09-29T00:00:00+09:00')}, eventBefore ${Date.parse('2026-09-30T00:00:00+09:00')}`
     );
-    expect(order).toContain("daily/2026-09-29.md by its procedure, help({topic: 'daily'})");
+    expect(order).toContain(
+      "daily page daily/2026-09/2026-09-29.md by its procedure, help({topic: 'daily'})"
+    );
     expect(order).toContain('Reply exactly [ack].');
     expect(() =>
       scheduledReportOrder({ report: 'daily', hourKey: '2026-09-29:23' }, new Date(), options)

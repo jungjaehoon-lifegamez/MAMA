@@ -1,7 +1,7 @@
 /** Bounded reads and content versions for the configured wiki root. */
 import { createHash } from 'crypto';
 import { existsSync, lstatSync, opendirSync, readFileSync, realpathSync } from 'fs';
-import { dirname, join, resolve, sep } from 'path';
+import { dirname, join, posix, resolve, sep } from 'path';
 
 import { normalizeWikiReadPath } from './path-safety.js';
 
@@ -77,6 +77,27 @@ export function listWikiPages(input: {
   }
 
   const root = realpathSync(resolve(input.root));
+  const paths = collectWikiMarkdownPaths(root);
+  const readVersion = createHash('sha256').update(JSON.stringify(paths)).digest('hex');
+  if (input.version && input.version !== readVersion) {
+    throw new Error('manage.wiki.read list changed; restart from the first page');
+  }
+  const start = cursor === null ? 0 : paths.indexOf(cursor) + 1;
+  if (cursor !== null && start === 0) {
+    throw new Error('manage.wiki.read list_cursor is not in the current list');
+  }
+  const page = paths.slice(start, start + (limit as number));
+  return {
+    paths: page,
+    returned: page.length,
+    total: paths.length,
+    nextCursor: start + page.length < paths.length ? page[page.length - 1] : null,
+    readVersion,
+  };
+}
+
+/** Markdown files under the real root, sorted; dot entries and symlinks are not followed. */
+function collectWikiMarkdownPaths(root: string): string[] {
   const paths: string[] = [];
   let inspected = 0;
   const visit = (absolute: string, relative: string, depth: number): void => {
@@ -102,23 +123,14 @@ export function listWikiPages(input: {
     }
   };
   visit(root, '', 0);
-  paths.sort();
-  const readVersion = createHash('sha256').update(JSON.stringify(paths)).digest('hex');
-  if (input.version && input.version !== readVersion) {
-    throw new Error('manage.wiki.read list changed; restart from the first page');
-  }
-  const start = cursor === null ? 0 : paths.indexOf(cursor) + 1;
-  if (cursor !== null && start === 0) {
-    throw new Error('manage.wiki.read list_cursor is not in the current list');
-  }
-  const page = paths.slice(start, start + (limit as number));
-  return {
-    paths: page,
-    returned: page.length,
-    total: paths.length,
-    nextCursor: start + page.length < paths.length ? page[page.length - 1] : null,
-    readVersion,
-  };
+  return paths.sort();
+}
+
+/** The day's daily pages: files named <day>.md under daily/, in a month folder or flat. */
+export function findDailyPages(root: string, day: string): string[] {
+  return collectWikiMarkdownPaths(realpathSync(resolve(root))).filter(
+    (path) => path.startsWith('daily/') && posix.basename(path) === `${day}.md`
+  );
 }
 
 function resolveInsideRoot(root: string, normalizedPath: string): string | null {

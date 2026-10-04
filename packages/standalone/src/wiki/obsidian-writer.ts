@@ -88,12 +88,13 @@ function titleWordOverlap(a: string, b: string): number {
 }
 
 /**
- * A daily journal page (`daily/YYYY-MM-DD.md`). Its identity is the exact
- * normalized path, never a fuzzy title match: date tokens overlap above the
- * title threshold (2026-08-09 vs 2026-09-04 share "2026" and "09"), which once
- * stored a 2026-09-04 note into daily/2026-08-09.md.
+ * A daily journal page: a date-named page under daily/, in its month folder
+ * (`daily/YYYY-MM/YYYY-MM-DD.md`) or flat as written before month folders. Its
+ * identity is the exact normalized path, never a fuzzy title match: date tokens
+ * overlap above the title threshold (2026-08-09 vs 2026-09-04 share "2026" and
+ * "09"), which once stored a 2026-09-04 note into daily/2026-08-09.md.
  */
-const DAILY_PAGE_PATTERN = /^daily\/\d{4}-\d{2}-\d{2}\.md$/;
+const DAILY_PAGE_PATTERN = /^daily\/(?:[^/]+\/)*\d{4}-\d{2}-\d{2}\.md$/;
 
 function isDailyPagePath(normalizedPath: string): boolean {
   return DAILY_PAGE_PATTERN.test(normalizedPath);

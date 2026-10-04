@@ -56,6 +56,7 @@ import { resolvePackageVersion } from '../../package-version.js';
 import { readViewerMemoryStats } from '../../api/viewer-data.js';
 import type { OwnerFileDeliveryResult } from '../../api/file-delivery.js';
 import { createReportScheduler, type ReportScheduler } from '../../runtime/report-scheduler.js';
+import { findDailyPages } from '../../wiki/wiki-read.js';
 import { createTimeZoneSetting } from '../../runtime/timezone.js';
 import { createOutboundEventRecorder } from '../../api/security-events.js';
 import { startEgressProxy, type EgressProxy } from '../../runtime/egress-proxy.js';
@@ -750,10 +751,10 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
           ? {}
           : {
               dailyPages: {
-                written: (day: string, since: number) => {
-                  const page = join(owner!.wikiRoot!, 'daily', `${day}.md`);
-                  return existsSync(page) && statSync(page).mtimeMs >= since;
-                },
+                written: (day: string, since: number) =>
+                  findDailyPages(owner!.wikiRoot!, day).some(
+                    (path) => statSync(join(owner!.wikiRoot!, path)).mtimeMs >= since
+                  ),
               },
             }),
         timeZone,

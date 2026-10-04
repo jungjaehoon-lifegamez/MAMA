@@ -552,7 +552,7 @@ export function scheduledReportOrder(
       `[scheduled_daily] ${day}`,
       currentTime(now, options.timeZone),
       `The day in ${options.timeZone}: eventSince ${epochAtLocalDateTime(`${day}T00:00:00`, options.timeZone)}, eventBefore ${epochAtLocalDateTime(`${nextDay}T00:00:00`, options.timeZone)} (epoch ms).`,
-      `Write the daily page daily/${day}.md by its procedure, help({topic: 'daily'}).`,
+      `Write the daily page daily/${day!.slice(0, 7)}/${day}.md by its procedure, help({topic: 'daily'}).`,
       'Reply exactly [ack].',
     ].join('\n');
   }
