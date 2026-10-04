@@ -4,7 +4,7 @@ The shared engine for storage, records and revisions, evidence links, memory, se
 runtime drivers. Consumers supply their own database, principals, source access and product
 vocabulary through public exports. Core does not require the MAMA OS daemon.
 
-Version **5.3.0**; Node.js 22.13+. This README describes the current rebuild checkout.
+Version **5.4.0**; Node.js 22.13+. This README describes the current rebuild checkout.
 See [architecture](../../docs/explanation/architecture.md) and
 [the shared-engine goal](../../INTENT.md).
 

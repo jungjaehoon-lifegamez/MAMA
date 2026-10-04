@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.63.0] - 2026-10-04
+
+### Added
+
+- The viewer's memory tab is a timeline of what was saved. Pick a period (today, 7 days, 30 days
+  or one day, in the owner's time zone); the list goes by day, then kind (owner rules, learned
+  rules, decisions, facts, work updates), then work item with its updates (opened, updated,
+  withdrawn). Kind chips keep their counts while one kind is shown, the text search runs on the
+  server, and each record says which turn wrote it: owner chat, source update or report. Served by
+  `/api/memory/timeline`; an explicit window covers at most 31 days.
+- Picking a record draws that record and its direct links only (`/api/graph/neighbors`): the
+  source messages it rests on, what it builds on and what it replaced. The legend names every dot
+  and line in plain words with counts, and the detail panel shows the text and its evidence.
+- The owner agent has `memory.read:timeline` (mama-core 5.4.0), so "what did you save this week"
+  can be answered in chat.
+
+### Changed
+
+- The turn reminder and the record order name open work by the statuses `work.list` accepts
+  (pending, in_progress, review or blocked). Waiting on an owner decision is judged from each
+  item's latest record, since no status marks it. The words "open" and "waiting" read as statuses,
+  and `work.list` refused them.
+- A refused tool call names the allowed fields and the expected shape (mama-core 5.4.0).
+
+### Removed
+
+- From the memory tab: the whole-graph load (up to 2,000 nodes), the topic and outcome filters,
+  graph search, the Save outcome control (the read-only viewer refuses its route), the Export
+  buttons (no route served them), and the confidence and similar-decision rows.
+
+### Fixed
+
+- The memory list on a desktop window no longer keeps the full width set by the phone layout.
+
 ## [0.62.0] - 2026-10-04
 
 ### Added
