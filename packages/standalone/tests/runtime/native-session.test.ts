@@ -25,6 +25,7 @@ function surface() {
     connectors: ['chatwork', 'slack', 'trello', 'kagemusha'],
     scopes: [{ kind: 'project', id: 'scope' }],
     judge: { ask: async () => ({}) },
+    attachmentPorts: { telegram: () => null },
   });
 }
 
@@ -102,8 +103,6 @@ describe('one owner native session', () => {
           .map((tool) => tool.name)
           .sort()
       ).toEqual([
-        'deliver.discord.file',
-        'deliver.slack.file',
         'deliver.telegram.file',
         'drive.download',
         'drive.read',

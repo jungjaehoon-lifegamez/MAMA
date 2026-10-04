@@ -304,7 +304,15 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     // The owner reads every channel of its own connectors; imported originals carry no
     // memory-scope tag, so without this their observations are invisible in the graph.
     connectorWideRead: options.connectors ?? OWNER_CONNECTORS,
-    actions: [...OWNER_ACTIONS],
+    // The grant follows the same wiring as the registrations above.
+    actions: OWNER_ACTIONS.filter((name) => {
+      const messenger = /^deliver\.(telegram|discord|slack)\.file$/.exec(name)?.[1] as
+        | 'telegram'
+        | 'discord'
+        | 'slack'
+        | undefined;
+      return messenger === undefined || options.attachmentPorts?.[messenger] !== undefined;
+    }),
   };
 
   return {

@@ -29,6 +29,8 @@ export interface W1TelegramConfig {
   allowed_chats: string[];
   owner_user_ids: string[];
   polling: boolean;
+  /** Whether the owner agent may send files through Telegram; on unless turned off. */
+  file_delivery: boolean;
 }
 
 export interface W1MessengerConfig {
@@ -36,6 +38,8 @@ export interface W1MessengerConfig {
   owner_channel_id?: string;
   allowed_channels: string[];
   owner_user_ids: string[];
+  /** Whether the owner agent may send files through this messenger; on unless turned off. */
+  file_delivery: boolean;
 }
 export type MessengerName = 'telegram' | 'discord' | 'slack';
 export interface W1DeliveryConfig {
@@ -311,7 +315,7 @@ function parseMessenger(
   const raw = value === undefined ? {} : object(value, name);
   collectIgnoredKeys(
     raw,
-    ['enabled', 'owner_channel_id', 'allowed_channels', 'owner_user_ids'],
+    ['enabled', 'owner_channel_id', 'allowed_channels', 'owner_user_ids', 'file_delivery'],
     name,
     state
   );
@@ -335,7 +339,24 @@ function parseMessenger(
     ...(ownerChannelId === undefined ? {} : { owner_channel_id: ownerChannelId }),
     allowed_channels: allowedChannels,
     owner_user_ids: Array.from(new Set(ownerUserIds.map((id) => id.trim()))),
+    file_delivery: fileDelivery(raw, name),
   };
+}
+
+function fileDelivery(raw: Record<string, unknown>, name: MessengerName): boolean {
+  const value = raw.file_delivery ?? true;
+  if (typeof value !== 'boolean') throw new ConfigError(`${name}.file_delivery must be boolean`);
+  return value;
+}
+
+/** Messengers the owner agent may send files through: enabled, with file delivery on. */
+export function fileDeliveryMessengers(
+  config: Pick<W1Config, 'telegram' | 'discord' | 'slack'>
+): MessengerName[] {
+  return (['telegram', 'discord', 'slack'] as const).filter((name) => {
+    const messenger = config[name];
+    return messenger !== undefined && messenger.enabled && messenger.file_delivery;
+  });
 }
 
 function parseDelivery(value: unknown, state: ParseState): W1DeliveryConfig {
@@ -397,7 +418,7 @@ function parseConfigValue(
   }
   collectIgnoredKeys(
     telegramRaw,
-    ['enabled', 'owner_chat_id', 'allowed_chats', 'owner_user_ids', 'polling'],
+    ['enabled', 'owner_chat_id', 'allowed_chats', 'owner_user_ids', 'polling', 'file_delivery'],
     'telegram',
     state
   );
@@ -470,6 +491,7 @@ function parseConfigValue(
         // Absent means the daemon polls, as in the archive gateway (`polling !== false`);
         // only an explicit `false` hands inbound polling to another instance.
         polling: (telegramRaw.polling ?? true) as boolean,
+        file_delivery: fileDelivery(telegramRaw, 'telegram'),
       },
       discord: parseMessenger(raw.discord, 'discord', state),
       slack: parseMessenger(raw.slack, 'slack', state),

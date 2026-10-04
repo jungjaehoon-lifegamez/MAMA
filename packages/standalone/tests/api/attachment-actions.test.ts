@@ -595,6 +595,19 @@ describe('attachment actions', () => {
     ).rejects.toThrow(/not available in room 501/);
   });
 
+  it('offers a file action only for messengers whose sender is wired', () => {
+    const names = (ports: AttachmentActionPorts) =>
+      createAttachmentActionRegistrations(ports)
+        .map((entry) => entry.contract.name)
+        .filter((name) => name.startsWith('deliver.'));
+    expect(names({})).toEqual([]);
+    expect(names({ telegram: () => null })).toEqual(['deliver.telegram.file']);
+    expect(names({ telegram: () => null, slack: () => null })).toEqual([
+      'deliver.telegram.file',
+      'deliver.slack.file',
+    ]);
+  });
+
   it('refuses every Telegram path class outside the workspace files root', async () => {
     const workspace = root();
     const files = join(workspace, 'files');

@@ -36,6 +36,7 @@ import {
 } from '../../runtime/connectors.js';
 import {
   defaultConfigPath,
+  fileDeliveryMessengers,
   loadConfig,
   type MessengerName,
   type W1Config,
@@ -482,9 +483,12 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       attachmentPorts: {
         downloadsDir: paths.downloadsDir,
         connectors: () => connectors?.registry ?? null,
-        telegram: () => gateways.get('telegram') ?? null,
-        discord: () => gateways.get('discord') ?? null,
-        slack: () => gateways.get('slack') ?? null,
+        ...Object.fromEntries(
+          fileDeliveryMessengers(config).map((messenger) => [
+            messenger,
+            () => gateways.get(messenger) ?? null,
+          ])
+        ),
       },
       ...(config.wiki?.enabled
         ? {

@@ -311,29 +311,33 @@ export function createAttachmentActionRegistrations(
         };
       },
     },
-    ...(['telegram', 'discord', 'slack'] as const).map((messenger) => ({
-      contract: {
-        name: `deliver.${messenger}.file`,
-        summary: `Send one regular file under the owner workspace files directory through ${messenger}; images and documents use the messenger upload API.`,
-        inputSchema: ownerFileSchema,
-        examples: [
-          { title: 'Send a workspace result', input: { path: '/workspace/files/result.xlsx' } },
-        ],
-      },
-      exec: async (input: unknown, context: ActionContext) => {
-        const values = input as Record<string, unknown>;
-        const path = values.path;
-        if (typeof path !== 'string' || path.trim() === '') throw new Error('path is required');
-        if (typeof context.operationId !== 'string' || context.operationId.trim() === '') {
-          throw new Error(`deliver.${messenger}.file requires an operation id`);
-        }
-        const sender = ports[messenger]?.();
-        if (!sender) throw new Error(`${messenger} file delivery port is not configured`);
-        const validated = validateWorkspaceFile(workspaceFilesRoot(ports), path);
-        const caption = values.caption === undefined ? undefined : String(values.caption);
-        const result = await sender.sendFile(validated.path, caption, context.operationId);
-        return { path: validated.path, ...result };
-      },
-    })),
+    // A messenger's file action exists only when its sender is wired: the daemon wires the
+    // messengers that are enabled with file_delivery on, so the agent sees no file route it lacks.
+    ...(['telegram', 'discord', 'slack'] as const)
+      .filter((messenger) => ports[messenger] !== undefined)
+      .map((messenger) => ({
+        contract: {
+          name: `deliver.${messenger}.file`,
+          summary: `Send one regular file under the owner workspace files directory through ${messenger}; images and documents use the messenger upload API.`,
+          inputSchema: ownerFileSchema,
+          examples: [
+            { title: 'Send a workspace result', input: { path: '/workspace/files/result.xlsx' } },
+          ],
+        },
+        exec: async (input: unknown, context: ActionContext) => {
+          const values = input as Record<string, unknown>;
+          const path = values.path;
+          if (typeof path !== 'string' || path.trim() === '') throw new Error('path is required');
+          if (typeof context.operationId !== 'string' || context.operationId.trim() === '') {
+            throw new Error(`deliver.${messenger}.file requires an operation id`);
+          }
+          const sender = ports[messenger]?.();
+          if (!sender) throw new Error(`${messenger} file delivery port is not configured`);
+          const validated = validateWorkspaceFile(workspaceFilesRoot(ports), path);
+          const caption = values.caption === undefined ? undefined : String(values.caption);
+          const result = await sender.sendFile(validated.path, caption, context.operationId);
+          return { path: validated.path, ...result };
+        },
+      })),
   ];
 }

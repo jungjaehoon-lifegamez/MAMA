@@ -37,11 +37,11 @@ describe('W1 action surface', () => {
       scopes: [{ kind: 'project', id: 'workspace-test' }],
       judge: { ask: async () => ({}) },
       ownerMessages: { exchanges: () => [], retentionMs: 1 },
+      // Only Telegram is wired for files, as the daemon wires it when file_delivery is on.
+      attachmentPorts: { telegram: () => null },
     });
     const expected = [
       'code_act',
-      'deliver.discord.file',
-      'deliver.slack.file',
       'deliver.telegram.file',
       'drive.download',
       'drive.read',

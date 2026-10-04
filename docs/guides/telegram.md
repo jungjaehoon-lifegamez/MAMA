@@ -25,6 +25,7 @@ The `telegram` section of `~/.mama/config.yaml` contains:
 | `allowed_chats`  | Chats allowed to reach the owner check; must include the owner chat |
 | `owner_user_ids` | Senders accepted as the owner                                       |
 | `polling`        | Receive messages; defaults to `true`                                |
+| `file_delivery`  | Let MAMA send files to the owner chat; defaults to `true`           |
 
 Both the chat and sender must pass the owner check. Other messages are dropped;
 logs contain hashed chat and sender IDs, without their message content. Setup
