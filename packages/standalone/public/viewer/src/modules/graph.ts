@@ -86,6 +86,9 @@ export class GraphModule {
   network: VisNetwork | null = null;
   graphData: GraphInput = { nodes: [], edges: [], meta: {} };
   centerId: string | null = null;
+  // A slower earlier read must not draw or describe a record the owner has moved away from.
+  private recordRequest = 0;
+  private detailRequest = 0;
   nodeColors: Record<string, string> = {
     decision: '#60A5FA',
     preference: '#C084FC',
@@ -114,18 +117,20 @@ export class GraphModule {
    * Draw a record and its direct links, then show its detail.
    */
   async showRecord(id: string): Promise<void> {
+    const request = ++this.recordRequest;
     const empty = getElementByIdOrNull<HTMLElement>('graph-empty');
     const loading = getElementByIdOrNull<HTMLElement>('graph-loading');
     if (empty) empty.style.display = 'none';
     if (loading) loading.style.display = 'flex';
     try {
       const data = (await API.getGraphNeighbors(id)) as GraphInput;
+      if (request !== this.recordRequest) return;
       this.centerId = id;
       this.init(data);
       const center = data.nodes.find((node) => String(node.id) === id);
       if (center) void this.showDetail(center);
     } finally {
-      if (loading) loading.style.display = 'none';
+      if (loading && request === this.recordRequest) loading.style.display = 'none';
     }
   }
 
@@ -342,11 +347,21 @@ export class GraphModule {
     reasoningEl.innerHTML = '';
     panel.classList.add('visible');
 
-    const detail = await API.getGraphDetail(String(node.id));
-    const detailNode = detail.node;
-    decisionEl.innerHTML = renderSafeMarkdown(
-      String(detailNode.decision || detailNode.decision_preview || '-')
-    );
-    reasoningEl.innerHTML = renderSafeMarkdown(String(detailNode.reasoning || '-'));
+    const request = ++this.detailRequest;
+    try {
+      const detail = await API.getGraphDetail(String(node.id));
+      if (request !== this.detailRequest) return;
+      const detailNode = detail.node;
+      decisionEl.innerHTML = renderSafeMarkdown(
+        String(detailNode.decision || detailNode.decision_preview || '-')
+      );
+      reasoningEl.innerHTML = renderSafeMarkdown(String(detailNode.reasoning || '-'));
+    } catch (error) {
+      if (request !== this.detailRequest) return;
+      logger.error('Failed to read record detail:', error);
+      decisionEl.textContent = `Could not read this record: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+    }
   }
 }

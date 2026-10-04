@@ -651,10 +651,21 @@ describe('archive-compatible viewer routes', () => {
           until: Date.parse(`${week.to}T00:00:00Z`) + 86_400_000,
         });
 
-        for (const query of ['from=2026-10-04&to=2026-10-03', 'from=10/03', 'period=year']) {
+        for (const query of [
+          'from=2026-10-04&to=2026-10-03',
+          'from=10/03',
+          'period=year',
+          // Every filter change re-reads the whole window, so a window is at most a month.
+          'from=2026-09-03&to=2026-10-04',
+        ]) {
           const refused = await makeRequest(server, `/api/memory/timeline?${query}`);
           expect(refused.status).toBe(400);
         }
+        const month = await makeRequest(
+          server,
+          '/api/memory/timeline?from=2026-09-04&to=2026-10-04'
+        );
+        expect(month.status).toBe(200);
       }
     );
   });
