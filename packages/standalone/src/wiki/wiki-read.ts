@@ -133,7 +133,8 @@ export function findDailyPages(root: string, day: string): string[] {
   );
 }
 
-function resolveInsideRoot(root: string, normalizedPath: string): string | null {
+/** The real path of a page inside the root, or null when absent; throws on symlinks and escapes. */
+export function resolveInsideRoot(root: string, normalizedPath: string): string | null {
   const rootReal = realpathSync(resolve(root));
   const absolute = join(rootReal, ...normalizedPath.split('/'));
   let ancestor = dirname(absolute);

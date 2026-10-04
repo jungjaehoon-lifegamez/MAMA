@@ -9,6 +9,7 @@ import {
   WIKI_READ_MAX_PAGE_CHARS,
 } from '../wiki/wiki-read.js';
 import { WIKI_PAGE_TYPES } from '../wiki/types.js';
+import { moveWikiPages, WIKI_MOVE_MAX, type WikiMove } from '../wiki/wiki-move.js';
 import { applyWikiEdits, readWikiSection, type WikiSectionEdit } from '../wiki/wiki-edits.js';
 import { WIKI_HUMAN_MARKER } from '../wiki/wiki-read.js';
 import {
@@ -244,6 +245,51 @@ export function wikiActionRegistrations(ports: WikiPorts): ActionRegistration[] 
         if (written === null)
           throw namedError('TOOL_ERROR', `Wiki page vanished after update: ${path}`);
         return { success: true, message: `Wiki updated: ${path}`, contentVersion: written.version };
+      },
+    },
+    {
+      contract: {
+        name: 'manage.wiki.move',
+        summary: `Move or rename wiki pages: moves lists up to ${WIKI_MOVE_MAX} {from, to} relative .md paths, and folders are made as needed. The batch moves all or none: a missing from, a to that exists, a path used twice and index.md/log.md are refused. Links to a moved page are not rewritten; fix the pages that link to it (Home.md) with manage.wiki.update.`,
+        inputSchema: {
+          type: 'object',
+          required: ['moves'],
+          properties: {
+            moves: {
+              type: 'array',
+              minItems: 1,
+              maxItems: WIKI_MOVE_MAX,
+              items: {
+                type: 'object',
+                required: ['from', 'to'],
+                properties: {
+                  from: { type: 'string', pattern: '^.+\\.md$' },
+                  to: { type: 'string', pattern: '^.+\\.md$' },
+                },
+              },
+            },
+          },
+        },
+        examples: [
+          {
+            title: 'Move a daily page into its month folder',
+            input: {
+              moves: [{ from: 'daily/2026-09-01.md', to: 'daily/2026-09/2026-09-01.md' }],
+            },
+          },
+        ],
+      },
+      exec: (input) => {
+        const vault = requireVault(ports);
+        try {
+          const moved = moveWikiPages(vault.path, (input as { moves: WikiMove[] }).moves);
+          return { success: true, message: `Wiki pages moved: ${moved.length}`, moved };
+        } catch (error) {
+          throw namedError(
+            'TOOL_ERROR',
+            error instanceof Error ? error.message : 'Wiki move failed'
+          );
+        }
       },
     },
     {

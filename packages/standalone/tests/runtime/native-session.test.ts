@@ -110,6 +110,7 @@ describe('one owner native session', () => {
         'graph.query',
         'help',
         'judge',
+        'manage.wiki.move',
         'manage.wiki.publish',
         'manage.wiki.read',
         'manage.wiki.update',

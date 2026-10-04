@@ -6,7 +6,7 @@
  * real dispatcher — not the executor's tool names.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCatalog, createDispatcher, type ActionContext } from '@jungjaehoon/mama-core';
@@ -19,7 +19,7 @@ const OWNER_DATE = '2026-09-06';
 const ownerAccess: ActionContext['access'] = {
   // Dispatch compares the call against this grant; these are the actions
   // this file calls.
-  actions: ['manage.wiki.publish', 'manage.wiki.read', 'manage.wiki.update'],
+  actions: ['manage.wiki.move', 'manage.wiki.publish', 'manage.wiki.read', 'manage.wiki.update'],
   principalId: 'principal_owner_1',
   agentId: 'agent',
   scopes: [],
@@ -67,11 +67,16 @@ describe('manage.wiki.* action registrations', () => {
     expect(publisher).not.toHaveBeenCalled();
   });
 
-  it('lists the read, publish and update actions', () => {
+  it('lists the move, read, publish and update actions', () => {
     const names = createCatalog(wikiActionRegistrations({}))
       .list()
       .map((contract) => contract.name);
-    expect(names.sort()).toEqual(['manage.wiki.publish', 'manage.wiki.read', 'manage.wiki.update']);
+    expect(names.sort()).toEqual([
+      'manage.wiki.move',
+      'manage.wiki.publish',
+      'manage.wiki.read',
+      'manage.wiki.update',
+    ]);
   });
 
   it('unbound wiki resources fail explicitly', async () => {
@@ -420,6 +425,119 @@ describe('manage.wiki.* action registrations', () => {
         data: { contentVersion: expect.any(String) },
       });
     } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('manage.wiki.move', () => {
+  const pages = (root: string, ...paths: string[]): void => {
+    for (const path of paths) {
+      const file = join(root, ...path.split('/'));
+      mkdirSync(join(file, '..'), { recursive: true });
+      writeFileSync(file, `# ${path}`);
+    }
+  };
+  const move = (root: string, moves: Array<{ from: string; to: string }>) =>
+    dispatch({ vault: { path: root, name: null } })(
+      { action: 'manage.wiki.move', input: { moves } },
+      { access: ownerAccess }
+    );
+
+  it('moves pages into folders it creates and names what moved', async () => {
+    const root = vault();
+    try {
+      pages(root, 'daily/2026-09-01.md', 'daily/2026-10-01.md');
+      const result = await move(root, [
+        { from: 'daily/2026-09-01.md', to: 'daily/2026-09/2026-09-01.md' },
+        { from: 'daily/2026-10-01.md', to: 'daily/2026-10/2026-10-01.md' },
+      ]);
+      expect(result).toMatchObject({
+        status: 'completed',
+        data: {
+          success: true,
+          moved: [
+            { from: 'daily/2026-09-01.md', to: 'daily/2026-09/2026-09-01.md' },
+            { from: 'daily/2026-10-01.md', to: 'daily/2026-10/2026-10-01.md' },
+          ],
+        },
+      });
+      expect(readWikiPageContent(root, 'daily/2026-09/2026-09-01.md')?.content).toBe(
+        '# daily/2026-09-01.md'
+      );
+      expect(readWikiPageContent(root, 'daily/2026-09-01.md')).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['a page already at the target', [{ from: 'daily/a.md', to: 'Home.md' }], 'already exists'],
+    ['a missing page', [{ from: 'daily/none.md', to: 'x/none.md' }], 'does not exist'],
+    ['the generated index', [{ from: 'daily/a.md', to: 'index.md' }], 'reserved'],
+    ['a parent traversal', [{ from: 'daily/a.md', to: '../a.md' }], 'traversal'],
+    ['a non-page target', [{ from: 'daily/a.md', to: 'daily/a.txt' }], '.md'],
+    ['a page moved onto itself', [{ from: 'daily/a.md', to: 'daily/a.md' }], 'same path'],
+    [
+      'two moves to one target',
+      [
+        { from: 'daily/a.md', to: 'x/a.md' },
+        { from: 'daily/b.md', to: 'x/a.md' },
+      ],
+      'twice',
+    ],
+    [
+      'a target that another move empties',
+      [
+        { from: 'daily/a.md', to: 'x/a.md' },
+        { from: 'daily/b.md', to: 'daily/a.md' },
+      ],
+      "another move's from",
+    ],
+  ])('refuses the whole batch for %s', async (_name, moves, message) => {
+    const root = vault();
+    try {
+      pages(root, 'daily/a.md', 'daily/b.md');
+      const result = await move(root, moves);
+      expect(result).toMatchObject({ status: 'failed' });
+      expect(JSON.stringify(result)).toContain(message);
+      expect(readWikiPageContent(root, 'daily/a.md')?.content).toBe('# daily/a.md');
+      expect(readWikiPageContent(root, 'daily/b.md')?.content).toBe('# daily/b.md');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a symlinked page', async () => {
+    const root = vault();
+    try {
+      pages(root, 'daily/a.md');
+      symlinkSync(join(root, 'daily', 'a.md'), join(root, 'daily', 'link.md'));
+      const result = await move(root, [{ from: 'daily/link.md', to: 'x/link.md' }]);
+      expect(JSON.stringify(result)).toContain('symlink');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('puts earlier moves back when a later rename fails', async () => {
+    const root = vault();
+    const locked = join(root, 'locked');
+    try {
+      pages(root, 'daily/a.md', 'daily/b.md');
+      mkdirSync(locked);
+      chmodSync(locked, 0o500);
+      const result = await move(root, [
+        { from: 'daily/a.md', to: 'moved/a.md' },
+        { from: 'daily/b.md', to: 'locked/b.md' },
+      ]);
+      expect(result).toMatchObject({ status: 'failed' });
+      expect(JSON.stringify(result)).toContain('daily/b.md');
+      expect(readWikiPageContent(root, 'daily/a.md')?.content).toBe('# daily/a.md');
+      expect(readWikiPageContent(root, 'moved/a.md')).toBeNull();
+      expect(readWikiPageContent(root, 'daily/b.md')?.content).toBe('# daily/b.md');
+    } finally {
+      chmodSync(locked, 0o700);
       rmSync(root, { recursive: true, force: true });
     }
   });

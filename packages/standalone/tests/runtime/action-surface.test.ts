@@ -48,6 +48,7 @@ describe('W1 action surface', () => {
       'graph.query',
       'help',
       'judge',
+      'manage.wiki.move',
       'manage.wiki.publish',
       'manage.wiki.read',
       'manage.wiki.update',
