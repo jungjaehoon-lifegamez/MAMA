@@ -16,6 +16,7 @@ import {
   scheduledReport,
   sessionStartBlock,
 } from '../../src/runtime/turn-orders.js';
+import { OPEN_WORK_STATUSES } from '../../src/api/work-actions.js';
 
 const now = new Date('2026-09-29T01:40:00.000Z');
 
@@ -381,5 +382,20 @@ describe('turn orders', () => {
     ])
       expect(reminder).toContain(part);
     expect(() => scheduledReport({ report: 'weekly' })).toThrow(/full \| reminder/);
+  });
+
+  // "open work" and "waiting on an owner decision" read as statuses: every reminder from
+  // 2026-09-29 to 2026-10-03 called work.list with status "open" or "waiting" and was refused.
+  it('names open work in the statuses work.list accepts', () => {
+    const reminder = scheduledReportOrder({ report: 'reminder', hourKey: '2026-09-29:10' }, now, {
+      backend: 'codex',
+      timeZone: 'Asia/Seoul',
+      messenger: 'telegram',
+    });
+    const offered = [...reminder.matchAll(/\(status ([^)]*)\)/g)].flatMap((match) =>
+      match[1].split(/, | or /)
+    );
+    expect(offered).toEqual([...OPEN_WORK_STATUSES]);
+    expect(reminder).toContain('no status or field marks');
   });
 });
