@@ -20,14 +20,13 @@ describe('ObsidianWriter', () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('creates the v5 wiki layout without bootstrapping root index/log files', () => {
+  it('creates the v5 wiki layout without root index/log files', () => {
     const writer = new ObsidianWriter(tempDir, 'wiki');
     writer.ensureDirectories();
     for (const sub of ['daily', 'lessons/clients', 'lessons/process', 'lessons/system']) {
       expect(existsSync(join(wikiDir, sub))).toBe(true);
     }
-    // The agent owns the vault root (Home.md); index.md/log.md appear on demand
-    // only when the manage.wiki.publish fallback writes them.
+    // The agent owns the vault root and its table of contents (Home.md).
     expect(existsSync(join(wikiDir, 'index.md'))).toBe(false);
     expect(existsSync(join(wikiDir, 'log.md'))).toBe(false);
   });
@@ -115,7 +114,7 @@ describe('ObsidianWriter', () => {
     const writer = new ObsidianWriter(tempDir, 'wiki');
     writer.ensureDirectories();
     const page: WikiPage = {
-      path: 'index.md',
+      path: 'log.md',
       title: 'ProjectAlpha',
       type: 'entity',
       content: 'Content.',
@@ -302,13 +301,9 @@ describe('ObsidianWriter', () => {
     expect(readFileSync(join(wikiDir, 'lessons/process/new-path.md'), 'utf8')).toContain('new');
   });
 
-  it('adds a versioned page to the index without dropping or duplicating existing links', () => {
+  it('publishes versioned pages without writing an index', () => {
     const writer = new ObsidianWriter(tempDir, 'wiki');
     writer.ensureDirectories();
-    const originalIndex =
-      '# Wiki Index\n\nAuto-compiled by MAMA.\n\n## Pages\n\n### Entity\n\n' +
-      '- [[work/existing|Existing]] — entity, confidence: high\n';
-    writeFileSync(join(wikiDir, 'index.md'), originalIndex, 'utf8');
     const page: WikiPage = {
       path: 'work/current.md',
       title: 'Current work',
@@ -322,25 +317,20 @@ describe('ObsidianWriter', () => {
     expect(writer.writePagesAtomically([{ ...page, expectedContentVersion: null }])).toEqual([
       page.path,
     ]);
-    const indexPath = join(wikiDir, 'index.md');
-    const firstIndex = readFileSync(indexPath, 'utf8');
-    expect(firstIndex).toContain('[[work/existing|Existing]]');
-    expect(firstIndex).toContain('[[work/current|Current work]]');
+    // The agent keeps the table of contents (Home.md); the host writes no index.
+    expect(existsSync(join(wikiDir, 'index.md'))).toBe(false);
 
     const version = readWikiPageVersion(wikiDir, page.path);
     writer.writePagesAtomically([
       { ...page, content: 'Updated dated account.', expectedContentVersion: version },
     ]);
-    const updatedIndex = readFileSync(indexPath, 'utf8');
-    expect(updatedIndex.match(/\[\[work\/current\|Current work\]\]/g)).toHaveLength(1);
-    expect(updatedIndex).toContain('[[work/existing|Existing]]');
     expect(() =>
       writer.writePagesAtomically([
         { ...page, content: 'Stale update.', expectedContentVersion: version },
       ])
     ).toThrow(/changed before activation/);
-    expect(readFileSync(indexPath, 'utf8')).toBe(updatedIndex);
     expect(readFileSync(join(wikiDir, page.path), 'utf8')).toContain('Updated dated account.');
+    expect(existsSync(join(wikiDir, 'index.md'))).toBe(false);
   });
 
   it('preserves one human section when read content is published back', () => {
@@ -388,47 +378,5 @@ describe('ObsidianWriter', () => {
     const written = readFileSync(join(wikiDir, path), 'utf8');
     expect(written).not.toContain('<!-- human -->');
     expect(written).not.toContain('Injected owner note');
-  });
-
-  it('updates index.md', () => {
-    const writer = new ObsidianWriter(tempDir, 'wiki');
-    writer.ensureDirectories();
-    const page: WikiPage = {
-      path: 'projects/ProjectAlpha.md',
-      title: 'ProjectAlpha',
-      type: 'entity',
-      content: 'Content.',
-      sourceIds: ['d_1'],
-      compiledAt: '2026-04-08T12:00:00Z',
-      confidence: 'high',
-    };
-    writer.writePage(page);
-    writer.updateIndex([page]);
-
-    const index = readFileSync(join(wikiDir, 'index.md'), 'utf8');
-    expect(index).toContain('[[projects/ProjectAlpha|ProjectAlpha]]');
-    expect(index).toContain('entity');
-  });
-
-  it('merges a partial non-versioned publish without erasing another index entry', () => {
-    const writer = new ObsidianWriter(tempDir, 'wiki');
-    writer.ensureDirectories();
-    const indexPath = join(wikiDir, 'index.md');
-    writeFileSync(indexPath, '# Wiki Index\n\n## Pages\n\n- [[work/existing|Existing]]\n');
-    const page: WikiPage = {
-      path: 'work/current.md',
-      title: 'Current',
-      type: 'synthesis',
-      content: 'One current state.',
-      sourceIds: [],
-      compiledAt: '2026-09-24T00:00:00Z',
-      confidence: 'medium',
-    };
-    writer.updateIndexIncrementally([page]);
-    writer.updateIndexIncrementally([{ ...page, title: 'Current revised' }]);
-    const index = readFileSync(indexPath, 'utf8');
-    expect(index).toContain('[[work/existing|Existing]]');
-    expect(index).toContain('[[work/current|Current revised]]');
-    expect(index.match(/\[\[work\/current\|/g)).toHaveLength(1);
   });
 });
