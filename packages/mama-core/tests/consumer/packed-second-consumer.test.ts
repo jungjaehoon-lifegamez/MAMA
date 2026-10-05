@@ -12,10 +12,11 @@ import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const CORE_DIR = new URL('../..', import.meta.url).pathname;
-const CONSUMER_FIXTURE = new URL('../fixtures/second-consumer', import.meta.url).pathname;
+const CORE_DIR = fileURLToPath(new URL('../..', import.meta.url));
+const CONSUMER_FIXTURE = fileURLToPath(new URL('../fixtures/second-consumer', import.meta.url));
 
 function run(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): string {
   try {

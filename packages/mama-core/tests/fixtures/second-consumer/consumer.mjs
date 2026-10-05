@@ -4,6 +4,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const dir = mkdtempSync(join(tmpdir(), 'mama-second-consumer-db-'));
 try {
@@ -11,7 +12,7 @@ try {
   const { createKnowledge } = await import('@jungjaehoon/mama-core/knowledge');
   const db = await openDatabase({
     path: join(dir, 'bench.db'),
-    migrations: [{ name: 'bench', dir: new URL('./migrations', import.meta.url).pathname }],
+    migrations: [{ name: 'bench', dir: fileURLToPath(new URL('./migrations', import.meta.url)) }],
   });
   try {
     const knowledge = createKnowledge({ adapter: db.adapter });
