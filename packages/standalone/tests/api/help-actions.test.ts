@@ -60,7 +60,7 @@ const help = helpActionRegistrations({
   contracts: () => contracts,
   topics: () => ({ 'full-report': 'Full report procedure text.', record: 'Recording text.' }),
 })[0]!;
-const run = (input: unknown) => help.exec(input as never, {} as never) as string;
+const run = async (input: unknown) => (await help.exec(input as never, {} as never)) as string;
 
 describe('action catalog line', () => {
   it('is an index entry: the name and first sentence, the arguments left to help', () => {
@@ -73,15 +73,11 @@ describe('action catalog line', () => {
     );
   });
 
-  it('names the arguments a top-level oneOf requires, and fixed values', () => {
+  it('names the arguments a top-level oneOf requires, and fixed values', async () => {
     expect(actionSignature(contracts[1]!.inputSchema)).toBe(
       '{observationRef?, observationRefs?: ≤500 items, mode?: "stored"; one of: observationRef | observationRefs}'
     );
-    expect(
-      run({ actions: ['source_read'] })
-        .split('\n')
-        .slice(2)
-    ).toEqual([
+    expect((await run({ actions: ['source_read'] })).split('\n').slice(2)).toEqual([
       '- observationRef: string',
       '- observationRefs: string[] (at most 500 items)',
       '- mode: "stored"',
@@ -111,27 +107,51 @@ describe('action catalog line', () => {
 });
 
 describe('help action', () => {
-  it('lists the topics and every action line when nothing is asked', () => {
-    expect(run({})).toBe(
+  it('lists the topics and every action line when nothing is asked', async () => {
+    expect(await run({})).toBe(
       ['Topics: full-report, record', 'Actions:', ...contracts.map(actionCatalogLine)].join('\n')
     );
   });
 
-  it('returns a procedure by topic, alone or with contracts, and names the topics when unknown', () => {
-    expect(run({ topic: 'full-report' })).toBe('Full report procedure text.');
-    expect(run({ topic: 'record', actions: ['work.list'] }).split('\n\n')[0]).toBe(
+  it('returns a procedure by topic, alone or with contracts, and names the topics when unknown', async () => {
+    expect(await run({ topic: 'full-report' })).toBe('Full report procedure text.');
+    expect((await run({ topic: 'record', actions: ['work.list'] })).split('\n\n')[0]).toBe(
       'Recording text.'
     );
-    expect(() => run({ topic: 'reports' })).toThrow(
+    await expect(run({ topic: 'reports' })).rejects.toThrow(
       'unknown topic: reports; topics: full-report, record'
     );
     // An inherited name is not a topic.
-    expect(() => run({ topic: 'toString' })).toThrow('unknown topic: toString');
+    await expect(run({ topic: 'toString' })).rejects.toThrow('unknown topic: toString');
   });
 
-  it('returns each contract as text for dotted and Codex names alike', () => {
+  it('adds what the product holds for a procedure, and fails when it cannot read it', async () => {
+    const withContext = (topicContext: (topic: string) => Promise<string>) =>
+      helpActionRegistrations({
+        contracts: () => contracts,
+        topics: () => ({ 'full-report': 'Full report procedure text.', record: 'Recording text.' }),
+        topicContext,
+      })[0]!;
+    const rules = withContext(async (topic) =>
+      topic === 'full-report'
+        ? '<owner_rules>\n- report_order: writing a report\n</owner_rules>'
+        : ''
+    );
+    expect(await rules.exec({ topic: 'full-report' } as never, {} as never)).toBe(
+      'Full report procedure text.\n\n<owner_rules>\n- report_order: writing a report\n</owner_rules>'
+    );
+    expect(await rules.exec({ topic: 'record' } as never, {} as never)).toBe('Recording text.');
+    const failing = withContext(async () => {
+      throw new Error('owner rules unreadable');
+    });
+    await expect(failing.exec({ topic: 'full-report' } as never, {} as never)).rejects.toThrow(
+      'owner rules unreadable'
+    );
+  });
+
+  it('returns each contract as text for dotted and Codex names alike', async () => {
     for (const name of ['work.list', 'work_list']) {
-      expect(run({ actions: [name] })).toBe(
+      expect(await run({ actions: [name] })).toBe(
         [
           'work.list({text, view?: "overview"|"items", links?, eventDatetime?})',
           'Read owner work progressively. Views: overview, pipeline, items, detail.',
@@ -144,13 +164,13 @@ describe('help action', () => {
       );
     }
     // Several actions: one call line each, not their whole contracts.
-    expect(run({ actions: ['memory_read_provenance', 'work.list'] })).toBe(
+    expect(await run({ actions: ['memory_read_provenance', 'work.list'] })).toBe(
       [
         'memory.read:provenance({}) — Trace a memory to its cited source messages.',
         'work.list({text, view?: "overview"|"items", links?, eventDatetime?}) — Read owner work progressively.',
         'Ask for one action by itself for its argument descriptions and examples.',
       ].join('\n')
     );
-    expect(() => run({ actions: ['work.delete'] })).toThrow(/unknown actions: work.delete/);
+    await expect(run({ actions: ['work.delete'] })).rejects.toThrow(/unknown actions: work.delete/);
   });
 });

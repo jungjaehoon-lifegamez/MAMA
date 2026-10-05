@@ -77,7 +77,7 @@ export function lessonsBlock(lessons: readonly Lesson[]): string {
   return lines.length === 0 ? '' : [open, ...lines, close].join('\n');
 }
 
-/** An owner rule in the record order's index: its topic and when it applies. */
+/** An owner rule in the rule index: its topic and when it applies. */
 export interface OwnerRuleLine {
   topic: string;
   /** The rule's applies-when line, or its own words for a rule saved without one. */
@@ -85,16 +85,17 @@ export interface OwnerRuleLine {
 }
 
 /**
- * The owner's rules as an index on every record order. A record turn decides as it reads what a
- * delta means (an item closed, which item a feedback belongs to), so the rules for that judgment
- * cannot be recalled from the delta's text beforehand: on the owner ledger, the rule for a closing
- * item was not among the 40 hits for the card move that closed one (2026-10-05). The agent opens
- * the rules that apply; a rule pushed once at session start was ignored when it mattered (W21).
+ * The owner's rules as an index on every record order and with the full-report procedure. A record
+ * turn decides as it reads what a delta means (an item closed, which item a feedback belongs to),
+ * so the rules for that judgment cannot be recalled from the delta's text beforehand: on the owner
+ * ledger, the rule for a closing item was not among the 40 hits for the card move that closed one
+ * (2026-10-05). The agent opens the rules that apply; a rule pushed once at session start was
+ * ignored when it mattered (W21).
  */
 export function ownerRulesBlock(rules: readonly OwnerRuleLine[]): string {
   if (rules.length === 0) return '';
   return [
-    "<owner_rules>\nThe owner's rules, by when they apply. Before you write, read each one that applies to what you record with memory.search({topicPrefix: topic}) and no query, and follow it; an owner rule wins a conflict.",
+    "<owner_rules>\nThe owner's rules, by when they apply. Before you write, read each one that applies with memory.search({topicPrefix: topic}) and no query, and follow it; an owner rule wins a conflict.",
     // The topic is whole: the agent reads the rule by it.
     ...rules.map((rule) => escapeMarkup(`- ${oneLine(rule.topic)}: ${clip(rule.when, 110)}`)),
     '</owner_rules>',
