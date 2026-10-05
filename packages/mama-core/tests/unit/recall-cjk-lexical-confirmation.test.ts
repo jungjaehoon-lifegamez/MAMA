@@ -17,6 +17,7 @@ const { longKoreanQuery, particleText } = JSON.parse(
 const generateEmbeddingMock = vi.fn();
 const vectorSearchMock = vi.fn();
 const fts5SearchMock = vi.fn();
+const wordSearchMock = vi.fn();
 let decisionRows: Array<Record<string, unknown>> = [];
 
 vi.mock('../../src/embedding/embedder.js', () => ({
@@ -45,6 +46,7 @@ vi.mock('../../src/knowledge/search.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/knowledge/search.js')>()),
   vectorSearch: vectorSearchMock,
   fts5Search: fts5SearchMock,
+  wordSearch: wordSearchMock,
 }));
 
 const { getAdapter } = await import('../../src/db-manager.js');
@@ -65,6 +67,7 @@ describe('lexical confirmation for CJK queries', () => {
       }))
     );
     fts5SearchMock.mockResolvedValue([]);
+    wordSearchMock.mockResolvedValue([]);
     decisionRows = [];
   });
 
@@ -75,7 +78,8 @@ describe('lexical confirmation for CJK queries', () => {
       includeRelated: false,
     });
 
-    expect(fts5SearchMock).toHaveBeenCalled();
+    // A Korean query is scored word by word across the trigram and word indexes.
+    expect(wordSearchMock).toHaveBeenCalled();
   });
 
   it('still skips lexical search for a long English query when vector search returned enough rows', async () => {
@@ -86,6 +90,7 @@ describe('lexical confirmation for CJK queries', () => {
     });
 
     expect(fts5SearchMock).not.toHaveBeenCalled();
+    expect(wordSearchMock).not.toHaveBeenCalled();
   });
 
   it('runs lexical search for an English query whose short tokens are acronyms or versions', async () => {
