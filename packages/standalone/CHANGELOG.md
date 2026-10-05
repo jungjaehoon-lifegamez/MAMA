@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.64.0] - 2026-10-05
+
+### Added
+
+- `deliver.drive.file`: a workspace file up to 2 GiB is uploaded to the owner's Drive folder
+  (`delivery.drive.folder`) and shared with the readers in `delivery.drive.readers` (a domain, a
+  group or a user). A retry of the same operation finds the earlier upload instead of sending it
+  twice, and a checksum mismatch removes the copy and fails the call.
+- `manage.wiki.move`: the agent moves wiki pages inside the wiki, up to 500 per call, all or none;
+  links are left for the agent to update.
+- `file_delivery` (default true) on Telegram and each messenger turns file sending on or off; a
+  messenger with it off has no `deliver.<messenger>.file` action.
+- Each WebFetch call raises a security alert naming its URL, grouped per host within a minute.
+  WebFetch stays allowed.
+- The memory graph draws what the filters select: one dot per record, one per work item for its
+  updates, faded dots for linked records outside the filter (`/api/memory/links`).
+- Memory search finds Korean and Japanese words with a particle attached or inside an unspaced
+  sentence (mama-core 5.5.0).
+
+### Changed
+
+- The daily order writes `daily/YYYY-MM/YYYY-MM-DD.md`, and a day counts as written when its page
+  is anywhere under `daily/`. Date-named pages keep their exact path in every folder under
+  `daily/`.
+- The host writes no `index.md`; Home.md is the wiki's table of contents and does not list daily
+  pages.
+
+### Fixed
+
+- The viewer serves its built files under `/viewer/b/<stamp>/`, a stamp of the build, so an edge
+  cache holding the old scripts no longer leaves the page blank after a deploy.
+
 ## [0.63.0] - 2026-10-04
 
 ### Added

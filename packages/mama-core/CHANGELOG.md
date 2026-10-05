@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.5.0] - 2026-10-05
+
+### Added
+
+- Migration 100: `decisions_trigram`, a trigram index of decisions (topic, decision, reasoning),
+  and its vocabulary table `decisions_trigram_vocab`, kept in step by SQL triggers. A migration
+  that rebuilds `decisions` must recreate these triggers, as it does those of `decisions_fts`.
+- `fts5Search` takes the index to match in, `decisions_fts` (default) or `decisions_trigram`.
+
+### Changed
+
+- `recallMemory` looks up the Korean, Japanese and Chinese words of a query in the trigram index,
+  so a word matches with a particle attached or inside a sentence written without spaces. A
+  Japanese word is split where its script changes and its hiragana is left out; a Korean word also
+  counts without its last one or two syllables; a two-character word matches as every indexed
+  trigram that holds it. A word led by a Latin letter or digit (a count, a month, an acronym
+  with a particle) stays in the word index, which anchors the start of a word, so a count of 4
+  does not match 14. Records are scored by the idf of each query word they hold, among the
+  records the search may return, with bm25 only breaking ties; the query's other words stay in
+  the word index. Queries without such words are searched as before.
+- Memory search sends every term to FTS5 as quoted text. A date or hyphen in a query used to be
+  read as a column filter, and the error was swallowed into an in-memory scan; an FTS5 failure now
+  reaches the caller.
+
 ## [5.4.0] - 2026-10-04
 
 ### Added
