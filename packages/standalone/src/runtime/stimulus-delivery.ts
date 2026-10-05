@@ -642,9 +642,11 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
           modelRunId = id;
         },
         prepareSessionContent: async ({ isNewSession }) => {
-          const lessons = await pickLessons(plan.lessonQuery, isNewSession);
+          // Read before the lessons are picked: picking marks them shown, and a read that throws
+          // here retries the turn, which would then skip the lessons it never showed.
           const ownerRules =
             plan.ownerRuleIndex && options.ownerRules ? await options.ownerRules() : [];
+          const lessons = await pickLessons(plan.lessonQuery, isNewSession);
           const start = isNewSession
             ? sessionStartBlock(
                 (await options.sessionStart?.(row)) ?? { exchanges: [], decisions: [] },
