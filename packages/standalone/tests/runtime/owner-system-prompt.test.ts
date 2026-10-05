@@ -72,6 +72,13 @@ describe('owner standing prompt', () => {
       'wiki',
       'daily',
     ]);
+    // 12 owner-correction saves were refused for a source or replaces given as a string (09-29 to
+    // 10-05): the procedure gives the call's shape.
+    for (const part of [
+      "source: {package: 'owner-agent', source_type: 'memory.save'}",
+      'replaces: [{id, reason}]',
+    ])
+      expect(topics.corrections).toContain(part);
     // An answer that confirms an earlier case links it; a wrong link is corrected, not deleted.
     expect(topics.cases).toContain('work.link (relation builds_on)');
     expect(topics.cases).toContain('relation contradicts');
