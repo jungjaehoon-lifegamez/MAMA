@@ -209,7 +209,7 @@ export function ownerHelpTopics(
             '  3. Missed and learned: what was recorded late or wrong, what the owner had to correct, and the lesson, one line each.',
             "- Read the day: work.list with eventSince and eventBefore (each item lists its revisions that day, so read them inside the script and keep what the page needs); owner.messages for that day; memory.search for the lessons that touch that day's work. Open sources only for what these leave unexplained.",
             '- Leave out single messages, item states and report text; a quiet day is a short page. Knowledge that day settled and a project page lacks goes to that page too (help topic wiki).',
-            "- Publish it with manage.wiki.publish as one page: path daily/<month>/<day>.md, title (the day), type 'daily', content, and expectedContentVersion from manage.wiki.read when the page exists or null when it does not. Without a title the call is refused, and without the type the page is filed as an entity.",
+            "- Publish it as one page: manage.wiki.publish({pages: [{path: 'daily/<month>/<day>.md', title: '<day>', type: 'daily', content, expectedContentVersion}]}), with expectedContentVersion from manage.wiki.read when the page exists or null when it does not. The page goes inside pages; without a title the call is refused, and without the type the page is filed as an entity.",
           ].join('\n'),
         }
       : {}),
