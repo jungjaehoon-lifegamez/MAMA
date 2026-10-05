@@ -61,7 +61,10 @@ With pnpm 10, allow the `better-sqlite3` build: add
 
 A consumer can keep its own database, migrations, principal and scope kinds, and needs no MAMA
 setting. Open the database with `openDatabase({ path, migrations })` from `./db-manager`, then
-write, revise, link and read records with `createKnowledge` from `./knowledge`.
+write, revise, link and read records with `createKnowledge` from `./knowledge`, and search them
+with `recallMemory(adapter, query, { scopes, embedder })`. Pass the same embedder to both; one
+whose `embed` answers `null` keeps no vectors and searches by text only, so the core's embedding
+model never loads. Without an `embedder`, recall uses the core's own model.
 `tests/consumer/packed-second-consumer.test.ts` installs the packed package in a temporary
 directory and does exactly that.
 

@@ -73,6 +73,8 @@ export {
   type MemoryEdge,
   type ProfileSnapshot,
   type RecallBundle,
+  type RecallMemoryOptions,
+  type MemoryEmbedder,
   type ConversationMessage,
   type IngestConversationInput,
   type ExtractedMemoryUnit,

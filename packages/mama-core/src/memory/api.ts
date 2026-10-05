@@ -1145,13 +1145,13 @@ export async function recallMemory(
 
   // Channel 1: Vector search (semantic similarity) — run all sub-queries
   const vectorMatched: MemoryRecord[] = [];
-  let primaryQueryEmbedding: Float32Array | null = null;
   try {
     for (const sq of subQueries) {
-      const queryEmbedding = await generateEmbedding(sq, 'query');
-      if (sq === query && primaryQueryEmbedding === null) {
-        primaryQueryEmbedding = queryEmbedding;
-      }
+      const queryEmbedding = options.embedder
+        ? await options.embedder.embed(sq, 'query')
+        : await generateEmbedding(sq, 'query');
+      // The consumer's embedder answered null: search by text only, which is no failure.
+      if (queryEmbedding === null) break;
       const vectorResults = await vectorSearch(
         searchAdapter,
         queryEmbedding,

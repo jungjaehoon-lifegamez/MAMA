@@ -27,7 +27,7 @@ import type {
   WorkReference,
   WorkAssignment,
 } from '../memory/judgment-types.js';
-import type { MemoryScopeRef } from '../memory/types.js';
+import type { MemoryEmbedder, MemoryScopeRef } from '../memory/types.js';
 
 export interface JudgmentAccess {
   principalId: string;
@@ -94,10 +94,8 @@ export interface DestinationRef {
 
 export interface JudgmentKnowledgeOptions {
   adapter: DatabaseInstance;
-  embedder?: {
-    /** A null result is the explicit no-vector mode (Tier 3); a failure must throw. */
-    embed(text: string, role: 'query' | 'passage'): Promise<Float32Array | null>;
-  };
+  /** Absent, records are written without a vector. */
+  embedder?: MemoryEmbedder;
 }
 
 export class JudgmentError extends Error {
