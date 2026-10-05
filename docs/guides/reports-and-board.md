@@ -50,10 +50,10 @@ reports:
   reminder_end_hour: 21
 ```
 
-A full report reads the complete open `work.list` pipeline, `schedule.upcoming` (14 days by
-default) and `source.recent`: the last 24 hours when you ask for it in chat, or since the previous
-full report for a scheduled one (24 hours for the first). Recent source lines carry references that can be opened with
-`source.read`; a source whose last collection failed is listed with its error. The report
+A full report starts from the work ledger: the items whose events happened since the previous
+full report (`work.list` with `eventSince`; 24 hours for the first), the open pipeline, and
+`schedule.upcoming` (14 days by default). It opens original messages only for a change the ledger
+does not explain, and a source whose last collection failed is reported as such. The report
 lists every item waiting for an owner decision and compares deadlines with
 calendar events and holidays. When you have given rules in chat about how reports
 are ordered or worded, the report follows them. Otherwise it has five parts: key

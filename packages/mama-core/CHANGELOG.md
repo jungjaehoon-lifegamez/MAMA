@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.0.0] - 2026-10-05
+
+### Removed (breaking)
+
+Modules no consumer used: no caller in MAMA OS, the MCP server, the plugin or the other consumer,
+no trained model and no rows in their stores on the databases checked. Their tables stay, without a
+migration.
+
+- The learned ranker: the `ranker-features`, `ranker-rescore` and `ranker-trainer` exports, the
+  `rerankWithLearned` option of `memory.search` and `mama.suggest`, and `SearchResult.meta.ranker`.
+- The search feedback store (the `feedback-store` exports).
+- The channel summary stores (`upsertChannelSummary`, `getChannelSummary`, the summary state store)
+  and the `ChannelSummary*` types.
+- The memory bootstrap: `buildMemoryBootstrap`, `queryRelevantTruth`, `MemoryAgentBootstrap` and
+  `MemoryTruthRow`.
+- The memory audit acknowledgement: `createAuditAck`, `recordMemoryAudit`, `createMemoryAuditAck`,
+  `MEMORY_AUDIT_ACK_STATUSES`, `MemoryAuditAck` and `MemoryAuditAckStatus`.
+- The native turn's post-tool handler: `runtime/post-tool-handler` and the `postToolHandler`
+  option.
+
+### Added
+
+- `RecallMemoryOptions.embedder`: `recallMemory` takes the consumer's `MemoryEmbedder`, the same one
+  `createKnowledge` takes. An embedder that answers null searches by text only, so a consumer
+  without a model never loads the core's.
+- A test packs the core with `npm pack`, installs it in a project outside the repository, and runs
+  a second consumer with its own database, migration, principal and scope through public subpaths
+  only, writing, revising, linking and searching its records.
+
+### Documentation
+
+- README: a pnpm 10 consumer must allow `better-sqlite3`'s build (`onlyBuiltDependencies`), and
+  `createKnowledge` and `recallMemory` take the consumer's embedder.
+
 ## [5.5.0] - 2026-10-05
 
 ### Added

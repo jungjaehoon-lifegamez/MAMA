@@ -90,7 +90,11 @@ The file is JSON in the `mama-backfill/1` format:
     }
   ],
   "wiki": [
-    { "path": "daily/2026-08-03.md", "title": "2026-08-03", "content": "## Summary\n- ..." },
+    {
+      "path": "daily/2026-08/2026-08-03.md",
+      "title": "2026-08-03",
+      "content": "## Summary\n- ..."
+    },
     {
       "path": "projects/posters.md",
       "append": [{ "section": "## Decisions", "text": "- Delivery is monthly." }]

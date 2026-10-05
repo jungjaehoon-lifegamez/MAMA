@@ -4,20 +4,18 @@ One owner agent on Claude or Codex watches connected work, keeps task revisions 
 answers on Telegram, publishes reports and a board, and recalls corrections.
 [mama-core](../mama-core/README.md) supplies the shared engine.
 
-Current manifest: **0.64.0**. This README describes the unreleased `rebuild/owner-flow` source.
-Use [owner setup](../../docs/start/owner-setup.md) with Node.js 22.13+ and pnpm.
+Current manifest: **0.65.0**. Install with `npm install -g @jungjaehoon/mama-os` (Node.js 22.13+)
+and follow [owner setup](../../docs/start/owner-setup.md).
 
 ## Start and operate
 
-From the repository root:
-
 ```bash
-pnpm install
-pnpm build
-node packages/standalone/dist/cli/index.js init
+npm install -g @jungjaehoon/mama-os
+mama init
 ```
 
-The guides use `mama` for the built CLI. Onboarding is terminal-only: the owner types tokens
+From a checkout, run `pnpm install` and `pnpm build`, then use
+`node packages/standalone/dist/cli/index.js` in place of `mama`. Onboarding is terminal-only: the owner types tokens
 with echo off. It writes configuration and optional launchd files; backend login and service
 startup are separate steps.
 
@@ -34,15 +32,18 @@ See [CLI flags](../../docs/reference/cli.md) and
 
 ## Current surface
 
-- **Owner chat:** Telegram, with an allowed chat and owner sender.
+- **Owner chat:** Telegram, Discord or Slack, each with an allowed chat and owner sender
+  ([messengers](../../docs/guides/messengers.md)).
 - **Five source connectors:** Chatwork, Slack, Trello, Kagemusha (read-only local bridge),
   and Google Calendar through `gws`.
 - **Records:** tasks and revision history, a four-slot board, wiki pages, daily journals,
   lessons, preferences and constraints.
-- **Reports:** live deltas, full reports at 08/13/18 KST and hourly reminders at 09–21.
+- **Reports:** live deltas, full reports at 08/13/18 and hourly reminders at 09–21, in the
+  configured time zone.
 - **Viewer:** board, work, memory graph, wiki, logs and security events; read-only data routes.
-- **Files:** source attachment lookup/download, native workspace processing and
-  `deliver.telegram.file` to the configured owner.
+- **Files:** source attachment lookup/download, native workspace processing,
+  `deliver.<messenger>.file` to the owner's chat and `deliver.drive.file` for files over the
+  messengers' limit.
 
 Assembly lives in `src/runtime/` and `src/cli/commands/daemon.ts`; actions in `src/api/`,
 collectors in `src/connectors/`, Telegram in `src/gateways/`, replay in `src/replay/`,

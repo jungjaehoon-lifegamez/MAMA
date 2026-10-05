@@ -12,10 +12,10 @@ it means for the current request.
 
 ## Keep the right kind of record
 
-Memory supports `decision`, `preference`, `constraint`, `lesson` and `fact`. A record has a topic,
-summary, details, scope, origin and status. Active, superseded, contradicted and stale records
-remain distinct. Work commitments have their own revision history and searchable judgment
-records; they are not a sixth memory kind.
+Memory supports `decision`, `preference`, `constraint`, `lesson`, `fact` and `workflow`. A record
+has a topic, summary, details, scope, origin and status. Active, superseded, contradicted and stale
+records remain distinct. Work commitments have their own revision history and searchable judgment
+records; they are not a memory kind.
 
 A correction should keep its original scope. Name the record it replaces or the relationship it
 changes. Reusing a topic or finding similar text does not automatically supersede an earlier
@@ -64,12 +64,14 @@ phrases and known relevant records.
 
 ## Carry a correction into a later turn
 
-For an owner message or a delta's notify turn, the runtime runs one `memory.search` with the
-incoming text and shows at most three active `lesson`, `preference` or `constraint` records in
-search order, at most 1,200 characters, without related-graph expansion. A record already shown is
-not shown again in the same session on the same local day. This is a relevance hint, not proof that
-every saved correction will be recalled or applied. Rules that always apply belong in the owner
-policy file instead.
+For an owner message, a delta's notify turn and its record turn, the runtime runs one
+`memory.search` with the turn's text and shows at most three active `lesson`, `preference`,
+`constraint` or `workflow` records in search order, at most 1,200 characters, without
+related-graph expansion. A record already shown is not shown again in the same session on the same
+local day. This is a relevance hint, not proof that every saved correction will be recalled or
+applied. Record turns and the full-report procedure also list every rule the owner gave in chat,
+with its topic and when it applies, and the agent reads the ones that apply with
+`memory.search({topicPrefix})`. Rules that always apply belong in the owner policy file instead.
 
 Check the whole cycle: applicable hint, access to the original experience, agent judgment,
 observed result, scoped correction and a better result on the next related request. Repeat in a

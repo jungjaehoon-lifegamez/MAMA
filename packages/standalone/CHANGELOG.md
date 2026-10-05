@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.65.0] - 2026-10-05
+
+### Added
+
+- Record orders carry the lessons recalled on their lines and an index of the owner's rules: each
+  rule's topic and when it applies. The agent opens the ones that apply with
+  `memory.search({topicPrefix})` before it writes.
+- `help({topic: 'full-report'})` returns the procedure with the same owner rule index, for scheduled
+  and requested reports alike.
+
+### Changed
+
+- The full-report procedure: the owner's rules for reports set its order and wording, and the five
+  parts are the layout when no rule does. The board's pipeline is built from `work.list pipeline`,
+  one row for every open item; the report names open items by their importance; an item past its
+  deadline is settled (done, cancelled or a new deadline) instead of carried; every item waiting on
+  an owner decision is listed.
+- A turn's time line reads `2026-10-05 Mon 21:18 (Asia/Seoul)`: the year, weekday and time in the
+  owner's zone, in place of the ko-KR locale string. Source line stamps keep `MM-DD HH:mm`.
+
+### Fixed
+
+- `work.list` pipeline rows give the due day, in the owner's zone, of an item stated with an exact
+  due time (`dueAt`); such items showed no deadline on the board.
+- The daily procedure names the page's publish fields (path, title, type `daily`, content and
+  `expectedContentVersion`); the first publish of each night was refused for a missing title.
+- The corrections procedure gives `memory.save`'s call shape (`source` as an object, `replaces` as
+  `[{id, reason}]`); owner corrections were refused on their first call and saved on a retry.
+
 ## [0.64.0] - 2026-10-05
 
 ### Added
