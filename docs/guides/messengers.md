@@ -45,7 +45,7 @@ delivery:
       - user: someone@example.com # or one account
 ```
 
-Readers are set on each file as it is sent, so changing the list affects later files only, and each receipt names exactly who can read that file. No public link is made, and the folder itself is shared with no one. A retry of the same operation returns the file already sent instead of uploading it again; the receipt carries the link, size, md5 and sha256.
+Readers are set on each file as it is sent, so changing the list affects later files only, and each receipt names the readers MAMA set. No public link is made. A Workspace whose default sharing gives its domain read access adds that reader to every new file and folder as well, so a list narrower than the domain also needs that default turned off for the account. A retry of the same operation returns the file already sent instead of uploading it again; the receipt carries the link, size, md5 and sha256.
 
 The owner turn names the output format for its destination: Telegram uses the supported HTML tag subset and no Markdown, Discord uses Markdown, and Slack uses mrkdwn. Direct replies use the messenger that received the message; scheduled reports and `[notify]` results use their configured route.
 
