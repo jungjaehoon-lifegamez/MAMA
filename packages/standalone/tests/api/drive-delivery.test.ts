@@ -132,9 +132,13 @@ describe('deliver.drive.file', () => {
       args[2] === 'list' ? { files: [] } : { id: 'file_2', name: 'x', md5Checksum: 'f'.repeat(32) }
     );
     await expect(action(wrong).exec({ path: path() }, owner)).rejects.toThrow(
-      /Drive stored file_2 with md5/
+      /Drive stored file_2 with md5 .*moved to the trash/
     );
     expect(wrong.mock.calls.some(([args]) => args[1] === 'permissions')).toBe(false);
+    // The bad copy carries the operation id; it goes to the trash so a retry can upload again.
+    const trashed = wrong.mock.calls.find(([args]) => args[2] === 'update')!;
+    expect(JSON.parse(trashed[0][trashed[0].indexOf('--params') + 1]).fileId).toBe('file_2');
+    expect(JSON.parse(trashed[0][trashed[0].indexOf('--json') + 1])).toEqual({ trashed: true });
 
     const other = vi.fn(async () => ({
       files: [{ id: 'file_3', name: 'x', md5Checksum: 'e'.repeat(32) }],

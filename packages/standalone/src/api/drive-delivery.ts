@@ -129,8 +129,18 @@ export function driveDeliveryActionRegistrations(ports: DriveDeliveryPorts): Act
           { timeoutMs: uploadTimeoutMs(file.size) }
         )) as DriveFile);
       if (sent.md5Checksum !== hashes.md5) {
+        // The bad copy carries this operation's id: trash it, or a retry would find it and refuse.
+        await gws([
+          'drive',
+          'files',
+          'update',
+          '--params',
+          JSON.stringify({ fileId: sent.id, supportsAllDrives: true, fields: 'id' }),
+          '--json',
+          JSON.stringify({ trashed: true }),
+        ]);
         throw new Error(
-          `Drive stored ${sent.id} with md5 ${sent.md5Checksum ?? 'none'}, not the sent ${hashes.md5}`
+          `Drive stored ${sent.id} with md5 ${sent.md5Checksum ?? 'none'}, not the sent ${hashes.md5}; it was moved to the trash, so a retry uploads again`
         );
       }
       // Applied on a retry too: a stop between upload and sharing leaves a file nobody can read.
