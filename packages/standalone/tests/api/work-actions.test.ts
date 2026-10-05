@@ -157,6 +157,39 @@ describe('minimal work actions', () => {
     ).rejects.toThrow('omit cursor');
   });
 
+  it('shows an item due at an exact time under the local date it falls on', async () => {
+    const item = (rowId: number, values: Record<string, unknown>) => ({
+      rowId,
+      commitmentId: `item-${rowId}`,
+      revision: 1,
+      latestJudgmentRef: null,
+      values: { title: `Item ${rowId}`, status: 'pending', stage: 'Doing', ...values },
+      withdrawn: false,
+      createdAt: '2026-09-26T00:00:00Z',
+      updatedAt: '2026-09-27T01:00:00Z',
+    });
+    const items = [
+      item(1, { dueAt: '2026-10-30T23:59:00+09:00' }),
+      item(2, { dueAt: '2026-10-07T15:00:00Z' }),
+      item(3, { deadline: '2026-10-23' }),
+      item(4, {}),
+    ];
+    const knowledge = {
+      readWork: vi.fn().mockReturnValue({ items, nextCursor: null, coverage: { reasons: [] } }),
+    };
+    const view = await runWorkListView(
+      { view: 'pipeline' },
+      { knowledge: knowledge as never, access, timeZone: 'Asia/Seoul' }
+    );
+    if (view.view !== 'pipeline') throw new Error('expected pipeline view');
+    expect(view.stages[0]?.rows.map((row) => row[4])).toEqual([
+      '2026-10-30',
+      '2026-10-08',
+      '2026-10-23',
+      null,
+    ]);
+  });
+
   it('returns the whole open ledger as compact pipeline rows under 10k characters', async () => {
     const items = Array.from({ length: 70 }, (_, index) => ({
       rowId: index + 1,
