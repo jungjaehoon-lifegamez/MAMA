@@ -408,6 +408,13 @@ function workListIso(value: unknown): string | null {
   return ms === null ? null : new Date(ms).toISOString();
 }
 
+/** The day an item is due in the owner's zone: its exact due time decides, as it does for the due state. */
+function workListDueDate(values: Record<string, unknown>, timeZone: string): string | null {
+  const exact = workListEventTime(values.dueAt ?? values.due_at);
+  if (exact !== null) return localDateKey(exact, timeZone);
+  return workListText(values.deadline ?? values.due_date);
+}
+
 function workListDueState(
   item: CommitmentView,
   now: number,
@@ -1022,7 +1029,7 @@ export async function runWorkListView(
         workListText(values.title),
         workListStatus(item),
         workListText(values.assignee ?? values.assigneeText ?? values.assignee_text),
-        workListText(values.deadline ?? values.due_date),
+        workListDueDate(values, ctx.timeZone),
         Math.trunc(
           typeof item.updatedAt === 'number'
             ? item.updatedAt / 1_000
@@ -1100,7 +1107,7 @@ export function workListActionRegistrations(ports: WorkListPorts): ActionRegistr
       contract: {
         name: 'work.list',
         summary:
-          'Find owner work by what the turn needs: items filtered by status, stage, project, due, changedSince or changedBefore and ranked by text, in pages of 25 (50 max); overview counts; detail for up to 4 ids with the current record, its 20 newest evidence refs and its 5 newest revisions (history_offset pages older ones). eventSince and eventBefore find what happened in a span by source event time, each item with its revisions there. pipeline returns every open item grouped by stage (rows in the order of its fields: commitmentId, title, status, assignee, deadline, latest_change in epoch seconds, latest_event) and ignores limit: read it inside a script that builds the board, not into your context. links for up to 4 ids returns every link from or to the item with its relation, reason, writer, evidence, correction and the other end (item title and status, person, record or observation); follow it to the other item with detail.',
+          'Find owner work by what the turn needs: items filtered by status, stage, project, due, changedSince or changedBefore and ranked by text, in pages of 25 (50 max); overview counts; detail for up to 4 ids with the current record, its 20 newest evidence refs and its 5 newest revisions (history_offset pages older ones). eventSince and eventBefore find what happened in a span by source event time, each item with its revisions there. pipeline returns every open item grouped by stage (rows in the order of its fields: commitmentId, title, status, assignee, deadline as the local due date, latest_change in epoch seconds, latest_event) and ignores limit: read it inside a script that builds the board, not into your context. links for up to 4 ids returns every link from or to the item with its relation, reason, writer, evidence, correction and the other end (item title and status, person, record or observation); follow it to the other item with detail.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
