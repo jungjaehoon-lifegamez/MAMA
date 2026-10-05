@@ -169,7 +169,8 @@ describe('owner standing prompt', () => {
             attempt: 1,
           },
           now,
-          { backend, timeZone: 'UTC', wikiEnabled: true }
+          { backend, timeZone: 'UTC', wikiEnabled: true },
+          { lessons: [], ownerRules: [] }
         ),
         deltaNotifyOrder([], 'room', now, [], { timeZone: 'UTC' }),
       ];
