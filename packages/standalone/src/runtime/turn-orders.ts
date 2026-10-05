@@ -77,6 +77,30 @@ export function lessonsBlock(lessons: readonly Lesson[]): string {
   return lines.length === 0 ? '' : [open, ...lines, close].join('\n');
 }
 
+/** An owner rule in the record order's index: its topic and when it applies. */
+export interface OwnerRuleLine {
+  topic: string;
+  /** The rule's applies-when line, or its own words for a rule saved without one. */
+  when: string;
+}
+
+/**
+ * The owner's rules as an index on every record order. A record turn decides as it reads what a
+ * delta means (an item closed, which item a feedback belongs to), so the rules for that judgment
+ * cannot be recalled from the delta's text beforehand: on the owner ledger, the rule for a closing
+ * item was not among the 40 hits for the card move that closed one (2026-10-05). The agent opens
+ * the rules that apply; a rule pushed once at session start was ignored when it mattered (W21).
+ */
+export function ownerRulesBlock(rules: readonly OwnerRuleLine[]): string {
+  if (rules.length === 0) return '';
+  return [
+    "<owner_rules>\nThe owner's rules, by when they apply. Before you write, read each one that applies to what you record with memory.search({topicPrefix: topic}) and no query, and follow it; an owner rule wins a conflict.",
+    // The topic is whole: the agent reads the rule by it.
+    ...rules.map((rule) => escapeMarkup(`- ${oneLine(rule.topic)}: ${clip(rule.when, 110)}`)),
+    '</owner_rules>',
+  ].join('\n');
+}
+
 /** What a new session is told, as Kagemusha's `buildSessionStartContext` gathers it. */
 export interface SessionStartExchange {
   /** Epoch ms of the owner's message. */
@@ -458,30 +482,37 @@ export function parseRecordOrder(payload: JsonValue | undefined): RecordOrderPay
  * On 2026-09-29 a text-search step in place of the first two left a short reply, a check result in
  * another room, unattached.
  */
+/**
+ * The lines a record order shows. Carried batches are older than the order's own, so their lines
+ * come first; like Kagemusha's tick, the order shows the last five of everything it covers.
+ */
+export function recordOrderLines(record: RecordOrderPayload): RecordOrderLine[] {
+  return [...(record.carried ?? []), record].flatMap((batch) => batch.lines).slice(-5);
+}
+
 export function deltaRecordOrder(
   record: RecordOrderPayload,
   now: Date,
-  options: TurnOrderOptions & { wikiEnabled: boolean }
+  options: TurnOrderOptions & { wikiEnabled: boolean },
+  guidance: { lessons: readonly Lesson[]; ownerRules: readonly OwnerRuleLine[] }
 ): string {
   // Record orders written before 2026-09-29 carry no source, and a retry copies its order, so the
   // channel is found by name in the list instead of by key; the step stays the same.
   const context = record.source
     ? `source.recent({channels: ["${record.source}:${record.channel}"], perChannel: 20})`
     : `source.recent (find the channel "${record.channel}" in its list, then read its lines with channels and perChannel: 20)`;
-  // Carried batches are older than the order's own, so their lines come first; like Kagemusha's
-  // tick, the order shows the last five of everything it covers.
   const batches = [...(record.carried ?? []), record];
   const observationRefs = [...new Set(batches.flatMap((batch) => batch.observationRefs))].sort();
-  const lines = batches
-    .flatMap((batch) => batch.lines)
-    .slice(-5)
-    .map((line) => {
-      const known = Number.isFinite(Date.parse(line.sourceAt));
-      return `[${known ? localStamp(line.sourceAt, options.timeZone) : '-'}] ${line.author}: ${line.text}`;
-    });
+  const lines = recordOrderLines(record).map((line) => {
+    const known = Number.isFinite(Date.parse(line.sourceAt));
+    return `[${known ? localStamp(line.sourceAt, options.timeZone) : '-'}] ${line.author}: ${line.text}`;
+  });
   return [
     `[delta_record] ${record.channel} · ${observationRefs.length} messages`,
     currentTime(now, options.timeZone),
+    ...[lessonsBlock(guidance.lessons), ownerRulesBlock(guidance.ownerRules)].filter(
+      (block) => block !== ''
+    ),
     ...(lines.length === 0 ? [] : [wrapUntrustedContent('source_delta', lines.join('\n'))]),
     'Record what this delta changed:',
     `1. Check this channel's latest context with ${context}; read an original with source.read only when a line needs its full text.`,
