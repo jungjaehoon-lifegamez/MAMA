@@ -108,7 +108,12 @@ describe('owner standing prompt', () => {
       'The person who delivered the work files or handled the feedback is the worker',
       'Keep observations distinct from entrusted work',
       'Save with memory.save only what a tool cannot re-derive',
-      'Write the report in five parts: key situation today (with the owner schedule and holidays); needs a response; needs a decision; pipeline with each stage and item; next actions.',
+      // Owner 2026-09-29: the owner's report order wins; it was read and not followed on 10-05.
+      "Write the report in the order and wording that the owner's rules for reports set",
+      'write it in five parts: key situation today (with the owner schedule and holidays); needs a response; needs a decision; pipeline with each stage and item; next actions.',
+      'name every open item once under its stage',
+      // A hand-built pipeline on 10-05 left out 19 of 41 open items; work.list pipeline has them all.
+      'Build the pipeline section inside the script from work.list pipeline, one row for every open item under its stage',
       // Owner 2026-09-29: the report is a delta on the ledger; the agent finds what it verifies.
       'The ledger is the record: the report is what changed since the previous report on top of it.',
       // A backfill writes past work today: a change is chosen by when it happened, not when it was written.
