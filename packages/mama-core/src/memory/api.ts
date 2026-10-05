@@ -17,8 +17,6 @@ import {
   type SearchRollupLeafHit,
   type SearchRollupResult,
 } from '../knowledge/case-search-rollup.js';
-import { isSearchRankerEnabled, rescoreSearchResults } from '../knowledge/ranker-rescore.js';
-import { SEARCH_RANKER_FEATURE_SET_VERSION } from '../knowledge/ranker-features.js';
 import type { SearchQualityOptions } from '../knowledge/search-quality.js';
 import type { SemanticEdgeItem } from '../db-manager.js';
 import type { DecisionRecord } from '../db-manager.js';
@@ -39,12 +37,9 @@ import { appendJudgment, judgmentRecordId, ingestSource } from '../knowledge/ind
 import type { JudgmentCommand, JudgmentReceipt, JsonValue } from './judgment-types.js';
 import { boundScopesOf, commandEmbedder, writeAccessForProvenance } from './write-adapters.js';
 import { classifyProfileEntries } from './profile-builder.js';
-import { buildMemoryAgentBootstrap } from './bootstrap-builder.js';
-import { recordChannelAudit } from './channel-summary-state-store.js';
 import { warn } from '../debug-logger.js';
 import { scanMemoryWriteInput, SecretMaterialRefusedError } from './secret-filter.js';
-import { createEmptyRecallBundle, createMemoryAuditAck } from './types.js';
-import { getChannelSummary, upsertChannelSummary } from './channel-summary-store.js';
+import { createEmptyRecallBundle } from './types.js';
 import {
   normalizeSearchQualityOptions,
   type SearchHitDiagnostics,
@@ -53,8 +48,6 @@ import type {
   MemoryKind,
   MemoryKindFilter,
   MemoryReachedThrough,
-  MemoryAgentBootstrap,
-  MemoryAuditAck,
   MemoryEdge,
   MemoryRecord,
   MemoryScopeKind,
@@ -1940,36 +1933,6 @@ export async function ingestMemory(
   return ingestMemoryInternal(adapter, sanitizePublicIngestMemoryInput(input));
 }
 
-export async function buildMemoryBootstrap(
-  adapter: DatabaseInstance,
-  params: {
-    scopes: MemoryScopeRef[];
-    channelKey?: string;
-    currentGoal?: string;
-    mainAgentState?: MemoryAgentBootstrap['main_agent_state'];
-  }
-): Promise<MemoryAgentBootstrap> {
-  return buildMemoryAgentBootstrap(adapter, params);
-}
-
-export function createAuditAck(input: MemoryAuditAck): MemoryAuditAck {
-  return createMemoryAuditAck(input);
-}
-
-export async function recordMemoryAudit(
-  adapter: DatabaseInstance,
-  input: {
-    channelKey: string;
-    turnId: string;
-    topic: string;
-    scopeRefs: MemoryScopeRef[];
-    ack: MemoryAuditAck;
-    savedMemories?: Array<{ id: string; topic: string; summary: string }>;
-  }
-) {
-  return recordChannelAudit(adapter, input);
-}
-
 async function ingestConversationInternal(
   adapter: DatabaseInstance,
   input: IngestConversationInput
@@ -2046,8 +2009,6 @@ export async function ingestConversation(
 ): Promise<IngestConversationResult> {
   return ingestConversationInternal(adapter, sanitizePublicIngestConversationInput(input));
 }
-
-export { upsertChannelSummary, getChannelSummary };
 
 // ── Adapter-bound reads and writes the catalog actions call ─────────────────
 //
@@ -2389,8 +2350,6 @@ export interface SuggestFunctionOptions extends SearchQualityOptions {
   limit?: number;
   kind?: MemoryKind;
   useReranking?: boolean;
-  /** Phase 3 Task 33: apply learned offline ranker rescoring. */
-  rerankWithLearned?: boolean;
   recencyWeight?: number;
   recencyScale?: number;
   recencyDecay?: number;
@@ -2401,24 +2360,6 @@ export interface SuggestFunctionOptions extends SearchQualityOptions {
    * every host installing the library; the host states it now (§2.1).
    */
   runner?: TextCompletion;
-}
-
-/** Phase 3 Task 33: learned-ranker meta attached to mama.suggest response. */
-function buildRankerMeta(
-  applied: boolean,
-  modelId: string | null,
-  skippedReason?: string
-): Record<string, unknown> {
-  const meta: Record<string, unknown> = {
-    model_id: modelId,
-    feature_set_version: SEARCH_RANKER_FEATURE_SET_VERSION,
-    applied,
-    mode: 'offline',
-  };
-  if (skippedReason) {
-    meta.skipped_reason = skippedReason;
-  }
-  return meta;
 }
 
 /** One stated link from or to a search hit: a pointer the reader opens. */
@@ -2650,7 +2591,6 @@ export async function suggestInAdapter(
     limit = 5,
     threshold,
     useReranking = false,
-    rerankWithLearned = false,
     // Recency boosting parameters (Gaussian Decay - Elasticsearch style)
     recencyWeight = 0.3, // 0-1: How much to weight recency (0.3 = 70% semantic, 30% recency)
     recencyScale = 7, // Days until recency score drops to 50%
@@ -2683,7 +2623,6 @@ export async function suggestInAdapter(
     options.topicPrefix !== undefined ||
     options.scopes !== undefined ||
     options.kind !== undefined;
-  const rerankPoolLimit = rerankWithLearned ? Math.max(limit * 4, limit + 5) : limit;
 
   try {
     // `recallMemoryInAdapter` was mama-api's alias for this file's own
@@ -2691,7 +2630,7 @@ export async function suggestInAdapter(
     const bundle = await recallMemory(adapter, userQuestion, {
       includeProfile: false,
       topicPrefix: options.topicPrefix,
-      limit: rerankPoolLimit,
+      limit: limit,
       threshold,
       strict,
       strictness,
@@ -2736,62 +2675,6 @@ export async function suggestInAdapter(
     const diagnosticsResponse =
       includeDiagnostics === true ? { diagnostics: bundle.search_meta.diagnostics ?? null } : {};
 
-    // Phase 3 Task 33: compute base ranker meta once so every return path
-    // (rolledUp, memories fallback, vector-search fallback) can attach it.
-    // rerankWithLearned-driven rescoring still only applies to result arrays
-    // that match the ranker's expected shape (id + source_type + case_id).
-    const baseRankerMeta = useReranking
-      ? buildRankerMeta(false, null, 'llm_reranking_requested')
-      : rerankWithLearned
-        ? null // marker: rescoring requested, actual meta set per-path after rescore
-        : buildRankerMeta(false, null, 'feature_disabled');
-
-    const applyLearnedRanker = <
-      T extends {
-        id: string;
-        source_type?: string;
-        case_id?: string | null;
-        retrieval_score?: number | null;
-        final_score?: number | null;
-      },
-    >(
-      results: T[]
-    ): { results: T[]; meta: Record<string, unknown> } => {
-      if (baseRankerMeta !== null) {
-        return { results, meta: baseRankerMeta };
-      }
-      // Phase 3 Task 33: the caller opted in via rerankWithLearned, but the
-      // runtime `search_ranker_enabled` gate still has final say. This lets
-      // operators disable the learned ranker globally during rollback without
-      // touching any caller code.
-      let runtimeEnabled = true;
-      try {
-        runtimeEnabled = isSearchRankerEnabled(adapter as never);
-      } catch (err) {
-        logWarn(`[mama.suggest] isSearchRankerEnabled check failed: ${String(err)}`);
-      }
-      if (!runtimeEnabled) {
-        return { results, meta: buildRankerMeta(false, null, 'feature_disabled') };
-      }
-      try {
-        const rescored = rescoreSearchResults(adapter as never, {
-          query: userQuestion,
-          results,
-        });
-        return {
-          results: rescored.results as T[],
-          meta: buildRankerMeta(
-            rescored.skipped_reason === undefined,
-            rescored.model_id,
-            rescored.skipped_reason
-          ),
-        };
-      } catch (err) {
-        logWarn(`[mama.suggest] learned-ranker rescore failed: ${String(err)}`);
-        return { results, meta: buildRankerMeta(false, null, 'rescore_error') };
-      }
-    };
-
     const summarizeGraphExpansion = <
       T extends {
         graph_source?: string | null;
@@ -2831,10 +2714,8 @@ export async function suggestInAdapter(
     };
 
     if (rolledUp.length > 0) {
-      const filteredResults = rolledUp.slice(0, rerankPoolLimit);
-      const { results: mappedResults, meta: rankerMeta } = applyLearnedRanker(
-        filteredResults.map(mapRolledUpResult)
-      );
+      const filteredResults = rolledUp.slice(0, limit);
+      const mappedResults = filteredResults.map(mapRolledUpResult);
       const limitedResults = withWorkRevision(
         withLinkPointers(mappedResults.slice(0, limit), adapter, options.scopes),
         adapter
@@ -2866,7 +2747,6 @@ export async function suggestInAdapter(
                 decay: recencyDecay,
               },
           graph_expansion: summarizeGraphExpansion(limitedResults),
-          ranker: rankerMeta,
         },
       };
     }
@@ -2877,7 +2757,7 @@ export async function suggestInAdapter(
       // The original stored confidence is lost after RRF normalization.
       // We capture the retrieval score separately so `similarity` reflects search
       // relevance while `confidence` is passed through as-is from the bundle.
-      const filteredMemories = bundle.memories.slice(0, rerankPoolLimit);
+      const filteredMemories = bundle.memories.slice(0, limit);
       const baseRows = filteredMemories.map((memory) => ({
         id: memory.id,
         topic: memory.topic,
@@ -2909,9 +2789,8 @@ export async function suggestInAdapter(
           ? { retrieval_diagnostics: memory.retrieval_diagnostics }
           : {}),
       }));
-      const { results: rankedRows, meta: rankerMeta } = applyLearnedRanker(baseRows);
       const limitedRows = withWorkRevision(
-        withLinkPointers(rankedRows.slice(0, limit), adapter, options.scopes),
+        withLinkPointers(baseRows.slice(0, limit), adapter, options.scopes),
         adapter
       );
 
@@ -2938,7 +2817,6 @@ export async function suggestInAdapter(
                 decay: recencyDecay,
               },
           graph_expansion: summarizeGraphExpansion(limitedRows),
-          ranker: rankerMeta,
         },
       };
     }
@@ -2946,8 +2824,6 @@ export async function suggestInAdapter(
     if (memoryV2QualityContractRequested) {
       const emptyRows: Array<{ id: string; source_type?: string; graph_source?: string | null }> =
         [];
-      const { meta: rankerMeta } = applyLearnedRanker(emptyRows);
-
       if (format === 'markdown') {
         return '🔍 Search method: memory_v2\n';
       }
@@ -2968,7 +2844,6 @@ export async function suggestInAdapter(
                 decay: recencyDecay,
               },
           graph_expansion: summarizeGraphExpansion(emptyRows),
-          ranker: rankerMeta,
         },
       };
     }
@@ -2990,7 +2865,7 @@ export async function suggestInAdapter(
       results = await vectorSearch(
         adapter,
         queryEmbedding,
-        rerankPoolLimit * 2,
+        limit * 2,
         0.5,
         undefined,
         undefined,
@@ -3055,9 +2930,7 @@ export async function suggestInAdapter(
         // a hyphen raised an FTS5 error here that was swallowed.
         const ftsExpression = ftsMatchTerms(ftsWords(userQuestion), 'AND');
         const ftsResults =
-          ftsExpression === null
-            ? []
-            : await fts5Search(adapter, ftsExpression, rerankPoolLimit * 2, kind);
+          ftsExpression === null ? [] : await fts5Search(adapter, ftsExpression, limit * 2, kind);
         if (ftsResults.length > 0) {
           const maxRank = Math.max(...ftsResults.map((r) => Math.abs(r.rank)));
           const ftsMap = new Map(ftsResults.map((r) => [r.id, bm25Relevance(r.rank, maxRank)]));
@@ -3159,7 +3032,7 @@ export async function suggestInAdapter(
       const rows = (await stmt.all(
         ...likeParams,
         ...(kind === undefined ? [] : [kind]),
-        rerankPoolLimit
+        limit
       )) as DecisionRecord[];
       results = rows.map((row: DecisionRecord) => ({
         ...row,
@@ -3189,7 +3062,7 @@ export async function suggestInAdapter(
       results = await rerankWithLLM(options.runner, userQuestion, results);
     }
 
-    const rerankCandidateResults = results.slice(0, rerankPoolLimit);
+    const rerankCandidateResults = results.slice(0, limit);
 
     const vectorRows = rerankCandidateResults.map((r) => ({
       id: r.id,
@@ -3215,8 +3088,7 @@ export async function suggestInAdapter(
       case_id: null as string | null,
       source_type: 'decision',
     }));
-    const { results: rankedVectorRows, meta: rankerMeta } = applyLearnedRanker(vectorRows);
-    const finalResults = rankedVectorRows.slice(0, limit);
+    const finalResults = vectorRows.slice(0, limit);
 
     // Markdown format (for human display)
     if (format === 'markdown') {
@@ -3265,7 +3137,6 @@ export async function suggestInAdapter(
             },
         // Graph expansion stats (NEW - Phase 1)
         graph_expansion: searchMethod.includes('graph') ? graphStats : null,
-        ranker: rankerMeta,
       },
     };
   } catch (error: unknown) {

@@ -9,13 +9,13 @@ import { closeDB, getAdapter, initDB } from '../../src/db-manager.js';
 import {
   ingestConversation,
   ingestMemory,
+  recallMemory,
   saveJudgmentRecord,
   saveMemory,
 } from '../../src/memory/api.js';
 import { getMemoryProvenance } from '../../src/memory/provenance-query.js';
 import { normalizeMemoryWriteProvenance } from '../../src/memory/provenance.js';
 import { listMemoryEventsForMemory } from '../../src/memory/event-store.js';
-import { queryRelevantTruth } from '../../src/memory/truth-store.js';
 import mama from '../../src/mama-api.js';
 
 const TEST_DB = path.join(os.tmpdir(), `test-memory-provenance-${randomUUID()}.db`);
@@ -157,7 +157,7 @@ describe('Story M2.1: Memory Write Provenance Foundation', () => {
       });
     });
 
-    it('keeps a stale decision out of current truth', async () => {
+    it('keeps a stale decision out of current recall', async () => {
       const stagedMemory = await saveMemory(getAdapter(), {
         topic: 'manual_staged_truth_projection_contract',
         kind: 'decision',
@@ -172,24 +172,18 @@ describe('Story M2.1: Memory Write Provenance Foundation', () => {
       expect(
         getAdapter().prepare('SELECT status FROM decisions WHERE id = ?').get(stagedMemory.id)
       ).toEqual({ status: 'stale' });
-      expect(
+      // Recall is where current state is read; the truth read it used to go through is gone.
+      const textOnly = { embed: async () => null };
+      const recalled = async (includeHistory: boolean) =>
         (
-          await queryRelevantTruth(getAdapter(), {
-            query: 'manual staged truth projection',
+          await recallMemory(getAdapter(), 'manual staged truth projection', {
             scopes: [PROJECT_SCOPE],
-            includeHistory: true,
+            includeHistory,
+            embedder: textOnly,
           })
-        ).some((row) => row.memory_id === stagedMemory.id)
-      ).toBe(true);
-      expect(
-        (
-          await queryRelevantTruth(getAdapter(), {
-            query: 'manual staged truth projection',
-            scopes: [PROJECT_SCOPE],
-            includeHistory: false,
-          })
-        ).some((row) => row.memory_id === stagedMemory.id)
-      ).toBe(false);
+        ).memories.some((memory) => memory.id === stagedMemory.id);
+      expect(await recalled(true)).toBe(true);
+      expect(await recalled(false)).toBe(false);
     });
   });
 

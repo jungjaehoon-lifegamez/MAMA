@@ -36,7 +36,6 @@ import {
   isHostToolTerminalCode,
 } from './drivers/types.js';
 import { NativeEffectReplayBoundary, type NativeEffectObserver } from './native-effect-observer.js';
-import type { PostToolHandler } from './post-tool-handler.js';
 import { composeLayers, type PromptLayer } from './prompt-layers.js';
 import type { SubagentBridge, SubagentBridgeRequest } from './subagent-bridge.js';
 import type { SessionPool } from './session-pool.js';
@@ -218,7 +217,6 @@ export interface NativeSessionHost<
   readonly sessionPool: SessionPool;
   readonly lanes?: SessionLanes;
   readonly useLanes?: boolean;
-  readonly postToolHandler?: PostToolHandler | null;
   /** Where an uploaded image is written so the runtime can read it back by path. */
   readonly inboundMediaDir?: string;
   /** Run-wide observers used when a request states none of its own. */
@@ -584,13 +582,6 @@ export class NativeSessionRunner<TToolContext extends HostExecutionContext = Hos
         }
 
         runScope.onToolUse?.(toolUse.name, toolUse.input, toolResult);
-
-        host.postToolHandler?.processInBackground(
-          toolUse.name,
-          toolUse.input,
-          toolResult,
-          reactiveInternalContext as Parameters<PostToolHandler['processInBackground']>[3]
-        );
 
         runScope.streamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, isError);
         host.onMetric?.('tool_duration_ms', Date.now() - toolStart, {

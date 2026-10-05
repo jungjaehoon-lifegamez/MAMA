@@ -19,7 +19,6 @@
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 
-import { SEARCH_RANKER_FEATURE_SET_VERSION } from '../../src/knowledge/ranker-features.js';
 import { cleanupTestDB, initTestDB } from '../helpers/test-utils.js';
 
 // The embedder is the model, not an internal component: fixing the query vector
@@ -42,13 +41,6 @@ vi.mock('../../src/memory/api.js', async (importOriginal) => {
 function queryVector(): Float32Array {
   const vector = new Float32Array(1024);
   vector[0] = 1;
-  return vector;
-}
-
-function unitVector(cosine: number): Float32Array {
-  const vector = new Float32Array(1024);
-  vector[0] = cosine;
-  vector[1] = Math.sqrt(Math.max(0, 1 - cosine * cosine));
   return vector;
 }
 
@@ -94,52 +86,6 @@ async function insertDecision(input: {
     db.insertEmbedding(row.rowid, input.embedding);
   }
   db.prepare("INSERT INTO decisions_fts(decisions_fts) VALUES('rebuild')").run();
-}
-
-async function insertCaseWithMember(caseId: string, title: string, memberId: string) {
-  const db = await adapter();
-  const now = new Date().toISOString();
-  db.prepare(
-    `INSERT INTO case_truth (case_id, current_wiki_path, title, status, created_at, updated_at)
-     VALUES (?, ?, ?, 'active', ?, ?)`
-  ).run(caseId, `cases/${caseId}.md`, title, now, now);
-  db.prepare(
-    `INSERT INTO case_memberships (
-       case_id, source_type, source_id, role, confidence, reason, status,
-       added_by, added_at, updated_at, user_locked
-     ) VALUES (?, 'decision', ?, 'supporting', 0.9, 'test', 'active', 'wiki-compiler', ?, ?, 0)`
-  ).run(caseId, memberId, now, now);
-}
-
-/** An active learned ranker that prefers a decision leaf over a case result. */
-async function installLearnedRanker() {
-  const db = await adapter();
-  db.prepare("DELETE FROM ranker_model_versions WHERE model_id = 'ranker-active'").run();
-  const weights = [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0];
-  db.prepare(
-    `INSERT INTO ranker_model_versions (
-       model_id, model_version, feature_set_version, coefficients_json, metrics_json,
-       training_window_json, baseline_metrics_json, quality_gate_status, trained_at,
-       trained_by, active
-     ) VALUES ('ranker-active', 'v1', ?, ?, '{}', '{}', '{}', 'passed',
-               '2026-04-18T00:00:00.000Z', 'test', 1)`
-  ).run(
-    SEARCH_RANKER_FEATURE_SET_VERSION,
-    JSON.stringify({
-      coefficients: weights,
-      intercept: 0,
-      question_type_weights: {
-        correction: weights,
-        artifact: [0, 0, 0, 0, 0, -4, -4, -4, 4, -4, 0, 0, 0, 0, 0, 0, 0],
-        timeline: [0, 0, 0, 0, 0, -4, -4, -4, -4, 4, 0, 0, 0, 0, 0, 0, 0],
-        status: [0, 0, 0, 0, 0, -4, -4, 4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
-        decision_reason: weights,
-        how_to: weights,
-        unknown: weights,
-      },
-      training_rows_count: 10,
-    })
-  );
 }
 
 describe('legacy shims', () => {
@@ -219,35 +165,5 @@ describe('legacy shims', () => {
 
     expect(result.results).toEqual([]);
     expect(result.meta?.search_method).toBe('memory_v2');
-  });
-
-  it('reranks a larger candidate pool before truncating to the requested limit', async () => {
-    await insertDecision({
-      id: 'base_top_member',
-      topic: 'base top case',
-      decision: 'reranktoken this is first before rerank',
-      embedding: unitVector(1),
-    });
-    await insertCaseWithMember('case-base-top', 'Base Top Case', 'base_top_member');
-    await insertDecision({
-      id: 'promoted-second',
-      topic: 'promoted second',
-      decision: 'reranktoken this should win after rerank',
-      embedding: unitVector(0.95),
-    });
-    await installLearnedRanker();
-
-    const mama = (await import('../../src/mama-api.js')).default;
-    const result = await mama.suggest('reranktoken', { limit: 1, rerankWithLearned: true });
-
-    // The case leads on fused rank; the learned model prefers the decision. A
-    // limit of 1 applied before rescoring would have cut the winner away.
-    expect(result.results).toHaveLength(1);
-    expect(result.results[0]?.id).toBe('promoted-second');
-    expect(result.meta?.ranker?.applied).toBe(true);
-    // And the graph_expansion summary counts what came back, not the pool.
-    expect(result.meta?.graph_expansion?.total_results).toBe(1);
-    expect(result.meta?.graph_expansion?.primary_count).toBe(1);
-    expect(result.meta?.graph_expansion?.expanded_count).toBe(0);
   });
 });

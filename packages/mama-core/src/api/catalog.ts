@@ -575,7 +575,6 @@ const memorySearchSchema: ActionSchemaObject = {
       description: 'Require lexical query support, e.g. true.',
     },
     diagnostics: { type: 'boolean', description: 'Include search diagnostics, e.g. true.' },
-    rerankWithLearned: { type: 'boolean', description: 'Apply the learned ranker, e.g. true.' },
     useReranking: { type: 'boolean', description: 'Allow host-provided reranking, e.g. true.' },
   },
 };
@@ -1193,7 +1192,6 @@ export function coreActionRegistrations(
           topicPrefix?: string;
           minLexicalSupport?: boolean;
           diagnostics?: boolean;
-          rerankWithLearned?: boolean;
           useReranking?: boolean;
         };
         const scopes = boundReadScopesFor(context.access, query.scopes);
@@ -1223,7 +1221,6 @@ export function coreActionRegistrations(
           topicPrefix: query.topicPrefix,
           minLexicalSupport: query.minLexicalSupport,
           diagnostics: query.diagnostics,
-          rerankWithLearned: query.rerankWithLearned,
           useReranking: query.useReranking,
           ...(runner?.() ? { runner: runner() } : {}),
           scopes,

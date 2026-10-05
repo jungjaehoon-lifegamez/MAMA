@@ -358,13 +358,6 @@ export interface AuditFindingRecord {
   resolved_at?: number;
 }
 
-export interface MemoryAuditAck {
-  status: MemoryAuditAckStatus;
-  action: MemoryAgentAction;
-  event_ids: string[];
-  reason?: string;
-}
-
 export interface AuditNotice {
   type: 'direction_alert' | 'truth_conflict' | 'truth_update' | 'memory_warning';
   severity: 'low' | 'medium' | 'high';
@@ -380,94 +373,6 @@ export interface MemoryConsultResult {
   evidence: Array<{ type: 'memory' | 'event'; ref: string; excerpt?: string }>;
   truth_snapshot?: Array<{ id: string; topic: string; summary: string; status: string }>;
   recommended_action?: string;
-}
-
-export interface MemoryAgentBootstrap {
-  current_goal?: string;
-  scope_context: MemoryScopeRef[];
-  channel_summary_markdown?: string;
-  truth_snapshot: Array<{
-    id: string;
-    topic: string;
-    summary: string;
-    trust_score: number;
-  }>;
-  open_audit_findings: Array<{
-    id: string;
-    kind: string;
-    severity: string;
-    summary: string;
-  }>;
-  recent_memory_events: Array<{
-    id: string;
-    type: string;
-    topic?: string;
-    created_at: number;
-  }>;
-  profile_snapshot?: {
-    static: Array<{ id: string; summary: string }>;
-    dynamic: Array<{ id: string; summary: string }>;
-  };
-  main_agent_state?: {
-    active_goal?: string;
-    active_channel?: string;
-    active_user?: string;
-  };
-}
-
-export interface MemoryTruthRow {
-  memory_id: string;
-  topic: string;
-  kind?: MemoryKind;
-  truth_status: MemoryTruthStatus;
-  effective_summary: string;
-  effective_details: string;
-  trust_score: number;
-  scope_refs: MemoryScopeRef[];
-  supporting_event_ids: string[];
-  superseded_by?: string;
-  contradicted_by?: string[];
-  created_at?: number;
-  updated_at?: number;
-}
-
-export interface ChannelSummaryRecord {
-  channel_key: string;
-  summary_markdown: string;
-  delta_hash?: string;
-  updated_at: number;
-}
-
-export interface ChannelSummaryStateDecision {
-  memory_id: string;
-  topic: string;
-  summary: string;
-  updated_at: number;
-}
-
-export interface ChannelSummaryStateMilestone {
-  topic: string;
-  action: MemoryAgentAction;
-  summary: string;
-  timestamp: number;
-  memory_id?: string;
-}
-
-export interface ChannelSummaryAuditOutcome {
-  topic: string;
-  status: MemoryAuditAckStatus;
-  reason?: string;
-  timestamp: number;
-}
-
-export interface ChannelSummaryStateRecord {
-  channel_key: string;
-  active_topic?: string;
-  active_decisions: ChannelSummaryStateDecision[];
-  recent_milestones: ChannelSummaryStateMilestone[];
-  recent_audit_outcomes: ChannelSummaryAuditOutcome[];
-  state_hash: string;
-  updated_at: number;
 }
 
 export function createEmptyRecallBundle(query: string): RecallBundle {
@@ -488,17 +393,6 @@ export function createEmptyRecallBundle(query: string): RecallBundle {
       scope_order: ['project'],
       retrieval_sources: ['vector'],
     },
-  };
-}
-
-export function createMemoryAuditAck(
-  input: Pick<MemoryAuditAck, 'status' | 'action' | 'event_ids'> & Partial<MemoryAuditAck>
-): MemoryAuditAck {
-  return {
-    status: input.status,
-    action: input.action,
-    event_ids: input.event_ids,
-    reason: input.reason,
   };
 }
 
