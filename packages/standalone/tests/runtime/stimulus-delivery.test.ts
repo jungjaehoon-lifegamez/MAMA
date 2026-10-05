@@ -721,6 +721,72 @@ describe('one stimulus intake and delivery', () => {
     );
   });
 
+  const recordRow = (n: number, text: string) =>
+    claimed({
+      stimulusId: `record:source_delta:${n}:1`,
+      kind: 'scheduled',
+      channelKey: 'operator:record',
+      payload: {
+        order: 'record',
+        deltaStimulusId: `source_delta:${n}`,
+        source: 'chat',
+        channel: 'room',
+        observationRefs: [`obs-${n}`],
+        lines: [{ sourceAt: recent(), author: 'sender', text }],
+        attempt: 1,
+      },
+    });
+
+  it('gives a record order the lessons for its lines and the owner rules as an index', async () => {
+    // The rule for a closing item was not among 40 hits for the card move that closed one, so a
+    // record turn's text cannot recall it; the index lets the agent read it when it decides.
+    const queries: string[] = [];
+    const prompts: string[] = [];
+    const delivery = createDelivery({
+      recordOrders: recordOrders(),
+      lessons: async (text) => {
+        queries.push(text);
+        return [{ id: 'lesson-1', topic: 'cards', summary: 'cite the card', ownerRule: false }];
+      },
+      ownerRules: async () => [
+        { topic: 'close_wrapup', when: 'when an item is fixed or delivered' },
+        { topic: 'unnamed_feedback', when: 'when a message names no item' },
+      ],
+    });
+    for (const n of [1, 2])
+      await delivery.deliver(
+        recordRow(n, `card ${n} moved to delivered`),
+        context((text) => prompts.push(text))
+      );
+    expect(queries).toEqual(['card 1 moved to delivered', 'card 2 moved to delivered']);
+    expect(prompts[0]).toContain('- [learned] cards: cite the card');
+    // Every record order carries the whole index; a lesson is shown once per session day.
+    for (const prompt of prompts) {
+      expect(prompt).toContain('<owner_rules>');
+      expect(prompt).toContain('- close_wrapup: when an item is fixed or delivered');
+      expect(prompt).toContain('- unnamed_feedback: when a message names no item');
+      expect(prompt).toContain('memory.search({topicPrefix: topic})');
+    }
+    expect(prompts[1]).not.toContain('cite the card');
+  });
+
+  it('indexes the owner rules on record orders only', async () => {
+    const prompts: string[] = [];
+    await createDelivery({
+      recordOrders: recordOrders(),
+      ownerRules: async () => [{ topic: 'close_wrapup', when: 'when an item is fixed' }],
+    }).deliver(
+      claimed({
+        stimulusId: 'telegram:1:9',
+        kind: 'owner_message',
+        channelKey: 'c',
+        payload: { text: 'report' },
+      }),
+      context((text) => prompts.push(text))
+    );
+    expect(prompts[0]).not.toContain('<owner_rules>');
+  });
+
   it.each(['full', 'reminder'] as const)(
     'runs a scheduled %s order and returns its text',
     async (report) => {

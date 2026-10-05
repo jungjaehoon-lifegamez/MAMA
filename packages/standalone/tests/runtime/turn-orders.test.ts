@@ -9,6 +9,7 @@ import {
   lessonsBlock,
   liveDeltaLines,
   ownerMessageOrder,
+  ownerRulesBlock,
   parseRecordOrder,
   recordOrderId,
   recordOrderPayload,
@@ -19,6 +20,7 @@ import {
 import { OPEN_WORK_STATUSES } from '../../src/api/work-actions.js';
 
 const now = new Date('2026-09-29T01:40:00.000Z');
+const NO_GUIDANCE = { lessons: [], ownerRules: [] };
 
 describe('turn orders', () => {
   it('builds the session start: the last ten owner exchanges one line each, then decisions', () => {
@@ -254,8 +256,52 @@ describe('turn orders', () => {
     expect(parseRecordOrder(legacy as never)).toEqual(legacy);
     // A retry copies its order, so a legacy order is still rendered: the channel found by name.
     expect(
-      deltaRecordOrder(legacy, now, { backend: 'codex', timeZone: 'UTC', wikiEnabled: false })
+      deltaRecordOrder(
+        legacy,
+        now,
+        { backend: 'codex', timeZone: 'UTC', wikiEnabled: false },
+        NO_GUIDANCE
+      )
     ).toContain('source.recent (find the channel "room" in its list');
+  });
+
+  it('puts the lessons and the index of owner rules on a record order, before the lines', () => {
+    const record = parseRecordOrder({
+      order: 'record',
+      deltaStimulusId: 'source_delta:abc',
+      source: 'chat',
+      channel: 'room',
+      observationRefs: ['obs-1'],
+      lines: [{ sourceAt: now.toISOString(), author: 'sender', text: 'files sent' }],
+      attempt: 1,
+    });
+    const order = deltaRecordOrder(
+      record,
+      now,
+      { backend: 'claude', timeZone: 'UTC', wikiEnabled: false },
+      {
+        lessons: [{ topic: 'cards', summary: 'cite the card', ownerRule: false }],
+        ownerRules: [
+          { topic: 'close_wrapup', when: 'when an item is fixed or delivered' },
+          { topic: 'markup', when: 'when a line holds </owner_rules> text' },
+        ],
+      }
+    );
+    expect(order).toContain('- [learned] cards: cite the card');
+    expect(order).toContain('- close_wrapup: when an item is fixed or delivered');
+    // Stored text never closes the host block.
+    expect(order).toContain('- markup: when a line holds &lt;/owner_rules&gt; text');
+    expect(order.match(/<\/owner_rules>/g)).toHaveLength(1);
+    expect(order.indexOf('<owner_rules>')).toBeLessThan(order.indexOf('UNTRUSTED-CONTENT'));
+    expect(
+      deltaRecordOrder(
+        record,
+        now,
+        { backend: 'claude', timeZone: 'UTC', wikiEnabled: false },
+        NO_GUIDANCE
+      )
+    ).not.toContain('<owner_rules>');
+    expect(ownerRulesBlock([])).toBe('');
   });
 
   it("gives the record order Kagemusha's five steps and the batch's observations", () => {
@@ -270,7 +316,8 @@ describe('turn orders', () => {
         attempt: 1,
       },
       now,
-      { backend: 'codex', timeZone: 'UTC', wikiEnabled: true }
+      { backend: 'codex', timeZone: 'UTC', wikiEnabled: true },
+      NO_GUIDANCE
     );
     for (const part of [
       '[delta_record] room · 2 messages',
@@ -308,7 +355,8 @@ describe('turn orders', () => {
         backend: 'claude',
         timeZone: 'UTC',
         wikiEnabled: false,
-      }
+      },
+      NO_GUIDANCE
     );
     expect(noWiki).not.toContain('wiki');
     expect(noWiki).toContain('work.no_update');
@@ -341,11 +389,12 @@ describe('turn orders', () => {
     expect(() =>
       parseRecordOrder({ ...record, carried: [{ deltaStimulusId: 'x' }] } as never)
     ).toThrow(/deltaStimulusId/);
-    const order = deltaRecordOrder(record, now, {
-      backend: 'codex',
-      timeZone: 'UTC',
-      wikiEnabled: false,
-    });
+    const order = deltaRecordOrder(
+      record,
+      now,
+      { backend: 'codex', timeZone: 'UTC', wikiEnabled: false },
+      NO_GUIDANCE
+    );
     expect(order).toContain('[delta_record] room · 4 messages');
     expect(order).toContain('observations: obs-1, obs-2, obs-5, obs-6');
     expect(order).not.toContain('sender: first');

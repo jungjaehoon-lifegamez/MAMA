@@ -43,6 +43,12 @@ or a change in a connected source arrives, the agent is shown the few lessons th
 match it best, marked as lessons rather than facts. It is not shown the same lesson
 again in that session on the same day.
 
+When the agent records what a change did, it also sees a list of every rule you
+gave it in chat, one line each, saying when the rule applies. Before it writes, it
+reads the rules that fit what it is recording. A rule about finished work, for
+example, applies when the agent decides that an item is finished, which the
+change's own words may never say.
+
 When you ask for the full report, in any words, the agent recognises the request
 and follows the same procedure as the scheduled report.
 
