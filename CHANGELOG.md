@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.64.0] / mama-core [5.5.0] - 2026-10-05
+
+Memory search finds Korean and Japanese words with a particle attached or inside a sentence
+written without spaces. Large files reach the owner through Drive, web fetches raise alerts, and
+the wiki keeps daily pages in month folders that the agent can move. The package changelogs list
+every change.
+
+### Added
+
+- A trigram index of memory records (mama-core migration 100): a Korean or Japanese query word is
+  found with a particle attached or inside an unspaced sentence, and records are scored word by
+  word.
+- `deliver.drive.file`: a file over the messenger's limit goes to the owner's Drive folder, with
+  readers set in `delivery.drive`.
+- `manage.wiki.move`: the agent moves wiki pages, up to 500 at a time, all or none.
+- `file_delivery` per messenger in config turns file sending on or off.
+- Each web fetch raises a security alert naming its URL, grouped per host within a minute.
+- The memory graph draws the records the filters select and the links between them.
+
+### Changed
+
+- Daily wiki pages go in month folders (`daily/YYYY-MM/YYYY-MM-DD.md`). Home.md does not list
+  them, and the host writes no `index.md`.
+- Memory search sends its terms to FTS5 as quoted text, and an FTS5 failure reaches the caller
+  instead of an in-memory scan answering (mama-core).
+
+### Fixed
+
+- The viewer loads its built files under a stamp of the build, so a cached old script no longer
+  leaves the page blank after a deploy.
+
 ## mama-os [0.63.0] / mama-core [5.4.0] - 2026-10-04
 
 The memory view shows what was saved and when, and a refused tool call says what the action
