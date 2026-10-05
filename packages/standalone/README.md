@@ -9,15 +9,13 @@ and follow [owner setup](../../docs/start/owner-setup.md).
 
 ## Start and operate
 
-From the repository root:
-
 ```bash
-pnpm install
-pnpm build
-node packages/standalone/dist/cli/index.js init
+npm install -g @jungjaehoon/mama-os
+mama init
 ```
 
-The guides use `mama` for the built CLI. Onboarding is terminal-only: the owner types tokens
+From a checkout, run `pnpm install` and `pnpm build`, then use
+`node packages/standalone/dist/cli/index.js` in place of `mama`. Onboarding is terminal-only: the owner types tokens
 with echo off. It writes configuration and optional launchd files; backend login and service
 startup are separate steps.
 

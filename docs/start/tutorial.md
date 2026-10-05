@@ -38,7 +38,7 @@ Create a Telegram bot and open a private chat with it. Have the numeric owner ch
 user id ready. In your terminal, type:
 
 ```bash
-node packages/standalone/dist/cli/index.js init
+mama init
 ```
 
 At the prompts, enter `claude` or `codex`, the model name, your timezone (press Enter to keep this
@@ -71,7 +71,7 @@ script:
 In another terminal, check the process:
 
 ```bash
-node packages/standalone/dist/cli/index.js status
+mama status
 ```
 
 **You should see:** `running` from `status`; the daemon logs startup in `~/.mama/logs/daemon.log`.
@@ -79,7 +79,7 @@ node packages/standalone/dist/cli/index.js status
 **Check:** the next step is the real check: send a message to the bot and confirm a reply reaches
 your Telegram chat. A running process by itself does not prove the owner flow works.
 
-**If not:** use `node packages/standalone/dist/cli/index.js status`, then read the daemon log for
+**If not:** use `mama status`, then read the daemon log for
 the failed startup stage. Check the backend login and the environment path in `~/.mama/start.sh`.
 
 ## 4. Ask your first question in Telegram
@@ -179,7 +179,7 @@ or delivery errors. The first live download-copy-deliver run has not yet been ob
 To stop a manually started daemon, use:
 
 ```bash
-node packages/standalone/dist/cli/index.js stop
+mama stop
 ```
 
 See the full [CLI reference](../reference/cli.md) and [security guide](../guides/security.md).
