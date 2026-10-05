@@ -45,6 +45,7 @@ function partsAt(ms: number, timeZone: string): Record<string, string> {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
+    weekday: 'short',
     hourCycle: 'h23',
   }).formatToParts(new Date(ms));
   return Object.fromEntries(parts.map(({ type, value }) => [type, value]));
@@ -56,6 +57,16 @@ export function localStamp(iso: string, timeZone: string): string {
   if (!Number.isFinite(ms)) throw new Error(`A source line needs a source time, got ${iso}`);
   const parts = partsAt(ms, timeZone);
   return `${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+}
+
+/**
+ * The owner's now as YYYY-MM-DD Ddd HH:mm in their timezone. A turn reads its date and weekday
+ * here: given only "10-05", a requested report on 2026-10-05 (a Monday) called the day Sunday,
+ * the weekday that date had in 2025.
+ */
+export function localNow(ms: number, timeZone: string): string {
+  const parts = partsAt(ms, timeZone);
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.weekday} ${parts.hour}:${parts.minute}`;
 }
 
 export function localDateKey(ms: number, timeZone: string): string {
