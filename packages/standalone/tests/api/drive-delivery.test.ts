@@ -104,6 +104,29 @@ describe('deliver.drive.file', () => {
     expect(gws.mock.calls.filter(([args]) => args[1] === 'permissions')).toHaveLength(2);
   });
 
+  it('lets a retry that arrives during the upload wait for it instead of uploading again', async () => {
+    let release!: () => void;
+    const uploaded = new Promise<void>((resolve) => (release = resolve));
+    const gws = vi.fn(async (args: string[]) => {
+      if (args[2] === 'list') return { files: [] };
+      if (args[1] === 'files' && args[2] === 'create') {
+        await uploaded;
+        return { id: 'file_1', name: 'result.pptx', md5Checksum: md5, webViewLink: 'l' };
+      }
+      return { id: 'perm' };
+    });
+    const deliver = action(gws);
+    const first = deliver.exec({ path: path() }, owner);
+    const retry = deliver.exec({ path: path() }, owner);
+    release();
+    const [a, b] = await Promise.all([first, retry]);
+
+    expect(b).toEqual(a);
+    expect(
+      gws.mock.calls.filter(([args]) => args[1] === 'files' && args[2] === 'create')
+    ).toHaveLength(1);
+  });
+
   it('fails loudly when Drive stored other bytes, and when the operation sent other content', async () => {
     const wrong = vi.fn(async (args: string[]) =>
       args[2] === 'list' ? { files: [] } : { id: 'file_2', name: 'x', md5Checksum: 'f'.repeat(32) }

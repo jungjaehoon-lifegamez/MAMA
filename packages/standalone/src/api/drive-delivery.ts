@@ -67,6 +67,104 @@ async function stage(fd: number, target: string): Promise<{ md5: string; sha256:
 export function driveDeliveryActionRegistrations(ports: DriveDeliveryPorts): ActionRegistration[] {
   const gws = ports.gws ?? execGwsAsync;
   const { folder, readers } = ports.delivery;
+  // One delivery per operation at a time: a retry that arrives while the first attempt is still
+  // uploading waits for it instead of passing the lookup and uploading a second copy.
+  const inFlight = new Map<string, Promise<unknown>>();
+  const send = async (values: { path: string; name?: unknown }, operationId: string) => {
+    const file = openWorkspaceFile(
+      join(ports.workspaceDir, 'files'),
+      values.path,
+      DRIVE_DELIVERY_MAX_BYTES
+    );
+    const name = typeof values.name === 'string' ? values.name : basename(file.path);
+    mkdirSync(ports.stagingDir, { recursive: true, mode: 0o700 });
+    const staged = join(
+      ports.stagingDir,
+      `${createHash('sha256').update(operationId).digest('hex').slice(0, 24)}${extname(file.path)}`
+    );
+    try {
+      let hashes: { md5: string; sha256: string };
+      try {
+        hashes = await stage(file.fd, staged);
+      } finally {
+        closeSync(file.fd);
+      }
+      const escaped = operationId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      const found = (await gws([
+        'drive',
+        'files',
+        'list',
+        '--params',
+        JSON.stringify({
+          q: `'${folder}' in parents and appProperties has { key='mamaOperationId' and value='${escaped}' } and trashed=false`,
+          fields: `files(${FIELDS})`,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        }),
+      ])) as { files?: DriveFile[] };
+      const earlier = found.files?.[0];
+      if (earlier !== undefined && earlier.md5Checksum !== hashes.md5) {
+        throw new Error(
+          `operation ${operationId} already sent Drive file ${earlier.id} with other content`
+        );
+      }
+      const sent =
+        earlier ??
+        ((await gws(
+          [
+            'drive',
+            'files',
+            'create',
+            '--params',
+            JSON.stringify({ supportsAllDrives: true, fields: FIELDS }),
+            '--json',
+            JSON.stringify({
+              name,
+              parents: [folder],
+              appProperties: { mamaOperationId: operationId, mamaSha256: hashes.sha256 },
+            }),
+            '--upload',
+            staged,
+          ],
+          { timeoutMs: uploadTimeoutMs(file.size) }
+        )) as DriveFile);
+      if (sent.md5Checksum !== hashes.md5) {
+        throw new Error(
+          `Drive stored ${sent.id} with md5 ${sent.md5Checksum ?? 'none'}, not the sent ${hashes.md5}`
+        );
+      }
+      // Applied on a retry too: a stop between upload and sharing leaves a file nobody can read.
+      for (const reader of readers) {
+        await gws([
+          'drive',
+          'permissions',
+          'create',
+          '--params',
+          JSON.stringify({
+            fileId: sent.id,
+            supportsAllDrives: true,
+            sendNotificationEmail: false,
+            fields: 'id',
+          }),
+          '--json',
+          JSON.stringify(permission(reader)),
+        ]);
+      }
+      return {
+        fileId: sent.id,
+        name: sent.name,
+        link: sent.webViewLink ?? null,
+        size: file.size,
+        md5: hashes.md5,
+        sha256: hashes.sha256,
+        readers,
+        operationId,
+        idempotent: earlier !== undefined,
+      };
+    } finally {
+      rmSync(staged, { force: true });
+    }
+  };
   return [
     {
       contract: {
@@ -103,99 +201,13 @@ export function driveDeliveryActionRegistrations(ports: DriveDeliveryPorts): Act
         if (typeof operationId !== 'string' || operationId.trim() === '') {
           throw new Error('deliver.drive.file requires an operation id');
         }
-        const file = openWorkspaceFile(
-          join(ports.workspaceDir, 'files'),
-          values.path,
-          DRIVE_DELIVERY_MAX_BYTES
+        const running = inFlight.get(operationId);
+        if (running !== undefined) return running;
+        const delivery = send({ ...values, path: values.path }, operationId).finally(() =>
+          inFlight.delete(operationId)
         );
-        const name = typeof values.name === 'string' ? values.name : basename(file.path);
-        mkdirSync(ports.stagingDir, { recursive: true, mode: 0o700 });
-        const staged = join(
-          ports.stagingDir,
-          `${createHash('sha256').update(operationId).digest('hex').slice(0, 24)}${extname(file.path)}`
-        );
-        try {
-          let hashes: { md5: string; sha256: string };
-          try {
-            hashes = await stage(file.fd, staged);
-          } finally {
-            closeSync(file.fd);
-          }
-          const escaped = operationId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-          const found = (await gws([
-            'drive',
-            'files',
-            'list',
-            '--params',
-            JSON.stringify({
-              q: `'${folder}' in parents and appProperties has { key='mamaOperationId' and value='${escaped}' } and trashed=false`,
-              fields: `files(${FIELDS})`,
-              supportsAllDrives: true,
-              includeItemsFromAllDrives: true,
-            }),
-          ])) as { files?: DriveFile[] };
-          const earlier = found.files?.[0];
-          if (earlier !== undefined && earlier.md5Checksum !== hashes.md5) {
-            throw new Error(
-              `operation ${operationId} already sent Drive file ${earlier.id} with other content`
-            );
-          }
-          const sent =
-            earlier ??
-            ((await gws(
-              [
-                'drive',
-                'files',
-                'create',
-                '--params',
-                JSON.stringify({ supportsAllDrives: true, fields: FIELDS }),
-                '--json',
-                JSON.stringify({
-                  name,
-                  parents: [folder],
-                  appProperties: { mamaOperationId: operationId, mamaSha256: hashes.sha256 },
-                }),
-                '--upload',
-                staged,
-              ],
-              { timeoutMs: uploadTimeoutMs(file.size) }
-            )) as DriveFile);
-          if (sent.md5Checksum !== hashes.md5) {
-            throw new Error(
-              `Drive stored ${sent.id} with md5 ${sent.md5Checksum ?? 'none'}, not the sent ${hashes.md5}`
-            );
-          }
-          // Applied on a retry too: a stop between upload and sharing leaves a file nobody can read.
-          for (const reader of readers) {
-            await gws([
-              'drive',
-              'permissions',
-              'create',
-              '--params',
-              JSON.stringify({
-                fileId: sent.id,
-                supportsAllDrives: true,
-                sendNotificationEmail: false,
-                fields: 'id',
-              }),
-              '--json',
-              JSON.stringify(permission(reader)),
-            ]);
-          }
-          return {
-            fileId: sent.id,
-            name: sent.name,
-            link: sent.webViewLink ?? null,
-            size: file.size,
-            md5: hashes.md5,
-            sha256: hashes.sha256,
-            readers,
-            operationId,
-            idempotent: earlier !== undefined,
-          };
-        } finally {
-          rmSync(staged, { force: true });
-        }
+        inFlight.set(operationId, delivery);
+        return delivery;
       },
     },
   ];
