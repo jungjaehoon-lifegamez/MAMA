@@ -160,7 +160,7 @@ export function ownerHelpTopics(
     ].join('\n'),
     corrections: [
       'Owner corrections:',
-      '- When the owner corrects you, apply the correction now to every affected item and board section, reading the originals you need; do not answer with a promise for work you can do in this turn. Then save it with memory.save: revise the correction it belongs with (keeping every earlier point not withdrawn) or save a new one with an appliesWhen line; retire withdrawn guidance with memory.retire. A request the owner marks as for this time only is applied and not saved.',
+      "- When the owner corrects you, apply the correction now to every affected item and board section, reading the originals you need; do not answer with a promise for work you can do in this turn. Then save it with memory.save({topic, kind, summary, details, appliesWhen, source: {package: 'owner-agent', source_type: 'memory.save'}}): revise the correction it belongs with by adding replaces: [{id, reason}] (keeping every earlier point not withdrawn), or save a new one; retire withdrawn guidance with memory.retire. A request the owner marks as for this time only is applied and not saved.",
       "- Save with memory.save only what a tool cannot re-derive: how the owner wants something done, a pattern you derived from several sources, a failure and its cause. Lessons shown with a message are lessons, not facts. The owner's standing rules are the owner policy.",
     ].join('\n'),
     sources: [
