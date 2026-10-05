@@ -165,7 +165,6 @@ interface SearchResult {
       expanded_count: number;
       sources: Record<string, number>;
     } | null;
-    ranker: Record<string, unknown> | null;
   };
 }
 
@@ -1277,17 +1276,11 @@ export default mama;
 
 // CommonJS compatibility - require('@jungjaehoon/mama-core/mama-api') exposes the
 // ambient `mama` facade methods at top level. Merge instead of replacing
-// module.exports: the compiled `exports.X = X` named exports (suggestInAdapter,
-// saveCheckpointInAdapter, ...) are how api/catalog.ts reaches them from dist.
-// Getter-only named exports (createAuditAck) keep their getter —
-// it already returns the same function the facade carries.
+// module.exports, so the compiled named exports stay beside them.
 if (typeof module !== 'undefined' && module.exports) {
   const target = module.exports as Record<string, unknown>;
   for (const [key, value] of Object.entries(mama)) {
-    const descriptor = Object.getOwnPropertyDescriptor(target, key);
-    if (!descriptor || descriptor.writable) {
-      target[key] = value;
-    }
+    target[key] = value;
   }
   target.default = mama;
   target.mama = mama;
