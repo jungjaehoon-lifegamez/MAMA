@@ -132,6 +132,14 @@ export interface MemoryReachedThrough {
   corrected_by?: DecisionCorrection[];
 }
 
+/**
+ * Turns text into a vector for the semantic index. A null result is the explicit no-vector mode:
+ * a record is written without a vector and a query searches by text only. A failure must throw.
+ */
+export interface MemoryEmbedder {
+  embed(text: string, role: 'query' | 'passage'): Promise<Float32Array | null>;
+}
+
 export type RecallMemoryOptions = SearchQualityOptions & {
   kind?: MemoryKindFilter;
   scopes?: MemoryScopeRef[];
@@ -139,6 +147,12 @@ export type RecallMemoryOptions = SearchQualityOptions & {
   includeHistory?: boolean;
   skipGraphExpansion?: boolean;
   limit?: number;
+  /**
+   * The query's embedder; a consumer passes the one it writes with (`createKnowledge`), and one
+   * that answers null searches by text only. Absent, recall uses the core's own embedder, which the
+   * MCP server and MAMA OS rely on.
+   */
+  embedder?: MemoryEmbedder;
 };
 
 export interface RecallSearchDiagnostics {
