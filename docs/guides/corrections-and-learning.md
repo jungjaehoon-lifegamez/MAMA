@@ -37,6 +37,8 @@ keeps the record. `memory.read:provenance` reads the record's source links.
 Rules that always apply to how MAMA works for you, such as the language, the
 style of reports and notices, and what a report contains, belong in your owner
 policy file. The agent reads that file with its instructions in every session.
+A rule about reports that you give in chat also reaches every full report, as
+described below.
 
 Other corrections are lessons for particular situations. When a message from you
 or a change in a connected source arrives, the agent is shown the few lessons that
@@ -48,6 +50,10 @@ gave it in chat, one line each, saying when the rule applies. Before it writes, 
 reads the rules that fit what it is recording. A rule about finished work, for
 example, applies when the agent decides that an item is finished, which the
 change's own words may never say.
+
+The same list comes with the steps for a full report, both the scheduled ones and
+the ones you ask for. A rule about how reports are ordered or worded then applies
+to every report, whatever words you used to ask for it.
 
 When you ask for the full report, in any words, the agent recognises the request
 and follows the same procedure as the scheduled report.

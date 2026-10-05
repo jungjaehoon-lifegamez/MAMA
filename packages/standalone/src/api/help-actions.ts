@@ -163,6 +163,8 @@ export interface HelpActionPorts {
   contracts(): readonly ActionContract[];
   /** The procedures a turn reads when it needs one, by topic name. */
   topics?(): Readonly<Record<string, string>>;
+  /** What a procedure is read with that only the running product holds, such as the owner's rules. */
+  topicContext?(topic: string): Promise<string>;
 }
 
 export function helpActionRegistrations(ports: HelpActionPorts): ActionRegistration[] {
@@ -185,7 +187,7 @@ export function helpActionRegistrations(ports: HelpActionPorts): ActionRegistrat
           { title: 'Read a procedure', input: { topic: 'full-report' } },
         ],
       },
-      exec: (input) => {
+      exec: async (input) => {
         const { actions: requested, topic } = input as { actions?: unknown; topic?: unknown };
         const contracts = ports.contracts();
         const topics = ports.topics?.() ?? {};
@@ -198,6 +200,8 @@ export function helpActionRegistrations(ports: HelpActionPorts): ActionRegistrat
               `unknown topic: ${String(topic)}; topics: ${Object.keys(topics).join(', ')}`
             );
           parts.push(text);
+          const context = await ports.topicContext?.(topic as string);
+          if (context) parts.push(context);
         }
         if (requested === undefined) {
           if (topic !== undefined) return parts.join('\n\n');
