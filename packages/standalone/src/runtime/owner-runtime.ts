@@ -23,7 +23,12 @@ import type { AttachmentActionPorts } from '../api/attachment-actions.js';
 import { createPersistentReportStore } from '../api/report-persistence.js';
 import { ObsidianWriter } from '../wiki/obsidian-writer.js';
 import { RawStore } from '../storage/source-archive.js';
-import type { RuntimeBackend, RuntimeEffort, RuntimeSandbox } from './config.js';
+import type {
+  RuntimeBackend,
+  RuntimeEffort,
+  RuntimeSandbox,
+  W1DriveDeliveryConfig,
+} from './config.js';
 import { openCoreDatabase, type CoreDatabase } from './core-db.js';
 import { createActionSurface, type ActionSurface } from './action-surface.js';
 import type { OutboundAttemptEvent } from '../api/security-events.js';
@@ -119,6 +124,8 @@ export interface OwnerRuntimeOptions {
     AttachmentActionPorts,
     'connectors' | 'telegram' | 'discord' | 'slack' | 'downloadsDir'
   >;
+  /** delivery.drive from config with a daemon-owned staging directory; absent turns it off. */
+  driveDelivery?: { delivery: W1DriveDeliveryConfig; stagingDir: string };
 }
 
 export interface OwnerRuntime {
@@ -310,6 +317,9 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         stored: storedSourceReader,
         workspaceDir: options.workspaceDir,
       },
+      ...(options.driveDelivery === undefined
+        ? {}
+        : { driveDelivery: { ...options.driveDelivery, workspaceDir: options.workspaceDir } }),
       ownerMessages: {
         exchanges: (since, before) => {
           if (ownerMailbox === undefined) throw new Error('The owner mailbox is not open yet');
@@ -326,7 +336,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       helpTopics: ownerHelpTopics(
         options.backend,
         options.wiki?.enabled ?? false,
-        options.jev !== undefined
+        options.jev !== undefined,
+        options.driveDelivery !== undefined
       ),
       ...(options.jev === undefined
         ? {}

@@ -24,6 +24,34 @@ describe('W1 action surface', () => {
     );
   });
 
+  it('offers Drive delivery only when delivery.drive is configured', () => {
+    const surface = (driveDelivery?: object) =>
+      createActionSurface({
+        timeZone: createTimeZoneSetting('UTC'),
+        configPath: '/tmp/mama-test-config.yaml',
+        isOwnerMessageTurn: () => true,
+        adapter: {} as DatabaseInstance,
+        knowledge: {} as Knowledge,
+        ownerPrincipalId: 'owner-test',
+        agentId: 'agent-test',
+        ...(driveDelivery === undefined ? {} : { driveDelivery: driveDelivery as never }),
+      });
+    const offered = (built: ReturnType<typeof surface>) => [
+      built.catalog.list().some((contract) => contract.name === 'deliver.drive.file'),
+      built.ownerAccess.actions.includes('deliver.drive.file'),
+    ];
+    expect(offered(surface())).toEqual([false, false]);
+    expect(
+      offered(
+        surface({
+          workspaceDir: '/tmp/ws',
+          stagingDir: '/tmp/outgoing',
+          delivery: { folder: 'folder_test_0123456789', readers: [{ domain: 'example.test' }] },
+        })
+      )
+    ).toEqual([true, true]);
+  });
+
   it('exposes the read-only viewer action and derives host tools from the catalog', () => {
     const surface = createActionSurface({
       timeZone: createTimeZoneSetting('UTC'),

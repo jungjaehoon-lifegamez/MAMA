@@ -42,6 +42,13 @@ describe('owner standing prompt', () => {
     );
   });
 
+  it('names Drive delivery in the files topic only when it is offered', () => {
+    expect(ownerHelpTopics('claude', true).files).not.toContain('deliver.drive.file');
+    expect(ownerHelpTopics('claude', true, false, true).files).toContain(
+      "goes to the owner's Drive delivery folder with deliver.drive.file"
+    );
+  });
+
   it('holds messenger syntax, boundaries, step-by-step work, continuity and tools; procedures are topics', () => {
     const prompt = ownerPrompt('codex');
     const topics = ownerHelpTopics('codex', true);

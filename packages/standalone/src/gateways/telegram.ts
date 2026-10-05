@@ -25,6 +25,7 @@ import {
 } from './telegram-message-ledger.js';
 import { TelegramResponsePresenter } from './telegram-response-presenter.js';
 import {
+  OWNER_FILE_MAX_UPLOAD_BYTES,
   openWorkspaceFile,
   readWorkspaceFile,
   workspaceFileIdentity,
@@ -297,7 +298,7 @@ export class TelegramGateway extends BaseGateway {
     this.requireAllowedChat(ownerChatId);
     if (!this.filesRoot) throw new Error('Telegram workspace files root is not configured');
 
-    const validated = openWorkspaceFile(this.filesRoot, path);
+    const validated = openWorkspaceFile(this.filesRoot, path, OWNER_FILE_MAX_UPLOAD_BYTES);
     try {
       const payloadIdentity = workspaceFileIdentity(validated.fd, caption);
       const claim = this.messageLedger.claim(`file:${operationId}`, {

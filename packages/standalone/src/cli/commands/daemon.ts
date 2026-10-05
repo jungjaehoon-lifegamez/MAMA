@@ -480,6 +480,14 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       codexSandbox: config.agent.codex_sandbox ?? 'workspace-write',
       ...(config.agent.backend === 'claude' ? { mcpConfigPath: paths.mcpConfigPath } : {}),
       pluginDir: paths.pluginDir,
+      ...(config.delivery?.drive === undefined
+        ? {}
+        : {
+            driveDelivery: {
+              delivery: config.delivery.drive,
+              stagingDir: join(paths.runtimeRoot, 'outgoing'),
+            },
+          }),
       attachmentPorts: {
         downloadsDir: paths.downloadsDir,
         connectors: () => connectors?.registry ?? null,

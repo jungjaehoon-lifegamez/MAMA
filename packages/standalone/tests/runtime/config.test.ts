@@ -280,6 +280,25 @@ describe('W1 runtime configuration', () => {
     );
   });
 
+  it('reads Drive delivery with the readers the owner names, and refuses a bad reader', () => {
+    const base = validConfig();
+    const drive = { folder: 'folder_test_0123456789', readers: [{ domain: 'example.test' }] };
+    expect(parseConfig({ ...base, delivery: { ...base.delivery, drive } }).delivery?.drive).toEqual(
+      drive
+    );
+    expect(parseConfig(base).delivery?.drive).toBeUndefined();
+    const bad = (value: unknown) =>
+      parseConfig({ ...base, delivery: { ...base.delivery, drive: value } as never });
+    expect(() => bad({ folder: 'x', readers: drive.readers })).toThrow(/delivery.drive.folder/);
+    expect(() => bad({ folder: drive.folder, readers: [] })).toThrow(/at least one reader/);
+    expect(() => bad({ folder: drive.folder, readers: [{ domain: 'a', user: 'b@c.d' }] })).toThrow(
+      /exactly one of domain, group or user/
+    );
+    expect(() => bad({ folder: drive.folder, readers: [{ user: 'not-an-email' }] })).toThrow(
+      /readers\[0\].user must be an email address/
+    );
+  });
+
   it('fails startup when a delivery route names a disabled or unconfigured messenger', () => {
     const base = validConfig();
     expect(() => validateDeliveryRoutes(base)).toThrow(/delivery.reports targets telegram/);
