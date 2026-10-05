@@ -42,9 +42,10 @@ export interface ValidatedWorkspaceFile {
 
 export function validateWorkspaceFile(
   filesRoot: string,
-  inputPath: string
+  inputPath: string,
+  maxBytes: number
 ): ValidatedWorkspaceFile {
-  const { fd, ...validated } = openWorkspaceFile(filesRoot, inputPath);
+  const { fd, ...validated } = openWorkspaceFile(filesRoot, inputPath, maxBytes);
   closeSync(fd);
   return validated;
 }
@@ -52,7 +53,8 @@ export function validateWorkspaceFile(
 /** Keep this descriptor open through upload so a later path replacement cannot change its bytes. */
 export function openWorkspaceFile(
   filesRoot: string,
-  inputPath: string
+  inputPath: string,
+  maxBytes: number
 ): ValidatedWorkspaceFile & { fd: number } {
   const rootPath = resolve(filesRoot);
   const rootMetadata = lstatSync(rootPath);
@@ -77,10 +79,8 @@ export function openWorkspaceFile(
     const opened = fstatSync(fd);
     if (!opened.isFile()) throw new Error('path must be a regular file');
     const size = opened.size;
-    if (size > OWNER_FILE_MAX_UPLOAD_BYTES) {
-      throw new Error(
-        `file exceeds owner messenger upload limit of ${OWNER_FILE_MAX_UPLOAD_BYTES} bytes`
-      );
+    if (size > maxBytes) {
+      throw new Error(`file exceeds the upload limit of ${maxBytes} bytes`);
     }
     return {
       fd,

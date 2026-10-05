@@ -15,7 +15,11 @@ import {
 import { extractChatworkFileIds } from '../connectors/chatwork/index.js';
 import { extractSlackFileIds } from '../connectors/slack/index.js';
 import type { StoredSourceReader } from './stored-source-reader.js';
-import { validateWorkspaceFile, type OwnerFileSender } from './file-delivery.js';
+import {
+  OWNER_FILE_MAX_UPLOAD_BYTES,
+  validateWorkspaceFile,
+  type OwnerFileSender,
+} from './file-delivery.js';
 
 export interface AttachmentActionPorts {
   stored?: StoredSourceReader | null;
@@ -333,7 +337,11 @@ export function createAttachmentActionRegistrations(
           }
           const sender = ports[messenger]?.();
           if (!sender) throw new Error(`${messenger} file delivery port is not configured`);
-          const validated = validateWorkspaceFile(workspaceFilesRoot(ports), path);
+          const validated = validateWorkspaceFile(
+            workspaceFilesRoot(ports),
+            path,
+            OWNER_FILE_MAX_UPLOAD_BYTES
+          );
           const caption = values.caption === undefined ? undefined : String(values.caption);
           const result = await sender.sendFile(validated.path, caption, context.operationId);
           return { path: validated.path, ...result };

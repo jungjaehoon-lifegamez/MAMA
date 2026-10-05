@@ -38,6 +38,10 @@ import { reportSourceActionRegistrations } from '../api/report-source-actions.js
 import { trelloActionRegistrations } from '../api/trello-actions.js';
 import { driveActionRegistrations } from '../api/drive-actions.js';
 import {
+  driveDeliveryActionRegistrations,
+  type DriveDeliveryPorts,
+} from '../api/drive-delivery.js';
+import {
   minimalWorkActionRegistrations,
   workListActionRegistrations,
 } from '../api/work-actions.js';
@@ -85,6 +89,7 @@ const OWNER_ACTIONS = [
   'deliver.telegram.file',
   'deliver.discord.file',
   'deliver.slack.file',
+  'deliver.drive.file',
 ] as const;
 
 export interface HostToolDefinition {
@@ -107,6 +112,8 @@ export interface ActionSurfaceOptions {
   reportSseClients?: Set<ServerResponse>;
   wikiPorts?: WikiPorts;
   attachmentPorts?: AttachmentActionPorts;
+  /** Large-file delivery to the owner's Drive folder; absent unless delivery.drive is configured. */
+  driveDelivery?: Omit<DriveDeliveryPorts, 'ownerPrincipalId'>;
   /** Jev, the agent's filter for candidates it should not read whole; absent unless enabled. */
   judge?: JudgePorts;
   /** The owner conversation by time span; absent where no owner mailbox exists. */
@@ -230,6 +237,12 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
         ? {}
         : { downloadsDir: options.attachmentPorts.downloadsDir }),
     }),
+    ...(options.driveDelivery === undefined
+      ? []
+      : driveDeliveryActionRegistrations({
+          ...options.driveDelivery,
+          ownerPrincipalId: options.ownerPrincipalId,
+        })),
     ...workListActionRegistrations({ knowledge: options.knowledge, timeZone: options.timeZone }),
     ...minimalWorkActionRegistrations({
       knowledge: options.knowledge,
@@ -311,6 +324,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
         | 'discord'
         | 'slack'
         | undefined;
+      if (name === 'deliver.drive.file') return options.driveDelivery !== undefined;
       return messenger === undefined || options.attachmentPorts?.[messenger] !== undefined;
     }),
   };

@@ -33,6 +33,20 @@ delivery:
 
 Every delivery route must name an enabled gateway with an allowlisted owner destination. A bad route stops daemon startup instead of sending through another gateway.
 
+A file over the messengers' 50 MB limit can go to a Google Drive folder instead (`deliver.drive.file`, up to 2 GiB, through the gws CLI the Drive reader uses). Name the folder and who may read each delivered file; without this section the action is not offered:
+
+```yaml
+delivery:
+  drive:
+    folder: 'drive-folder-id'
+    readers:
+      - domain: example.com # everyone in a Workspace domain
+      - group: team@example.com # or a Google group
+      - user: someone@example.com # or one account
+```
+
+Readers are set on each file as it is sent, so changing the list affects later files only, and each receipt names exactly who can read that file. No public link is made, and the folder itself is shared with no one. A retry of the same operation returns the file already sent instead of uploading it again; the receipt carries the link, size, md5 and sha256.
+
 The owner turn names the output format for its destination: Telegram uses the supported HTML tag subset and no Markdown, Discord uses Markdown, and Slack uses mrkdwn. Direct replies use the messenger that received the message; scheduled reports and `[notify]` results use their configured route.
 
 ## Attachments and replies
