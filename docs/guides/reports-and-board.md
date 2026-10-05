@@ -53,15 +53,16 @@ reports:
 A full report reads the complete open `work.list` pipeline, `schedule.upcoming` (14 days by
 default) and `source.recent`: the last 24 hours when you ask for it in chat, or since the previous
 full report for a scheduled one (24 hours for the first). Recent source lines carry references that can be opened with
-`source.read`; a source whose last collection failed is listed with its error. The report names work under each stage,
-lists every item waiting for an owner decision, and compares deadlines with
+`source.read`; a source whose last collection failed is listed with its error. The report
+lists every item waiting for an owner decision and compares deadlines with
 calendar events and holidays. When you have given rules in chat about how reports
 are ordered or worded, the report follows them. Otherwise it has five parts: key
 situation today, needs a response, needs a decision, pipeline, and next actions,
-with the owner schedule under key situation today. Either way every open item is
-named once under its stage, and the board's pipeline has one row for each. An empty
-activity window is reported plainly, and a collection failure is never described as
-no change.
+with the owner schedule under key situation today. The board's pipeline has one row
+for every open item, so the report names open items by their importance to you rather
+than all of them. An item past its deadline is settled in the report: recorded as done
+or cancelled when it ended, or given its new deadline when it continues. An empty activity
+window is reported plainly, and a collection failure is never described as no change.
 
 Full reports also rewrite all four board sections. Reminders read the open
 pipeline (and the calendar when the session has not read it today), update only
