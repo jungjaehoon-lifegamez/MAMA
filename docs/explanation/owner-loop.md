@@ -59,7 +59,8 @@ or goes alone five minutes later when no delta comes first. After three attempts
 logs the batch as lost. Messages more than
 six hours old when they arrive are not delivered as live deltas.
 
-Scheduled full reports default to 08:00, 13:00 and 18:00 Asia/Seoul. Hourly reminders run from
+Scheduled full reports default to 08:00, 13:00 and 18:00 in the configured `timezone`, which
+defaults to the machine's zone. Hourly reminders run from
 09:00 through 21:00, with a full report taking precedence in a matching hour. The scheduler
 records an hour as sent only after delivery succeeds. See
 [reports and board](../guides/reports-and-board.md) for operation and verification.
@@ -73,10 +74,12 @@ the owner decided, and what was missed and learned. See [wiki](../guides/wiki.md
 ## Learn from the next result
 
 Rules that always apply belong in the owner policy file, which the agent holds in every session.
-Other corrections are saved as scoped lessons. For an owner message or a delta's notify turn, the
-runtime searches memory with the incoming text and shows up to three matching lessons,
-preferences or constraints, marked as advice rather than facts, and not repeated in the same
-session on the same day. The agent decides whether they apply.
+Other corrections are saved as scoped lessons. For an owner message, a delta's notify turn and its
+record turn, the runtime searches memory with the turn's text and shows up to three matching
+lessons, preferences, constraints or workflows, marked as advice rather than facts, and not
+repeated in the same session on the same day. Record turns and the full-report procedure also list
+every rule the owner gave in chat, by when it applies, for the agent to read. The agent decides
+whether they apply.
 
 A saved lesson is evidence of storage. Learning requires a changed result on the next related
 request, no spillover into an unrelated request, and persistence in a fresh session or after

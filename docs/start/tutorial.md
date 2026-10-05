@@ -6,26 +6,22 @@ nav_order: 1
 
 # Your first day with MAMA
 
-This walkthrough builds MAMA OS from source, connects Telegram and one work source, and shows
+This walkthrough installs MAMA OS, connects Telegram and one work source, and shows
 where to inspect the results. Examples use fictional work and synthetic identifiers. This walkthrough uses Telegram;
 Discord and Slack work the same way. See the [messengers guide](../guides/messengers.md).
 
-## 1. Install dependencies and build
+## 1. Install
 
-Use Node.js 22.13 or later, pnpm, and an authenticated Claude or Codex CLI. From the repository
-root, type:
+Use Node.js 22.13 or later and an authenticated Claude or Codex CLI. Type:
 
 ```bash
 node --version
-pnpm install
-pnpm build
+npm install -g @jungjaehoon/mama-os
+mama
 ```
 
-For this unreleased rebuild, run the command from the checkout:
-
-```bash
-node packages/standalone/dist/cli/index.js
-```
+From a checkout, run `pnpm install` and `pnpm build`, then
+`node packages/standalone/dist/cli/index.js` in place of `mama`.
 
 **You should see:** the `mama` usage line listing `init`, `secret`, `daemon`, `replay`, `status`,
 and `stop`.
@@ -150,9 +146,10 @@ next report follows it without a restart. There is no report
 command in the current CLI; ask for the full report in the owner chat in your own words, or leave
 the daemon running and wait for the next source change or report time.
 
-**You should see:** a Telegram notification summarizing a new change, and a scheduled report with
-sections such as briefing, actions needed, decisions, and pipeline. These are example shapes, not
-guaranteed output.
+**You should see:** a Telegram notification summarizing a new change, and a scheduled report in
+the order your report rules set (five parts by default: key situation today, needs a response,
+needs a decision, pipeline, next actions), with the board's briefing, actions needed, decisions and
+pipeline rewritten. These are example shapes, not guaranteed output.
 
 **Check:** compare a notification with the source message and open the viewer board to see the
 updated work. Check Telegram delivery and the daemon log for the scheduled report.

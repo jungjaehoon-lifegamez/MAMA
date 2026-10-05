@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.65.0] / mama-core [6.0.0] - 2026-10-05
+
+The owner's rules reach every record turn and every full report. A full report follows the
+owner's order for reports, its board pipeline has every open item with its due date, and a turn
+states the weekday. mama-core 6.0.0 removes modules no consumer used and lets a consumer search
+with its own embedder or none. The package changelogs list every change.
+
+### Added
+
+- Record orders and the full-report procedure carry an index of the owner's rules, and the agent
+  opens the ones that apply before it writes.
+- `recallMemory` takes the consumer's embedder; one that answers null searches by text only
+  (mama-core).
+
+### Changed
+
+- The full report follows the owner's rules for its order and wording, names open items by
+  importance, settles items past their deadline, and builds the board pipeline from every open
+  item.
+- A turn's time line states the year, weekday and time in the owner's zone.
+
+### Removed
+
+- mama-core 6.0.0: the learned ranker and `rerankWithLearned`, the search feedback store, the
+  channel summary stores, the memory bootstrap, the memory audit acknowledgement and the post-tool
+  handler.
+
+### Fixed
+
+- Items with an exact due time show their due day on the board pipeline.
+- The daily page and owner corrections are saved on their first call.
+
+### Documentation
+
+- `npm install -g @jungjaehoon/mama-os` is the default install; a checkout build is for
+  contributors.
+- The owner action reference lists all 39 owner grants, and the guides give the daily page's month
+  folder, the report time zone, the `workflow` memory kind, and the turns that recall lessons and
+  list the owner's rules.
+
 ## mama-os [0.64.0] / mama-core [5.5.0] - 2026-10-05
 
 Memory search finds Korean and Japanese words with a particle attached or inside a sentence
