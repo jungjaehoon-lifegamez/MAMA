@@ -575,7 +575,6 @@ const memorySearchSchema: ActionSchemaObject = {
       description: 'Require lexical query support, e.g. true.',
     },
     diagnostics: { type: 'boolean', description: 'Include search diagnostics, e.g. true.' },
-    rerankWithLearned: { type: 'boolean', description: 'Apply the learned ranker, e.g. true.' },
     useReranking: { type: 'boolean', description: 'Allow host-provided reranking, e.g. true.' },
   },
 };
@@ -1166,7 +1165,7 @@ export function coreActionRegistrations(
       contract: {
         name: 'memory.search',
         summary:
-          'Search or list memory records under the caller authority. Omitted scopes read the admitted corpus; explicit scopes must be a subset of it. With a query this is the semantic recall path (vector + lexical fusion, learned ranker when enabled), each hit lists the records its stated links reach (links: id, topic, relation, reason, corrected_by), and a result reached through a link names the hit it came from (related_to), the relation (graph_source), the reason (edge_reason) and any correction (edge_corrected_by); a hit that is one revision of a work item names it (work_item: commitment_id, revision, head_revision), and an earlier revision can rank above the head that corrected it, so open the head before answering from it; without one it is the exact topic-prefix ledger read.',
+          'Search or list memory records under the caller authority. Omitted scopes read the admitted corpus; explicit scopes must be a subset of it. With a query this is the semantic recall path (vector + lexical fusion), each hit lists the records its stated links reach (links: id, topic, relation, reason, corrected_by), and a result reached through a link names the hit it came from (related_to), the relation (graph_source), the reason (edge_reason) and any correction (edge_corrected_by); a hit that is one revision of a work item names it (work_item: commitment_id, revision, head_revision), and an earlier revision can rank above the head that corrected it, so open the head before answering from it; without one it is the exact topic-prefix ledger read.',
         inputSchema: memorySearchSchema,
         examples: [
           {
@@ -1193,7 +1192,6 @@ export function coreActionRegistrations(
           topicPrefix?: string;
           minLexicalSupport?: boolean;
           diagnostics?: boolean;
-          rerankWithLearned?: boolean;
           useReranking?: boolean;
         };
         const scopes = boundReadScopesFor(context.access, query.scopes);
@@ -1223,7 +1221,6 @@ export function coreActionRegistrations(
           topicPrefix: query.topicPrefix,
           minLexicalSupport: query.minLexicalSupport,
           diagnostics: query.diagnostics,
-          rerankWithLearned: query.rerankWithLearned,
           useReranking: query.useReranking,
           ...(runner?.() ? { runner: runner() } : {}),
           scopes,

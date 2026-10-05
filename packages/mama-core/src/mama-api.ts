@@ -51,11 +51,6 @@ import {
   buildProfile as buildProfileInAdapter,
   ingestMemory as ingestMemoryInAdapter,
   ingestConversation as ingestConversationInAdapter,
-  buildMemoryBootstrap as buildMemoryBootstrapInAdapter,
-  createAuditAck,
-  recordMemoryAudit as recordMemoryAuditInAdapter,
-  upsertChannelSummary as upsertChannelSummaryInAdapter,
-  getChannelSummary as getChannelSummaryInAdapter,
 } from './memory/api.js';
 import {
   createAuditFinding as createAuditFindingInAdapter,
@@ -170,7 +165,6 @@ interface SearchResult {
       expanded_count: number;
       sources: Record<string, number>;
     } | null;
-    ranker: Record<string, unknown> | null;
   };
 }
 
@@ -181,7 +175,6 @@ export interface SuggestOptions {
   limit?: number;
   threshold?: number;
   format?: 'full' | 'teaser' | 'brief' | 'markdown';
-  rerankWithLearned?: boolean;
   recency_boost?:
     | boolean
     | {
@@ -930,20 +923,6 @@ async function createAuditFinding(
 // Facade wrappers: the stores below take an explicit adapter as their first
 // argument; the `mama` surface keeps its published (input) signatures and
 // resolves the ambient adapter at this boundary instead.
-async function upsertChannelSummary(
-  input: Parameters<typeof upsertChannelSummaryInAdapter>[1]
-): Promise<void> {
-  await initDB();
-  return upsertChannelSummaryInAdapter(getAdapter(), input);
-}
-
-async function getChannelSummary(
-  channelKey: string
-): Promise<Awaited<ReturnType<typeof getChannelSummaryInAdapter>>> {
-  await initDB();
-  return getChannelSummaryInAdapter(getAdapter(), channelKey);
-}
-
 async function listOpenAuditFindings(): Promise<
   Awaited<ReturnType<typeof listOpenAuditFindingsInAdapter>>
 > {
@@ -1033,20 +1012,6 @@ async function ingestConversation(
 ): Promise<Awaited<ReturnType<typeof ingestConversationInAdapter>>> {
   await initDB();
   return ingestConversationInAdapter(getAdapter(), input);
-}
-
-async function buildMemoryBootstrap(
-  params: Parameters<typeof buildMemoryBootstrapInAdapter>[1]
-): Promise<Awaited<ReturnType<typeof buildMemoryBootstrapInAdapter>>> {
-  await initDB();
-  return buildMemoryBootstrapInAdapter(getAdapter(), params);
-}
-
-async function recordMemoryAudit(
-  input: Parameters<typeof recordMemoryAuditInAdapter>[1]
-): Promise<Awaited<ReturnType<typeof recordMemoryAuditInAdapter>>> {
-  await initDB();
-  return recordMemoryAuditInAdapter(getAdapter(), input);
 }
 
 async function beginModelRun(
@@ -1162,15 +1127,6 @@ export function createMamaApi(adapter: DatabaseInstance) {
       ingestMemoryInAdapter(adapter, input),
     ingestConversation: (input: Parameters<typeof ingestConversationInAdapter>[1]) =>
       ingestConversationInAdapter(adapter, input),
-    buildMemoryBootstrap: (params: Parameters<typeof buildMemoryBootstrapInAdapter>[1]) =>
-      buildMemoryBootstrapInAdapter(adapter, params),
-    createAuditAck: (input: Parameters<typeof createAuditAck>[0]) => createAuditAck(input),
-    recordMemoryAudit: (input: Parameters<typeof recordMemoryAuditInAdapter>[1]) =>
-      recordMemoryAuditInAdapter(adapter, input),
-    upsertChannelSummary: (input: Parameters<typeof upsertChannelSummaryInAdapter>[1]) =>
-      upsertChannelSummaryInAdapter(adapter, input),
-    getChannelSummary: (channelKey: Parameters<typeof getChannelSummaryInAdapter>[1]) =>
-      getChannelSummaryInAdapter(adapter, channelKey),
     listAuditFindings: () => listOpenAuditFindingsInAdapter(adapter),
     listOpenAuditFindings: () => listOpenAuditFindingsInAdapter(adapter),
     createAuditFinding: (input: Parameters<typeof createAuditFindingInAdapter>[1]) =>
@@ -1255,11 +1211,6 @@ const mama = {
   buildProfile,
   ingestMemory,
   ingestConversation,
-  buildMemoryBootstrap,
-  createAuditAck,
-  recordMemoryAudit,
-  upsertChannelSummary,
-  getChannelSummary,
   listAuditFindings: listOpenAuditFindings,
   listOpenAuditFindings,
   createAuditFinding,
@@ -1298,11 +1249,6 @@ export {
   buildProfile,
   ingestMemory,
   ingestConversation,
-  buildMemoryBootstrap,
-  createAuditAck,
-  recordMemoryAudit,
-  upsertChannelSummary,
-  getChannelSummary,
   listOpenAuditFindings,
   createAuditFinding,
   getMemoryProvenance,
@@ -1330,17 +1276,11 @@ export default mama;
 
 // CommonJS compatibility - require('@jungjaehoon/mama-core/mama-api') exposes the
 // ambient `mama` facade methods at top level. Merge instead of replacing
-// module.exports: the compiled `exports.X = X` named exports (suggestInAdapter,
-// saveCheckpointInAdapter, ...) are how api/catalog.ts reaches them from dist.
-// Getter-only named exports (createAuditAck) keep their getter —
-// it already returns the same function the facade carries.
+// module.exports, so the compiled named exports stay beside them.
 if (typeof module !== 'undefined' && module.exports) {
   const target = module.exports as Record<string, unknown>;
   for (const [key, value] of Object.entries(mama)) {
-    const descriptor = Object.getOwnPropertyDescriptor(target, key);
-    if (!descriptor || descriptor.writable) {
-      target[key] = value;
-    }
+    target[key] = value;
   }
   target.default = mama;
   target.mama = mama;

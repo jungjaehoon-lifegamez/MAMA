@@ -92,12 +92,7 @@ export {
   recallMemory,
   buildProfile,
   ingestMemory,
-  buildMemoryBootstrap,
-  createAuditAck,
-  recordMemoryAudit,
   ingestConversation,
-  upsertChannelSummary,
-  getChannelSummary,
   type MemoryRetirementStatus,
   type ReadMemoryRecordsOptions,
 } from './memory/api.js';
@@ -115,7 +110,6 @@ export {
   type WorkGraphQuery,
   type WorkReference,
 } from './knowledge/index.js';
-export { queryRelevantTruth } from './memory/truth-store.js';
 export { createAuditFinding, listOpenAuditFindings } from './memory/finding-store.js';
 export {
   appendMemoryEvent,
@@ -347,10 +341,6 @@ export * from './knowledge/case-timeline-range.js';
 export * from './knowledge/observations.js';
 export * from './identity/principal-repository.js';
 export * from './knowledge/question-type.js';
-export * from './knowledge/feedback-store.js';
-export * from './knowledge/ranker-features.js';
-export * from './knowledge/ranker-trainer.js';
-export * from './knowledge/ranker-rescore.js';
 export * from './knowledge/search-quality.js';
 export * from './registry/store.js';
 export * from './registry/record-identity.js';

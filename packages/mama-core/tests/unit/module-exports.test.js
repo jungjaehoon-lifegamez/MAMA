@@ -25,11 +25,6 @@ describe('Story M1.1: Core Module Exports', () => {
         'buildProfile',
         'ingestMemory',
         'ingestConversation',
-        'buildMemoryBootstrap',
-        'createAuditAck',
-        'recordMemoryAudit',
-        'upsertChannelSummary',
-        'getChannelSummary',
         'listOpenAuditFindings',
         'getMemoryProvenance',
         'listMemoriesByEnvelopeHash',
@@ -63,6 +58,32 @@ describe('Story M1.1: Core Module Exports', () => {
       }
       for (const exportName of namedFunctionExports) {
         expect(typeof mama[exportName]).toBe('function');
+      }
+    });
+
+    it('no longer exports what W11 removed (2026-10-05): no caller, no live rows', async () => {
+      const mama = await import('../../src/mama-api.js');
+      const core = await import('../../src/index.js');
+      for (const removed of [
+        'buildMemoryBootstrap',
+        'createAuditAck',
+        'recordMemoryAudit',
+        'upsertChannelSummary',
+        'getChannelSummary',
+      ]) {
+        expect(mama[removed]).toBeUndefined();
+        expect(mama.default[removed]).toBeUndefined();
+        expect(core[removed]).toBeUndefined();
+      }
+      for (const removed of [
+        'queryRelevantTruth',
+        'recordSearchFeedback',
+        'isSearchRankerEnabled',
+        'rescoreSearchResults',
+        'scoreWithRankerModel',
+        'SEARCH_RANKER_FEATURE_SET_VERSION',
+      ]) {
+        expect(core[removed]).toBeUndefined();
       }
     });
   });
