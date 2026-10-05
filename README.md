@@ -59,15 +59,17 @@ the rest are gathered into an hourly reminder between 09:00 and 21:00.
 
 ## Getting started
 
-You need Node.js 22.13+, pnpm, a logged-in `claude` or `codex` CLI, and a Telegram bot for your
-owner chat. This branch is an unreleased rebuild, so build it from the checkout:
+You need Node.js 22.13+, a logged-in `claude` or `codex` CLI, and a Telegram bot for your owner
+chat (Discord and Slack work too).
 
 ```bash
-pnpm install
-pnpm build
-node packages/standalone/dist/cli/index.js init    # asks for settings; tokens are typed at hidden prompts
-~/.mama/start.sh                                   # or the launchctl command init prints
+npm install -g @jungjaehoon/mama-os
+mama init          # asks for settings; tokens are typed at hidden prompts
+~/.mama/start.sh   # or the launchctl command init prints
 ```
+
+To run from a checkout instead, run `pnpm install` and `pnpm build`, then use
+`node packages/standalone/dist/cli/index.js` wherever the guides say `mama`.
 
 Then send your bot a message. Setup is done when MAMA answers you, not when the process is
 running. The [first-day tutorial](docs/start/tutorial.md) walks through connecting a source,
@@ -149,24 +151,24 @@ Details: [Security guide](docs/guides/security.md), [Viewer](docs/guides/viewer.
 
 ## Packages
 
-These are the current package manifests for the unreleased rebuild.
+These are the current package versions.
 
 | Package                                                     | Role                             | Version |
 | ----------------------------------------------------------- | -------------------------------- | ------- |
-| [MAMA OS](packages/standalone/README.md)                    | Owner agent and `mama` command   | 0.64.0  |
-| [mama-core](packages/mama-core/README.md)                   | Shared engine and public exports | 5.5.0   |
+| [MAMA OS](packages/standalone/README.md)                    | Owner agent and `mama` command   | 0.65.0  |
+| [mama-core](packages/mama-core/README.md)                   | Shared engine and public exports | 6.0.0   |
 | [Public MCP server](packages/mcp-server/README.md)          | Development memory over stdio    | 2.4.0   |
 | [Claude Code plugin](packages/claude-code-plugin/README.md) | Development commands and hooks   | 2.1.5   |
 
 ## Status
 
-| Stage                  | What                                                                     | Status                            |
-| ---------------------- | ------------------------------------------------------------------------ | --------------------------------- |
-| The record             | Originals kept, work history with evidence, local search                 | done                              |
-| One owner agent        | Answers, reports, board, wiki, guidance and workflows on Claude or Codex | done, live checks in progress     |
-| Sources and messengers | The sources above; Telegram, Discord and Slack                           | restored in this release          |
-| History import         | Import past messages per source and replay them day by day               | script only; product command next |
-| Team members           | Verified people share the same record within their own permissions       | after the owner flow              |
+| Stage                  | What                                                                     | Status                         |
+| ---------------------- | ------------------------------------------------------------------------ | ------------------------------ |
+| The record             | Originals kept, work history with evidence, local search                 | done                           |
+| One owner agent        | Answers, reports, board, wiki, guidance and workflows on Claude or Codex | done, live checks in progress  |
+| Sources and messengers | The sources above; Telegram, Discord and Slack                           | restored in this release       |
+| History import         | Import past messages per source and replay them day by day               | `mama backfill`, `mama replay` |
+| Team members           | Verified people share the same record within their own permissions       | after the owner flow           |
 
 What still needs live confirmation is listed in the [changelog](CHANGELOG.md) under known issues.
 

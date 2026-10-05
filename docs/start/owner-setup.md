@@ -10,24 +10,19 @@ MAMA OS keeps work history, answers the owner on Telegram, and publishes a board
 reports. For coding-session decisions and checkpoints, use the separate
 [Claude Code plugin](claude-code-plugin.md).
 
-## Build the current source and sign in
+## Install and sign in
 
-These steps describe the rebuild source. Use Node.js 22.13 or newer, pnpm, and an
-authenticated Claude or Codex CLI on the machine that will run MAMA. From the
-repository root:
+Use Node.js 22.13 or newer and an authenticated Claude or Codex CLI on the machine
+that will run MAMA:
 
 ```bash
 node --version
-pnpm install
-pnpm build
+npm install -g @jungjaehoon/mama-os
 ```
 
-Run the built CLI from that checkout with
-`node packages/standalone/dist/cli/index.js`. The guides use `mama` as the short
-command name; substitute this built-CLI command when working from source.
-
-The npm package is `@jungjaehoon/mama-os`. Until a release carries this rebuild, use
-the source build.
+This installs the `mama` command. To work from a checkout instead, run `pnpm install`
+and `pnpm build` at the repository root and use
+`node packages/standalone/dist/cli/index.js` wherever the guides say `mama`.
 
 For Claude, run `claude auth login`. For Codex, authenticate the managed home:
 

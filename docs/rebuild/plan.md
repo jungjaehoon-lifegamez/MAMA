@@ -1,6 +1,6 @@
 # MAMA rebuild — carry, keep, drop
 
-Status: operating layer in Kagemusha's structure is live; Trello and Drive read live (W33, W34); after a restart, C1 passed once (production scope), C3 twice and C4's board matched the ledger; C2 nearly passed; C5 still open, C6 passes (W3, W4's search half); Drive delivery and the Korean and Japanese trigram index live (#409, #411) · 2026-10-05
+Status: operating layer in Kagemusha's structure is live; Trello and Drive read live (W33, W34); after a restart, C1 passed once (production scope) and C3 twice; C4 passed on a requested full report that follows the owner's report rules, with a board pipeline equal to the ledger (#420–#424); C2 nearly passed; C5 still open; C6 passes (W3, W4's search half); the owner's rules reach record turns and full reports (#414, #421) · 2026-10-05
 Purpose: [INTENT.md](../../INTENT.md) v8. This file is a work list. It edits rows in place; it
 does not grow dated sections. Evidence and open acceptance: [checks.md](checks.md).
 Reports and backend parity: [R1–R10](owner-reports.md); replay: [window pipeline](window-pipeline.md).
@@ -142,7 +142,9 @@ questions on real data, asked first; only a wrong or missing answer names what t
    needs a correction that changes the next related request, leaves an unrelated one alone and
    survives a restart (the C1 scope is a ready case: production only, lodging stays in status
    questions).
-2. C4: the next scheduled full report's text against the ledger (the board already matched).
+2. The procedures fixed on 10-05 at their next use: tonight's daily publish and the next owner
+   correction on their first call (#415, #416), and whether record turns open the rule bodies
+   their index lists (0 of 14 so far).
 3. Search: the first owner question through the trigram index (#411, after #407 and #410 closed
    the other wrong answers named here); paraphrases that share no word with the case they mean
    are a vector-channel miss.
