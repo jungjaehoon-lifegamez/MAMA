@@ -5,9 +5,17 @@ import {
   calendarValueKind,
   epochForCalendarValue,
   localDateKey,
+  localNow,
 } from '../../src/runtime/timezone.js';
 
 describe('owner timezone setting', () => {
+  it('states the date, weekday and time of an instant where the owner is', () => {
+    expect(localNow(Date.parse('2026-10-05T12:18:00Z'), 'Asia/Seoul')).toBe('2026-10-05 Mon 21:18');
+    // Past local midnight the date and the weekday both move.
+    expect(localNow(Date.parse('2026-10-04T15:30:00Z'), 'Asia/Seoul')).toBe('2026-10-05 Mon 00:30');
+    expect(localNow(Date.parse('2026-10-04T15:30:00Z'), 'UTC')).toBe('2026-10-04 Sun 15:30');
+  });
+
   it('converts local wall times and reads changes through one holder', () => {
     const setting = createTimeZoneSetting('America/Los_Angeles');
     expect(epochAtLocalDateTime('2026-09-27T00:00:00', setting.get())).toBe(

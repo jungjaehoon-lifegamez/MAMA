@@ -1,6 +1,6 @@
 import type { JsonValue } from '@jungjaehoon/mama-core/knowledge';
 import type { OwnerRuntimeBackend } from './owner-system-prompt.js';
-import { epochAtLocalDateTime, localStamp } from './timezone.js';
+import { epochAtLocalDateTime, localNow, localStamp } from './timezone.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import { OPEN_WORK_STATUSES } from '../api/work-actions.js';
 import { createHash } from 'node:crypto';
@@ -36,7 +36,7 @@ export interface Lesson {
 }
 
 function currentTime(now: Date, timeZone: string): string {
-  return `Current time: ${now.toLocaleString('ko-KR', { timeZone })} (${timeZone})`;
+  return `Current time: ${localNow(now.getTime(), timeZone)} (${timeZone})`;
 }
 
 function oneLine(value: string): string {
@@ -297,7 +297,7 @@ export function ownerMessageOrder(
 ): string {
   const text = textField(payloadObject(input.payload)?.text);
   return [
-    `[owner_message] ${input.messenger} · ${localStamp(new Date(input.occurredAt).toISOString(), options.timeZone)} (${options.timeZone})`,
+    `[owner_message] ${input.messenger} · ${localNow(input.occurredAt, options.timeZone)} (${options.timeZone})`,
     lessonsBlock(lessons),
     text,
     ...attachmentLines(input.payload),
@@ -364,7 +364,7 @@ export function deltaNotifyOrder(
       `[${localStamp(line.sourceAt, options.timeZone)}] ${line.author}: ${clip(line.text, DELTA_LINE_LIMIT)}`
   );
   return [
-    `[delta ${deltaChannelLabel(lines, channelKey)} ~${localStamp(now.toISOString(), options.timeZone)}] (${options.timeZone})`,
+    `[delta ${deltaChannelLabel(lines, channelKey)} ~${localNow(now.getTime(), options.timeZone)}] (${options.timeZone})`,
     lessonsBlock(lessons),
     wrapUntrustedContent('source_delta', rendered.join('\n')),
     'Decide whether the owner needs to hear this now under the owner policy. Reply with [notify] and the message the owner receives, or with [ack]. A record order follows; do not record work in this turn.',

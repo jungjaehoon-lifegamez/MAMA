@@ -111,7 +111,7 @@ describe('turn orders', () => {
     const block = sessionStartBlock({ exchanges: [], decisions: [] }, now, {
       timeZone: 'UTC',
     });
-    expect(block.split('\n')[1]).toMatch(/^Current time: /);
+    expect(block.split('\n')[1]).toBe('Current time: 2026-09-29 Tue 01:40 (UTC)');
     expect(block).not.toContain('Earlier owner messages');
   });
 
@@ -161,7 +161,9 @@ describe('turn orders', () => {
       [{ topic: 'report style', summary: 'point form', ownerRule: true }],
       { timeZone: 'Asia/Seoul' }
     );
-    expect(order.split('\n')[0]).toBe('[owner_message] telegram · 09-29 10:40 (Asia/Seoul)');
+    expect(order.split('\n')[0]).toBe(
+      '[owner_message] telegram · 2026-09-29 Tue 10:40 (Asia/Seoul)'
+    );
     expect(order).toContain('- [owner rule] report style: point form');
     expect(order).toContain('full report please');
     expect(order).toContain('attachment: name="a.pdf" path="/downloads/a.pdf" size=3 bytes');
@@ -209,7 +211,9 @@ describe('turn orders', () => {
       [],
       { timeZone: 'Asia/Seoul' }
     );
-    expect(order.split('\n')[0]).toBe('[delta chat:client room ~09-29 10:40] (Asia/Seoul)');
+    expect(order.split('\n')[0]).toBe(
+      '[delta chat:client room ~2026-09-29 Tue 10:40] (Asia/Seoul)'
+    );
     expect(order).toContain('<<<UNTRUSTED-CONTENT source=source_delta>>>');
     expect(order).toContain(`${'x'.repeat(499)}…`);
     expect(order).toContain(
