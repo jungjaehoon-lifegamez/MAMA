@@ -1,0 +1,94 @@
+{
+  "_note": "Synthetic Korean and Japanese text for the trigram word search tests (the pre-commit guard keeps Korean out of .ts files). It holds no owner data.",
+  "words": {
+    "query": "피드백을 4번이나 받은 작업 건, 資料の提出はいつですか ab_1234_テスト ありがとう",
+    "expected": [
+      {
+        "index": "decisions_trigram",
+        "forms": ["피드백을", "피드백", "피드"]
+      },
+      {
+        "index": "decisions_fts",
+        "forms": ["4번이나", "4번이", "4번"]
+      },
+      {
+        "index": "decisions_trigram",
+        "forms": ["받은"]
+      },
+      {
+        "index": "decisions_trigram",
+        "forms": ["작업"]
+      },
+      {
+        "index": "decisions_trigram",
+        "forms": ["資料"]
+      },
+      {
+        "index": "decisions_trigram",
+        "forms": ["提出"]
+      },
+      {
+        "index": "decisions_fts",
+        "forms": ["ab"]
+      },
+      {
+        "index": "decisions_fts",
+        "forms": ["1234"]
+      },
+      {
+        "index": "decisions_trigram",
+        "forms": ["テスト"]
+      },
+      {
+        "index": "decisions_trigram",
+        "forms": ["ありがとう"]
+      }
+    ]
+  },
+  "records": {
+    "attached": "클라이언트가 피드백을 보냈다",
+    "rejectStart": "반려 처리 완료",
+    "rejectEnd": "검토 결과 반려",
+    "japanese": "資料を提出いたします",
+    "repeated": "작업 작업을 작업이 작업에서 작업으로 작업만",
+    "long": "주간 정리: 고객 피드백 4회 뒤 완료. 이어 일정 조정과 납품 확인, 담당 변경, 다음 달 계획 수립, 비용 정산까지 마무리했고 기록과 회신을 모두 남겼다. 이어 일정 조정과 납품 확인, 담당 변경, 다음 달 계획 수립, 비용 정산까지 마무리했고 기록과 회신을 모두 남겼다. 이어 일정 조정과 납품 확인, 담당 변경, 다음 달 계획 수립, 비용 정산까지 마무리했고 기록과 회신을 모두 남겼다. 이어 일정 조정과 납품 확인, 담당 변경, 다음 달 계획 수립, 비용 정산까지 마무리했고 기록과 회신을 모두 남겼다. 이어 일정 조정과 납품 확인, 담당 변경, 다음 달 계획 수립, 비용 정산까지 마무리했고 기록과 회신을 모두 남겼다. 이어 일정 조정과 납품 확인, 담당 변경, 다음 달 계획 수립, 비용 정산까지 마무리했고 기록과 회신을 모두 남겼다.",
+    "short": "4회 완료",
+    "added": "새 기록 문서화"
+  },
+  "queries": {
+    "bareWord": "클라이언트",
+    "particleOnTwoCharacters": "반려를",
+    "japaneseSentence": "資料の提出はいつ",
+    "countWithParticle": "피드백이 4회였던 작업",
+    "added": "문서화",
+    "updated": "갱신됨"
+  },
+  "updatedText": "기록 갱신됨",
+  "boundaries": {
+    "records": {
+      "four": "수정 4회 완료",
+      "fourteen": "수정 14회 완료",
+      "jan": "1월 일정 확정",
+      "nov": "11월 일정 확정",
+      "ai": "AI 도입 검토",
+      "email": "email detail 정리"
+    },
+    "queries": {
+      "count": "4회였던",
+      "month": "1월은",
+      "acronym": "AI는"
+    }
+  },
+  "idf": {
+    "visible": {
+      "x": "알파 베타",
+      "y": "감마 정리",
+      "f1": "알파 기록",
+      "f2": "알파 정리",
+      "f3": "알파 확인",
+      "f4": "베타 확인"
+    },
+    "superseded": "기타 기록",
+    "query": "알파 베타 감마"
+  }
+}

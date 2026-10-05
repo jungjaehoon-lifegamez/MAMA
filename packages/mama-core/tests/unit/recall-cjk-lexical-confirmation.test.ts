@@ -10,13 +10,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 // Korean text lives in a fixture: the pre-commit guard keeps it out of .ts files.
-const { longKoreanQuery, particleText } = JSON.parse(
+const { longKoreanQuery, particleText, mixedQuery } = JSON.parse(
   fs.readFileSync(new URL('../fixtures/cjk-short-tokens.json', import.meta.url), 'utf8')
-) as { longKoreanQuery: string; particleText: string };
+) as { longKoreanQuery: string; particleText: string; mixedQuery: string };
 
 const generateEmbeddingMock = vi.fn();
 const vectorSearchMock = vi.fn();
 const fts5SearchMock = vi.fn();
+const wordSearchMock = vi.fn();
 let decisionRows: Array<Record<string, unknown>> = [];
 
 vi.mock('../../src/embedding/embedder.js', () => ({
@@ -45,6 +46,7 @@ vi.mock('../../src/knowledge/search.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/knowledge/search.js')>()),
   vectorSearch: vectorSearchMock,
   fts5Search: fts5SearchMock,
+  wordSearch: wordSearchMock,
 }));
 
 const { getAdapter } = await import('../../src/db-manager.js');
@@ -65,6 +67,7 @@ describe('lexical confirmation for CJK queries', () => {
       }))
     );
     fts5SearchMock.mockResolvedValue([]);
+    wordSearchMock.mockResolvedValue([]);
     decisionRows = [];
   });
 
@@ -75,7 +78,22 @@ describe('lexical confirmation for CJK queries', () => {
       includeRelated: false,
     });
 
-    expect(fts5SearchMock).toHaveBeenCalled();
+    // A Korean query is scored word by word across the trigram and word indexes.
+    expect(wordSearchMock).toHaveBeenCalled();
+  });
+
+  it('keeps the English words of a mixed query in the word index', async () => {
+    const { recallMemory } = await import('../../src/memory/api.js');
+
+    await recallMemory(getAdapter(), mixedQuery, { includeRelated: false });
+
+    // An English word, and the Latin word a hyphen joins to a Korean one.
+    expect(wordSearchMock.mock.calls[0]![1]).toEqual(
+      expect.arrayContaining([
+        { index: 'decisions_fts', forms: ['deploy'] },
+        { index: 'decisions_fts', forms: ['github'] },
+      ])
+    );
   });
 
   it('still skips lexical search for a long English query when vector search returned enough rows', async () => {
@@ -86,6 +104,7 @@ describe('lexical confirmation for CJK queries', () => {
     });
 
     expect(fts5SearchMock).not.toHaveBeenCalled();
+    expect(wordSearchMock).not.toHaveBeenCalled();
   });
 
   it('runs lexical search for an English query whose short tokens are acronyms or versions', async () => {

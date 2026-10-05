@@ -10,5 +10,6 @@
   "singleCharacterQuery": "여러 번 a 5",
   "singleCharacterTokens": ["여러"],
   "longKoreanQuery": "회의 일정 변경 요청이 계속 들어온 프로젝트 사례",
-  "particleText": "고객 QA가 두 번 왔다."
+  "particleText": "고객 QA가 두 번 왔다.",
+  "mixedQuery": "deploy 일정 변경 github-연동"
 }

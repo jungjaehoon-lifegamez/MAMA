@@ -26,9 +26,12 @@ import type { DatabaseInstance } from '../db-manager.js';
 import {
   vectorSearch,
   fts5Search,
+  cjkQueryWords,
   ftsMatchTerms,
   ftsWords,
   RECALL_EXCLUDED_STATUSES,
+  wordSearch,
+  type QueryWord,
 } from '../knowledge/search.js';
 import type { DecisionInput } from '../db-manager.js';
 import { generateEmbedding } from '../embedding/embedder.js';
@@ -1288,19 +1291,44 @@ export async function recallMemory(
     // of the query must match.
     const ftsQuery =
       ftsTokens.length > 0 ? ftsMatchTerms(ftsTokens, 'OR') : ftsMatchTerms(ftsWords(query), 'AND');
+    const lexicalExclusions = options.includeHistory
+      ? undefined
+      : { statuses: [...EXCLUDED_STATUSES], amendments: true };
+    // Korean, Japanese and Chinese words are looked up in the trigram index, where a word matches
+    // with a particle attached or inside a sentence written without spaces; the query's other
+    // tokens stay in the word index, and the records are scored word by word across both.
+    const cjkWords = cjkQueryWords(query);
     // An absent FTS table is already an empty answer inside fts5Search; any other failure is real.
     const ftsResults =
-      ftsQuery === null
-        ? []
-        : await fts5Search(
+      cjkWords.length > 0
+        ? await wordSearch(
             searchAdapter,
-            ftsQuery,
+            [
+              ...cjkWords,
+              // A token joining Latin text to Korean or Japanese ("name-word") keeps its Latin words.
+              ...ftsTokens
+                .flatMap((token) =>
+                  CJK_TEXT.test(token)
+                    ? ftsWords(token).filter(
+                        (part) => !CJK_TEXT.test(part) && characterCount(part) >= 2
+                      )
+                    : [token]
+                )
+                .map((token): QueryWord => ({ index: 'decisions_fts', forms: [token] })),
+            ],
             lexicalLimit,
             options.kind,
-            options.includeHistory
-              ? undefined
-              : { statuses: [...EXCLUDED_STATUSES], amendments: true }
-          );
+            lexicalExclusions
+          )
+        : ftsQuery === null
+          ? []
+          : await fts5Search(
+              searchAdapter,
+              ftsQuery,
+              lexicalLimit,
+              options.kind,
+              lexicalExclusions
+            );
     if (ftsResults.length > 0) {
       const adapter = searchAdapter;
       const fallbackSource: SaveMemoryInput['source'] = {
