@@ -111,7 +111,11 @@ describe('owner standing prompt', () => {
       // Owner 2026-09-29: the owner's report order wins; it was read and not followed on 10-05.
       "Write the report in the order and wording that the owner's rules for reports set",
       'write it in five parts: key situation today (with the owner schedule and holidays); needs a response; needs a decision; pipeline with each stage and item; next actions.',
-      'name every open item once under its stage',
+      'List every item waiting on an owner decision with the decision requested.',
+      // Owner 2026-10-05: open items are named by importance, the board has them all, and an
+      // item past its deadline is settled rather than carried.
+      "The board's pipeline carries every open item, so the report names open items by their importance to the owner, not all of them.",
+      'Settle every item past its deadline instead of carrying it as overdue',
       // A hand-built pipeline on 10-05 left out 19 of 41 open items; work.list pipeline has them all.
       'Build the pipeline section inside the script from work.list pipeline, one row for every open item under its stage',
       // Owner 2026-09-29: the report is a delta on the ledger; the agent finds what it verifies.
