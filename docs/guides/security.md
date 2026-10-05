@@ -164,8 +164,9 @@ What can leave the machine from an owner turn, checked on the Claude backend on
 - The agent writes outward only through owner actions: files to the configured owner
   messengers (`deliver.<messenger>.file`, offered only for an enabled messenger whose
   `file_delivery` is on), files over that limit to the owner's Drive delivery folder
-  (`deliver.drive.file`, readable only by the readers in `delivery.drive.readers`, set
-  per file, with no public link), and
+  (`deliver.drive.file`, shared with the readers in `delivery.drive.readers`, set per
+  file, with no public link; a Workspace default that shares new files with the domain
+  applies as well), and
   the board and wiki, which the viewer serves behind the access controls above. Drive,
   Trello, Chatwork and Slack are read only.
 - Drive is read through the gws CLI and its own credential store (`drive.read`,

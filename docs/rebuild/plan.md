@@ -1,6 +1,6 @@
 # MAMA rebuild — carry, keep, drop
 
-Status: operating layer in Kagemusha's structure is live; Trello and Drive read live (W33, W34); after a restart, C1 passed once (production scope), C3 twice and C4's board matched the ledger; C2 nearly passed; C5 and C6 still open · 2026-10-05
+Status: operating layer in Kagemusha's structure is live; Trello and Drive read live (W33, W34); after a restart, C1 passed once (production scope), C3 twice and C4's board matched the ledger; C2 nearly passed; C5 and C6 still open; Drive delivery and the Korean and Japanese trigram index live (#409, #411) · 2026-10-05
 Purpose: [INTENT.md](../../INTENT.md) v8. This file is a work list. It edits rows in place; it
 does not grow dated sections. Evidence and open acceptance: [checks.md](checks.md).
 Reports and backend parity: [R1–R10](owner-reports.md); replay: [window pipeline](window-pipeline.md).
@@ -75,7 +75,7 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
 | `packages/core-conformance`                                                                                                                                          | archive                 | **Pending (W3).** Recreate the second-consumer proof against the packed tarball; this package is not present in the rebuild                                                                                                                                                                                 |
 | `standalone/src/connectors/{framework,chatwork,slack,trello,kagemusha,calendar}`, storage, `source.*` / `work.*` adapters                                            | archive                 | **Carried (W1 slices 1–2)**, trimmed; calendar restored in `ba90c51cb` and collected live                                                                                                                                                                                                                   |
 | `standalone/src/gateways/telegram*`, `message-splitter`, `session-store`, `conversation-record`, native tool policy                                                  | archive                 | **Carried (W1 slices 3–4)**                                                                                                                                                                                                                                                                                 |
-| `standalone/src/api/{report,wiki,attachment}-actions`, `file-delivery`; large-file Drive delivery                                                                    | archive                 | **Carried for reports, wiki and Telegram files.** W8 Drive delivery remains pending                                                                                                                                                                                                                         |
+| `standalone/src/api/{report,wiki,attachment}-actions`, `file-delivery`; large-file Drive delivery                                                                    | archive                 | **Carried for reports, wiki and Telegram files.** W8 Drive delivery carried as `deliver.drive.file` (#409)                                                                                                                                                                                                  |
 | `standalone/ui` and `public/viewer`                                                                                                                                  | archive                 | **Carried (W10).** Viewer pages read the carried actions; history and source detail are available                                                                                                                                                                                                           |
 | Loop assembly (`app.ts` equivalent)                                                                                                                                  | new, Kagemusha shape    | **Implemented (W1).** One owner session on Claude or Codex; the core mailbox's input kinds (owner message, source delta, scheduled, native event) enter through one intake; the host does not classify or choose work. Kagemusha `agent-loop.ts` + `bootstrap.ts` is 1,130 lines; archive `app.ts` is 2,098 |
 | Standing owner policy                                                                                                                                                | new + relocated content | **Implemented in standing text and recalled memory (W5/R2/R3).** Relevant lessons, preferences and constraints reach turns; full C5 acceptance remains open                                                                                                                                                 |
@@ -143,11 +143,12 @@ questions on real data, asked first; only a wrong or missing answer names what t
    survives a restart (the C1 scope is a ready case: production only, lodging stays in status
    questions).
 2. C4: the next scheduled full report's text against the ledger (the board already matched).
-3. Build named by wrong answers: hide `deliver.<messenger>.file` for messengers that are not
-   configured (7404 told the owner Discord and Slack could send files); quote FTS5 terms (a hyphen
-   or date turns into a full scan) and then a CJK bigram index for the C3 search misses.
+3. Search: the first owner question through the trigram index (#411, after #407 and #410 closed
+   the other wrong answers named here); paraphrases that share no word with the case they mean
+   are a vector-channel miss.
 4. W3 then W11: the packed second-consumer test (C6, with search) first, then the core subtraction
-   it guards. W8 waits until the owner needs a file over Telegram's limit.
+   it guards. W8's Drive delivery is live (#409, 7515); its check waits for a delivery bound to a
+   work item.
 5. W23's remaining measures and the W26 replay check. September is not re-imported: live changes
    and corrections complete it (owner, 2026-09-29).
 
