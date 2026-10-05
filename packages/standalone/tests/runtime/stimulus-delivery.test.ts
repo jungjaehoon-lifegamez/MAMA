@@ -770,6 +770,47 @@ describe('one stimulus intake and delivery', () => {
     expect(prompts[1]).not.toContain('cite the card');
   });
 
+  it('keeps the lessons for a retry when the owner rules cannot be read', async () => {
+    const prompts: string[] = [];
+    let reads = 0;
+    const delivery = createDelivery({
+      recordOrders: recordOrders(),
+      lessons: async () => [
+        { id: 'lesson-1', topic: 'cards', summary: 'cite the card', ownerRule: false },
+      ],
+      ownerRules: async () => {
+        reads += 1;
+        if (reads === 1) throw new Error('database is locked');
+        return [{ topic: 'close_wrapup', when: 'when an item is fixed' }];
+      },
+    });
+    await expect(
+      delivery.deliver(
+        recordRow(1, 'card moved'),
+        context((text) => prompts.push(text))
+      )
+    ).rejects.toThrow('database is locked');
+    await delivery.deliver(
+      recordRow(1, 'card moved'),
+      context((text) => prompts.push(text))
+    );
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain('- [learned] cards: cite the card');
+  });
+
+  it('shows an owner rule topic whole, since the agent reads the rule by it', async () => {
+    const topic = `rules/${'long_topic_'.repeat(10)}end`;
+    let prompt = '';
+    await createDelivery({
+      recordOrders: recordOrders(),
+      ownerRules: async () => [{ topic, when: 'when it applies' }],
+    }).deliver(
+      recordRow(1, 'card moved'),
+      context((text) => (prompt = text))
+    );
+    expect(prompt).toContain(`- ${topic}: when it applies`);
+  });
+
   it('indexes the owner rules on record orders only', async () => {
     const prompts: string[] = [];
     await createDelivery({

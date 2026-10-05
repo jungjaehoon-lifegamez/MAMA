@@ -95,7 +95,8 @@ export function ownerRulesBlock(rules: readonly OwnerRuleLine[]): string {
   if (rules.length === 0) return '';
   return [
     "<owner_rules>\nThe owner's rules, by when they apply. Before you write, read each one that applies to what you record with memory.search({topicPrefix: topic}) and no query, and follow it; an owner rule wins a conflict.",
-    ...rules.map((rule) => escapeMarkup(`- ${clip(rule.topic, 80)}: ${clip(rule.when, 110)}`)),
+    // The topic is whole: the agent reads the rule by it.
+    ...rules.map((rule) => escapeMarkup(`- ${oneLine(rule.topic)}: ${clip(rule.when, 110)}`)),
     '</owner_rules>',
   ].join('\n');
 }
