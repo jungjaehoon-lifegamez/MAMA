@@ -88,9 +88,11 @@ describe('owner standing prompt', () => {
     for (const part of ['eventSince and eventBefore', 'owner.messages', 'At most 30 lines'])
       expect(topics.daily).toContain(part);
     // Three nights' first publish was refused for a missing title, and one page was filed as an
-    // entity without its type (2026-10-02 to 10-04): the procedure names the page's fields.
-    for (const part of ['title (the day)', "type 'daily'", 'expectedContentVersion'])
-      expect(topics.daily).toContain(part);
+    // entity without its type (2026-10-02 to 10-04); on 10-05 the fields came outside pages and
+    // were refused: the procedure gives the call itself.
+    expect(topics.daily).toContain(
+      "manage.wiki.publish({pages: [{path: 'daily/<month>/<day>.md', title: '<day>', type: 'daily', content, expectedContentVersion}]})"
+    );
     // log.md is a reserved path the host writes on each publication.
     expect(topics.daily).not.toContain('log.md');
     expect(topics.wiki).toContain('The host writes log.md; do not write it.');
