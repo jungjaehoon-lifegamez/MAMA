@@ -1,15 +1,24 @@
 /**
- * C6 without search (plan W3): a second consumer installs the packed mama-core in a temporary
- * directory and writes, revises, links and reads its own records through public exports only.
+ * C6 (plan W3, W4): a second consumer installs the packed mama-core in a temporary directory and
+ * writes, revises, links, reads and searches its own records through public exports only.
  *
  * The archive's conformance package depended on the core through a workspace link, so it never
  * met the published package: its files list, its exports map or its install. Here the tarball is
  * packed and installed outside the repository, Node's exports map refuses any private subpath,
- * and the consumer runs with no MAMA setting and a home directory of its own. Search waits for
- * W4: recall needs an embedder, which a consumer has to be able to leave out first.
+ * and the consumer runs with no MAMA setting and a home directory of its own. It keeps no vectors:
+ * the embedder it writes and searches with answers null, so the core's model must never load (on
+ * this install its first search used to start a model download).
  */
-import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,7 +39,7 @@ function run(command: string, args: string[], cwd: string, env: NodeJS.ProcessEn
 }
 
 describe('a second consumer of the packed core', () => {
-  it('writes, revises, links and reads its own records through public exports only', () => {
+  it('writes, revises, links, reads and searches its own records through public exports only', () => {
     const root = mkdtempSync(join(tmpdir(), 'mama-second-consumer-'));
     try {
       // npm pack ships what the files list names: dist, which the core suite builds first.
@@ -56,8 +65,14 @@ describe('a second consumer of the packed core', () => {
       const home = join(root, 'home');
       mkdirSync(home);
       // A real consumer sets no MAMA variable and has a home of its own.
-      const output = run('node', ['consumer.mjs'], app, { PATH: process.env.PATH, HOME: home });
-      const result = JSON.parse(output.trim().split('\n').at(-1)!) as {
+      const consumer = spawnSync('node', ['consumer.mjs'], {
+        cwd: app,
+        env: { PATH: process.env.PATH, HOME: home },
+        encoding: 'utf8',
+      });
+      if (consumer.status !== 0)
+        throw new Error(`consumer failed:\n${consumer.stdout}\n${consumer.stderr}`);
+      const result = JSON.parse(consumer.stdout.trim().split('\n').at(-1)!) as {
         ownTable: boolean;
         foreignTables: string[];
         scopeKinds: string[];
@@ -69,6 +84,9 @@ describe('a second consumer of the packed core', () => {
         linkId: string;
         graphEdges: Array<{ relation: string; from: string; to: string }>;
         findingId: string;
+        otherId: string;
+        searchHits: string[];
+        searchMs: number;
         privatePath: string;
       };
 
@@ -85,6 +103,30 @@ describe('a second consumer of the packed core', () => {
         from: result.revisedRecord,
         to: result.findingId,
       });
+      // Search finds the record under the consumer's scope and not the one under another.
+      expect(result.searchHits).toContain(result.findingId);
+      expect(result.searchHits).not.toContain(result.otherId);
+      expect(result.searchMs).toBeLessThan(5_000);
+      // The core's embedding model never loaded: no load notice, and no model cache was created.
+      expect(`${consumer.stdout}${consumer.stderr}`).not.toContain('Loading embedding model');
+      const transformers = readdirSync(join(app, 'node_modules', '.pnpm')).filter((name) =>
+        name.startsWith('@huggingface+transformers')
+      );
+      for (const name of transformers)
+        expect(
+          existsSync(
+            join(
+              app,
+              'node_modules',
+              '.pnpm',
+              name,
+              'node_modules',
+              '@huggingface',
+              'transformers',
+              '.cache'
+            )
+          )
+        ).toBe(false);
       expect(result.privatePath).toBe('ERR_PACKAGE_PATH_NOT_EXPORTED');
       // The core wrote nothing into the consumer's home.
       expect(readdirSync(home)).toEqual([]);
