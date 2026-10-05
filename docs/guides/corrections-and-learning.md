@@ -49,6 +49,10 @@ reads the rules that fit what it is recording. A rule about finished work, for
 example, applies when the agent decides that an item is finished, which the
 change's own words may never say.
 
+The same list comes with the steps for a full report, both the scheduled ones and
+the ones you ask for. A rule about how reports are ordered or worded then applies
+to every report, whatever words you used to ask for it.
+
 When you ask for the full report, in any words, the agent recognises the request
 and follows the same procedure as the scheduled report.
 

@@ -120,6 +120,8 @@ export interface ActionSurfaceOptions {
   ownerMessages?: OwnerMessagePorts;
   /** The procedures help({topic}) returns, read when a turn needs one. */
   helpTopics?: Readonly<Record<string, string>>;
+  /** What help({topic}) adds to a procedure from the running product, such as the owner's rules. */
+  helpTopicContext?: (topic: string) => Promise<string>;
   timeZone: TimeZoneSetting;
   configPath: string;
   isOwnerMessageTurn: (sourceMessageRef: string) => boolean;
@@ -260,6 +262,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       : ownerMessageActionRegistrations(options.ownerMessages)),
     ...helpActionRegistrations({
       topics: () => options.helpTopics ?? {},
+      ...(options.helpTopicContext === undefined ? {} : { topicContext: options.helpTopicContext }),
       contracts: () =>
         catalog
           .list()

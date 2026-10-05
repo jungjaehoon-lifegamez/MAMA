@@ -161,6 +161,41 @@ describe('owner runtime assembly', () => {
       await owner.stop();
     }
   });
+  it('reads the full-report procedure with the owner rule index, and no other procedure', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'mama-owner-report-rules-'));
+    homes.push(home);
+    const owner = await createOwnerRuntime({
+      backend: 'codex',
+      model: 'test-model',
+      databasePath: join(home, 'state.db'),
+      socketPath: join(home, 'runtime.sock'),
+      credentialPath: join(home, 'credential'),
+      runtimeRoot: home,
+      timeZone: createTimeZoneSetting('UTC'),
+      workspaceDir: join(home, 'workspace'),
+      ownerPrincipalId: 'owner',
+      agentId: 'agent',
+      scopes: [{ kind: 'global', id: 'system' }],
+      nativeSession: { stop: async () => {} },
+      ownerRules: async () => [{ topic: 'report_order', when: 'writing a full report' }],
+      maxTurns: 20,
+      timeout: 1_000,
+    });
+    try {
+      const report = await owner.surface.hostToolCall('help', { topic: 'full-report' }, 'help-1');
+      const record = await owner.surface.hostToolCall('help', { topic: 'record' }, 'help-2');
+      expect(report.status).toBe('completed');
+      expect(record.status).toBe('completed');
+      if (report.status !== 'completed' || record.status !== 'completed') return;
+      expect(report.data).toContain('Full report');
+      expect(report.data).toContain('<owner_rules>');
+      expect(report.data).toContain('- report_order: writing a full report');
+      expect(record.data).not.toContain('<owner_rules>');
+    } finally {
+      await owner.stop();
+    }
+  });
+
   it('starts a session with recent decisions, not the records that amend them', async () => {
     const home = mkdtempSync(join(tmpdir(), 'mama-owner-session-start-'));
     homes.push(home);

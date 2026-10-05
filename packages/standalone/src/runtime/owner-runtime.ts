@@ -57,7 +57,7 @@ import {
   type StimulusIntake,
   type TurnLesson,
 } from './stimulus-delivery.js';
-import type { OwnerRuleLine } from './turn-orders.js';
+import { ownerRulesBlock, type OwnerRuleLine } from './turn-orders.js';
 
 export interface OwnerRuntimeOptions {
   /** Native shell commands that open a network connection, reported as they start (W35). */
@@ -349,6 +349,11 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         },
         retentionMs: OWNER_MESSAGE_RETENTION_MS,
       },
+      // Both report paths read this procedure, scheduled and requested (2026-09-29 to 10-05), and
+      // the owner's rules for reports reached neither: a scheduled order carries no lessons and a
+      // request's three recalled lessons depend on its wording.
+      helpTopicContext: async (topic) =>
+        topic === 'full-report' ? ownerRulesBlock(await ownerRules()) : '',
       helpTopics: ownerHelpTopics(
         options.backend,
         options.wiki?.enabled ?? false,
@@ -364,6 +369,22 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           })()),
     });
     const access: JudgmentAccess = surface.ownerAccess;
+    // Every active owner rule, oldest first as memory reads them; learned lessons stay on recall.
+    const ownerRules =
+      options.ownerRules ??
+      (async (): Promise<OwnerRuleLine[]> => {
+        const active = await readMemoryRecordsInScopes(database.adapter, [...access.scopes], {
+          kind: [...RULE_KINDS],
+          status: 'active',
+        });
+        return ownerRuleLines(
+          active,
+          ownerRuleIds(
+            database.adapter,
+            active.map((record) => record.id)
+          )
+        );
+      });
     const standingText = ownerSystemPrompt(
       options.backend,
       null,
@@ -495,22 +516,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           const hitIds = hits.map((hit) => hit.id);
           return guidanceInSearchOrder(hitIds, active, 10, ownerRuleIds(database.adapter, hitIds));
         }),
-      // Every active owner rule, oldest first as memory reads them; learned lessons stay on recall.
-      ownerRules:
-        options.ownerRules ??
-        (async (): Promise<OwnerRuleLine[]> => {
-          const active = await readMemoryRecordsInScopes(database.adapter, [...access.scopes], {
-            kind: [...RULE_KINDS],
-            status: 'active',
-          });
-          return ownerRuleLines(
-            active,
-            ownerRuleIds(
-              database.adapter,
-              active.map((record) => record.id)
-            )
-          );
-        }),
+      ownerRules,
       recordOrders,
       ...(options.onOwnerResult === undefined ? {} : { onOwnerResult: options.onOwnerResult }),
       ...(options.onSourceResult === undefined ? {} : { onSourceResult: options.onSourceResult }),
