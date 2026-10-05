@@ -1145,13 +1145,17 @@ export async function recallMemory(
 
   // Channel 1: Vector search (semantic similarity) — run all sub-queries
   const vectorMatched: MemoryRecord[] = [];
+  // The consumer's embedder answered null: the search goes by text, which is no failure.
+  let textOnly = false;
   try {
     for (const sq of subQueries) {
       const queryEmbedding = options.embedder
         ? await options.embedder.embed(sq, 'query')
         : await generateEmbedding(sq, 'query');
-      // The consumer's embedder answered null: search by text only, which is no failure.
-      if (queryEmbedding === null) break;
+      if (queryEmbedding === null) {
+        textOnly = true;
+        break;
+      }
       const vectorResults = await vectorSearch(
         searchAdapter,
         queryEmbedding,
@@ -1240,6 +1244,7 @@ export async function recallMemory(
     CJK_TEXT.test(query) ||
     looksEntityLike(query);
   const needsLexical =
+    textOnly ||
     isAggregation ||
     vectorMatched.length < VECTOR_SUFFICIENT_THRESHOLD ||
     shouldForceLexicalConfirmation;
