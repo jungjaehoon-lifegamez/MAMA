@@ -948,7 +948,7 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
         continue;
       }
 
-      if (isCore && version === 92) {
+      if (isCore && (version === 92 || version === 100)) {
         // Legacy high-version stores may carry only a skeletal decisions table.
         // An external-content FTS rebuild cannot read columns that do not exist;
         // leave this migration unstamped until the canonical table is present.
