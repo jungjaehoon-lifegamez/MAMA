@@ -64,7 +64,9 @@ Full reports also rewrite all four board sections. Reminders read the open
 pipeline (and the calendar when the session has not read it today), update only
 `action_required`, and deliver a three-to-six-line priority reminder. When nothing
 needs you, the reminder is not sent. A full-report hour takes precedence over a
-reminder. The language and style of reports come from your owner policy file.
+reminder. The language and style of reports come from your owner policy file and
+from the rules you give in chat about reports, which also set a report's order and
+wording.
 
 The scheduler checks every minute. It records an hour as sent only after delivery
 through `delivery.reports` succeeds; pending reports prevent another scheduled report
