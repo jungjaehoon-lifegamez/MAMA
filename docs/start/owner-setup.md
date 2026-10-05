@@ -40,7 +40,7 @@ Create a Telegram bot through BotFather, start a private conversation with it, a
 have your owner chat and user IDs ready. Then run:
 
 ```bash
-node packages/standalone/dist/cli/index.js init
+mama init
 ```
 
 Enter the backend, model, Telegram bot token, owner chat and user IDs, and any
@@ -80,7 +80,7 @@ On macOS, if you chose to write the launch agent, start it after backend login:
 
 ```bash
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mama.server.plist
-node packages/standalone/dist/cli/index.js status
+mama status
 curl -fsS http://127.0.0.1:3847/health
 ```
 
