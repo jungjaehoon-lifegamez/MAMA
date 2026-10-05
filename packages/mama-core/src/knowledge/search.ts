@@ -78,6 +78,21 @@ export async function vectorSearch(
 }
 
 /**
+ * A MATCH expression that reads every term as text. Unquoted, a hyphen or a date is a column filter
+ * or a subtraction to FTS5 ("no such column: 10") and AND, OR and NOT are operators; quoted, each
+ * term is a phrase the table's tokenizer splits as it split the stored text.
+ */
+export function ftsMatchTerms(terms: readonly string[], join: 'AND' | 'OR'): string | null {
+  if (terms.length === 0) return null;
+  return terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(` ${join} `);
+}
+
+/** The words of free text, for a match that needs every one of them. */
+export function ftsWords(text: string): string[] {
+  return text.match(/[\p{L}\p{N}_]+/gu) ?? [];
+}
+
+/**
  * FTS5 keyword search on the decisions table.
  *
  * @param adapter - Database to read through
