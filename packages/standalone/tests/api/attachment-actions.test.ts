@@ -639,7 +639,7 @@ describe('attachment actions', () => {
       deliver({ path: directory }, { access, operationId: 'op-directory' })
     ).rejects.toThrow(/regular file/);
     await expect(deliver({ path: oversized }, { access, operationId: 'op-large' })).rejects.toThrow(
-      /owner messenger upload limit/
+      /upload limit of/
     );
     expect(sender.sendFile).not.toHaveBeenCalled();
   });

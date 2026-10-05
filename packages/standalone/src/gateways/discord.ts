@@ -7,7 +7,11 @@ import type { JsonValue } from '@jungjaehoon/mama-core/knowledge';
 import type { OwnerMessageInput, TurnIntake } from './turn-contract.js';
 import { DEFAULT_INTERRUPTED_NOTICE, OwnerMessageLedger } from './telegram-message-ledger.js';
 import { splitForDiscord } from './message-splitter.js';
-import { openWorkspaceFile, workspaceFileIdentity } from '../api/file-delivery.js';
+import {
+  OWNER_FILE_MAX_UPLOAD_BYTES,
+  openWorkspaceFile,
+  workspaceFileIdentity,
+} from '../api/file-delivery.js';
 import type { OwnerFileDeliveryResult } from '../api/file-delivery.js';
 import { saveResponseBody } from '../connectors/framework/attachment-io.js';
 import { safeFileName } from '../api/attachment-actions.js';
@@ -178,7 +182,7 @@ export class DiscordGateway extends BaseGateway {
     if (!channel) throw new Error('discord.owner_channel_id is required');
     this.requireAllowed(channel);
     if (!this.options.filesRoot) throw new Error('Discord workspace files root is not configured');
-    const file = openWorkspaceFile(this.options.filesRoot, path);
+    const file = openWorkspaceFile(this.options.filesRoot, path, OWNER_FILE_MAX_UPLOAD_BYTES);
     try {
       const identity = workspaceFileIdentity(file.fd, caption);
       const key = `file:${operationId}`;

@@ -33,7 +33,7 @@ Evidence:
 | —                                             | `drive.read` `file` (`id` or a Drive/Docs link)                                                          | Added: the agent holds links (card attachments, cited messages), not ids. Returns the file's metadata.                                                                      |
 | —                                             | `drive.read` `search` (text across all drives)                                                           | Added: the agent knows an asset name, not the folder it sits in.                                                                                                            |
 | `drive_download` (`alt=media` only)           | `drive.download` (`id` or link)                                                                          | Google Docs, Sheets and Slides are exported as docx, xlsx and pptx, because `alt=media` refuses them. Saved under the daemon downloads directory.                           |
-| `drive_upload`                                | — (W8, `deliver.drive`)                                                                                  | Writing to Drive stays with W8.                                                                                                                                             |
+| `drive_upload`                                | `deliver.drive.file` (W8): the delivery folder in `delivery.drive` only                                  | Large owner files; readers set per file from config, no public link.                                                                                                        |
 | `gwsExecSync` with the account's credentials  | `execGwsAsync` (`connectors/framework/gws-utils.ts`)                                                     | Same credential (the gws keyring); asynchronous so the daemon does not block.                                                                                               |
 
 `trello.read` reaches Trello through its registered connector. Drive has no running connector
@@ -60,5 +60,5 @@ defaults to `execGwsAsync`; tests replace the port.
 ## Out of scope
 
 - Storing Drive changes or a copy of any Drive state.
-- Uploading (W8).
+- Uploading anywhere but the delivery folder (W8 sends there only).
 - The Gmail and Sheets connectors.

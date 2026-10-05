@@ -42,10 +42,20 @@ export interface W1MessengerConfig {
   file_delivery: boolean;
 }
 export type MessengerName = 'telegram' | 'discord' | 'slack';
+/** Who may read a file delivered to Drive: a Workspace domain, a Google group or one account. */
+export type DriveReader = { domain: string } | { group: string } | { user: string };
+
+/** Large files go to a Drive folder the owner names, readable by the readers the owner names. */
+export interface W1DriveDeliveryConfig {
+  folder: string;
+  readers: DriveReader[];
+}
+
 export interface W1DeliveryConfig {
   reports: MessengerName;
   notifications: MessengerName;
   security_alerts: MessengerName;
+  drive?: W1DriveDeliveryConfig;
   /** What the owner is told when a turn on their message was cut off, in the owner's words. */
   interrupted_notice?: string;
 }
@@ -363,7 +373,7 @@ function parseDelivery(value: unknown, state: ParseState): W1DeliveryConfig {
   const raw = value === undefined ? {} : object(value, 'delivery');
   collectIgnoredKeys(
     raw,
-    ['reports', 'notifications', 'security_alerts', 'interrupted_notice'],
+    ['reports', 'notifications', 'security_alerts', 'interrupted_notice', 'drive'],
     'delivery',
     state
   );
@@ -383,7 +393,41 @@ function parseDelivery(value: unknown, state: ParseState): W1DeliveryConfig {
     notifications: route('notifications'),
     security_alerts: route('security_alerts'),
     ...(notice === undefined ? {} : { interrupted_notice: notice }),
+    ...(raw.drive === undefined ? {} : { drive: parseDriveDelivery(raw.drive, state) }),
   };
+}
+
+const DRIVE_ID = /^[A-Za-z0-9_-]{10,}$/;
+const DOMAIN =
+  /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/i;
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function parseDriveDelivery(value: unknown, state: ParseState): W1DriveDeliveryConfig {
+  const raw = object(value, 'delivery.drive');
+  collectIgnoredKeys(raw, ['folder', 'readers'], 'delivery.drive', state);
+  const folder = text(raw.folder, 'delivery.drive.folder');
+  if (!DRIVE_ID.test(folder))
+    throw new ConfigError('delivery.drive.folder must be a Drive folder id');
+  if (!Array.isArray(raw.readers) || raw.readers.length === 0) {
+    throw new ConfigError('delivery.drive.readers must list at least one reader');
+  }
+  const readers = raw.readers.map((entry, index): DriveReader => {
+    const field = `delivery.drive.readers[${index}]`;
+    const reader = object(entry, field);
+    const keys = Object.keys(reader);
+    if (keys.length !== 1 || !['domain', 'group', 'user'].includes(keys[0]!)) {
+      throw new ConfigError(`${field} must have exactly one of domain, group or user`);
+    }
+    const kind = keys[0] as 'domain' | 'group' | 'user';
+    const target = text(reader[kind], `${field}.${kind}`);
+    if (kind === 'domain' ? !DOMAIN.test(target) : !EMAIL.test(target)) {
+      throw new ConfigError(
+        `${field}.${kind} must be ${kind === 'domain' ? 'a domain name' : 'an email address'}`
+      );
+    }
+    return { [kind]: target } as DriveReader;
+  });
+  return { folder, readers };
 }
 
 function parseConfigValue(

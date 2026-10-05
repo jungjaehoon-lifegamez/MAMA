@@ -59,7 +59,11 @@ function invalid(message: string): Error {
   return error;
 }
 
-function ownerOnly(action: string, access: ActionContext['access'], ownerPrincipalId: string) {
+export function ownerOnly(
+  action: string,
+  access: ActionContext['access'],
+  ownerPrincipalId: string
+) {
   if (access.principalId === ownerPrincipalId) return;
   const error = new Error(`${action} is the owner's; no Drive grant exists for other principals`);
   error.name = 'drive_out_of_scope';

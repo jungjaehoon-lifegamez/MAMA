@@ -132,7 +132,8 @@ function helpTopicWhen(wikiEnabled: boolean): Record<string, string> {
 export function ownerHelpTopics(
   backend: OwnerRuntimeBackend,
   wikiEnabled: boolean,
-  judgeEnabled = false
+  judgeEnabled = false,
+  driveDeliveryEnabled = false
 ): Record<string, string> {
   const readers =
     'Board sections are read by people: who, when, what changed, what is awaited next, in sentences a reader understands alone, with no ids in their text.';
@@ -179,6 +180,11 @@ export function ownerHelpTopics(
       'Attachments and files:',
       "- A message's attachments are listed with source.attachment.list and fetched with source.attachment.download into the daemon downloads directory (read-only for you); copy a download into workspace files before modifying, unzipping or sending it with the matching deliver.<messenger>.file action. Files the owner sends arrive with a local path there; an attachment error means the download failed, so tell the owner the error.",
       '- Google Drive is read live: a Drive or Docs link in a message or card is read with drive.read (view file) and fetched with drive.download into the same downloads directory; a file known only by its name is found with drive.read (view search), and folders are listed with drive.read (view browse).',
+      ...(driveDeliveryEnabled
+        ? [
+            "- A file over the messengers' 50 MB limit goes to the owner's Drive delivery folder with deliver.drive.file, at full quality rather than shrunk to fit; reply with its link, and record the link and sha256 on the work item's revision.",
+          ]
+        : []),
       backend === 'claude'
         ? '- File readers: images and PDFs with the Read tool; spreadsheets with Bash/python3 (openpyxl); archives with Bash/unzip.'
         : '- File readers: images by viewing them; PDFs and spreadsheets with python3 (PyMuPDF/pdfplumber/openpyxl); archives with unzip.',

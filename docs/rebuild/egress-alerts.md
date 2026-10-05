@@ -36,15 +36,15 @@ Evidence:
 Checked on the Claude backend, 2026-10-03, by tests and one sandboxed experiment; no bypass was
 attempted on the owner's machine.
 
-| Path                                                                   | Blocked by                                               | Seen by                                                                                                   |
-| ---------------------------------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| A network client in the command (curl, wget, git over HTTPS, pip, ...) | MAMA's proxy refuses it                                  | the command alert (W35.1) and the proxy alert (W35.4)                                                     |
-| ssh, scp, nc and other clients that ignore the proxy settings          | the operating system sandbox                             | the command alert; the kernel log                                                                         |
-| A script file written first and run after                              | MAMA's proxy refuses it                                  | the proxy alert, with the destination                                                                     |
-| A subagent's shell                                                     | the same sandbox and proxy                               | the same alerts; its traces carry its own run                                                             |
-| A direct socket that ignores the proxy settings                        | the operating system sandbox (`Operation not permitted`) | the kernel log (`deny(1) network-outbound`, port only); no alert yet                                      |
-| Web fetch and web search                                               | not blocked (the owner's work needs them)                | web fetch: an alert with its URL, per host per minute (owner, 2026-10-05); web search: `tool_traces` only |
-| Files and messages to the owner                                        | only the owner's messengers, board and wiki              | receipts and `tool_traces`                                                                                |
+| Path                                                                   | Blocked by                                                                                            | Seen by                                                                                                   |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| A network client in the command (curl, wget, git over HTTPS, pip, ...) | MAMA's proxy refuses it                                                                               | the command alert (W35.1) and the proxy alert (W35.4)                                                     |
+| ssh, scp, nc and other clients that ignore the proxy settings          | the operating system sandbox                                                                          | the command alert; the kernel log                                                                         |
+| A script file written first and run after                              | MAMA's proxy refuses it                                                                               | the proxy alert, with the destination                                                                     |
+| A subagent's shell                                                     | the same sandbox and proxy                                                                            | the same alerts; its traces carry its own run                                                             |
+| A direct socket that ignores the proxy settings                        | the operating system sandbox (`Operation not permitted`)                                              | the kernel log (`deny(1) network-outbound`, port only); no alert yet                                      |
+| Web fetch and web search                                               | not blocked (the owner's work needs them)                                                             | web fetch: an alert with its URL, per host per minute (owner, 2026-10-05); web search: `tool_traces` only |
+| Files and messages to the owner                                        | only the owner's messengers, the Drive delivery folder (readers per `delivery.drive`), board and wiki | receipts and `tool_traces`; no alert, as for messenger files                                              |
 
 ## Known limits
 
