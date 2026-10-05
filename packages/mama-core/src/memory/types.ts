@@ -71,9 +71,6 @@ export const MEMORY_CONSULT_INTENTS = [
 ] as const;
 export type MemoryConsultIntent = (typeof MEMORY_CONSULT_INTENTS)[number];
 
-export const MEMORY_AUDIT_ACK_STATUSES = ['applied', 'skipped', 'failed'] as const;
-export type MemoryAuditAckStatus = (typeof MEMORY_AUDIT_ACK_STATUSES)[number];
-
 export interface MemoryScopeRef {
   kind: MemoryScopeKind;
   id: string;
