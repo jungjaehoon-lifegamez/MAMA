@@ -10,9 +10,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 // Korean text lives in a fixture: the pre-commit guard keeps it out of .ts files.
-const { longKoreanQuery, particleText } = JSON.parse(
+const { longKoreanQuery, particleText, mixedQuery } = JSON.parse(
   fs.readFileSync(new URL('../fixtures/cjk-short-tokens.json', import.meta.url), 'utf8')
-) as { longKoreanQuery: string; particleText: string };
+) as { longKoreanQuery: string; particleText: string; mixedQuery: string };
 
 const generateEmbeddingMock = vi.fn();
 const vectorSearchMock = vi.fn();
@@ -80,6 +80,20 @@ describe('lexical confirmation for CJK queries', () => {
 
     // A Korean query is scored word by word across the trigram and word indexes.
     expect(wordSearchMock).toHaveBeenCalled();
+  });
+
+  it('keeps the English words of a mixed query in the word index', async () => {
+    const { recallMemory } = await import('../../src/memory/api.js');
+
+    await recallMemory(getAdapter(), mixedQuery, { includeRelated: false });
+
+    // An English word, and the Latin word a hyphen joins to a Korean one.
+    expect(wordSearchMock.mock.calls[0]![1]).toEqual(
+      expect.arrayContaining([
+        { index: 'decisions_fts', forms: ['deploy'] },
+        { index: 'decisions_fts', forms: ['github'] },
+      ])
+    );
   });
 
   it('still skips lexical search for a long English query when vector search returned enough rows', async () => {
