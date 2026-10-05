@@ -128,4 +128,21 @@ describe('lexical confirmation for CJK queries', () => {
     expect(aiIds).not.toContain('mail-note');
     expect(qa.memories.map((memory) => memory.id)).toContain('qa-particle');
   });
+
+  it('sends dates and hyphens to FTS5 as text', async () => {
+    const { recallMemory } = await import('../../src/memory/api.js');
+
+    await recallMemory(getAdapter(), '2026-10-04 ex-1234', { includeRelated: false });
+
+    expect(fts5SearchMock.mock.calls[0]![1]).toBe('"2026-10-04" OR "ex-1234"');
+  });
+
+  it('lets an FTS5 failure reach the caller instead of answering from the in-memory scan', async () => {
+    fts5SearchMock.mockRejectedValue(new Error('disk I/O error'));
+    const { recallMemory } = await import('../../src/memory/api.js');
+
+    await expect(
+      recallMemory(getAdapter(), '2026-10-04 ex-1234', { includeRelated: false })
+    ).rejects.toThrow(/disk I\/O error/);
+  });
 });

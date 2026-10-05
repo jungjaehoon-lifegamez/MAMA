@@ -29,6 +29,7 @@ import {
   type JudgmentAccess,
 } from './judgments.js';
 import { getObservationVersion } from './observations.js';
+import { ftsMatchTerms, ftsWords } from './search.js';
 import { expandCaseChainForAssembly, resolveCanonicalCaseChain } from './case-store.js';
 import {
   currentIdentityRevision,
@@ -1339,12 +1340,10 @@ function resolveSearchSeeds(
     const ftsTable = adapter
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'decisions_fts'")
       .get() as { name: string } | undefined;
-    const terms = text.match(/[\p{L}\p{N}_]+/gu) ?? [];
-    if (ftsTable && terms.length > 0) {
-      // Preserve FTS's AND-of-terms recall without accepting user text as
-      // operators. A hyphenated name otherwise becomes subtraction and raises
-      // "no such column"; quoting the whole input would lose nonadjacent hits.
-      const literalTerms = terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(' AND ');
+    // FTS's AND-of-terms recall without accepting user text as operators; quoting the whole input
+    // would lose nonadjacent hits.
+    const literalTerms = ftsMatchTerms(ftsWords(text), 'AND');
+    if (ftsTable && literalTerms !== null) {
       const rows = adapter
         .prepare(
           `SELECT d.id AS id

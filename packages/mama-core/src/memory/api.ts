@@ -23,7 +23,13 @@ import type { SearchQualityOptions } from '../knowledge/search-quality.js';
 import type { SemanticEdgeItem } from '../db-manager.js';
 import type { DecisionRecord } from '../db-manager.js';
 import type { DatabaseInstance } from '../db-manager.js';
-import { vectorSearch, fts5Search, RECALL_EXCLUDED_STATUSES } from '../knowledge/search.js';
+import {
+  vectorSearch,
+  fts5Search,
+  ftsMatchTerms,
+  ftsWords,
+  RECALL_EXCLUDED_STATUSES,
+} from '../knowledge/search.js';
 import type { DecisionInput } from '../db-manager.js';
 import { generateEmbedding } from '../embedding/embedder.js';
 import { appendJudgment, judgmentRecordId, ingestSource } from '../knowledge/index.js';
@@ -1238,106 +1244,108 @@ export async function recallMemory(
   const lexicalLimit = isAggregation ? 100 : 50;
 
   if (needsLexical) {
-    try {
-      // Try FTS5 first — proper BM25 ranking, much better than in-memory .includes()
-      // FTS5 MATCH treats spaces as AND; convert to OR so partial matches still surface.
-      // Use all non-stopword tokens for FTS5 (stopwords already removed by getLexicalQueryTokens).
-      // Additional high-frequency words that cause too many FTS5 matches are filtered separately.
-      const FTS5_NOISE_WORDS = new Set([
-        'this',
-        'that',
-        'also',
-        'just',
-        'like',
-        'some',
-        'many',
-        'much',
-        'very',
-        'more',
-        'most',
-        'such',
-        'each',
-        'every',
-        'been',
-        'being',
-        'about',
-        'would',
-        'could',
-        'should',
-        'will',
-        'year',
-        'years',
-        'time',
-        'know',
-        'think',
-        'want',
-        'need',
-        'make',
-        'made',
-      ]);
-      const ftsTokens = getLexicalQueryTokens(query)
-        .map((t) => stemToken(t))
-        .filter((t) => !FTS5_NOISE_WORDS.has(t));
-      const ftsQuery = ftsTokens.length > 0 ? ftsTokens.join(' OR ') : query;
-      const ftsResults = await fts5Search(
-        searchAdapter,
-        ftsQuery,
-        lexicalLimit,
-        options.kind,
-        options.includeHistory ? undefined : { statuses: [...EXCLUDED_STATUSES], amendments: true }
-      );
-      if (ftsResults.length > 0) {
-        const adapter = searchAdapter;
-        const fallbackSource: SaveMemoryInput['source'] = {
-          package: 'mama-core',
-          source_type: 'fts5',
-        };
+    // Try FTS5 first — proper BM25 ranking, much better than in-memory .includes()
+    // FTS5 MATCH treats spaces as AND; convert to OR so partial matches still surface.
+    // Use all non-stopword tokens for FTS5 (stopwords already removed by getLexicalQueryTokens).
+    // Additional high-frequency words that cause too many FTS5 matches are filtered separately.
+    const FTS5_NOISE_WORDS = new Set([
+      'this',
+      'that',
+      'also',
+      'just',
+      'like',
+      'some',
+      'many',
+      'much',
+      'very',
+      'more',
+      'most',
+      'such',
+      'each',
+      'every',
+      'been',
+      'being',
+      'about',
+      'would',
+      'could',
+      'should',
+      'will',
+      'year',
+      'years',
+      'time',
+      'know',
+      'think',
+      'want',
+      'need',
+      'make',
+      'made',
+    ]);
+    const ftsTokens = getLexicalQueryTokens(query)
+      .map((t) => stemToken(t))
+      .filter((t) => !FTS5_NOISE_WORDS.has(t));
+    // Every token is quoted text: a date or a hyphen unquoted is an FTS5 column filter and raised
+    // an error that used to be swallowed into the in-memory scan. With no token left, every word
+    // of the query must match.
+    const ftsQuery =
+      ftsTokens.length > 0 ? ftsMatchTerms(ftsTokens, 'OR') : ftsMatchTerms(ftsWords(query), 'AND');
+    // An absent FTS table is already an empty answer inside fts5Search; any other failure is real.
+    const ftsResults =
+      ftsQuery === null
+        ? []
+        : await fts5Search(
+            searchAdapter,
+            ftsQuery,
+            lexicalLimit,
+            options.kind,
+            options.includeHistory
+              ? undefined
+              : { statuses: [...EXCLUDED_STATUSES], amendments: true }
+          );
+    if (ftsResults.length > 0) {
+      const adapter = searchAdapter;
+      const fallbackSource: SaveMemoryInput['source'] = {
+        package: 'mama-core',
+        source_type: 'fts5',
+      };
 
-        const maxRank = Math.max(...ftsResults.map((r) => Math.abs(r.rank)));
+      const maxRank = Math.max(...ftsResults.map((r) => Math.abs(r.rank)));
 
-        for (const ftsRow of ftsResults) {
-          const row = adapter
-            .prepare(
-              `SELECT id, topic, decision, reasoning, confidence, created_at, updated_at,
-                    trust_context, kind, status, summary, event_date, event_datetime, outcome
-             FROM decisions WHERE id = ?`
-            )
-            .get(ftsRow.id) as Record<string, unknown> | undefined;
-          if (!row) continue;
+      for (const ftsRow of ftsResults) {
+        const row = adapter
+          .prepare(
+            `SELECT id, topic, decision, reasoning, confidence, created_at, updated_at,
+                  trust_context, kind, status, summary, event_date, event_datetime, outcome
+           FROM decisions WHERE id = ?`
+          )
+          .get(ftsRow.id) as Record<string, unknown> | undefined;
+        if (!row) continue;
 
-          const effectiveStatus = (row.status as string) || '';
-          if (
-            !options.includeHistory &&
-            effectiveStatus &&
-            EXCLUDED_STATUSES.has(effectiveStatus)
-          ) {
-            continue;
-          }
-
-          const memoryIds = [String(row.id)];
-          const scopeMap = batchLoadScopes(adapter, memoryIds);
-          const record = toMemoryRecord(row, scopeMap.get(String(row.id)) ?? [], fallbackSource);
-
-          // Topic prefix filtering (matches vectorSearch behavior)
-          if (searchOptions.topicPrefix && !record.topic.startsWith(searchOptions.topicPrefix))
-            continue;
-
-          if (!matchesKind(record.kind)) continue;
-
-          // Scope filtering
-          if (options.scopes && options.scopes.length > 0) {
-            const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
-            const scopes = scopeMap.get(record.id) ?? [];
-            if (scopes.length === 0) continue;
-            if (!scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`))) continue;
-          }
-
-          const bm25Score = bm25Relevance(ftsRow.rank, maxRank);
-          lexicalCandidates.push({ memory: record, score: bm25Score });
+        const effectiveStatus = (row.status as string) || '';
+        if (!options.includeHistory && effectiveStatus && EXCLUDED_STATUSES.has(effectiveStatus)) {
+          continue;
         }
+
+        const memoryIds = [String(row.id)];
+        const scopeMap = batchLoadScopes(adapter, memoryIds);
+        const record = toMemoryRecord(row, scopeMap.get(String(row.id)) ?? [], fallbackSource);
+
+        // Topic prefix filtering (matches vectorSearch behavior)
+        if (searchOptions.topicPrefix && !record.topic.startsWith(searchOptions.topicPrefix))
+          continue;
+
+        if (!matchesKind(record.kind)) continue;
+
+        // Scope filtering
+        if (options.scopes && options.scopes.length > 0) {
+          const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
+          const scopes = scopeMap.get(record.id) ?? [];
+          if (scopes.length === 0) continue;
+          if (!scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`))) continue;
+        }
+
+        const bm25Score = bm25Relevance(ftsRow.rank, maxRank);
+        lexicalCandidates.push({ memory: record, score: bm25Score });
       }
-    } catch {
-      // FTS5 not available — fall through to in-memory lexical
     }
 
     // Topic-affinity rescore for FTS5 candidates: the OR-joined FTS query
@@ -3010,54 +3018,56 @@ export async function suggestInAdapter(
 
       // Stage 1.7: FTS5 hybrid merge (Haiku Memory Layer)
       {
-        try {
-          const ftsResults = await fts5Search(adapter, userQuestion, rerankPoolLimit * 2, kind);
-          if (ftsResults.length > 0) {
-            const maxRank = Math.max(...ftsResults.map((r) => Math.abs(r.rank)));
-            const ftsMap = new Map(ftsResults.map((r) => [r.id, bm25Relevance(r.rank, maxRank)]));
+        // The question's words as quoted text, all of them required, as before; unquoted, a date or
+        // a hyphen raised an FTS5 error here that was swallowed.
+        const ftsExpression = ftsMatchTerms(ftsWords(userQuestion), 'AND');
+        const ftsResults =
+          ftsExpression === null
+            ? []
+            : await fts5Search(adapter, ftsExpression, rerankPoolLimit * 2, kind);
+        if (ftsResults.length > 0) {
+          const maxRank = Math.max(...ftsResults.map((r) => Math.abs(r.rank)));
+          const ftsMap = new Map(ftsResults.map((r) => [r.id, bm25Relevance(r.rank, maxRank)]));
 
-            // Tunable hybrid weights (env: MAMA_VECTOR_WEIGHT, MAMA_FTS5_WEIGHT)
-            const vectorWeight = parseFloat(process.env.MAMA_VECTOR_WEIGHT || '0.6');
-            const fts5Weight = parseFloat(process.env.MAMA_FTS5_WEIGHT || '0.4');
+          // Tunable hybrid weights (env: MAMA_VECTOR_WEIGHT, MAMA_FTS5_WEIGHT)
+          const vectorWeight = parseFloat(process.env.MAMA_VECTOR_WEIGHT || '0.6');
+          const fts5Weight = parseFloat(process.env.MAMA_FTS5_WEIGHT || '0.4');
 
-            // Merge: boost existing results that also matched FTS5
-            for (const result of results) {
-              const ftsScore = ftsMap.get(result.id);
-              if (ftsScore !== undefined) {
-                result.similarity = vectorWeight * result.similarity + fts5Weight * ftsScore;
-                ftsMap.delete(result.id);
-              }
+          // Merge: boost existing results that also matched FTS5
+          for (const result of results) {
+            const ftsScore = ftsMap.get(result.id);
+            if (ftsScore !== undefined) {
+              result.similarity = vectorWeight * result.similarity + fts5Weight * ftsScore;
+              ftsMap.delete(result.id);
             }
-
-            // Add FTS5-only results (not in embedding results)
-            for (const [id, ftsScore] of ftsMap) {
-              const ftsResult = ftsResults.find((r) => r.id === id);
-              if (ftsResult) {
-                // Need to get full decision record
-                const stmt = adapter.prepare(
-                  'SELECT * FROM decisions WHERE id = ? AND superseded_by IS NULL'
-                );
-                const decision = stmt.get(id) as (DecisionRecord & { kind?: string }) | undefined;
-                if (decision && (kind === undefined || decision.kind === kind)) {
-                  results.push({
-                    ...decision,
-                    similarity: fts5Weight * ftsScore, // Only FTS5 score component
-                    graph_source: 'fts5',
-                  });
-                }
-              }
-            }
-
-            // Re-sort by similarity
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            results.sort(
-              (a: { similarity?: number }, b: { similarity?: number }) =>
-                (b.similarity || 0) - (a.similarity || 0)
-            );
-            searchMethod = disableRecency ? 'vector+fts5' : 'vector+recency+fts5';
           }
-        } catch {
-          // FTS5 not available, continue with embedding-only results
+
+          // Add FTS5-only results (not in embedding results)
+          for (const [id, ftsScore] of ftsMap) {
+            const ftsResult = ftsResults.find((r) => r.id === id);
+            if (ftsResult) {
+              // Need to get full decision record
+              const stmt = adapter.prepare(
+                'SELECT * FROM decisions WHERE id = ? AND superseded_by IS NULL'
+              );
+              const decision = stmt.get(id) as (DecisionRecord & { kind?: string }) | undefined;
+              if (decision && (kind === undefined || decision.kind === kind)) {
+                results.push({
+                  ...decision,
+                  similarity: fts5Weight * ftsScore, // Only FTS5 score component
+                  graph_source: 'fts5',
+                });
+              }
+            }
+          }
+
+          // Re-sort by similarity
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          results.sort(
+            (a: { similarity?: number }, b: { similarity?: number }) =>
+              (b.similarity || 0) - (a.similarity || 0)
+          );
+          searchMethod = disableRecency ? 'vector+fts5' : 'vector+recency+fts5';
         }
       }
 
