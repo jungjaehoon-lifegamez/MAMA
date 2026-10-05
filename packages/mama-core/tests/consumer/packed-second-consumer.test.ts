@@ -29,7 +29,14 @@ const CONSUMER_FIXTURE = fileURLToPath(new URL('../fixtures/second-consumer', im
 
 function run(command: string, args: string[], cwd: string, env: NodeJS.ProcessEnv): string {
   try {
-    return execFileSync(command, args, { cwd, env, encoding: 'utf8', stdio: 'pipe' });
+    // Synchronous, so the test timeout cannot stop it: each step carries its own.
+    return execFileSync(command, args, {
+      cwd,
+      env,
+      encoding: 'utf8',
+      stdio: 'pipe',
+      timeout: 240_000,
+    });
   } catch (error) {
     const failed = error as { stdout?: string; stderr?: string; message: string };
     throw new Error(
@@ -69,9 +76,13 @@ describe('a second consumer of the packed core', () => {
         cwd: app,
         env: { PATH: process.env.PATH, HOME: home },
         encoding: 'utf8',
+        // A model download would run for minutes; the consumer needs seconds.
+        timeout: 60_000,
       });
       if (consumer.status !== 0)
-        throw new Error(`consumer failed:\n${consumer.stdout}\n${consumer.stderr}`);
+        throw new Error(
+          `consumer failed (${consumer.signal ?? consumer.status}):\n${consumer.stdout}\n${consumer.stderr}`
+        );
       const result = JSON.parse(consumer.stdout.trim().split('\n').at(-1)!) as {
         ownTable: boolean;
         foreignTables: string[];

@@ -62,6 +62,34 @@ describe("recall with the consumer's embedder", () => {
     expect(warnMock).not.toHaveBeenCalled();
   });
 
+  it('searches by text when the embedder declines a later sub-query, whatever vectors found', async () => {
+    const { recallMemory } = await import('../../src/memory/api.js');
+    // Six vector hits for the first sub-query would have skipped lexical confirmation.
+    vectorSearchMock.mockResolvedValue(
+      Array.from({ length: 6 }, (_, index) => ({
+        id: `vector-${index}`,
+        topic: `topic_${index}`,
+        decision: `row ${index}`,
+        reasoning: '',
+        similarity: 0.8,
+        created_at: 100 + index,
+      }))
+    );
+    let calls = 0;
+    const embed = async () => (calls++ === 0 ? new Float32Array([0.4, 0.5, 0.6]) : null);
+
+    await recallMemory(
+      getAdapter(),
+      'calibration notes for bench one and drift readings for bench two',
+      {
+        embedder: { embed },
+      }
+    );
+
+    expect(calls).toBe(2);
+    expect(fts5SearchMock).toHaveBeenCalled();
+  });
+
   it("searches vectors with the consumer's embedding when it gives one", async () => {
     const { recallMemory } = await import('../../src/memory/api.js');
     const vector = new Float32Array([0.4, 0.5, 0.6]);
