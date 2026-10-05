@@ -55,6 +55,16 @@ Set the path before initialization: the default `~/.claude/mama-memory.db` is re
 memory, not a test database. Adapter-based APIs accept consumer-owned storage; consult the
 exported types for input contracts.
 
+With pnpm 10, allow the `better-sqlite3` build: add
+`"pnpm": { "onlyBuiltDependencies": ["better-sqlite3"] }` to your `package.json`, or run
+`pnpm approve-builds`. Without its native binding, the first database open fails.
+
+A consumer can keep its own database, migrations, principal and scope kinds, and needs no MAMA
+setting. Open the database with `openDatabase({ path, migrations })` from `./db-manager`, then
+write, revise, link and read records with `createKnowledge` from `./knowledge`.
+`tests/consumer/packed-second-consumer.test.ts` installs the packed package in a temporary
+directory and does exactly that.
+
 Embeddings use `Xenova/multilingual-e5-large` (1024 dimensions), computed locally.
 Core selects `HF_HOME`, then `TRANSFORMERS_CACHE`, then the directory declared by the consumer;
 otherwise Transformers uses its own default. MAMA's OS, MCP and plugin consumers declare
