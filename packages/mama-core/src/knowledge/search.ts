@@ -84,7 +84,11 @@ export async function vectorSearch(
  */
 export function ftsMatchTerms(terms: readonly string[], join: 'AND' | 'OR'): string | null {
   if (terms.length === 0) return null;
-  return terms.map((term) => `"${term.replaceAll('"', '""')}"`).join(` ${join} `);
+  return terms.map(ftsPhrase).join(` ${join} `);
+}
+
+function ftsPhrase(term: string): string {
+  return `"${term.replaceAll('"', '""')}"`;
 }
 
 /** The words of free text, for a match that needs every one of them. */
@@ -94,28 +98,38 @@ export function ftsWords(text: string): string[] {
 
 const CJK_CHARACTER = /[\p{Script=Hangul}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
 const HANGUL_ONLY = /^\p{Script=Hangul}+$/u;
-const HIRAGANA_ONLY = /^\p{Script=Hiragana}+$/u;
+// The long-vowel mark (U+30FC, halfwidth U+FF70) and the halfwidth voiced marks (U+FF9E, U+FF9F)
+// belong to kana words, but their own script is Common.
+const KANA_MARKS = '\\u30FC\\uFF70\\uFF9E\\uFF9F';
+const HIRAGANA_ONLY = new RegExp(`^[\\p{Script=Hiragana}${KANA_MARKS}]+$`, 'u');
 // Japanese has no spaces: a word changes where the script does. Kanji and katakana runs carry the
-// words; the hiragana between them are particles and verb endings. U+30FC (the long-vowel mark)
-// belongs to katakana words but its own script is Common. Korean and Latin text stay together;
-// an underscore separates, as it does in the word index.
-const SCRIPT_RUN =
-  /\p{Script=Han}+|[\p{Script=Katakana}\u30FC]+|\p{Script=Hiragana}+|[^\p{Script=Han}\p{Script=Katakana}\p{Script=Hiragana}\u30FC_]+/gu;
+// words; the hiragana between them are particles and verb endings. Korean and Latin text stay
+// together; an underscore separates, as it does in the word index.
+const SCRIPT_RUN = new RegExp(
+  `\\p{Script=Han}+|[\\p{Script=Katakana}${KANA_MARKS}]+|[\\p{Script=Hiragana}${KANA_MARKS}]+|` +
+    `[^\\p{Script=Han}\\p{Script=Katakana}\\p{Script=Hiragana}${KANA_MARKS}_]+`,
+  'gu'
+);
 // Korean particles and endings take one or two syllables.
 const HANGUL_ENDING_SYLLABLES = 2;
 
 /**
- * The words of the Korean and Japanese words of free text, lower-cased: each with the forms that
- * count as it, in the trigram index.
+ * The words of free text that hold Korean or Japanese text, lower-cased, each with the forms that
+ * count as it and the index that holds them.
  *
  * A Japanese word written without spaces is split where its script changes and its hiragana
- * runs are left out, unless the word is hiragana alone; Latin letters and digits split off it
- * are a word of the word index (a card name with its code attached). A Korean word also counts
- * without its last one or two syllables, where particles and endings attach (a noun with its
- * object particle also looks up the noun). Forms of one character are not looked up. Measured on
- * the agent's 762 distinct Korean and Japanese queries: dropping the last syllable found 355 of
+ * runs are left out, unless the word is hiragana alone; a word of one kanji with kana (a verb
+ * noun) leaves no form, since without a dictionary its kanji stand alone. A Korean word also
+ * counts without its last one or two syllables, where particles and endings attach (a noun with
+ * its object particle also looks up the noun). Forms of one character are not looked up. Measured
+ * on the agent's 762 distinct Korean and Japanese queries: dropping the last syllable found 355 of
  * 925 Korean words that matched no record, and splitting at the script found 124 of 327 longer
  * words.
+ *
+ * A word led by a Latin letter or digit (a count, a month, an acronym with a particle, a code
+ * split off a Japanese word) is looked up in the word index, which anchors the start of a word;
+ * in the trigram index a count of 4 rounds matched inside 14 rounds, January inside November
+ * (the month numbers 1 and 11 with their Korean counter) and "ai" inside "email".
  */
 export function cjkQueryWords(text: string): QueryWord[] {
   const words = new Map<string, QueryWord>();
@@ -123,19 +137,16 @@ export function cjkQueryWords(text: string): QueryWord[] {
     if (!CJK_CHARACTER.test(word)) continue;
     const runs = word.match(SCRIPT_RUN) ?? [];
     for (const run of runs.length > 1 ? runs.filter((r) => !HIRAGANA_ONLY.test(r)) : runs) {
-      if (characterCount(run) < 2) continue;
-      if (!CJK_CHARACTER.test(run)) {
-        words.set(`decisions_fts:${run}`, { index: 'decisions_fts', forms: [run] });
-        continue;
-      }
       const characters = Array.from(run);
+      if (characters.length < 2) continue;
       const forms = [run];
       for (let cut = 1; cut <= HANGUL_ENDING_SYLLABLES; cut += 1) {
         const ending = characters.slice(characters.length - cut).join('');
         if (!HANGUL_ONLY.test(ending) || characters.length - cut < 2) break;
         forms.push(characters.slice(0, characters.length - cut).join(''));
       }
-      words.set(`decisions_trigram:${run}`, { index: 'decisions_trigram', forms });
+      const index = CJK_CHARACTER.test(characters[0]!) ? 'decisions_trigram' : 'decisions_fts';
+      words.set(`${index}:${run}`, { index, forms });
     }
   }
   return [...words.values()];
@@ -173,9 +184,30 @@ export async function fts5Search(
   if (!tableCheck) return [];
 
   // Query execution - let errors propagate to the caller
+  // Excluded rows are left out before LIMIT, so they cannot fill the pool ahead of rows that stay.
+  const filters = decisionFilters(kind, exclude);
+  const stmt = adapter.prepare(`
+    SELECT d.id, rank
+    FROM ${index}
+    JOIN decisions d ON ${index}.rowid = d.rowid
+    WHERE ${index} MATCH ?
+      ${filters.sql}
+    ORDER BY rank
+    LIMIT ?
+  `);
+  return stmt.all(query, ...filters.params, limit) as {
+    id: string;
+    rank: number;
+  }[];
+}
+
+/** SQL conditions on `decisions d` for a kind filter and the excluded statuses and amendments. */
+function decisionFilters(
+  kind: MemoryKindFilter | undefined,
+  exclude: { statuses?: readonly string[]; amendments?: boolean } | undefined
+): { sql: string; params: string[] } {
   const kinds = Array.isArray(kind) ? kind : kind === undefined ? [] : [kind];
   const kindClause = kinds.length === 0 ? '' : `AND d.kind IN (${kinds.map(() => '?').join(', ')})`;
-  // Excluded rows are left out before LIMIT, so they cannot fill the pool ahead of rows that stay.
   const statuses = exclude?.statuses ?? [];
   const statusClause =
     statuses.length === 0
@@ -184,21 +216,10 @@ export async function fts5Search(
   const amendmentClause = exclude?.amendments
     ? "AND json_extract(d.payload_json, '$.amended') IS NULL"
     : '';
-  const stmt = adapter.prepare(`
-    SELECT d.id, rank
-    FROM ${index}
-    JOIN decisions d ON ${index}.rowid = d.rowid
-    WHERE ${index} MATCH ?
-      ${kindClause}
-      ${statusClause}
-      ${amendmentClause}
-    ORDER BY rank
-    LIMIT ?
-  `);
-  return stmt.all(query, ...kinds, ...statuses, limit) as {
-    id: string;
-    rank: number;
-  }[];
+  return {
+    sql: `${kindClause} ${statusClause} ${amendmentClause}`,
+    params: [...kinds, ...statuses],
+  };
 }
 
 // Far below the smallest difference between the idf sums of two different sets of words.
@@ -215,12 +236,15 @@ export interface QueryWord {
  *
  * A word's matches are the records holding any of its forms in its index. In the trigram index a
  * form of two characters, which no trigram holds alone, matches as every indexed trigram that
- * starts or ends with it. A record scores the idf (BM25's) of each query word it holds, so records
- * holding more and rarer words come first; the word's bm25 only orders records holding the same
- * words. On the owner ledger, FTS5's bm25 over one expression weighed each of a common word's 44
- * trigram forms as a word of its own and filled the top 50 with it, and bm25 as the weight put an
- * item's long closing revision, the record a similar-case question looks for, 374th of the 440
- * records holding one of its words, under short records holding a single rare word.
+ * starts or ends with it. In the word index a form holding Korean or Japanese text matches as the
+ * start of a word, where a particle may follow it (a count matches with its particle attached); a
+ * form of Latin letters and digits matches a whole word. A record scores the idf (BM25's) of each
+ * query word it holds, so records holding more and rarer words come first; the word's bm25 only
+ * orders records holding the same words. On the owner ledger, FTS5's bm25 over one expression
+ * weighed each of a common word's 44 trigram forms as a word of its own and filled the top 50 with
+ * it, and bm25 as the weight put an item's long closing revision, the record a similar-case
+ * question looks for, 374th of the 440 records holding one of its words, under short records
+ * holding a single rare word.
  *
  * @returns Matching decision IDs, best first, with the negated score as `rank` (bm25's sign)
  */
@@ -260,25 +284,34 @@ export async function wordSearch(
     }
   }
 
-  const { total } = adapter.prepare('SELECT count(*) AS total FROM decisions').get() as {
-    total: number;
-  };
+  // The records the search may return: the idf counts holders among them, not among excluded ones.
+  const filters = decisionFilters(kind, exclude);
+  const { total } = adapter
+    .prepare(`SELECT count(*) AS total FROM decisions d WHERE 1 = 1 ${filters.sql}`)
+    .get(...filters.params) as { total: number };
   const scores = new Map<string, number>();
   // A word given twice weighs once.
   const distinct = new Map(words.map((word) => [`${word.index}:${word.forms.join('|')}`, word]));
   for (const word of distinct.values()) {
-    const terms = word.forms.flatMap((form) =>
-      word.index === 'decisions_trigram' && characterCount(form) === 2
-        ? (trigramsOfPair.get(form) ?? [])
-        : [form]
-    );
-    const expression = ftsMatchTerms([...new Set(terms)], 'OR');
-    if (expression === null) continue;
+    const terms = [
+      ...new Set(
+        word.forms.flatMap((form) => {
+          if (word.index === 'decisions_fts') {
+            return [CJK_CHARACTER.test(form) ? `${ftsPhrase(form)}*` : ftsPhrase(form)];
+          }
+          const trigrams = characterCount(form) === 2 ? (trigramsOfPair.get(form) ?? []) : [form];
+          return trigrams.map(ftsPhrase);
+        })
+      ),
+    ];
+    if (terms.length === 0) continue;
     // Every record holding the word: the idf counts them, and the cut comes after the sum.
-    const matches = await fts5Search(adapter, expression, total, kind, exclude, word.index);
+    const matches = await fts5Search(adapter, terms.join(' OR '), total, kind, exclude, word.index);
     if (matches.length === 0) continue;
     const idf = Math.log(1 + (total - matches.length + 0.5) / (matches.length + 0.5));
-    const best = Math.max(...matches.map((match) => Math.abs(match.rank)));
+    // A loop, not Math.max(...): the matches are every holder, past what a spread can take.
+    let best = 0;
+    for (const match of matches) best = Math.max(best, Math.abs(match.rank));
     for (const match of matches) {
       const order = best > 0 ? Math.abs(match.rank) / best : 1;
       scores.set(match.id, (scores.get(match.id) ?? 0) + idf + order * BM25_TIE_BREAK);

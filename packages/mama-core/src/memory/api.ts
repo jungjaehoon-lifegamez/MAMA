@@ -1305,8 +1305,15 @@ export async function recallMemory(
             searchAdapter,
             [
               ...cjkWords,
+              // A token joining Latin text to Korean or Japanese ("name-word") keeps its Latin words.
               ...ftsTokens
-                .filter((token) => !CJK_TEXT.test(token))
+                .flatMap((token) =>
+                  CJK_TEXT.test(token)
+                    ? ftsWords(token).filter(
+                        (part) => !CJK_TEXT.test(part) && characterCount(part) >= 2
+                      )
+                    : [token]
+                )
                 .map((token): QueryWord => ({ index: 'decisions_fts', forms: [token] })),
             ],
             lexicalLimit,
