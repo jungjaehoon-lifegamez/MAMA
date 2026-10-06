@@ -54,26 +54,31 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
 2. W37: done on 2026-10-06 (#430, #431; [work list](work/owner-rules.md)). Standing rules live in
    the owner policy (22 moved, 5 situational, accepted by the owner); the rule index and the record
    order's recall are gone. Left to observe: the 08:00 full report and the 09:00 reminder.
-3. W25: the `⏳` placeholder replaced by the answer has been live since 0.51.1 (owner confirmed
-   2026-10-07). Left: delete the presenter's unused streaming hooks and log a failed placeholder
-   send. No typing action and no streaming edits (owner, 2026-10-06).
-4. Team flow: the whole member flow is analysed in [team-flow.md](work/team-flow.md) (2026-10-07,
+3. W25: done on 2026-10-07 (#432). The `⏳` placeholder replaced by the answer has been live since
+   0.51.1; the presenter's unused streaming hooks are gone and a failed placeholder send is logged.
+   Released with W37 and W38 in mama-os 0.66.0 and mama-core 6.1.0, live from 01:41 KST.
+4. iCal: an event that returned to an earlier version (A → B → A) without `LAST-MODIFIED` is sent
+   again under its stored version address with a new first-seen time, and the raw archive refuses
+   it as a forged replay (`storage/source-archive.ts:546`). One save covers the whole poll, so every
+   iCal feed has failed each poll since 2026-10-07 00:03 KST. Fix it so a return to an earlier
+   version is recorded as the event's current state and the poll saves again.
+5. Team flow: the whole member flow is analysed in [team-flow.md](work/team-flow.md) (2026-10-07,
    two independent reviews merged and checked). Core has the mechanisms; the product wires every
    principal path to the owner; two core gaps (registering the existing `owner` principal; work
    reads that ignore read-only scopes and fail on a partial ledger) block a read-only member
    before any wiring. Next: the owner's four blocking decisions, then the ten-step slice.
-5. Paraphrase search, bounded (owner, 2026-10-06): reproduce the four paraphrases that miss the
+6. Paraphrase search, bounded (owner, 2026-10-06): reproduce the four paraphrases that miss the
    August case in the vector channel
    ([check](checks.md#fts5-terms-as-quoted-text-and-a-trigram-index-for-korean-and-japanese-words-410-411-2026-10-05))
    and find where each drops out: the embedding, the vector top-K chosen before filtering
    (`mama-core/src/memory/api.ts:1152`), or later ranking. No algorithm is chosen in advance.
-6. Core: a knowledge construction without an embedder writes records without a vector and says
+7. Core: a knowledge construction without an embedder writes records without a vector and says
    nothing (`mama-core/src/knowledge/judgments.ts:97`); the 10-03 check found 178 revisions written
    that way. Make the embedder an explicit argument, `null` for text-only, as W4 did for recall.
    Then the AGENTS.md index rule can go. [W11's candidates](checks.md#w11-core-subtraction-2026-10-05)
    follow: the unused memory-agent vocabulary (`AuditNotice`, `MemoryConsultResult`, consult
    intents and ack statuses) and the removed code's tables, after a data check on every database.
-7. W23's program measures: compactions per day, input size per turn, reply wait, and recovery when
+8. W23's program measures: compactions per day, input size per turn, reply wait, and recovery when
    a restart lands during a record order. W26: replay runs every stimulus under
    `OWNER_RUNTIME_SESSION_KEY` (`runtime/stimulus-delivery.ts:659`); check whether a replay resumes
    the live native session and give it its own session if it does, then run a one-day replay.
