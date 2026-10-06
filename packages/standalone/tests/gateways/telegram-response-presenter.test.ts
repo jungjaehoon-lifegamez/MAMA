@@ -6,10 +6,7 @@ describe('TelegramResponsePresenter', () => {
     const send = vi.fn().mockResolvedValue('message-1');
     const edit = vi.fn().mockResolvedValue(undefined);
     const remove = vi.fn().mockResolvedValue(undefined);
-    const presenter = new TelegramResponsePresenter(
-      { send, edit, delete: remove },
-      { throttleMs: 1 }
-    );
+    const presenter = new TelegramResponsePresenter({ send, edit, delete: remove });
 
     await presenter.start();
     await presenter.finalize('final answer');
@@ -21,6 +18,34 @@ describe('TelegramResponsePresenter', () => {
     });
     expect(remove).not.toHaveBeenCalled();
   });
+
+  it.each([new Error('connection failed\nrequest closed'), 'connection failed\nrequest closed'])(
+    'logs a failed placeholder send and still delivers the final answer (%s)',
+    async (error) => {
+      const send = vi.fn().mockRejectedValueOnce(error).mockResolvedValueOnce('message-2');
+      const edit = vi.fn();
+      const remove = vi.fn();
+      const lines: string[] = [];
+      const presenter = new TelegramResponsePresenter(
+        { send, edit, delete: remove },
+        { log: (line) => lines.push(line) }
+      );
+
+      await presenter.start();
+      await presenter.finalize('final answer');
+
+      expect(lines).toEqual([
+        'telegram placeholder send failed error=connection failed request closed',
+      ]);
+      expect(send.mock.calls).toEqual([
+        [{ text: '⏳', entities: [] }],
+        [{ text: 'final answer', entities: [] }],
+      ]);
+      expect(presenter.deliveredText).toBe('final answer');
+      expect(edit).not.toHaveBeenCalled();
+      expect(remove).not.toHaveBeenCalled();
+    }
+  );
 
   it('sends later chunks when the final answer exceeds one Telegram message', async () => {
     const send = vi.fn().mockResolvedValueOnce('message-1').mockResolvedValueOnce('message-2');

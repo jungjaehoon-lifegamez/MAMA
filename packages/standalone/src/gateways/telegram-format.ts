@@ -66,7 +66,6 @@ const LINK_PROTOCOLS = ['https:', 'http:', 'mailto:'];
 const TAG_SCAN = /<\/?[a-z][^>]*>/gi;
 const CLOSING_TAG = /^<\/([a-z-]+)\s*>$/i;
 const OPENING_TAG = /^<([a-z-]+)([^>]*)>$/i;
-const TRAILING_OPENING_TAG = /<[a-z][^>]*>$/i;
 
 /**
  * The producer half of this module. The parser above can only read the subset
@@ -304,51 +303,9 @@ export function sanitizeTelegramHtml(input: string): string {
     cursor = span.end;
   }
   out += input.slice(cursor);
-  // Innermost first, the same order `closeOpenTelegramHtml` uses for snapshots.
+  // Close nested tags innermost first.
   for (let index = autoClose.length - 1; index >= 0; index -= 1) out += `</${autoClose[index]}>`;
   return out;
-}
-
-/**
- * Make a mid-stream snapshot readable by the parser above.
- *
- * A streaming snapshot is cut at an arbitrary character: it can end inside a
- * tag, and it almost always leaves tags open. Either one makes the WHOLE
- * snapshot literal, so the owner watches the placeholder flicker between styled
- * text and raw markup. Drop the partial tag at the end and close what is still
- * open, using the same tag scan the parser uses.
- *
- * A snapshot the scan cannot follow is returned as-is: the parser then falls
- * back to literal text, which is the existing behaviour, not a new one.
- */
-export function closeOpenTelegramHtml(snapshot: string): string {
-  const lastOpen = snapshot.lastIndexOf('<');
-  let text =
-    lastOpen >= 0 && snapshot.indexOf('>', lastOpen) < 0 ? snapshot.slice(0, lastOpen) : snapshot;
-  // A tag the stream has opened but not yet filled encloses nothing. Closing it
-  // would build markup around no text, and `formatTelegramMessage` shows THAT
-  // literally rather than send an empty message. Drop it instead.
-  for (
-    let empty = TRAILING_OPENING_TAG.exec(text);
-    empty;
-    empty = TRAILING_OPENING_TAG.exec(text)
-  ) {
-    text = text.slice(0, -empty[0].length);
-  }
-  const open: string[] = [];
-  for (const match of text.matchAll(TAG_SCAN)) {
-    const closing = CLOSING_TAG.exec(match[0]);
-    if (closing) {
-      if (open.pop() !== closing[1].toLowerCase()) return text;
-      continue;
-    }
-    const opening = OPENING_TAG.exec(match[0]);
-    if (!opening || !TAG_TYPES[opening[1].toLowerCase()]) return text;
-    open.push(opening[1].toLowerCase());
-  }
-  let closed = text;
-  while (open.length) closed += `</${open.pop()}>`;
-  return closed;
 }
 
 /**

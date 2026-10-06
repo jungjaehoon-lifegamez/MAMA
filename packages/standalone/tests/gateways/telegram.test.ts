@@ -85,7 +85,8 @@ async function gatewayFor(
   intake: TurnIntake,
   ledgerPath?: string,
   filesRoot?: string,
-  interruptedNotice?: string
+  interruptedNotice?: string,
+  log?: (line: string) => void
 ): Promise<TelegramGateway> {
   const root = mkdtempSync(join(tmpdir(), 'mama-telegram-fixture-'));
   temporaryRoots.push(root);
@@ -93,6 +94,7 @@ async function gatewayFor(
   const gateway = new TelegramGateway({
     token: 'fixture-token',
     intake,
+    log,
     messageLedgerPath: ledgerPath ?? join(root, 'telegram-ledger.json'),
     config: {
       allowedChats: ['7'],
@@ -501,6 +503,40 @@ describe('TelegramGateway', () => {
     });
     expect(seams.api.sendMessage).toHaveBeenCalledWith(7, '⏳');
     await gateway.stop();
+  });
+
+  it('logs a failed placeholder through the gateway logger and delivers the final answer', async () => {
+    const received: OwnerMessageInput[] = [];
+    const recordOwnerReply = vi.fn();
+    const lines: string[] = [];
+    const gateway = await gatewayFor(
+      { ...intakeFor(received), recordOwnerReply },
+      undefined,
+      undefined,
+      undefined,
+      (line) => lines.push(line)
+    );
+    seams.api.sendMessage.mockRejectedValueOnce(new Error('placeholder transport failed'));
+    try {
+      await seams.handlers.get('message')!({ message: message() });
+      await gateway.deliverResponse('telegram:7:11', 'final answer');
+
+      expect(lines).toEqual([
+        'telegram placeholder send failed error=placeholder transport failed',
+      ]);
+      expect(received).toHaveLength(1);
+      expect(seams.api.sendMessage.mock.calls).toEqual([
+        [7, '⏳'],
+        [7, 'final answer'],
+      ]);
+      expect(seams.api.editMessageText).not.toHaveBeenCalled();
+      expect(gateway.answered('telegram:7:11')).toBe(true);
+      expect(recordOwnerReply).toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'final answer', deliveryVerified: true })
+      );
+    } finally {
+      await gateway.stop();
+    }
   });
 
   it('does not submit a Telegram retry after the completed response is delivered', async () => {

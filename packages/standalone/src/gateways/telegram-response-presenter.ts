@@ -2,16 +2,13 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { isDefinitiveTelegramRejection } from './telegram-errors.js';
 
-import type { StreamCallbacks } from '@jungjaehoon/mama-core/runtime/drivers/types';
 import {
-  closeOpenTelegramHtml,
   formatTelegramMessage,
   TELEGRAM_MAX_MESSAGE_LENGTH,
   type TelegramFormattedText,
   type TelegramChunkFormat,
 } from './telegram-format.js';
 
-const DEFAULT_THROTTLE_MS = 800;
 const DEFAULT_MAX_LENGTH = TELEGRAM_MAX_MESSAGE_LENGTH;
 const EMPTY_RESPONSE_MESSAGE = 'No response was generated.';
 /** The host-written placeholder shown while the answer is still forming. */
@@ -34,9 +31,9 @@ function plain(text: string): TelegramFormattedText {
 
 export interface TelegramResponsePresenterOptions {
   chunkFormat?: TelegramChunkFormat;
-  /** Serialize the final multipart batch after pending streaming edits drain. */
+  /** Serialize the final multipart batch. */
   withDelivery?: (send: () => Promise<void>) => Promise<void>;
-  throttleMs?: number;
+  log?: (line: string) => void;
   maxLength?: number;
   chunkRetryCount?: number;
   resumeFromChunk?: number;
@@ -89,13 +86,9 @@ export class TelegramResponsePresenter {
   private readonly chunkFormat: TelegramChunkFormat;
   private readonly adapter: TelegramResponseAdapter;
   private readonly withDelivery: (send: () => Promise<void>) => Promise<void>;
-  private readonly throttleMs: number;
+  private readonly log: (line: string) => void;
   private readonly maxLength: number;
   private handle: string | null = null;
-  private accumulatedText = '';
-  private toolStatus = '';
-  private editTimer: ReturnType<typeof setTimeout> | null = null;
-  private inFlightEdit: Promise<void> = Promise.resolve();
   private finalized = false;
   private finalText: string | null = null;
   private finalizing = false;
@@ -107,7 +100,7 @@ export class TelegramResponsePresenter {
     this.chunkFormat = options.chunkFormat ?? 'html-v1';
     this.adapter = adapter;
     this.withDelivery = options.withDelivery ?? ((send) => send());
-    this.throttleMs = options.throttleMs ?? DEFAULT_THROTTLE_MS;
+    this.log = options.log ?? ((line) => console.log(line));
     this.maxLength = options.maxLength ?? DEFAULT_MAX_LENGTH;
     this.chunkRetryCount = Math.max(1, options.chunkRetryCount ?? 3);
     this.resumeFromChunk = Math.max(0, options.resumeFromChunk ?? 0);
@@ -120,51 +113,17 @@ export class TelegramResponsePresenter {
     }
     try {
       this.handle = await this.adapter.send(plain(PENDING_PLACEHOLDER));
-    } catch {
+    } catch (error) {
       this.handle = null;
+      this.log(
+        `telegram placeholder send failed error=${telegramErrorMessage(error).replace(/[\r\n]+/g, ' ')}`
+      );
+      // Continue the turn: finalize() sends the answer as a new message without a placeholder.
     }
-  }
-
-  callbacks(): StreamCallbacks {
-    return {
-      onDelta: (text) => {
-        if (this.finalized || this.finalizing) {
-          return;
-        }
-        this.accumulatedText += text;
-        this.scheduleEdit();
-      },
-      onToolUse: (name) => {
-        if (this.finalized || this.finalizing) {
-          return;
-        }
-        // Text that precedes a tool call is the model narrating its next step,
-        // not the answer. Drop it so the live message shows the tool status
-        // instead of leaking commentary; finalize() uses rawResponse regardless.
-        this.accumulatedText = '';
-        this.toolStatus = `🔧 ${name}...`;
-        this.scheduleEdit();
-      },
-      onToolComplete: (name, _toolUseId, isError) => {
-        if (this.finalized || this.finalizing || this.accumulatedText) {
-          return;
-        }
-        this.toolStatus = `${isError ? '❌' : '✅'} ${name}`;
-        this.scheduleEdit();
-      },
-    };
-  }
-
-  markQueued(): void {
-    if (this.finalized || this.finalizing) {
-      return;
-    }
-    this.toolStatus = '⏳ Waiting for the earlier task to finish.';
-    this.scheduleEdit();
   }
 
   get deliveredText(): string {
-    // A streamed draft or a partially sent batch is not a delivered reply.
+    // A partially sent batch is not a delivered reply.
     if (!this.finalized || this.finalText === null)
       throw new Error('Telegram final text is not delivered');
     return this.finalText;
@@ -175,9 +134,7 @@ export class TelegramResponsePresenter {
       return;
     }
     this.finalizing = true;
-    this.cancelPendingEdit();
     try {
-      await this.inFlightEdit;
       await this.withDelivery(() => this.deliverFinal(rawResponse));
     } finally {
       this.finalizing = false;
@@ -232,71 +189,13 @@ export class TelegramResponsePresenter {
     this.finalized = true;
   }
 
-  /** Stop live edits while the durable input waits for result reconciliation. */
+  /** Stop delivery while the durable input waits for result reconciliation. */
   async suspend(): Promise<void> {
     this.finalized = true;
-    if (this.editTimer) clearTimeout(this.editTimer);
-    this.editTimer = null;
-    await this.inFlightEdit;
   }
 
   async fail(message: string): Promise<void> {
     await this.finalize(message);
-  }
-
-  private scheduleEdit(): void {
-    if (this.editTimer || this.finalized) {
-      return;
-    }
-    this.editTimer = setTimeout(() => {
-      this.editTimer = null;
-      this.inFlightEdit = this.inFlightEdit.then(() => this.flushStreamingEdit());
-    }, this.throttleMs);
-  }
-
-  private async flushStreamingEdit(): Promise<void> {
-    if (this.finalized || !this.handle) {
-      return;
-    }
-    const sanitized = sanitizeVisibleText(this.accumulatedText);
-    if (sanitized === null) {
-      return;
-    }
-    const visible = sanitized.trim() || this.toolStatus;
-    if (!visible) {
-      return;
-    }
-    // A streaming snapshot is cut mid-markup. Formatted as-is, one open tag
-    // makes the whole snapshot literal and the owner watches the answer flicker
-    // between styled text and raw HTML. Close the snapshot first, then format.
-    // A closed snapshot can still be empty (the cut fell inside the first tag),
-    // and then the placeholder start() already wrote is the right thing to show.
-    const formatted =
-      formatTelegramMessage(
-        this.chunkFormat === 'html-v1' ? closeOpenTelegramHtml(visible) : visible,
-        Number.MAX_SAFE_INTEGER,
-        this.chunkFormat
-      )[0] ?? plain(PENDING_PLACEHOLDER);
-    // Clip the rendered tail, not the HTML source: removing an opening tag
-    // before parsing would expose its closing tag and lose the entity span.
-    let start = Math.max(0, formatted.text.length - this.maxLength);
-    if (/[\uDC00-\uDFFF]/.test(formatted.text[start])) start += 1;
-    const message = {
-      text: formatted.text.slice(start),
-      entities: formatted.entities.flatMap((entity) => {
-        const offset = Math.max(start, entity.offset);
-        const end = entity.offset + entity.length;
-        return end > offset ? [{ ...entity, offset: offset - start, length: end - offset }] : [];
-      }),
-    };
-    await this.adapter.edit(this.handle, message).catch(() => {});
-  }
-
-  private cancelPendingEdit(): void {
-    if (this.editTimer) {
-      clearTimeout(this.editTimer);
-      this.editTimer = null;
-    }
   }
 
   private async sendChunks(chunks: TelegramFormattedText[], startIndex = 0): Promise<void> {
