@@ -15,6 +15,10 @@ others). Claude-only notes live in `CLAUDE.md`.
   report a finished sub-task as the purpose being met.
 - The current work list is [docs/development/plan.md](docs/development/plan.md). After each item, add 3–5
   lines to [docs/development/checks.md](docs/development/checks.md): result, evidence, what still fails.
+  Both are working documents: commit them straight to `main`, without a PR (owner, 2026-10-06).
+- What a better model would fix is not product work. A problem counts only when a perfect model
+  could not solve it with today's tools, data and write paths. A done condition checks what the
+  program delivers, not whether the model obeys it (owner, 2026-10-06).
 
 ## Repository map
 
@@ -67,6 +71,8 @@ cd packages/mama-core && npx vitest run -t "pattern"
 - Check claims of absence ("nothing calls X") at the assembly point where things are wired
   together, not by grep alone.
 - Never print ranges of `~/.mama/config.yaml`; it holds tokens.
+- The daemon runs `packages/standalone/dist` from the main checkout, so pulling into it is a
+  deploy: pull, build and restart together. Only one daemon can poll the Telegram bot.
 
 ## Rules
 
@@ -80,6 +86,9 @@ cd packages/mama-core && npx vitest run -t "pattern"
   data or the owner decision that requires it. Do not build from imagination.
 - **The agent judges, the host provides.** Meaning, relevance, identity and roles are not coded as
   rules. The host provides collection, storage, search, execution, permissions and receipts.
+- **Similarity search needs the index.** Records meant for similarity search enter the semantic
+  index: pass the embedder wherever core knowledge is constructed, and verify lexical and semantic
+  search separately.
 - **Relocate before you delete.** Before removing a host step, lane brief or policy line, name the
   place where its domain knowledge and owner corrections will reach the agent, and confirm it with
   one real owner turn.

@@ -42,8 +42,9 @@ Program evidence ([checks](../checks.md)):
 | W38.5 | Replay windows leave out the `chat` connector at the read, as Kagemusha's delta read leaves out its chat                                                                                                                                                                                                                                                                                                                                                                                                                           | Test: a replay window over a period with stored chat has no chat events                                                                                                                                                                       |
 | W38.6 | Backfill in the testbed with the daemon stopped: the snapshot goes through the W38.1/W38.2 item builder (questions, their replies, and replies without a question)                                                                                                                                                                                                                                                                                                                                                                 | Counts match the snapshot (125, 123, 98); `source.read` returns a 09-29 message; `daemon.log` is clean after restart                                                                                                                          |
 
-Open (owner's call): whether the owner's agent may read a team member's chat by default. Letta lets
-an admin read every conversation. This is a policy line in the team design, not part of W38.
+Decided (owner, 2026-10-06): the owner's agent cannot read a team member's chat by default. W38.1
+adds `chat` to the owner's connectors while only the owner's own chat exists; once member chats
+are stored, the owner's reads of `chat` are limited to the owner's own channel (team design).
 
 Messages before 09-29 survive only in the Claude CLI transcripts, which MAMA does not own. They are
 not backfilled unless the owner asks.
