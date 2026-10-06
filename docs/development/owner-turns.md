@@ -30,7 +30,7 @@ file. `turn-orders.ts` supplies only the steps and data for the turn at hand, fo
 reference implementation's small-order mechanism. Owner rules saved in chat still reach record
 orders and full-report help through an index in the current code. The decision to move standing
 rules into the policy file and then remove that index is recorded in
-[the owner-rule work item](work/owner-rules.md); the index has not yet been removed from this code.
+[the owner-rule work item](https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/development/work/owner-rules.md); the index has not yet been removed from this code.
 
 Code: [turn orders](../../packages/standalone/src/runtime/turn-orders.ts),
 [delivery assembly](../../packages/standalone/src/runtime/stimulus-delivery.ts),
