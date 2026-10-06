@@ -53,7 +53,7 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    it saved returns the owner's words through its provenance.
 2. W37: standing owner rules move into the owner policy ([work list](work/owner-rules.md)).
    W37.1 deployed and W37.2 merged on 2026-10-06 (#430): 22 owner rules moved, 5 stay situational.
-   Left: the owner accepts the file; the daily and full report run with it (W37.3); then W37.4
+   The owner accepted the file. Left: the daily and full report run with it (W37.3); then W37.4
    relocates the report rules and removes the rule index and the record order's recall.
 3. W25 (owner, 2026-10-06): a Telegram reply shows the typing action and a `⏳` placeholder at
    once and is replaced by the final answer; no streaming edits. The ledger delivers into the
