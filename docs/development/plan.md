@@ -51,15 +51,12 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
 1. W38: done on 2026-10-06 (#429; [work list](work/owner-chat.md)). 126 owner messages and 222
    replies backfilled; the first live owner turn stored its message and reply, and the correction
    it saved returns the owner's words through its provenance.
-2. W37: standing owner rules move into the owner policy ([work list](work/owner-rules.md)).
-   W37.1 deployed and W37.2 merged on 2026-10-06 (#430): 22 owner rules moved, 5 stay situational.
-   The owner accepted the file. Left: the daily and full report run with it (W37.3); then W37.4
-   relocates the report rules and removes the rule index and the record order's recall.
-3. W25 (owner, 2026-10-06): a Telegram reply shows the typing action and a `⏳` placeholder at
-   once and is replaced by the final answer; no streaming edits. The ledger delivers into the
-   placeholder, and an interrupted turn turns the placeholder into the interruption notice.
-   Measured since 09-29: 123 owner messages took 54 s on average to answer, 11 over three minutes,
-   with nothing shown meanwhile.
+2. W37: done on 2026-10-06 (#430, #431; [work list](work/owner-rules.md)). Standing rules live in
+   the owner policy (22 moved, 5 situational, accepted by the owner); the rule index and the record
+   order's recall are gone. Left to observe: the 08:00 full report and the 09:00 reminder.
+3. W25: the `⏳` placeholder replaced by the answer has been live since 0.51.1 (owner confirmed
+   2026-10-07). Left: delete the presenter's unused streaming hooks and log a failed placeholder
+   send. No typing action and no streaming edits (owner, 2026-10-06).
 4. Team flow: [research](research/team-members-research.md) and
    [program comparison](research/letta-mama-program-comparison.md). Owner, 2026-10-06: separate
    agent sessions for the common session, the owner session and each team member; each keeps
