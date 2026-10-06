@@ -71,17 +71,19 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    or bring one paraphrase in while admitting the case that must stay out and reordering most real
    queries' top five. The record holds none of the paraphrases' words; the agent's own rephrasing
    reached the case live (4580). The embedding switch waits with the Drive files below.
-7. Core: a knowledge construction without an embedder writes records without a vector and says
-   nothing (`mama-core/src/knowledge/judgments.ts:97`); the 10-03 check found 178 revisions written
-   that way. Make the embedder an explicit argument, `null` for text-only, as W4 did for recall.
-   Then the AGENTS.md index rule can go. [W11's candidates](checks.md#w11-core-subtraction-2026-10-05)
-   follow: the unused memory-agent vocabulary (`AuditNotice`, `MemoryConsultResult`, consult
-   intents and ack statuses) and the removed code's tables, after a data check on every database.
-8. W23's program measures: compactions per day, input size per turn, reply wait, and recovery when
-   a restart lands during a record order. W26: replay runs every stimulus under
-   `OWNER_RUNTIME_SESSION_KEY` (`runtime/stimulus-delivery.ts:659`); check whether a replay resumes
-   the live native session and give it its own session if it does, then run a one-day replay.
-   September is not re-imported; live changes and corrections complete it (owner, 2026-09-29).
+7. Core: done in part on 2026-10-07
+   ([check](checks.md#knowledge-writes-name-their-embedder-the-removed-modules-tables-435-2026-10-07)).
+   Knowledge writes name their embedder or `null` and refuse the omission (#435, breaking: the next
+   core release is a major one); the AGENTS.md index rule went. Ten tables of the modules 6.0.0
+   removed have no reader or writer; dropping them deletes 623 development-memory rows, so it
+   waits for the owner. The memory-agent vocabulary is the `codex/core-unused-runtime` branch.
+8. W23 and W26: built on 2026-10-07 and live from 05:19 KST
+   ([W23](checks.md#w23-each-model-run-records-its-usage-and-compactions-437-2026-10-07),
+   [W26](checks.md#w26-replay-windows-run-in-a-session-of-their-own-436-2026-10-07)). Each model
+   run records its tokens and compactions (#437); replay windows run in their own session (#436).
+   Left: read compactions per day and input size per turn after a day of live runs, and the
+   one-day replay, which waits for a cost estimate and the owner's go-ahead. September is not
+   re-imported; live changes and corrections complete it (owner, 2026-09-29).
 
 ## Waiting
 
