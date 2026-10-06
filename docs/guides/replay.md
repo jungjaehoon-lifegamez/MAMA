@@ -57,7 +57,8 @@ the window's summary. A window does not advance until all its inputs settle.
 
 ## Return to live collection
 
-On successful completion, replay resets the owner session and sets enabled live
+Replay windows run in a session of their own. On successful completion, replay resets that
+session and the owner session, so the next owner turn starts fresh, and sets enabled live
 connector cursors to the manifest's `untilMs` fence. It does not start live
 collection automatically. Start the launch agent again:
 

@@ -6,7 +6,8 @@ nav_order: 7
 
 # Owner turns
 
-The owner runtime uses one persistent native session. `owner-runtime.ts` builds the standing
+Live owner turns use the persistent native session `owner:runtime`. Replay windows use the
+separate persistent native session `owner:replay`. `owner-runtime.ts` builds the standing
 prompt from `owner-system-prompt.ts`; `native-session.ts` adds the current owner policy file as
 a separate system layer. The policy provider reads the file for each turn. A changed policy
 fingerprint makes `native-prompt.ts` open a session with the full policy again when the backend

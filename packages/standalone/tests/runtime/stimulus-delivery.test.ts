@@ -387,7 +387,10 @@ describe('one stimulus intake and delivery', () => {
       )
     ).toBe(true);
     expect(prompts.some((text) => text.includes('observationRefs'))).toBe(true);
-    expect(runTurn.mock.calls.every((call) => call[1]?.sessionKey === 'owner:runtime')).toBe(true);
+    expect(runTurn.mock.calls.map((call) => call[1]?.sessionKey)).toEqual([
+      'owner:runtime',
+      'owner:replay',
+    ]);
   });
 
   it('does not ack a native turn that throws after native acceptance', async () => {
@@ -547,6 +550,59 @@ describe('one stimulus intake and delivery', () => {
       onAccepted: vi.fn(),
     } as never;
   }
+
+  it.each([
+    {
+      turn: 'replay window',
+      kind: 'source_delta',
+      channelKey: 'source:fixture',
+      payload: () => ({ replay: { windowEndMs: 1_501 } }),
+      sessionKey: 'owner:replay',
+    },
+    {
+      turn: 'owner message',
+      kind: 'owner_message',
+      channelKey: 'owner-chat',
+      payload: () => ({ text: 'owner request', replay: { windowEndMs: 1_501 } }),
+      sessionKey: 'owner:runtime',
+    },
+    {
+      turn: 'live delta',
+      kind: 'source_delta',
+      channelKey: 'source:fixture',
+      payload: () => ({
+        refs: [
+          {
+            connector: 'fixture',
+            channelName: 'fixture',
+            author: 'actor',
+            contentPreview: 'current update',
+            sourceAt: recent(),
+            observationRef: 'observation-1',
+          },
+        ],
+      }),
+      sessionKey: 'owner:runtime',
+    },
+    {
+      turn: 'scheduled row',
+      kind: 'scheduled',
+      channelKey: 'schedule',
+      payload: () => ({
+        report: 'full',
+        hourKey: '2026-01-01:13',
+        replay: { windowEndMs: 1_501 },
+      }),
+      sessionKey: 'owner:runtime',
+    },
+  ])('runs a $turn with $sessionKey', async ({ kind, channelKey, payload, sessionKey }) => {
+    const requests: NativeInvocationOptions[] = [];
+    await createDelivery().deliver(
+      claimed({ stimulusId: 'input-1', kind, channelKey, payload: payload() }),
+      context((_text, request) => requests.push(request))
+    );
+    expect(requests.map((request) => request.sessionKey)).toEqual([sessionKey]);
+  });
 
   const recordOrders = () => ({
     enqueueFirst: vi.fn(),
