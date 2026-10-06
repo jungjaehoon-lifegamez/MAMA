@@ -67,11 +67,12 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    principal path to the owner; two core gaps (registering the existing `owner` principal; work
    reads that ignore read-only scopes and fail on a partial ledger) block a read-only member
    before any wiring. Next: the owner's four blocking decisions, then the ten-step slice.
-6. Paraphrase search, bounded (owner, 2026-10-06): reproduce the four paraphrases that miss the
-   August case in the vector channel
-   ([check](checks.md#fts5-terms-as-quoted-text-and-a-trigram-index-for-korean-and-japanese-words-410-411-2026-10-05))
-   and find where each drops out: the embedding, the vector top-K chosen before filtering
-   (`mama-core/src/memory/api.ts:1152`), or later ranking. No algorithm is chosen in advance.
+6. Paraphrase search: measured on 2026-10-07
+   ([check](checks.md#where-the-four-paraphrases-lose-the-august-case-2026-10-07)). Three
+   paraphrases put the August case's closing revision at cosine rank 52, 65 and 149, outside the
+   20 vector candidates; the fourth reaches rank 16 and fusion drops it, because a vector-only hit
+   scores below every one of the 50 lexical hits. Choosing the top-K before the scope filter costs
+   nothing here. Next: a fusion change, measured on the search checks before any choice.
 7. Core: a knowledge construction without an embedder writes records without a vector and says
    nothing (`mama-core/src/knowledge/judgments.ts:97`); the 10-03 check found 178 revisions written
    that way. Make the embedder an explicit argument, `null` for text-only, as W4 did for recall.
