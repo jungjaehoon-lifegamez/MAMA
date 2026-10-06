@@ -342,6 +342,7 @@ export class PersistentClaudeProcess extends EventEmitter {
   private awaitingToolResults = false;
   private pendingToolUseStartedAt: number | null = null;
   private accumulatedText: string = '';
+  private compactionCount = 0;
   private startPromise: Promise<void> | null = null;
   private onTokenUsage?: (record: TokenUsageRecord) => void;
   /** Live + just-finished native background Agents, keyed by their `Agent` tool_use id. */
@@ -637,6 +638,7 @@ export class PersistentClaudeProcess extends EventEmitter {
     this.promptToolExchanges.clear();
     this.completedToolExchanges = [];
     this.accumulatedText = '';
+    this.compactionCount = 0;
     // A live child keeps running, but this turn's own events are the parent's again.
     this.parentTurnEnded = false;
 
@@ -725,6 +727,7 @@ export class PersistentClaudeProcess extends EventEmitter {
     this.promptToolExchanges.clear();
     this.completedToolExchanges = [];
     this.accumulatedText = '';
+    this.compactionCount = 0;
     // A live child keeps running, but this turn's own events are the parent's again.
     this.parentTurnEnded = false;
 
@@ -825,6 +828,8 @@ export class PersistentClaudeProcess extends EventEmitter {
           this.recordBackgroundTaskStarted(event);
         } else if (event.subtype === 'task_notification') {
           this.recordBackgroundTaskNotification(event);
+        } else if (event.subtype === 'compact_boundary' && this.currentResolve) {
+          this.compactionCount += 1;
         }
         break;
 
@@ -984,10 +989,11 @@ export class PersistentClaudeProcess extends EventEmitter {
             cost_usd: event.total_cost_usd,
             duration_ms: event.duration_ms,
             usage: {
-              input_tokens: event.usage?.input_tokens || 0,
-              output_tokens: event.usage?.output_tokens || 0,
+              input_tokens: event.usage?.input_tokens,
+              output_tokens: event.usage?.output_tokens,
               cache_creation_input_tokens: event.usage?.cache_creation_input_tokens,
               cache_read_input_tokens: event.usage?.cache_read_input_tokens,
+              compaction_count: this.compactionCount,
             },
             toolUseBlocks: hasToolUse ? unresolvedToolUses : undefined,
             hasToolUse,
@@ -1029,7 +1035,10 @@ export class PersistentClaudeProcess extends EventEmitter {
         } else {
           // Every result ends the request: one that is neither success nor flagged as an error
           // would otherwise leave it waiting with its timers already cleared.
-          const error = new Error(event.error || `Claude CLI ended the turn: ${event.subtype}`);
+          const error = this.withPromptUsage(
+            new Error(event.error || `Claude CLI ended the turn: ${event.subtype}`),
+            event.usage
+          );
           this.currentCallbacks?.onError?.(error);
           this.state = 'idle';
           this.awaitingToolResults = false;
@@ -1042,7 +1051,7 @@ export class PersistentClaudeProcess extends EventEmitter {
 
       case 'error': {
         this.clearRequestTimeout();
-        const error = new Error(event.error || 'Unknown error');
+        const error = this.withPromptUsage(new Error(event.error || 'Unknown error'), event.usage);
         this.currentCallbacks?.onError?.(error);
         this.state = 'idle';
         this.awaitingToolResults = false;
@@ -1432,11 +1441,16 @@ export class PersistentClaudeProcess extends EventEmitter {
 
     // Reject any pending request
     if (this.currentReject) {
-      this.currentReject(new Error(`Process exited with code ${code}`));
+      this.currentReject(this.withPromptUsage(new Error(`Process exited with code ${code}`)));
       this.resetRequestState();
     }
 
     this.emit('close', code);
+  }
+
+  /** Attach the interrupted prompt's usage, so a failed run still records what it consumed. */
+  private withPromptUsage(error: Error, usage?: PromptResult['usage']): Error {
+    return Object.assign(error, { usage: { ...usage, compaction_count: this.compactionCount } });
   }
 
   /**
@@ -1446,7 +1460,7 @@ export class PersistentClaudeProcess extends EventEmitter {
     console.error(`[PersistentCLI] Process error:`, error.message);
 
     if (this.currentReject) {
-      this.currentReject(error);
+      this.currentReject(this.withPromptUsage(error));
       this.resetRequestState();
     }
 
@@ -1470,7 +1484,7 @@ export class PersistentClaudeProcess extends EventEmitter {
     );
 
     if (this.currentReject) {
-      this.currentReject(new Error(`Request timeout: ${reason}`));
+      this.currentReject(this.withPromptUsage(new Error(`Request timeout: ${reason}`)));
       this.resetRequestState();
     }
 
@@ -1560,6 +1574,7 @@ export class PersistentClaudeProcess extends EventEmitter {
     this.promptToolExchanges.clear();
     this.completedToolExchanges = [];
     this.accumulatedText = '';
+    this.compactionCount = 0;
   }
 
   /**
@@ -1571,7 +1586,7 @@ export class PersistentClaudeProcess extends EventEmitter {
     // Reject any pending request BEFORE resetting state
     // This ensures promises are resolved even if process is already dead
     if (this.currentReject) {
-      this.currentReject(new Error('Process stopped by user'));
+      this.currentReject(this.withPromptUsage(new Error('Process stopped by user')));
     }
 
     if (this.process) {

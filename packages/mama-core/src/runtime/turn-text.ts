@@ -46,7 +46,7 @@ export function extractTextResponse(history: Message[]): string {
  * doubled every count in 0.44.0, where a 2.8M turn read as 5.5M and was stopped.
  */
 export function countBudgetTokens(usage: PromptResult['usage'], backend: BackendType): number {
-  const base = usage.input_tokens + usage.output_tokens;
+  const base = (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0);
   if (backend === 'codex') {
     return base;
   }

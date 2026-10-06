@@ -122,12 +122,7 @@ export interface CompletedToolExchange {
 
 export interface PromptResult {
   response: string;
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
-  };
+  usage: Partial<Usage>;
   session_id: string;
   cost_usd?: number;
   /** Only tool uses that still require host execution. */
@@ -554,6 +549,7 @@ export interface Usage {
   output_tokens: number;
   cache_creation_input_tokens?: number;
   cache_read_input_tokens?: number;
+  compaction_count?: number;
   cost_usd?: number;
 }
 

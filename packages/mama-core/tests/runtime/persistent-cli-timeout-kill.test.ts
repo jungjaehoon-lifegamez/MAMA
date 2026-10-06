@@ -47,6 +47,16 @@ function readyProcess(options: { requestTimeout: number; requestMaxMs?: number }
 describe('persistent CLI request timeout', () => {
   afterEach(() => vi.useRealTimers());
 
+  it('reports a compact boundary observed before a request times out', async () => {
+    vi.useFakeTimers();
+    const { proc, emit } = readyProcess({ requestTimeout: 1_000 });
+    const pending = proc.sendMessage('fixture');
+    emit({ type: 'system', subtype: 'compact_boundary' });
+    const rejected = expect(pending).rejects.toMatchObject({ usage: { compaction_count: 1 } });
+    vi.advanceTimersByTime(1_001);
+    await rejected;
+  });
+
   it('escalates to SIGKILL when the child ignores SIGTERM', () => {
     vi.useFakeTimers();
     const child = new FakeChild();

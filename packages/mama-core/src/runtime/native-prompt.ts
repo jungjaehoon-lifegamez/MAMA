@@ -39,6 +39,20 @@ import { DebugLogger } from '../debug-logger.js';
 
 const logger = new DebugLogger('turn');
 import { countBudgetTokens } from './turn-text.js';
+import type { ModelRunUsage } from './model-run-types.js';
+
+function accumulateUsage(
+  total: Usage,
+  measured: ModelRunUsage,
+  usage: PromptResult['usage']
+): void {
+  total.input_tokens += usage.input_tokens ?? 0;
+  total.output_tokens += usage.output_tokens ?? 0;
+  for (const field of Object.keys(measured) as Array<keyof ModelRunUsage>) {
+    const value = usage[field];
+    if (value !== undefined) measured[field] = (measured[field] ?? 0) + value;
+  }
+}
 
 /** Why a run stopped on the host's side, as distinct from the model's own stop reason. */
 export interface BudgetStopInfo {
@@ -136,6 +150,7 @@ export interface NativePromptContext<TToolContext extends HostExecutionContext> 
   runScope: RunScope;
   toolExecutionContext: TToolContext | null;
   totalUsage: Usage;
+  runUsage: ModelRunUsage;
   tracksSessionPolicy: boolean;
 }
 
@@ -441,6 +456,12 @@ export async function runNativePrompt<TToolContext extends HostExecutionContext>
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error(`[turn] ${host.backend} CLI error:`, errorMessage);
 
+        const errorUsage = (error as { usage?: PromptResult['usage'] }).usage;
+        if (errorUsage) {
+          accumulateUsage(totalUsage, context.runUsage, errorUsage);
+          budgetTokens += countBudgetTokens(errorUsage, host.backend);
+        }
+
         // A codex turn interrupted by the run budget is a host decision, not a failure:
         // stop here with what was collected and let the host record the receipt.
         if (
@@ -448,17 +469,14 @@ export async function runNativePrompt<TToolContext extends HostExecutionContext>
           errorMessage.startsWith('run budget stop:')
         ) {
           stoppedBy = 'budget';
-          const stoppedUsage = (error as { usage?: PromptResult['usage'] }).usage;
+          const stoppedUsage = errorUsage;
           if (stoppedUsage) {
-            totalUsage.input_tokens += stoppedUsage.input_tokens;
-            totalUsage.output_tokens += stoppedUsage.output_tokens;
-            budgetTokens += countBudgetTokens(stoppedUsage, host.backend);
             try {
               host.onTokenUsage?.({
                 channel_key: channelKey,
                 agent_id: request.agentContext?.roleName || host.model,
-                input_tokens: stoppedUsage.input_tokens,
-                output_tokens: stoppedUsage.output_tokens,
+                input_tokens: stoppedUsage.input_tokens ?? 0,
+                output_tokens: stoppedUsage.output_tokens ?? 0,
                 cache_read_tokens: stoppedUsage.cache_read_input_tokens || 0,
                 cost_usd: 0,
               });
@@ -588,6 +606,11 @@ export async function runNativePrompt<TToolContext extends HostExecutionContext>
               ...(host.backend === 'claude' ? { tools: claudeNativeTools } : {}),
             });
           } catch (retryError) {
+            const retryUsage = (retryError as { usage?: PromptResult['usage'] }).usage;
+            if (retryUsage) {
+              accumulateUsage(totalUsage, context.runUsage, retryUsage);
+              budgetTokens += countBudgetTokens(retryUsage, host.backend);
+            }
             console.error(
               `[turn] ${host.backend} reset retry failed:`,
               retryError instanceof Error ? retryError.message : String(retryError)
@@ -635,12 +658,15 @@ export async function runNativePrompt<TToolContext extends HostExecutionContext>
         model: host.model,
         stop_reason: 'end_turn' as const,
         stop_sequence: null,
-        usage: piResult.usage,
+        usage: {
+          ...piResult.usage,
+          input_tokens: piResult.usage.input_tokens ?? 0,
+          output_tokens: piResult.usage.output_tokens ?? 0,
+        },
       };
 
       // Update usage
-      totalUsage.input_tokens += response.usage.input_tokens;
-      totalUsage.output_tokens += response.usage.output_tokens;
+      accumulateUsage(totalUsage, context.runUsage, piResult.usage);
       budgetTokens += countBudgetTokens(response.usage, host.backend);
 
       // Record token usage

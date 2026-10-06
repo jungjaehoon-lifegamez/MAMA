@@ -209,7 +209,7 @@ interface PendingTurn {
   hostToolBridge?: HostToolBridge;
   abortController: AbortController;
   intentionalStop: boolean;
-  usageBaseline?: { input: number; output: number; cached: number };
+  usageBaseline: Partial<PromptResult['usage']>;
   usageShrinkWarned?: boolean;
   /** Counted-token budget for this run; 0/undefined disables the in-turn check. */
   runTokenBudget?: number;
@@ -1394,7 +1394,8 @@ export class CodexAppServerProcess {
       const pendingTurn: PendingTurn = {
         threadId,
         agentMessagePhases: new Map(),
-        usage: { input_tokens: 0, output_tokens: 0 },
+        usage: { compaction_count: 0 },
+        usageBaseline: {},
         runTokenBudget,
         timer,
         ...(maxTimer === undefined ? {} : { maxTimer }),
@@ -1701,6 +1702,11 @@ export class CodexAppServerProcess {
         }
         return;
       }
+      if (item.type === 'contextCompaction') {
+        this.refreshTurnIdleTimeout(turn);
+        if (method === 'item/completed') turn.usage.compaction_count! += 1;
+        return;
+      }
       if (item.type === 'reasoning') {
         // A completed reasoning item is the model making progress; at high effort a
         // thinking phase can outlast the idle timeout between tool calls.
@@ -1752,49 +1758,38 @@ export class CodexAppServerProcess {
       const last = object(tokenUsage?.last);
       const total = object(tokenUsage?.total);
       this.refreshTurnIdleTimeout(turn);
-      const num = (value: unknown): number => (typeof value === 'number' ? value : 0);
-      if (total) {
-        // Turn usage = cumulative-thread delta. The baseline derives from the
-        // first total-bearing event (total minus its own call, minus any usage
-        // already accumulated from total-less events this turn), so a resumed
-        // thread's unseen history is never attributed to this turn, and a
-        // multi-call tool-loop turn keeps its earlier calls (recording only
-        // `last` undercounted ~5x against the rollout ground truth).
-        turn.usageBaseline ??= {
-          input: num(total.inputTokens) - num(last?.inputTokens) - turn.usage.input_tokens,
-          output: num(total.outputTokens) - num(last?.outputTokens) - turn.usage.output_tokens,
-          cached:
-            num(total.cachedInputTokens) -
-            num(last?.cachedInputTokens) -
-            (turn.usage.cache_read_input_tokens ?? 0),
-        };
-        // A total below the baseline (compaction/rollback resetting the thread
-        // counter) must never write negative usage into the metrics DB.
-        const input = num(total.inputTokens) - turn.usageBaseline.input;
-        const output = num(total.outputTokens) - turn.usageBaseline.output;
-        const cached = num(total.cachedInputTokens) - turn.usageBaseline.cached;
-        if ((input < 0 || output < 0 || cached < 0) && !turn.usageShrinkWarned) {
-          turn.usageShrinkWarned = true;
-          console.warn(
-            '[CodexAppServer] cumulative token total shrank below the turn baseline; clamping usage to 0'
-          );
+      const fields = [
+        ['input_tokens', 'inputTokens'],
+        ['output_tokens', 'outputTokens'],
+        ['cache_read_input_tokens', 'cachedInputTokens'],
+        ['cache_creation_input_tokens', 'cacheWriteInputTokens'],
+      ] as const;
+      for (const [field, wireField] of fields) {
+        const cumulative = total?.[wireField];
+        const current = last?.[wireField];
+        if (typeof cumulative === 'number') {
+          // Thread totals include resumed history. Establish each reported field's
+          // baseline from its first call, including any earlier total-less calls.
+          if (turn.usageBaseline[field] === undefined && typeof current === 'number') {
+            turn.usageBaseline[field] = cumulative - current - (turn.usage[field] ?? 0);
+          }
+          const baseline = turn.usageBaseline[field];
+          if (baseline !== undefined) {
+            const measured = cumulative - baseline;
+            // Preserve the existing handling of a shrinking thread counter.
+            if (measured < 0 && !turn.usageShrinkWarned) {
+              turn.usageShrinkWarned = true;
+              console.warn(
+                '[CodexAppServer] cumulative token total shrank below the turn baseline; clamping usage to 0'
+              );
+            }
+            turn.usage[field] = Math.max(0, measured);
+          }
+        } else if (typeof current === 'number') {
+          turn.usage[field] = (turn.usage[field] ?? 0) + current;
         }
-        turn.usage = {
-          input_tokens: Math.max(0, input),
-          output_tokens: Math.max(0, output),
-          cache_read_input_tokens: Math.max(0, cached),
-        };
-        this.enforceTurnBudget(turn.threadId, turn);
-      } else {
-        // No cumulative total on this event: accumulate per-call usage.
-        turn.usage = {
-          input_tokens: turn.usage.input_tokens + num(last?.inputTokens),
-          output_tokens: turn.usage.output_tokens + num(last?.outputTokens),
-          cache_read_input_tokens:
-            (turn.usage.cache_read_input_tokens ?? 0) + num(last?.cachedInputTokens),
-        };
-        this.enforceTurnBudget(turn.threadId, turn);
       }
+      this.enforceTurnBudget(turn.threadId, turn);
       return;
     }
     if (method !== 'turn/completed') {
@@ -2822,7 +2817,7 @@ export class CodexAppServerProcess {
       const terminalError =
         turn.settledTerminalError ??
         (turn.abortError instanceof HostToolTerminalError ? turn.abortError : undefined);
-      turn.reject(this.toError(terminalError ?? safe));
+      turn.reject(Object.assign(this.toError(terminalError ?? safe), { usage: { ...turn.usage } }));
     });
   }
 
@@ -2832,7 +2827,7 @@ export class CodexAppServerProcess {
     turn: {
       runTokenBudget?: number;
       budgetStopped?: boolean;
-      usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number };
+      usage: PromptResult['usage'];
     }
   ): void {
     const budget = turn.runTokenBudget ?? 0;
@@ -2841,7 +2836,7 @@ export class CodexAppServerProcess {
     }
     // Codex reports inputTokens INCLUSIVE of cachedInputTokens (OpenAI usage semantics),
     // so cached is not added again: 0.44.0 counted a 2.8M wiki turn as 5.5M.
-    const counted = turn.usage.input_tokens + turn.usage.output_tokens;
+    const counted = (turn.usage.input_tokens ?? 0) + (turn.usage.output_tokens ?? 0);
     if (counted < budget) {
       return;
     }

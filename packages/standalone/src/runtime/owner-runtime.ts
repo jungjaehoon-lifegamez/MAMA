@@ -172,11 +172,11 @@ function runtimeModelRun(
       });
       return record.model_run_id;
     },
-    commit: async (modelRunId, summary, tokenCount) => {
-      commitModelRun(adapter, modelRunId, summary, tokenCount);
+    commit: async (modelRunId, summary, tokenCount, usage) => {
+      commitModelRun(adapter, modelRunId, summary, tokenCount, usage);
     },
-    fail: async (modelRunId, summary, tokenCount) => {
-      failModelRun(adapter, modelRunId, summary, tokenCount);
+    fail: async (modelRunId, summary, tokenCount, usage) => {
+      failModelRun(adapter, modelRunId, summary, tokenCount, usage);
     },
   };
 }

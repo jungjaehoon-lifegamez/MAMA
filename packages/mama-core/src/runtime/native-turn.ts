@@ -39,6 +39,7 @@ import { NativeEffectReplayBoundary, type NativeEffectObserver } from './native-
 import { composeLayers, type PromptLayer } from './prompt-layers.js';
 import type { SubagentBridge, SubagentBridgeRequest } from './subagent-bridge.js';
 import type { SessionPool } from './session-pool.js';
+import type { ModelRunUsage } from './model-run-types.js';
 import type { NativeToolCaller } from '../action-contracts.js';
 import { extractTextResponse } from './turn-text.js';
 import {
@@ -174,8 +175,18 @@ export interface NativeTurnPolicy {
  */
 export interface NativeModelRunPort {
   begin(request: NativeTurnRequest | undefined, cliSessionId: string | null): Promise<string>;
-  commit(modelRunId: string, summary: string, tokenCount?: number): Promise<void>;
-  fail(modelRunId: string, summary: string, tokenCount?: number): Promise<void>;
+  commit(
+    modelRunId: string,
+    summary: string,
+    tokenCount?: number,
+    usage?: Partial<ModelRunUsage>
+  ): Promise<void>;
+  fail(
+    modelRunId: string,
+    summary: string,
+    tokenCount?: number,
+    usage?: Partial<ModelRunUsage>
+  ): Promise<void>;
 }
 
 /** The queue that serializes one session's runs. The core asks; it does not own one. */
@@ -1024,6 +1035,13 @@ export class NativeSessionRunner<TToolContext extends HostExecutionContext = Hos
       request?.ownerJournalPrompt ??
       content.map((block) => (block.type === 'text' ? block.text : `[${block.type}]`)).join('\n');
     const totalUsage = { input_tokens: 0, output_tokens: 0 };
+    const runUsage: ModelRunUsage = {
+      input_tokens: null,
+      cache_read_input_tokens: null,
+      cache_creation_input_tokens: null,
+      output_tokens: null,
+      compaction_count: null,
+    };
     // Budget accounting is separate from totalUsage (a published field): it includes cache
     // creation and cache reads, which are the bulk of a re-sent context and the cost being
     // bounded - a budget that ignored them would not have stopped a 4.28M-token run.
@@ -1333,6 +1351,7 @@ export class NativeSessionRunner<TToolContext extends HostExecutionContext = Hos
           runScope,
           toolExecutionContext,
           totalUsage,
+          runUsage,
           tracksSessionPolicy,
         },
         request ?? {},
@@ -1388,7 +1407,8 @@ export class NativeSessionRunner<TToolContext extends HostExecutionContext = Hos
           await host.modelRun.commit(
             ownedModelRunId,
             completionSummary(finalResponse),
-            totalUsage.input_tokens + totalUsage.output_tokens
+            totalUsage.input_tokens + totalUsage.output_tokens,
+            runUsage
           );
           ownedModelRunCommitted = true;
         }
@@ -1451,7 +1471,8 @@ export class NativeSessionRunner<TToolContext extends HostExecutionContext = Hos
           await host.modelRun.fail(
             ownedModelRunId,
             summary,
-            totalUsage.input_tokens + totalUsage.output_tokens
+            totalUsage.input_tokens + totalUsage.output_tokens,
+            runUsage
           );
         } catch (failError) {
           logger.warn(

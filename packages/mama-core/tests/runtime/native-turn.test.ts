@@ -211,6 +211,12 @@ describe('native host-tool loop signatures', () => {
       sessionKey: 'test-lane',
     });
 
-    expect(commit).toHaveBeenCalledWith('model-run-test', response.slice(0, 2_000), 2);
+    expect(commit).toHaveBeenCalledWith('model-run-test', response.slice(0, 2_000), 2, {
+      input_tokens: 1,
+      output_tokens: 1,
+      cache_read_input_tokens: null,
+      cache_creation_input_tokens: null,
+      compaction_count: null,
+    });
   });
 });

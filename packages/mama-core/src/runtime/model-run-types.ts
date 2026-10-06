@@ -22,7 +22,19 @@ export interface BeginModelRunInput {
   created_at?: number;
 }
 
-export interface ModelRunRecord {
+/**
+ * NULL means the backend did not report this measure. Values are as the backend reports them:
+ * Codex `input_tokens` include cached input; Claude's exclude cache reads and writes.
+ */
+export interface ModelRunUsage {
+  input_tokens: number | null;
+  cache_read_input_tokens: number | null;
+  cache_creation_input_tokens: number | null;
+  output_tokens: number | null;
+  compaction_count: number | null;
+}
+
+export interface ModelRunRecord extends ModelRunUsage {
   model_run_id: string;
   model_id: string | null;
   model_provider: string | null;

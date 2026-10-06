@@ -2,7 +2,12 @@ import crypto from 'node:crypto';
 
 import type { DatabaseAdapter } from '../db-manager.js';
 import { MODEL_RUN_STATUSES } from './model-run-types.js';
-import type { BeginModelRunInput, ModelRunRecord, ModelRunStatus } from './model-run-types.js';
+import type {
+  BeginModelRunInput,
+  ModelRunRecord,
+  ModelRunStatus,
+  ModelRunUsage,
+} from './model-run-types.js';
 
 type ModelRunAdapter = Pick<DatabaseAdapter, 'prepare'>;
 type NormalizedBeginModelRunInput = Pick<
@@ -102,6 +107,15 @@ function requireTokenCount(value: number | undefined): number | undefined {
   return value;
 }
 
+function requireUsage(usage: Partial<ModelRunUsage> | undefined): void {
+  for (const [field, value] of Object.entries(usage ?? {})) {
+    if (value === undefined || value === null) continue;
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error(`model_runs.${field} must be a non-negative safe integer`);
+    }
+  }
+}
+
 function normalizeCost(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
@@ -196,6 +210,11 @@ function mapModelRunRow(row: Record<string, unknown>): ModelRunRecord {
     status: requireModelRunStatus(row.status, model_run_id),
     error_summary: nullableString(row.error_summary),
     token_count: normalizeNumber(row.token_count, 0),
+    input_tokens: row.input_tokens as number | null,
+    cache_read_input_tokens: row.cache_read_input_tokens as number | null,
+    cache_creation_input_tokens: row.cache_creation_input_tokens as number | null,
+    output_tokens: row.output_tokens as number | null,
+    compaction_count: row.compaction_count as number | null,
     cost_estimate: normalizeCost(row.cost_estimate),
     created_at: requireTimestamp(row.created_at, 'created_at', model_run_id),
     completed_at:
@@ -213,7 +232,9 @@ function selectModelRun(adapter: ModelRunAdapter, id: string): ModelRunRecord | 
           model_run_id, model_id, model_provider, prompt_version, tool_manifest_version,
           output_schema_version, agent_id, instance_id, envelope_hash, parent_model_run_id,
           input_snapshot_ref, input_refs_json, completion_summary, status, error_summary,
-          token_count, cost_estimate, created_at, completed_at
+          token_count, cost_estimate, created_at, completed_at,
+          input_tokens, cache_read_input_tokens, cache_creation_input_tokens,
+          output_tokens, compaction_count
         FROM model_runs
         WHERE model_run_id = ?
       `
@@ -408,9 +429,17 @@ function isDuplicateModelRunError(error: unknown): boolean {
 function resolveExistingCommittedRun(
   existing: ModelRunRecord,
   summary: string | null,
-  tokenCount?: number
+  tokenCount?: number,
+  usage?: Partial<ModelRunUsage>
 ): ModelRunRecord {
   if (existing.status === 'committed') {
+    for (const field of Object.keys(usage ?? {}) as Array<keyof ModelRunUsage>) {
+      if (usage?.[field] !== undefined && existing[field] !== usage[field]) {
+        throw new Error(
+          `Model run already ${existing.status} with different ${field}: ${existing.model_run_id}`
+        );
+      }
+    }
     if (
       existing.completion_summary === summary &&
       (tokenCount === undefined || existing.token_count === tokenCount)
@@ -435,9 +464,17 @@ function resolveExistingCommittedRun(
 function resolveExistingFailedRun(
   existing: ModelRunRecord,
   errorSummary: string | null,
-  tokenCount?: number
+  tokenCount?: number,
+  usage?: Partial<ModelRunUsage>
 ): ModelRunRecord {
   if (existing.status === 'failed') {
+    for (const field of Object.keys(usage ?? {}) as Array<keyof ModelRunUsage>) {
+      if (usage?.[field] !== undefined && existing[field] !== usage[field]) {
+        throw new Error(
+          `Model run already ${existing.status} with different ${field}: ${existing.model_run_id}`
+        );
+      }
+    }
     if (
       existing.error_summary === errorSummary &&
       (tokenCount === undefined || existing.token_count === tokenCount)
@@ -526,13 +563,15 @@ export function commitModelRun(
   adapter: ModelRunAdapter,
   modelRunId: string,
   summary?: string,
-  tokenCount?: number
+  tokenCount?: number,
+  usage?: Partial<ModelRunUsage>
 ): ModelRunRecord {
   const summaryValue = nullableString(summary);
   const measuredTokens = requireTokenCount(tokenCount);
+  requireUsage(usage);
   const existing = requireModelRun(adapter, modelRunId);
   if (existing.status !== 'running') {
-    return resolveExistingCommittedRun(existing, summaryValue, measuredTokens);
+    return resolveExistingCommittedRun(existing, summaryValue, measuredTokens, usage);
   }
 
   const completedAt = Date.now();
@@ -544,17 +583,33 @@ export function commitModelRun(
             completion_summary = ?,
             error_summary = NULL,
             token_count = ?,
+            input_tokens = ?,
+            cache_read_input_tokens = ?,
+            cache_creation_input_tokens = ?,
+            output_tokens = ?,
+            compaction_count = ?,
             completed_at = ?
         WHERE model_run_id = ? AND status = 'running'
       `
     )
-    .run(summaryValue, measuredTokens ?? existing.token_count, completedAt, modelRunId);
+    .run(
+      summaryValue,
+      measuredTokens ?? existing.token_count,
+      usage?.input_tokens ?? null,
+      usage?.cache_read_input_tokens ?? null,
+      usage?.cache_creation_input_tokens ?? null,
+      usage?.output_tokens ?? null,
+      usage?.compaction_count ?? null,
+      completedAt,
+      modelRunId
+    );
 
   if (result.changes === 0) {
     return resolveExistingCommittedRun(
       requireModelRun(adapter, modelRunId),
       summaryValue,
-      measuredTokens
+      measuredTokens,
+      usage
     );
   }
 
@@ -565,13 +620,15 @@ export function failModelRun(
   adapter: ModelRunAdapter,
   modelRunId: string,
   errorSummary: string,
-  tokenCount?: number
+  tokenCount?: number,
+  usage?: Partial<ModelRunUsage>
 ): ModelRunRecord {
   const errorSummaryValue = nullableString(errorSummary);
   const measuredTokens = requireTokenCount(tokenCount);
+  requireUsage(usage);
   const existing = requireModelRun(adapter, modelRunId);
   if (existing.status !== 'running') {
-    return resolveExistingFailedRun(existing, errorSummaryValue, measuredTokens);
+    return resolveExistingFailedRun(existing, errorSummaryValue, measuredTokens, usage);
   }
 
   const completedAt = Date.now();
@@ -583,17 +640,33 @@ export function failModelRun(
             completion_summary = NULL,
             error_summary = ?,
             token_count = ?,
+            input_tokens = ?,
+            cache_read_input_tokens = ?,
+            cache_creation_input_tokens = ?,
+            output_tokens = ?,
+            compaction_count = ?,
             completed_at = ?
         WHERE model_run_id = ? AND status = 'running'
       `
     )
-    .run(errorSummaryValue, measuredTokens ?? existing.token_count, completedAt, modelRunId);
+    .run(
+      errorSummaryValue,
+      measuredTokens ?? existing.token_count,
+      usage?.input_tokens ?? null,
+      usage?.cache_read_input_tokens ?? null,
+      usage?.cache_creation_input_tokens ?? null,
+      usage?.output_tokens ?? null,
+      usage?.compaction_count ?? null,
+      completedAt,
+      modelRunId
+    );
 
   if (result.changes === 0) {
     return resolveExistingFailedRun(
       requireModelRun(adapter, modelRunId),
       errorSummaryValue,
-      measuredTokens
+      measuredTokens,
+      usage
     );
   }
 
