@@ -35,6 +35,7 @@ import type { ChatSources } from '../storage/chat-sources.js';
 import type { OwnerReplyInput } from '../gateways/turn-contract.js';
 
 export const OWNER_RUNTIME_SESSION_KEY = 'owner:runtime';
+export const OWNER_REPLAY_SESSION_KEY = 'owner:replay';
 
 export interface OwnerMessageInput {
   id: string;
@@ -563,7 +564,7 @@ function planTurn(row: MailboxRow, options: StimulusDeliveryOptions): TurnPlan {
   throw new Error(`No owner turn is assembled for stimulus kind ${row.kind ?? 'unknown'}`);
 }
 
-/** Deliver every model-bearing kind through one serialized owner session. */
+/** Serialize native turns; replay windows use their own session. */
 export function createStimulusDelivery(options: StimulusDeliveryOptions): ReplayClockDelivery {
   let serialTail = Promise.resolve();
   let activeReplaySourceEndMs: number | undefined;
@@ -640,7 +641,8 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
             : '';
           return text([start, plan.render(lessons, new Date())]);
         },
-        sessionKey: OWNER_RUNTIME_SESSION_KEY,
+        sessionKey:
+          replaySourceEndMs === undefined ? OWNER_RUNTIME_SESSION_KEY : OWNER_REPLAY_SESSION_KEY,
         source: row.kind,
         channelId: row.channelKey,
         sourceMessageRef: row.stimulusId,

@@ -37,6 +37,15 @@ import {
   commitModelRun,
   failModelRun,
 } from '@jungjaehoon/mama-core/runtime/model-run-store';
+import {
+  CodexThreadRegistry,
+  fingerprintText,
+} from '@jungjaehoon/mama-core/runtime/drivers/codex-thread-registry';
+import type { DatabaseInstance, Knowledge } from '@jungjaehoon/mama-core';
+import { createActionSurface } from '../../src/runtime/action-surface.js';
+import { createNativeSession } from '../../src/runtime/native-session.js';
+import { createStimulusDelivery } from '../../src/runtime/stimulus-delivery.js';
+import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
 const roots: string[] = [];
 
 interface FixtureTurn {
@@ -1930,6 +1939,100 @@ describe('Story: Codex app-server process', () => {
     const runner = new CodexAppServerProcess(item.options);
     await expect(runner.prompt('hi')).rejects.toThrow('did not match');
     expect(runner.getStatus()).toMatchObject({ running: false, pendingRequestCount: 0 });
+  });
+
+  it('runs a replay window without loading or resuming the live owner thread', async () => {
+    const item = fixture();
+    const timeZone = createTimeZoneSetting('UTC');
+    const surface = createActionSurface({
+      timeZone,
+      runtimeRoot: item.root,
+      configPath: join(item.root, 'config.yaml'),
+      isOwnerMessageTurn: () => false,
+      adapter: {} as DatabaseInstance,
+      knowledge: {} as Knowledge,
+      ownerPrincipalId: 'owner',
+      agentId: 'agent',
+      connectors: [],
+      scopes: [],
+    });
+    const pools: SessionPool[] = [];
+    const open = () => {
+      const pool = new SessionPool();
+      pools.push(pool);
+      return createNativeSession({
+        backend: 'codex',
+        model: 'gpt-test',
+        workspaceDir: item.root,
+        runtimeRoot: item.root,
+        actionSurface: surface,
+        agent: new CodexRuntimeProcess({ ...item.options, hostRootDir: item.root }),
+        sessionPool: pool,
+        ownerSystemPrompt: 'standing policy',
+        maxTurns: 10,
+        timeout: 2_000,
+      });
+    };
+    let session = open();
+    try {
+      await session.runTurn([{ type: 'text', text: 'live owner request' }], {
+        sessionKey: 'owner:runtime',
+      });
+      await session.stop();
+      const ownerPath = join(
+        item.options.registryRoot!,
+        `${fingerprintText('owner:runtime')}.json`
+      );
+      const ownerRecord = readFileSync(ownerPath, 'utf8');
+      const beforeReplay = messages(item.capture).length;
+      session = open();
+      const loads = vi.spyOn(CodexThreadRegistry.prototype, 'load');
+      await createStimulusDelivery({ backend: 'codex', timeZone }).deliver(
+        {
+          id: 'replay-input',
+          stimulusId: 'replay-input',
+          principalId: 'owner',
+          kind: 'source_delta',
+          channelKey: 'source:fixture',
+          occurredAt: 1,
+          refs: [],
+          preview: [],
+          status: 'claimed',
+          attempts: 1,
+          createdAt: 1,
+          payload: { replay: { windowEndMs: 1_501 } },
+          coalesceKey: null,
+        },
+        {
+          nativeInputId: 'replay-input',
+          run: (content, request) => session.runTurn(content, request),
+          steer: (content, target, sessionKey) => session.steer(content, target, sessionKey),
+          resultForReceipt: () => null,
+          wasDispatched: () => false,
+          onInputDispatch: () => {},
+          onAccepted: () => {},
+        }
+      );
+      const threadMethods = messages(item.capture)
+        .slice(beforeReplay)
+        .filter((entry) => entry.method === 'thread/start' || entry.method === 'thread/resume')
+        .map((entry) => entry.method);
+      expect(threadMethods).toEqual(['thread/start']);
+      expect(loads.mock.calls.map(([key]) => key)).not.toContain('owner:runtime');
+      expect(loads.mock.calls.map(([key]) => key)).toContain('owner:replay');
+      expect(readFileSync(ownerPath, 'utf8')).toBe(ownerRecord);
+      expect(
+        JSON.parse(
+          readFileSync(
+            join(item.options.registryRoot!, `${fingerprintText('owner:replay')}.json`),
+            'utf8'
+          )
+        )
+      ).toMatchObject({ sessionKey: 'owner:replay' });
+    } finally {
+      await session.stop();
+      for (const pool of pools) pool.dispose();
+    }
   });
 
   it('resumes after a rebuilt system prompt and reuses the shared homes', async () => {

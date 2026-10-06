@@ -58,7 +58,7 @@ afterEach(() => {
 
 describe('replay finalization', () => {
   it.each(['codex', 'claude'] as const)(
-    'resets %s before stop so the next live turn receives startup context',
+    'resets the %s replay and live sessions before stop so the next live turn receives startup context',
     async (backend) => {
       const pool = new SessionPool();
       const retained = new Set<string>();
@@ -105,8 +105,9 @@ describe('replay finalization', () => {
         maxTurns: 10,
         timeout: 1000,
       });
-      const run = () =>
+      const run = (sessionKey = 'owner:runtime') =>
         session.runTurn([], {
+          sessionKey,
           prepareSessionContent: async ({ isNewSession }) => [
             { type: 'text', text: isNewSession ? 'startup' : 'continuation' },
           ],
@@ -114,6 +115,8 @@ describe('replay finalization', () => {
       try {
         expect((await run()).response).toBe('startup');
         expect((await run()).response).toBe('continuation');
+        expect((await run('owner:replay')).response).toBe('startup');
+        expect((await run('owner:replay')).response).toBe('continuation');
         state.context = {
           paths: {
             mamaRoot: '/tmp/replay-session-test',
@@ -129,10 +132,11 @@ describe('replay finalization', () => {
           logger: { info: () => {} },
         };
         await runReplay();
-        expect(state.order).toEqual(['replay', 'reset', 'fence', 'stop']);
+        expect(state.order).toEqual(['replay', 'reset', 'reset', 'fence', 'stop']);
         expect(pool.peekSession('owner:runtime')).toEqual({ busy: false });
+        expect(pool.peekSession('owner:replay')).toEqual({ busy: false });
         expect((await run()).response).toBe('startup');
-        expect((await run()).response).toBe('continuation');
+        expect((await run('owner:replay')).response).toBe('startup');
         state.order = [];
         state.reached = 500;
         await expect(runReplay()).rejects.toThrow('before the import fence');

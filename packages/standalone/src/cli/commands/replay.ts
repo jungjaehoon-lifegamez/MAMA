@@ -12,7 +12,10 @@ import {
 } from '../../replay/replay-source-catalog.js';
 import { createJevClient } from '../../replay/jev-client.js';
 import { buildWindowQueue, trelloCardsFromEvents } from '../../replay/window-queue.js';
-import { OWNER_RUNTIME_SESSION_KEY } from '../../runtime/stimulus-delivery.js';
+import {
+  OWNER_REPLAY_SESSION_KEY,
+  OWNER_RUNTIME_SESSION_KEY,
+} from '../../runtime/stimulus-delivery.js';
 
 export interface ReplayCommandOptions {
   daemon?: Omit<DaemonBootOptions, 'mode' | 'replay'>;
@@ -157,6 +160,8 @@ export async function runReplay(options: ReplayCommandOptions = {}): Promise<Rep
       const session = context.owner.runtime.nativeSession;
       if (!session?.resetSession)
         throw new Error('Replay finalization requires native session reset');
+      // The replay rewrote the ledger: its session ends, and the next live turn gets startup context.
+      await session.resetSession(OWNER_REPLAY_SESSION_KEY);
       await session.resetSession(OWNER_RUNTIME_SESSION_KEY);
       setLiveConnectorPollCursors({
         configPath: context.paths.connectorsConfigPath,
