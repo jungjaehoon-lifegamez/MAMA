@@ -65,7 +65,7 @@ The [public MCP server](../mcp-server/README.md) and
 [Replay](../../docs/guides/replay.md) · [Viewer](../../docs/guides/viewer.md).
 
 Completion is measured by [INTENT.md](../../INTENT.md); open live checks are in
-[checks.md](../../docs/rebuild/checks.md). Run `pnpm test` inside this package, with isolated
+[checks.md](../../docs/development/checks.md). Run `pnpm test` inside this package, with isolated
 state as described in [testing](../../docs/development/testing.md).
 
 [MIT](../../LICENSE).

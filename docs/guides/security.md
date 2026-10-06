@@ -183,6 +183,20 @@ What can leave the machine from an owner turn, checked on the Claude backend on
 
 The Codex backend keeps its own sandbox's network setting; it was not checked here.
 
+Each path out of the shell, and what sees it:
+
+| Path out of the shell                        | What stops it                         | What sees it                                                       |
+| -------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------ |
+| A named network command                      | The proxy or operating system sandbox | The command alert and tool trace; the proxy also alerts if reached |
+| A script that connects through the proxy     | The proxy                             | A connection alert with its destination                            |
+| A subagent shell connection                  | The same sandbox and proxy            | The same alerts and the child run's tool trace                     |
+| An unrecognised client using a direct socket | The operating system sandbox          | The kernel log only                                                |
+| Native web fetch                             | The shell sandbox does not apply      | An alert with its URL, grouped by host, and a tool trace           |
+| Native web search                            | The shell sandbox does not apply      | A tool trace; the query reaches the search provider                |
+
+The proxy sees a script's connection only when the client uses the proxy settings, and it does not
+know the model run: match its event time with `tool_traces`.
+
 ## Limits of this threat model
 
 - A compromised owner account or stolen bearer credential carries the owner's

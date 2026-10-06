@@ -66,6 +66,13 @@ Drive records file changes and removals in configured folders or shared drives. 
 source identity and does not download file contents. Use `folderId` for a folder in My Drive or
 `driveId` for a shared drive.
 
+For a current file, the agent can use `drive.read` to list shared drives, browse a folder, inspect
+a file by ID or link, or search across drives. `drive.download` saves a requested file in the
+downloads directory. Google Docs, Sheets and Slides are exported as docx, xlsx and pptx; folders and
+other Google-native types are refused. These live reads do not
+keep a copy of Drive state. The separate connector above stores file change observations only when
+it is enabled.
+
 ```json
 {
   "drive": {
@@ -248,6 +255,11 @@ Trello reads configured boards, their cards and activity. Set `boardId` to the b
 ```
 
 Trello also needs the separate `MAMA_TRELLO_KEY` value in `auth.env`.
+
+For current board state, the agent uses `trello.read` to list configured boards, read open cards,
+inspect a card, or search cards. These reads go to Trello and do not keep a board snapshot. The
+connector stores board actions as source history; the agent searches that history with
+`source.search` and opens a cited action with `source.read` when it needs to explain a past change.
 
 ### Notion
 

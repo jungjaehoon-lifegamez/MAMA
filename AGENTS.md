@@ -13,8 +13,8 @@ others). Claude-only notes live in `CLAUDE.md`.
 - Work is done when real owner questions on real data get the right answer. Passing tests,
   structure checks, line or file counts, and progress scripts are supporting evidence only. Never
   report a finished sub-task as the purpose being met.
-- The current work list is [docs/rebuild/plan.md](docs/rebuild/plan.md). After each item, add 3–5
-  lines to [docs/rebuild/checks.md](docs/rebuild/checks.md): result, evidence, what still fails.
+- The current work list is [docs/development/plan.md](docs/development/plan.md). After each item, add 3–5
+  lines to [docs/development/checks.md](docs/development/checks.md): result, evidence, what still fails.
 
 ## Repository map
 

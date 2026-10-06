@@ -34,6 +34,11 @@ keeps the record. `memory.read:provenance` reads the record's source links.
 
 ## When corrections reach the agent
 
+Only a rule you give in your own conversation with the agent has owner-rule authority. Messages
+collected from connected sources remain observations, even when they quote you. The agent can still
+save lessons learned from those observations; they are marked as learned advice, not your rules.
+An observed message cannot replace or retire one of your owner rules.
+
 Rules that always apply to how MAMA works for you, such as the language, the
 style of reports and notices, and what a report contains, belong in your owner
 policy file. The agent reads that file with its instructions in every session.

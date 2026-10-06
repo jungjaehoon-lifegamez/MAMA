@@ -6,13 +6,13 @@
 
 추천은 **같은 봇 + 멤버별 신원·세션·작업 공간 + 명시적으로 허용한 공유 자료와 행동**이다. 등록 승인은 대화할 자격을 주고, 자료 공유와 실행 권한은 별도로 부여한다. 모델에게 상대의 자료를 보지 말라고 지시하는 것으로 격리를 대신하지 않는다. 아래 추천은 설계 제안이며, 외부 프로젝트의 문서가 MAMA 구현의 안전성을 증명하지는 않는다.
 
-| 프로젝트 | 사람을 추가하는 방식 | 권한·격리 방식 | MAMA에서 참고할 부분과 한계 |
-| --- | --- | --- | --- |
-| OpenClaw | 미등록 DM 발신자에게 페어링 코드를 주고 운영자가 승인. DM 접근과 그룹 접근은 별도 | DM 세션을 발신자별로 나눌 수 있고 도구 정책을 설정. 팀 모드는 한 gateway의 신뢰 영역 안에서 협업 | 등록 UX와 Telegram sender 정책을 참고. 공식 multi-user 문서는 세션 소유권·UI 필터를 보안 경계로 보지 않으며, 같은 에이전트를 운영하는 사람들은 그 에이전트의 권한을 공유한다고 명시한다. |
-| NanoClaw | 채널별 사용자 신원, `owner`/`admin` 역할, agent-group 멤버십을 각각 등록·부여 | 세션별 컨테이너와 그룹별 작업 폴더·공유 기억. 멤버십은 접근, 역할은 관리 권한. credential gateway와 마운트 경계도 별도 | 사람의 역할과 그룹 접근을 구분하는 구조, 실행체 격리를 참고. 같은 그룹의 세션들은 그룹 기억을 공유하므로 개인 기억 격리와 같지 않다. |
-| Letta | 조직 이메일 초대 수락 후 기본 Editor. Admin이 역할 변경 | 에이전트와 대화는 기본 개인 소유. 공유 에이전트에도 각 사람의 대화는 별도. Admin은 조직 전체 접근 가능 | 같은 에이전트를 여러 사람이 쓰는 UX와 대화 소유권을 참고. 장기 기억은 agent 단위 MemFS이므로 개인 대화 열람 격리를 사람별 기억 격리로 가정하지 않음. 도구 실행 허용도 별도다. |
-| LibreChat | 로컬/연합 로그인 계정, 그룹·역할. 리소스 소유자가 사용자·그룹별 공유 권한 부여 | 기능별 권한, 리소스 ACL, 관리 권한을 구분. 리소스 권한은 Viewer/Editor/Owner | 무엇을 할 수 있는지와 어느 자료에 할 수 있는지를 구분하는 모델을 참고. 설정 화면을 숨겨도 에이전트 답변을 통해 첨부 자료가 노출될 수 있다고 문서가 경고한다. |
-| LangGraph / LangSmith Deployment | 애플리케이션이 인증된 최종 사용자의 신원을 서버에 전달 | thread는 서버의 owner metadata/filter, 장기 기억은 인증 신원이 포함된 namespace로 격리. 각각 별도 설정 필요 | 동일 엔진을 쓰면서 개인 대화와 기억을 별도로 구분하는 구현 패턴. 공용 API key만 쓰면 최종 사용자의 신원이 구분되지 않는다. |
+| 프로젝트                         | 사람을 추가하는 방식                                                              | 권한·격리 방식                                                                                                         | MAMA에서 참고할 부분과 한계                                                                                                                                                              |
+| -------------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenClaw                         | 미등록 DM 발신자에게 페어링 코드를 주고 운영자가 승인. DM 접근과 그룹 접근은 별도 | DM 세션을 발신자별로 나눌 수 있고 도구 정책을 설정. 팀 모드는 한 gateway의 신뢰 영역 안에서 협업                       | 등록 UX와 Telegram sender 정책을 참고. 공식 multi-user 문서는 세션 소유권·UI 필터를 보안 경계로 보지 않으며, 같은 에이전트를 운영하는 사람들은 그 에이전트의 권한을 공유한다고 명시한다. |
+| NanoClaw                         | 채널별 사용자 신원, `owner`/`admin` 역할, agent-group 멤버십을 각각 등록·부여     | 세션별 컨테이너와 그룹별 작업 폴더·공유 기억. 멤버십은 접근, 역할은 관리 권한. credential gateway와 마운트 경계도 별도 | 사람의 역할과 그룹 접근을 구분하는 구조, 실행체 격리를 참고. 같은 그룹의 세션들은 그룹 기억을 공유하므로 개인 기억 격리와 같지 않다.                                                     |
+| Letta                            | 조직 이메일 초대 수락 후 기본 Editor. Admin이 역할 변경                           | 에이전트와 대화는 기본 개인 소유. 공유 에이전트에도 각 사람의 대화는 별도. Admin은 조직 전체 접근 가능                 | 같은 에이전트를 여러 사람이 쓰는 UX와 대화 소유권을 참고. 장기 기억은 agent 단위 MemFS이므로 개인 대화 열람 격리를 사람별 기억 격리로 가정하지 않음. 도구 실행 허용도 별도다.            |
+| LibreChat                        | 로컬/연합 로그인 계정, 그룹·역할. 리소스 소유자가 사용자·그룹별 공유 권한 부여    | 기능별 권한, 리소스 ACL, 관리 권한을 구분. 리소스 권한은 Viewer/Editor/Owner                                           | 무엇을 할 수 있는지와 어느 자료에 할 수 있는지를 구분하는 모델을 참고. 설정 화면을 숨겨도 에이전트 답변을 통해 첨부 자료가 노출될 수 있다고 문서가 경고한다.                             |
+| LangGraph / LangSmith Deployment | 애플리케이션이 인증된 최종 사용자의 신원을 서버에 전달                            | thread는 서버의 owner metadata/filter, 장기 기억은 인증 신원이 포함된 namespace로 격리. 각각 별도 설정 필요            | 동일 엔진을 쓰면서 개인 대화와 기억을 별도로 구분하는 구현 패턴. 공용 API key만 쓰면 최종 사용자의 신원이 구분되지 않는다.                                                               |
 
 표의 근거: [OpenClaw pairing](https://docs.openclaw.ai/channels/pairing), [OpenClaw multi-user](https://docs.openclaw.ai/concepts/multi-user), [OpenClaw Telegram 접근 제어](https://docs.openclaw.ai/channels/telegram/access-control), [OpenClaw DM 세션](https://docs.openclaw.ai/concepts/session), [NanoClaw 사용자·역할·멤버 CLI](https://docs.nanoclaw.dev/operate/ncl-cli), [NanoClaw 보안 모델](https://docs.nanoclaw.dev/concepts/security), [Letta 초대](https://docs.letta.com/teams/collaborators), [Letta 권한](https://docs.letta.com/teams/permissions), [LibreChat 접근 제어](https://www.librechat.ai/docs/features/access_control), [LangGraph 인증](https://docs.langchain.com/langsmith/custom-auth), [thread 격리](https://docs.langchain.com/langsmith/resource-auth), [기억 격리](https://docs.langchain.com/langsmith/store-auth).
 
@@ -23,25 +23,25 @@
 1. **기존 선택을 복원:** 오너가 멤버의 메시지를 전달하고, 호스트가 전달 원본의 사용자 ID를 확인한다. 오너가 시작하는 흐름을 유지한다. 숨김 전달에는 쓸 수 없고, 표시 이름을 실제 사용자 ID처럼 쓰면 안 된다.
 2. **오너 초대 링크 후 승인:** 오너가 일회성 초대를 만들고, 멤버가 봇 DM에서 수락하면 Telegram 발신 신원을 확인한 뒤 오너가 최종 승인한다. 숨김 전달 없이도 신원을 확인할 수 있다. 링크를 전달받은 다른 사람이 열 수 있으므로 링크 소지만으로 자료·관리 권한을 주지 않는다. 이 경로는 기존 결정과 비교해 선택할 제안이다.
 
-OpenClaw의 미등록 DM 페어링은 봇과 대화할 발신자를 확인하는 패턴이다. NanoClaw의 Telegram 설치 페어링은 채팅·사용자를 등록하고, 설치에 오너가 없으면 첫 페어링 사용자를 오너로 승격한다. **이 초기 설치 규칙을 운영 중인 MAMA에 이식하면 안 된다.** 현재 운영 DB의 `principals`와 활성 `principal_scope_grants`는 모두 0건이지만, 제품은 별도의 오너 설정과 고정 principal `owner`로 실제 운영 중이다. 빈 레지스트리가 오너 부재를 뜻하지 않는다. 근거: [NanoClaw Telegram](https://docs.nanoclaw.dev/channels/telegram), [MAMA 오너 ID](../../packages/standalone/src/cli/commands/daemon.ts#L65).
+OpenClaw의 미등록 DM 페어링은 봇과 대화할 발신자를 확인하는 패턴이다. NanoClaw의 Telegram 설치 페어링은 채팅·사용자를 등록하고, 설치에 오너가 없으면 첫 페어링 사용자를 오너로 승격한다. **이 초기 설치 규칙을 운영 중인 MAMA에 이식하면 안 된다.** 현재 운영 DB의 `principals`와 활성 `principal_scope_grants`는 모두 0건이지만, 제품은 별도의 오너 설정과 고정 principal `owner`로 실제 운영 중이다. 빈 레지스트리가 오너 부재를 뜻하지 않는다. 근거: [NanoClaw Telegram](https://docs.nanoclaw.dev/channels/telegram), [MAMA 오너 ID](../../../packages/standalone/src/cli/commands/daemon.ts#L65).
 
 Telegram은 `start` 인자가 있는 봇 링크를 지원한다. 초대 링크는 신원 확인 흐름의 입구로 사용할 수 있고, 공유 리소스 권한 그 자체로 취급하지 않는 것이 위 추천이다. [Telegram deep linking](https://core.telegram.org/bots/features#deep-linking)
 
 **현재 MAMA에서는 저장 기능과 실제 수신·실행 경로를 구분해야 한다.**
 
-| 현재 근거 | 확인한 동작 | 팀 멤버 추가 전에 필요한 작업 |
-| --- | --- | --- |
-| `telegram.ts:356–378` | 허용된 오너 발신자만 받으며 비오너는 드롭 | Telegram 신원을 확인한 뒤 오너와 활성 멤버를 각각 해석. 멤버를 `ownerUserIds`에 넣어 우회하지 않음 |
-| `stimulus-delivery.ts:193–221` | intake를 만든 principal로 모든 입력을 저장 | 실제 발신 principal과 응답 목적지를 호스트가 확정 |
-| `stimulus-delivery.ts:659` | 모든 턴이 `owner:runtime` 세션 사용 | 개인 DM은 principal별, 공유 채팅은 명시한 공유 범위별 세션 |
-| `native-session.ts:438–443` | 기본 실행 권한과 준비 권한이 오너로 고정 | 큐 대기 뒤 실제 호출자의 현재 권한을 준비하고 부모·하위 호출에 전달 |
-| `action-surface.ts:358–361` | 도구 dispatch에도 오너 권한을 넣음 | caller grant가 도구까지 도달하도록 구성. 요청 JSON이 principal이나 권한을 바꾸지 못하게 함 |
-| `principal-repository.ts:41–68, 316–345` | 등록·신원 연결·중지·퇴장·source/memory grant 저장/철회 API 존재. active member/owner 조건 확인 | 공개 core API를 제품 수신·관리 흐름에 연결. 기존 오너 ID·기록의 소유권을 보존해 먼저 연결 |
-| `dispatch.ts:105–148`, `memory/api.ts:929–957` | action 허용 목록과 connector 권한 검사, 허용 밖 기억 scope 거부 | 실제 member access로 검색·원문·그래프·파일·도구 경로 모두 확인 |
-| `stored-source-reader.ts:63–72`, `drive-actions.ts:62–70` | 저장 원문은 비오너 channel grant 필요. Drive live read는 명시적으로 owner-only | 첫 멤버의 자료 범위를 실제 지원하는 source부터 정함. Drive 파일 접근을 자동으로 확대하지 않음 |
-| `native-session.ts:178–215`, `backend-security.ts:18–31` | 현재 native driver는 오너 workspace와 credential deny 경계를 구성 | 멤버 실행에 오너 작업 공간·원장·파일을 그대로 노출하지 않도록 별도 실행 경계를 검증 |
+| 현재 근거                                                 | 확인한 동작                                                                                    | 팀 멤버 추가 전에 필요한 작업                                                                      |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `telegram.ts:356–378`                                     | 허용된 오너 발신자만 받으며 비오너는 드롭                                                      | Telegram 신원을 확인한 뒤 오너와 활성 멤버를 각각 해석. 멤버를 `ownerUserIds`에 넣어 우회하지 않음 |
+| `stimulus-delivery.ts:193–221`                            | intake를 만든 principal로 모든 입력을 저장                                                     | 실제 발신 principal과 응답 목적지를 호스트가 확정                                                  |
+| `stimulus-delivery.ts:659`                                | 모든 턴이 `owner:runtime` 세션 사용                                                            | 개인 DM은 principal별, 공유 채팅은 명시한 공유 범위별 세션                                         |
+| `native-session.ts:438–443`                               | 기본 실행 권한과 준비 권한이 오너로 고정                                                       | 큐 대기 뒤 실제 호출자의 현재 권한을 준비하고 부모·하위 호출에 전달                                |
+| `action-surface.ts:358–361`                               | 도구 dispatch에도 오너 권한을 넣음                                                             | caller grant가 도구까지 도달하도록 구성. 요청 JSON이 principal이나 권한을 바꾸지 못하게 함         |
+| `principal-repository.ts:41–68, 316–345`                  | 등록·신원 연결·중지·퇴장·source/memory grant 저장/철회 API 존재. active member/owner 조건 확인 | 공개 core API를 제품 수신·관리 흐름에 연결. 기존 오너 ID·기록의 소유권을 보존해 먼저 연결          |
+| `dispatch.ts:105–148`, `memory/api.ts:929–957`            | action 허용 목록과 connector 권한 검사, 허용 밖 기억 scope 거부                                | 실제 member access로 검색·원문·그래프·파일·도구 경로 모두 확인                                     |
+| `stored-source-reader.ts:63–72`, `drive-actions.ts:62–70` | 저장 원문은 비오너 channel grant 필요. Drive live read는 명시적으로 owner-only                 | 첫 멤버의 자료 범위를 실제 지원하는 source부터 정함. Drive 파일 접근을 자동으로 확대하지 않음      |
+| `native-session.ts:178–215`, `backend-security.ts:18–31`  | 현재 native driver는 오너 workspace와 credential deny 경계를 구성                              | 멤버 실행에 오너 작업 공간·원장·파일을 그대로 노출하지 않도록 별도 실행 경계를 검증                |
 
-source/memory grant 저장과 실행 권한 저장은 같은 기능이 아니다. 현재 `PrincipalScopeGrantRef`는 source와 shared-memory 범위를 표현하고, `JudgmentAccess`는 별도로 `actions`, `readScopes`, `channels`, `destinations` 등을 가진다. 어떤 자료를 읽고, 어떤 기록을 쓰고, 어떤 행동을 실행하고, 어디로 보낼 수 있는지를 제품이 합성해야 한다. 기존 액션 카탈로그에는 멤버 관리 등록이 연결되어 있지 않다. [principal 저장 계약](../../packages/mama-core/src/identity/principal-repository.ts#L15), [실행 권한 계약](../../packages/mama-core/src/knowledge/judgments.ts#L37), [현재 제품 등록 지점](../../packages/standalone/src/runtime/action-surface.ts#L201)
+source/memory grant 저장과 실행 권한 저장은 같은 기능이 아니다. 현재 `PrincipalScopeGrantRef`는 source와 shared-memory 범위를 표현하고, `JudgmentAccess`는 별도로 `actions`, `readScopes`, `channels`, `destinations` 등을 가진다. 어떤 자료를 읽고, 어떤 기록을 쓰고, 어떤 행동을 실행하고, 어디로 보낼 수 있는지를 제품이 합성해야 한다. 기존 액션 카탈로그에는 멤버 관리 등록이 연결되어 있지 않다. [principal 저장 계약](../../../packages/mama-core/src/identity/principal-repository.ts#L15), [실행 권한 계약](../../../packages/mama-core/src/knowledge/judgments.ts#L37), [현재 제품 등록 지점](../../../packages/standalone/src/runtime/action-surface.ts#L201)
 
 **권장 구조는 동일한 MAMA 경험을 유지하면서 내부 경계를 분리하는 것이다.**
 
@@ -68,11 +68,11 @@ flowchart LR
 
 접근 방식별 판단은 다음과 같다.
 
-| 접근 | 장점 | 목적과의 충돌·비용 |
-| --- | --- | --- |
-| 오너 허용 목록에 팀원을 추가 | 가장 적은 수정 | 현재 코드에서는 오너 principal·권한·세션을 공유한다. 개인 기억·제한된 권한이라는 INTENT와 충돌 |
-| 같은 봇, principal별 실행과 명시적 공유 범위 | 같은 MAMA에 자연스럽게 요청하면서 개인·공유 상태 구분. 기존 core 계약 활용 | 수신→세션→권한→도구→파일→전달 전체 연결이 필요. **권장** |
-| 사람/조직마다 독립 gateway·credentials·저장소 | 신뢰하지 않는 사용자 간 실행 경계를 더 강하게 분리 | 공통 업무·교정·이력 연결 비용이 커짐. 외부 조직·상호 불신 사용자를 받을 때 검토 |
+| 접근                                          | 장점                                                                       | 목적과의 충돌·비용                                                                             |
+| --------------------------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| 오너 허용 목록에 팀원을 추가                  | 가장 적은 수정                                                             | 현재 코드에서는 오너 principal·권한·세션을 공유한다. 개인 기억·제한된 권한이라는 INTENT와 충돌 |
+| 같은 봇, principal별 실행과 명시적 공유 범위  | 같은 MAMA에 자연스럽게 요청하면서 개인·공유 상태 구분. 기존 core 계약 활용 | 수신→세션→권한→도구→파일→전달 전체 연결이 필요. **권장**                                       |
+| 사람/조직마다 독립 gateway·credentials·저장소 | 신뢰하지 않는 사용자 간 실행 경계를 더 강하게 분리                         | 공통 업무·교정·이력 연결 비용이 커짐. 외부 조직·상호 불신 사용자를 받을 때 검토                |
 
 **첫 실제 멤버 검증은 등록보다 권한 변경이 행동에 반영되는지까지 봐야 한다.**
 
@@ -93,10 +93,10 @@ Letta의 [로컬 도구 권한](https://docs.letta.com/configuration/permissions
 
 오너가 이어서 제안한 방향은 **각자 개인 에이전트 세션을 가지고, 공유 채널에서는 공유 에이전트를 쓰는 방식**이다. 이를 다음 설계의 방향으로 기록한다. 아직 구현 spec이나 실행 계획의 승인은 아니다.
 
-| 사용 위치 | 에이전트 문맥 | 기억·파일의 기본 경계 |
-| --- | --- | --- |
-| 개인 DM | 해당 principal의 개인 에이전트 | 그 사람의 개인 기억·대화·작업 파일, 허용된 공유 업무 |
-| 공유 채널 | 해당 채널의 공유 에이전트 | 그 채널에 허용한 공유 기억·대화·작업 파일 |
+| 사용 위치 | 에이전트 문맥                  | 기억·파일의 기본 경계                                |
+| --------- | ------------------------------ | ---------------------------------------------------- |
+| 개인 DM   | 해당 principal의 개인 에이전트 | 그 사람의 개인 기억·대화·작업 파일, 허용된 공유 업무 |
+| 공유 채널 | 해당 채널의 공유 에이전트      | 그 채널에 허용한 공유 기억·대화·작업 파일            |
 
 허용된 프로젝트의 업무와 수정 이력은 공통 원장을 사용한다. 에이전트별로 같은 업무를 중복 생성하지 않으며, 개인 문맥 전체를 공유 문맥으로 복사하지 않는다. 공유 채널의 agent가 수행하는 인간 요청에도 요청자 신원과 행동 권한을 유지한다. 공유 agent의 권한으로 멤버의 권한을 승격하지 않는다.
 
@@ -116,19 +116,19 @@ Letta의 [로컬 도구 권한](https://docs.letta.com/configuration/permissions
 
 Letta 프로젝트 전체를 비교할 때는 최신 구현과 과거 API 서버를 구분해야 한다. [현재 공식 저장소](https://github.com/letta-ai/letta)는 활성 구현을 `letta-code`로 안내하며 V1 API 서버를 `archive`에 보관한다. MemGPT에서 시작해 현재는 지속되는 신원·기억·도구·대화를 가진 agent harness, CLI/앱, Agent SDK와 로컬·원격·클라우드 실행을 제공하는 범용 플랫폼으로 설명한다. [현재 프로젝트](https://docs.letta.com/), [Agent SDK](https://www.letta.com/agent-sdk/), [MemGPT 논문](https://arxiv.org/abs/2310.08560)
 
-| 비교 축 | 현재 Letta 공식 문서 | MAMA의 현재 구현·목적과 설계 방향 |
-| --- | --- | --- |
-| 지속되는 중심 단위 | Agent의 신원·MemFS·모델/도구 설정·여러 conversation | 실제 업무와 수정 이력·원문·판단 링크를 공통 근거로 유지하고 이를 읽는 지속 에이전트 |
-| 장기 기억 | agent 소유 Git/Markdown MemFS, 필요할 때 파일 읽기. 별도 mod로 검색 확장 | SQLite 기록·수정·근거·링크와 lexical/vector 검색, 사람이 읽는 위키 |
-| 경험 반영 | agent가 기억을 수정·commit하고, 설정한 dreaming으로 최근 대화의 교훈 정리 | 오너 교정의 범위와 근거를 남기고 다음 관련 판단·행동이 실제로 달라지는지 확인 |
-| 실행·배포 | SDK local/remote/cloud, 연결된 컴퓨터 또는 cloud sandbox에서 도구 실행 | 현재 로컬 데몬과 native Claude/Codex 경로, action catalog·scope·실행/전달 기록 |
-| 공유 지식 | 여러 cloud agent에 조직 소유 Git repository를 attach | 같은 업무를 중복 생성하지 않는 공통 업무 원장과 허용된 공유 기억·원문 |
-| 제품 기능 | 코딩·개인 비서·메신저 동료 등 여러 유형의 agent를 구성 | 실제 대화/업무 도구를 관찰해 업무 인식·귀속·이력·답변·보고·교정으로 연결하는 운영 제품 |
-| 팀의 현재 상태 | 조직 역할, agent 공유, 개인 conversation, shared-memory repository를 문서상 지원 | 현재 운영은 오너 흐름. 사람별 개인 agent와 채널별 공유 agent, 공통 기억 기반 개인 우선순위는 설계 중 |
+| 비교 축            | 현재 Letta 공식 문서                                                             | MAMA의 현재 구현·목적과 설계 방향                                                                    |
+| ------------------ | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| 지속되는 중심 단위 | Agent의 신원·MemFS·모델/도구 설정·여러 conversation                              | 실제 업무와 수정 이력·원문·판단 링크를 공통 근거로 유지하고 이를 읽는 지속 에이전트                  |
+| 장기 기억          | agent 소유 Git/Markdown MemFS, 필요할 때 파일 읽기. 별도 mod로 검색 확장         | SQLite 기록·수정·근거·링크와 lexical/vector 검색, 사람이 읽는 위키                                   |
+| 경험 반영          | agent가 기억을 수정·commit하고, 설정한 dreaming으로 최근 대화의 교훈 정리        | 오너 교정의 범위와 근거를 남기고 다음 관련 판단·행동이 실제로 달라지는지 확인                        |
+| 실행·배포          | SDK local/remote/cloud, 연결된 컴퓨터 또는 cloud sandbox에서 도구 실행           | 현재 로컬 데몬과 native Claude/Codex 경로, action catalog·scope·실행/전달 기록                       |
+| 공유 지식          | 여러 cloud agent에 조직 소유 Git repository를 attach                             | 같은 업무를 중복 생성하지 않는 공통 업무 원장과 허용된 공유 기억·원문                                |
+| 제품 기능          | 코딩·개인 비서·메신저 동료 등 여러 유형의 agent를 구성                           | 실제 대화/업무 도구를 관찰해 업무 인식·귀속·이력·답변·보고·교정으로 연결하는 운영 제품               |
+| 팀의 현재 상태     | 조직 역할, agent 공유, 개인 conversation, shared-memory repository를 문서상 지원 | 현재 운영은 오너 흐름. 사람별 개인 agent와 채널별 공유 agent, 공통 기억 기반 개인 우선순위는 설계 중 |
 
 이 표는 공식 자료와 현재 MAMA 코드·INTENT를 대조한 분석이다. Letta로 업무 원장이나 유사 사례 검색을 만들 수 없다는 주장이 아니며, 기본 Agent 상태·기억·실행 기반과 MAMA가 제품 중심에 둔 업무 기록 구조의 차이를 설명한다. 실행 기술로서 Letta는 `mama-core`와, 사용자 제품으로서 앱·메신저 동료는 `mama-os`와 각각 비교해야 한다. MAMA의 설계 목표를 이미 실현된 팀 기능처럼 표시하지 않는다.
 
-기억과 실행 부분의 근거: [stateful agent](https://docs.letta.com/concepts/stateful-agents), [MemFS](https://docs.letta.com/concepts/memfs), [dreaming](https://docs.letta.com/configuration/memory), [cloud 실행](https://docs.letta.com/platform/cloud-agents), [shared memory](https://docs.letta.com/concepts/shared-memory), [MAMA INTENT](../../INTENT.md).
+기억과 실행 부분의 근거: [stateful agent](https://docs.letta.com/concepts/stateful-agents), [MemFS](https://docs.letta.com/concepts/memfs), [dreaming](https://docs.letta.com/configuration/memory), [cloud 실행](https://docs.letta.com/platform/cloud-agents), [shared memory](https://docs.letta.com/concepts/shared-memory), [MAMA INTENT](../../../INTENT.md).
 
 Letta에서 배울 우선순위는 문서로 확인되는 제공 기능과 현재 MAMA의 연결 지점에서 판단한다. 답변 정확도·학습 효과·지연·비용의 우열은 비교 실험을 하지 않았으므로 판정하지 않는다. Agent의 지속 상태와 conversation/computer를 구분한 제품 모델, 검사하고 갱신할 수 있는 기억, dreaming의 경험 정리 흐름, 팀 권한, 애플리케이션용 SDK와 클라우드 실행은 참고할 제공 범위다.
 
@@ -152,12 +152,12 @@ Letta의 한계도 공식 제약과 구조적 추론을 구분한다. 확인된 
 
 오너는 비교의 전제를 **모델은 발전하며, 에이전트의 문제와 프로그램의 문제를 구분해야 한다**고 정했다. 앞선 답변의 누락·교정 적용·검색·보고 사례를 그대로 프로그램 결함 목록으로 분류한 것은 수정한다. 에이전트가 더 정확히 판단하고 도구를 사용해도 남는 신원·저장·권한·조회·실행·복구의 구조적 제약을 프로그램 비교의 중심에 둔다.
 
-| 관찰 | 분류 기준 |
-| --- | --- |
-| 원장에 있는 후반 교환을 답변에서 누락 | 에이전트가 정상 도구로 원문을 읽을 수 있었는지, 실제 반환에 있었는지 확인한다. 도구가 제공했는데 누락하면 판단·탐색 문제이고, 자료·조회 경로가 끊겼다면 프로그램 문제다. 원장에 있다는 사실만으로 원인을 확정하지 않는다. |
-| 규칙 색인을 받은 14 기록 턴이 본문을 열지 않음 | 관련 색인·본문 조회가 정상 제공되었는데 읽지 않은 행동과, 호스트가 색인·저장 규칙을 제공하지 못한 결함을 구분한다. 저장 성공만으로 적용을 입증하지도 않는다. |
-| 단어가 겹치지 않는 네 표현의 검색 실패 | 검색 질의 선택과 추가 탐색 중단, 임베딩 모델 품질, 호스트 색인·필터·검색 경로를 분리한다. 직접 도구 입력·반환과 원문으로 원인을 확인하기 전에는 혼합 원인으로 남긴다. |
-| 41/41 행·마감이 맞지만 새 교환을 "변경 없음"으로 설명 | 최신 자료가 반환됐는데 해석을 틀린 경우와, 호스트가 낡은 상태·잘못된 범위·불완전한 자료를 반환한 경우를 나눈다. 보고 문장의 오류만으로 저장·투영 결함을 확정하지 않는다. |
+| 관찰                                                  | 분류 기준                                                                                                                                                                                                                 |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 원장에 있는 후반 교환을 답변에서 누락                 | 에이전트가 정상 도구로 원문을 읽을 수 있었는지, 실제 반환에 있었는지 확인한다. 도구가 제공했는데 누락하면 판단·탐색 문제이고, 자료·조회 경로가 끊겼다면 프로그램 문제다. 원장에 있다는 사실만으로 원인을 확정하지 않는다. |
+| 규칙 색인을 받은 14 기록 턴이 본문을 열지 않음        | 관련 색인·본문 조회가 정상 제공되었는데 읽지 않은 행동과, 호스트가 색인·저장 규칙을 제공하지 못한 결함을 구분한다. 저장 성공만으로 적용을 입증하지도 않는다.                                                              |
+| 단어가 겹치지 않는 네 표현의 검색 실패                | 검색 질의 선택과 추가 탐색 중단, 임베딩 모델 품질, 호스트 색인·필터·검색 경로를 분리한다. 직접 도구 입력·반환과 원문으로 원인을 확인하기 전에는 혼합 원인으로 남긴다.                                                     |
+| 41/41 행·마감이 맞지만 새 교환을 "변경 없음"으로 설명 | 최신 자료가 반환됐는데 해석을 틀린 경우와, 호스트가 낡은 상태·잘못된 범위·불완전한 자료를 반환한 경우를 나눈다. 보고 문장의 오류만으로 저장·투영 결함을 확정하지 않는다.                                                  |
 
 현재 확인된 프로그램 과제는 `main` 81695ecbc의 `native-session.ts:442–443`와 `action-surface.ts:361`이 오너 권한을 넣는 실행 경로다. 더 강한 모델이 와도 이 경로가 멤버 신원·현재 grants를 대신 전달하거나 개인·공유 에이전트의 native 실행 경계를 만들어 주지는 않는다. core principal/grant 기능을 실제 ingress/session/tools/files/delivery에 연결해야 한다. 아직 팀 기능을 제공하지 않은 상태이며, 존재하는 core 기능의 결함과 혼동하지 않는다.
 

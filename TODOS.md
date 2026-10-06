@@ -1,7 +1,7 @@
 # TODOs
 
-Current work is in the [rebuild plan](docs/rebuild/plan.md); evidence and unresolved checks are in
-[checks.md](docs/rebuild/checks.md). These follow-ups serve [INTENT.md](INTENT.md).
+Current work is in the [development plan](docs/development/plan.md); evidence and unresolved checks are in
+[checks.md](docs/development/checks.md). These follow-ups serve [INTENT.md](INTENT.md).
 A task and its revisions are the container for a case.
 
 ## Backfill for every connector and optional Jev — Recognise and Attach

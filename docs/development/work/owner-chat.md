@@ -8,7 +8,7 @@ Owner decisions, 2026-10-06:
   member. Each keeps common memory apart from each member's memory. This item only stores the
   owner's conversation; the same path later stores each session's conversation.
 
-Program evidence ([checks](checks.md)):
+Program evidence ([checks](../checks.md)):
 
 - MAMA keeps the owner's messages only in the mailbox, which deletes handled rows seven days after
   they were acknowledged (`mama-core/src/runtime/mailbox.ts:316`). Replies survive in

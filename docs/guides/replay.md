@@ -24,9 +24,9 @@ prepared raw observations and their core index, plus these default runtime files
 The names are the current defaults even for another period. The manifest supplies
 `fromMs` (inclusive) and `untilMs` (exclusive), maximum source time and import
 counts. The replay queue also requires the configured `jev.keyFile` and
-`jev.vocabFile`. Keep provider credentials private. See the
-[window pipeline work log](../rebuild/window-pipeline.md) for the import and
-verification procedure; there is no general-purpose historical import CLI yet.
+`jev.vocabFile`. Keep provider credentials private. There is no general-purpose
+historical import CLI yet. Prepare the originals and manifest before starting replay, then compare
+the resulting work records with those originals when it finishes.
 
 ## Run without a live daemon
 
@@ -49,6 +49,11 @@ write the journal, board, wiki table of contents and applicable lessons. Source
 reads are capped at the window's end so later evidence cannot leak into an earlier
 day. The cursor preserves progress; inspect a failed window's ledger and durable
 writes before retrying it.
+
+The queue groups source lines by likely work item, possible match, possible new work and unresolved
+lines. These are hints for the agent, which decides what belongs together. It assigns distinct work
+to child agents, reads their receipts back against the ledger and settles gaps before publishing
+the window's summary. A window does not advance until all its inputs settle.
 
 ## Return to live collection
 

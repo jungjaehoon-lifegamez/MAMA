@@ -41,7 +41,7 @@ the cited original when the stored record does not settle the question.
 
 The owner receives readable sentences. Internal record and observation references remain in
 stored links and tool traces rather than appearing in the answer. A new session starts with a
-short block: the local time and the latest owner exchanges, at most 2,500 characters. It reads
+short block: the local time and the latest owner exchanges. It reads
 current work and sources with tools rather than receiving them. Restart consistency still needs to
 be checked with the same owner question after a restart.
 
@@ -54,7 +54,7 @@ links to the messages, updates the board sections that changed (`briefing`, `act
 `decisions`, `pipeline`) and, when the messages settle lasting knowledge, the project's wiki page,
 or declares that nothing needs recording. The
 daemon then checks the ledger for a revision citing those messages or the declaration. A batch
-with neither waits, as Kagemusha's cursor leaves it: it rides with the channel's next record order,
+with neither waits: it rides with the channel's next record order,
 or goes alone five minutes later when no delta comes first. After three attempts in all the daemon
 logs the batch as lost. Messages more than
 six hours old when they arrive are not delivered as live deltas.
@@ -64,6 +64,9 @@ defaults to the machine's zone. Hourly reminders run from
 09:00 through 21:00, with a full report taking precedence in a matching hour. The scheduler
 records an hour as sent only after delivery succeeds. See
 [reports and board](../guides/reports-and-board.md) for operation and verification.
+
+A full-report order names the preceding report time, or uses the previous day when none is known.
+The agent reads the work ledger for changes in that span before writing the report.
 
 The wiki keeps what the sources and the ledger do not show on their own: knowledge that stays
 true and has to be gathered from many messages, such as a project's terms, decisions and
