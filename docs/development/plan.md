@@ -70,7 +70,10 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    paraphrases put the August case's closing revision at cosine rank 52, 65 and 149, outside the
    20 vector candidates; the fourth reaches rank 16 and fusion drops it, because a vector-only hit
    scores below every one of the 50 lexical hits. Choosing the top-K before the scope filter costs
-   nothing here. Next: a fusion change, measured on the search checks before any choice.
+   nothing here. EmbeddingGemma 2 (2026-10-07,
+   [check](checks.md#embeddinggemma-2-against-e5-on-the-owner-search-checks-2026-10-07)) moves
+   two of the four paraphrases into the 20 candidates and widens the cosine band, but loses two
+   anchor cases. Next: a fusion change, measured with both embeddings on the search checks.
 7. Core: a knowledge construction without an embedder writes records without a vector and says
    nothing (`mama-core/src/knowledge/judgments.ts:97`); the 10-03 check found 178 revisions written
    that way. Make the embedder an explicit argument, `null` for text-only, as W4 did for recall.
