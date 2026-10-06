@@ -13,7 +13,7 @@ Rules: [AGENTS.md](../../AGENTS.md). Keep this plan under 200 lines and each che
 - C4 passed on a requested full report following the owner's rules; its board pipeline equals the ledger ([check](checks.md#c4-full-reports-against-the-ledger-420424-2026-10-05)).
 - C5 was accepted for owner chat turns on 2026-10-06; no restart repeat ran ([check](checks.md#c2c5-owner-acceptance-and-monitoring-stopped-2026-10-06)).
 - C6 passes with search through the packed core's public exports (W3, W4's search half; [check](checks.md#c6-with-search-a-consumer-searches-its-own-records-without-a-model-w4-2026-10-05)).
-- Standing owner rules have no write path: `owner-policy.ts` only reads the file (W37, 2026-10-06; [check](checks.md#how-corrections-reach-each-turn-kind-w37-decided-2026-10-06)).
+- Standing owner rules are written into the owner policy in owner chat turns (W37.1, #430; [check](checks.md#how-corrections-reach-each-turn-kind-w37-decided-2026-10-06)).
 
 ## Owner checks
 
@@ -51,10 +51,10 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
 1. W38: done on 2026-10-06 (#429; [work list](work/owner-chat.md)). 126 owner messages and 222
    replies backfilled; the first live owner turn stored its message and reply, and the correction
    it saved returns the owner's words through its provenance.
-2. W37: standing owner rules move into the owner policy ([work list](work/owner-rules.md)), with
-   protected revision records, the call shapes of #415/#416/#426 removed, a wiki publish without a
-   type refused instead of filed as `entity`, and situational report rules relocated before the
-   rule index goes.
+2. W37: standing owner rules move into the owner policy ([work list](work/owner-rules.md)).
+   W37.1 deployed and W37.2 merged on 2026-10-06 (#430): 22 owner rules moved, 5 stay situational.
+   Left: the owner accepts the file; the daily and full report run with it (W37.3); then W37.4
+   relocates the report rules and removes the rule index and the record order's recall.
 3. W25 (owner, 2026-10-06): a Telegram reply shows the typing action and a `⏳` placeholder at
    once and is replaced by the final answer; no streaming edits. The ledger delivers into the
    placeholder, and an interrupted turn turns the placeholder into the interruption notice.
