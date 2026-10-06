@@ -58,6 +58,7 @@ function file(): ReturnType<typeof parseBackfillFile> {
       {
         path: 'daily/2026-08-28.md',
         title: '2026-08-28',
+        type: 'daily',
         content: 'All delivered.',
         sources: ['src:2'],
       },

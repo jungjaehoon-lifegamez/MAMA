@@ -236,6 +236,7 @@ export async function pushBackfill(
             {
               path: page.path,
               title: page.title,
+              type: page.type,
               content: page.content,
               // A new page only: one that already exists is refused, not overwritten.
               expectedContentVersion: null,

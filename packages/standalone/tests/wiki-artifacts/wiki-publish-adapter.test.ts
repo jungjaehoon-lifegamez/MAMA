@@ -6,6 +6,24 @@ import { createWikiPublishAdapter } from '../../src/wiki-artifacts/wiki-publish-
 
 describe('Story PR4.2: Wiki Publish Adapter', () => {
   describe('AC #1: publish compatibility and validation', () => {
+    it.each([undefined, '', '   '])('refuses a missing or blank page type (%s)', (type) => {
+      const publisher = vi.fn();
+      const adapter = createWikiPublishAdapter({ publisher });
+      expect(() =>
+        adapter.publish({
+          pages: [
+            {
+              path: 'daily/2026-01/2026-01-01.md',
+              title: '2026-01-01',
+              type,
+              content: 'A quiet day.',
+            },
+          ],
+        })
+      ).toThrow(/type/);
+      expect(publisher).not.toHaveBeenCalled();
+    });
+
     it('keeps legacy manage.wiki.publish compatible while preserving supplied source IDs', () => {
       const publisher = vi.fn();
       const adapter = createWikiPublishAdapter({

@@ -51,6 +51,7 @@ describe('recallable wiki and report writes', () => {
       const page = {
         path: 'work/current.md',
         title: field === 'title' ? credential : 'Current work',
+        type: 'synthesis',
         content: field === 'content' ? credential : '## History\nA safe note.',
         sourceRefs: [
           { kind: 'raw', connector: 'source', id: field === 'sourceRef' ? credential : 'obs_1' },
@@ -79,6 +80,7 @@ describe('recallable wiki and report writes', () => {
             {
               path: 'work/current.md',
               title: 'Current work',
+              type: 'synthesis',
               content: `## History\nHash: ${hash}`,
               expectedContentVersion: null,
               sourceRefs: [{ kind: 'raw', connector: 'source', id: 'obs_1' }],

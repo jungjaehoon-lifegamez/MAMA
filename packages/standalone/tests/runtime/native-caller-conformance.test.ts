@@ -40,6 +40,7 @@ describe('native host contract conformance', () => {
       });
       const surface = createActionSurface({
         timeZone: createTimeZoneSetting('UTC'),
+        runtimeRoot: '/tmp/mama-test-runtime',
         configPath: '/tmp/mama-test-config.yaml',
         isOwnerMessageTurn: () => true,
         adapter: db.adapter,

@@ -58,6 +58,7 @@ beforeEach(async () => {
     agentId: 'agent-test',
     connectors: ['slack'],
     timeZone: createTimeZoneSetting('UTC'),
+    runtimeRoot: home,
     configPath: join(home, 'config.yaml'),
     isOwnerMessageTurn: () => true,
     storedSourceReader: createStoredSourceReader({

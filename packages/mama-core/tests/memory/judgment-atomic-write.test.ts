@@ -37,6 +37,31 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
 
   afterAll(async () => cleanupTestDB(dbPath));
 
+  it.each([
+    { reasoning: '', expected: '' },
+    { reasoning: null, expected: null },
+    { reasoning: undefined, expected: null },
+  ])(
+    'preserves explicit empty reasoning without changing absent reasoning ($reasoning)',
+    async ({ reasoning, expected }) => {
+      const adapter = getAdapter();
+      const saved = await appendJudgment(
+        {
+          commandId: 'exact-reasoning',
+          topic: 'record-text',
+          summary: 'Keep the complete text',
+          recordKind: 'judgment',
+          ...(reasoning === undefined ? {} : { reasoning }),
+        },
+        access,
+        { adapter }
+      );
+      expect(
+        adapter.prepare('SELECT reasoning FROM decisions WHERE id = ?').get(saved.recordId)
+      ).toEqual({ reasoning: expected });
+    }
+  );
+
   it('keeps one run and agent on its record, linked edge, and commitment stores', async () => {
     const adapter = getAdapter();
     const modelRunId = 'run-judgment-and-work';

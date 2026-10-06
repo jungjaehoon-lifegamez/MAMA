@@ -310,6 +310,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         })()
       : {};
     const surface = createActionSurface({
+      runtimeRoot: options.runtimeRoot,
       adapter: database.adapter,
       ...(options.outboundAttempts === undefined
         ? {}

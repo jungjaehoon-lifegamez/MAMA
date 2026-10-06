@@ -12,6 +12,7 @@
  * outside a model turn, so this is the one part of the reader's coverage that MAMA does not hold.
  */
 import { LINK_RELATIONS, offsetIsoTime } from '../api/work-actions.js';
+import { isValidPageType, type WikiPageType } from '../wiki/types.js';
 
 export const BACKFILL_FORMAT = 'mama-backfill/1';
 
@@ -59,7 +60,7 @@ export interface BackfillLesson {
  * section appends, so its title, metadata and earlier evidence stay as they are.
  */
 export type BackfillWikiPage =
-  | { path: string; title: string; content: string; sources?: string[] }
+  | { path: string; title: string; type: WikiPageType; content: string; sources?: string[] }
   | { path: string; append: Array<{ section: string; text: string }>; sources?: string[] };
 
 export interface BackfillFile {
@@ -302,7 +303,7 @@ export function parseBackfillFile(raw: unknown): BackfillFile {
     file.wiki === undefined ? [] : (list(file.wiki, 'wiki', 0) ?? [])
   ).flatMap((value, index): BackfillWikiPage[] => {
     const where = `wiki[${index}]`;
-    const page = object(value, where, ['path', 'title', 'content', 'append', 'sources']);
+    const page = object(value, where, ['path', 'title', 'type', 'content', 'append', 'sources']);
     if (!page) return [];
     const path = text(page.path, `${where}.path`) ?? '';
     if (path.startsWith('/') || path.split('/').includes('..') || !path.endsWith('.md'))
@@ -312,17 +313,24 @@ export function parseBackfillFile(raw: unknown): BackfillFile {
     const pageSources =
       page.sources === undefined ? {} : { sources: sources(page.sources, `${where}.sources`) };
     if (page.append === undefined) {
+      const type = text(page.type, `${where}.type`);
+      if (type !== undefined && !isValidPageType(type))
+        fail(`${where}.type`, 'must be a supported wiki page type');
       return [
         {
           path,
           title: text(page.title, `${where}.title`) ?? '',
+          type: type as WikiPageType,
           content: text(page.content, `${where}.content`) ?? '',
           ...pageSources,
         },
       ];
     }
-    if (page.title !== undefined || page.content !== undefined)
-      fail(where, 'carries either title and content (a new page) or append (an existing page)');
+    if (page.title !== undefined || page.type !== undefined || page.content !== undefined)
+      fail(
+        where,
+        'carries either title, type and content (a new page) or append (an existing page)'
+      );
     const append = (list(page.append, `${where}.append`) ?? []).flatMap((entry, n) => {
       const edit = object(entry, `${where}.append[${n}]`, ['section', 'text']);
       if (!edit) return [];

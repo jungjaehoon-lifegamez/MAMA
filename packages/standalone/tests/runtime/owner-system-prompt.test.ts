@@ -72,13 +72,11 @@ describe('owner standing prompt', () => {
       'wiki',
       'daily',
     ]);
-    // 12 owner-correction saves were refused for a source or replaces given as a string (09-29 to
-    // 10-05): the procedure gives the call's shape.
-    for (const part of [
-      "source: {package: 'owner-agent', source_type: 'memory.save'}",
-      'replaces: [{id, reason}]',
-    ])
+    // Standing corrections have their own write path; help supplies action contracts.
+    for (const part of ['manage.policy.read', 'manage.policy.update', 'memory.save'])
       expect(topics.corrections).toContain(part);
+    expect(topics.corrections).not.toContain('memory.save({');
+    expect(topics.corrections).not.toContain('replaces: [{');
     // An answer that confirms an earlier case links it; a wrong link is corrected, not deleted.
     expect(topics.cases).toContain('work.link (relation builds_on)');
     expect(topics.cases).toContain('relation contradicts');
@@ -87,12 +85,11 @@ describe('owner standing prompt', () => {
     expect(topics.wiki).not.toContain('a dated line per change');
     for (const part of ['eventSince and eventBefore', 'owner.messages', 'At most 30 lines'])
       expect(topics.daily).toContain(part);
-    // Three nights' first publish was refused for a missing title, and one page was filed as an
-    // entity without its type (2026-10-02 to 10-04); on 10-05 the fields came outside pages and
-    // were refused: the procedure gives the call itself.
-    expect(topics.daily).toContain(
-      "manage.wiki.publish({pages: [{path: 'daily/<month>/<day>.md', title: '<day>', type: 'daily', content, expectedContentVersion}]})"
-    );
+    for (const part of ['daily/<YYYY-MM>/<YYYY-MM-DD>.md', 'title', 'daily', 'manage.wiki.publish'])
+      expect(topics.daily).toContain(part);
+    expect(topics.daily).not.toContain('manage.wiki.publish({');
+    expect(topics.daily).not.toContain('The page goes inside pages');
+    expect(topics.daily).not.toContain('filed as an entity');
     // log.md is a reserved path the host writes on each publication.
     expect(topics.daily).not.toContain('log.md');
     expect(topics.wiki).toContain('The host writes log.md; do not write it.');
@@ -284,6 +281,7 @@ describe('owner standing prompt', () => {
       }
       const surface = createActionSurface({
         timeZone: createTimeZoneSetting('UTC'),
+        runtimeRoot: '/tmp/mama-test-runtime',
         configPath: '/tmp/mama-test-config.yaml',
         isOwnerMessageTurn: () => true,
         adapter: {} as DatabaseInstance,

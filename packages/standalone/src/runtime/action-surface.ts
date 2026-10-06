@@ -24,6 +24,7 @@ import {
 } from '../api/attachment-actions.js';
 import { sourceActionRegistrations } from '../api/source-actions.js';
 import { ownerTimeZoneActionRegistrations } from '../api/owner-timezone-actions.js';
+import { ownerPolicyActionRegistrations } from '../api/owner-policy-actions.js';
 import { actionCatalogLine, helpActionRegistrations } from '../api/help-actions.js';
 import { CODE_ACT_CONTRACT, codeActRegistration } from '../api/code-act-actions.js';
 import { guardOwnerRules } from './owner-authority.js';
@@ -81,6 +82,8 @@ const OWNER_ACTIONS = [
   'report.read',
   'report.publish',
   'manage.wiki.move',
+  'manage.policy.read',
+  'manage.policy.update',
   'manage.wiki.publish',
   'manage.wiki.read',
   'manage.wiki.update',
@@ -99,6 +102,7 @@ export interface HostToolDefinition {
 }
 
 export interface ActionSurfaceOptions {
+  runtimeRoot: string;
   adapter: DatabaseInstance;
   /** Native shell commands that open a network connection, reported as they start (W35). */
   outboundAttempts?: (event: OutboundAttemptEvent) => void;
@@ -243,6 +247,11 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       ownerPrincipalId: options.ownerPrincipalId,
       setting: options.timeZone,
       isOwnerMessageTurn: options.isOwnerMessageTurn,
+    }),
+    ...ownerPolicyActionRegistrations({
+      runtimeRoot: options.runtimeRoot,
+      adapter: options.adapter,
+      ownerPrincipalId: options.ownerPrincipalId,
     }),
     ...createAttachmentActionRegistrations({
       ...(options.attachmentPorts ?? {}),

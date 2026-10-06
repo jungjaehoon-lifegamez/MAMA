@@ -160,7 +160,7 @@ export function ownerHelpTopics(
     ].join('\n'),
     corrections: [
       'Owner corrections:',
-      "- When the owner corrects you, apply the correction now to every affected item and board section, reading the originals you need; do not answer with a promise for work you can do in this turn. Then save it with memory.save({topic, kind, summary, details, appliesWhen, source: {package: 'owner-agent', source_type: 'memory.save'}}): revise the correction it belongs with by adding replaces: [{id, reason}] (keeping every earlier point not withdrawn), or save a new one; retire withdrawn guidance with memory.retire. A request the owner marks as for this time only is applied and not saved.",
+      '- When the owner corrects you, apply the correction now to every affected item and board section, reading the originals you need; do not answer with a promise for work you can do in this turn. A correction that always applies goes into the owner policy: read it first with manage.policy.read, then change it with manage.policy.update, keeping every earlier point not withdrawn. A correction that fits a situation is saved with memory.save: revise the correction it belongs with, keeping every earlier point not withdrawn, or save a new one; retire withdrawn situational guidance with memory.retire. A request the owner marks as for this time only is applied and not saved.',
       "- Save with memory.save only what a tool cannot re-derive: how the owner wants something done, a pattern you derived from several sources, a failure and its cause. Lessons shown with a message are lessons, not facts. The owner's standing rules are the owner policy.",
     ].join('\n'),
     sources: [
@@ -209,7 +209,7 @@ export function ownerHelpTopics(
             '  3. Missed and learned: what was recorded late or wrong, what the owner had to correct, and the lesson, one line each.',
             "- Read the day: work.list with eventSince and eventBefore (each item lists its revisions that day, so read them inside the script and keep what the page needs); owner.messages for that day; memory.search for the lessons that touch that day's work. Open sources only for what these leave unexplained.",
             '- Leave out single messages, item states and report text; a quiet day is a short page. Knowledge that day settled and a project page lacks goes to that page too (help topic wiki).',
-            "- Publish it as one page: manage.wiki.publish({pages: [{path: 'daily/<month>/<day>.md', title: '<day>', type: 'daily', content, expectedContentVersion}]}), with expectedContentVersion from manage.wiki.read when the page exists or null when it does not. The page goes inside pages; without a title the call is refused, and without the type the page is filed as an entity.",
+            '- Publish it with manage.wiki.publish at daily/<YYYY-MM>/<YYYY-MM-DD>.md, with the day as its title and daily as its type. Read an existing page first with manage.wiki.read before replacing it.',
           ].join('\n'),
         }
       : {}),

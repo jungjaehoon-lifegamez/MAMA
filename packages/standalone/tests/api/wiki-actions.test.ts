@@ -46,11 +46,75 @@ function vault(): string {
 }
 
 describe('manage.wiki.* action registrations', () => {
+  it.each([undefined, '', '   '])(
+    'refuses publishing a page without a nonblank type (%s)',
+    async (type) => {
+      const root = vault();
+      const writer = new ObsidianWriter(root, '.');
+      try {
+        const result = await dispatch({ publisher: (pages) => writer.writePagesAtomically(pages) })(
+          {
+            action: 'manage.wiki.publish',
+            input: {
+              pages: [
+                {
+                  path: 'daily/2026-01/2026-01-01.md',
+                  title: '2026-01-01',
+                  type,
+                  content: 'A quiet day.',
+                },
+              ],
+            },
+          },
+          { access: ownerAccess }
+        );
+        expect(result).toMatchObject({
+          status: 'failed',
+          error: { message: expect.stringContaining('type') },
+        });
+        expect(readWikiPageContent(root, 'daily/2026-01/2026-01-01.md')).toBeNull();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it('refuses an update of a page whose frontmatter has no type, preserving its contents', async () => {
+    const root = vault();
+    const text = '---\ntitle: Untyped\n---\n## Notes\nOriginal note.\n';
+    writeFileSync(join(root, 'untyped.md'), text);
+    const writer = new ObsidianWriter(root, '.');
+    try {
+      const before = readWikiPageContent(root, 'untyped.md')!;
+      const result = await dispatch({
+        vault: { path: root, name: null },
+        publisher: (pages) => writer.writePagesAtomically(pages),
+      })(
+        {
+          action: 'manage.wiki.update',
+          input: {
+            path: 'untyped.md',
+            expectedContentVersion: before.version,
+            edits: [{ section: '## Notes', append: 'Another note.' }],
+          },
+        },
+        { access: ownerAccess }
+      );
+      expect(result).toMatchObject({
+        status: 'failed',
+        error: { message: expect.stringContaining('type') },
+      });
+      expect(readWikiPageContent(root, 'untyped.md')!.content).toBe(text);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('advertises publish page objects and relative markdown read paths', async () => {
     const contracts = createCatalog(wikiActionRegistrations({})).list();
     const publish = contracts.find((contract) => contract.name === 'manage.wiki.publish');
     const page = publish?.inputSchema.properties?.pages.items;
-    expect(page?.required).toEqual(['path', 'title', 'content']);
+    expect(page?.required).toEqual(['path', 'title', 'type', 'content']);
     expect(page?.properties?.content).toMatchObject({ type: 'string' });
     expect(page?.properties?.expectedContentVersion).toMatchObject({ oneOf: expect.any(Array) });
     const read = contracts.find((contract) => contract.name === 'manage.wiki.read');

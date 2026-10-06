@@ -16,14 +16,7 @@ export function requiredWikiString(value: unknown, field: string, prefix: string
   return trimmed;
 }
 
-export function normalizeWikiPageType(
-  value: string | undefined,
-  prefix: string,
-  defaultType: WikiPageType = 'entity'
-): WikiPageType {
-  if (value === undefined || value.trim().length === 0) {
-    return defaultType;
-  }
+export function normalizeWikiPageType(value: string | undefined, prefix: string): WikiPageType {
   const normalized = requiredWikiString(value, 'type', prefix);
   if (!isValidPageType(normalized)) {
     throw new Error(`${prefix} type is not supported: ${normalized}`);
