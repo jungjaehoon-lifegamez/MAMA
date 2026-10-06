@@ -97,6 +97,7 @@ export class TelegramResponsePresenter {
   private editTimer: ReturnType<typeof setTimeout> | null = null;
   private inFlightEdit: Promise<void> = Promise.resolve();
   private finalized = false;
+  private finalText: string | null = null;
   private finalizing = false;
   private readonly chunkRetryCount: number;
   private readonly resumeFromChunk: number;
@@ -162,6 +163,13 @@ export class TelegramResponsePresenter {
     this.scheduleEdit();
   }
 
+  get deliveredText(): string {
+    // A streamed draft or a partially sent batch is not a delivered reply.
+    if (!this.finalized || this.finalText === null)
+      throw new Error('Telegram final text is not delivered');
+    return this.finalText;
+  }
+
   async finalize(rawResponse: string): Promise<void> {
     if (this.finalized || this.finalizing) {
       return;
@@ -180,6 +188,7 @@ export class TelegramResponsePresenter {
     const sanitized = sanitizeVisibleText(rawResponse);
     const visible = (sanitized ?? '').trim() || EMPTY_RESPONSE_MESSAGE;
     const chunks = formatTelegramMessage(visible, this.maxLength, this.chunkFormat);
+    this.finalText = chunks.map((chunk) => chunk.text).join('\n');
 
     if (this.resumeFromChunk >= chunks.length) {
       this.finalized = true;

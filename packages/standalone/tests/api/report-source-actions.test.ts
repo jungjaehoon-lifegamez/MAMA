@@ -6,7 +6,7 @@ import { createTimeZoneSetting, localDateKey } from '../../src/runtime/timezone.
 const now = Date.now();
 const rows = [
   {
-    source_connector: 'chat',
+    source_connector: 'slack',
     source_id: 'one',
     source_entity_id: 'one',
     channel: 'room-a',
@@ -17,7 +17,7 @@ const rows = [
     metadata_json: '{"channelName":"Room A"}',
   },
   {
-    source_connector: 'chat',
+    source_connector: 'slack',
     source_id: 'two',
     source_entity_id: 'two',
     channel: 'room-b',
@@ -66,7 +66,7 @@ function setup(sourceRows = rows) {
         if (sql.includes('connector_event_index_cursors'))
           return [
             {
-              connector_name: 'chat',
+              connector_name: 'slack',
               last_error: 'poll failed',
               last_error_at: new Date(now).toISOString(),
             },
@@ -75,7 +75,7 @@ function setup(sourceRows = rows) {
           return [
             ...new Map(
               sourceRows
-                .filter((row) => row.source_connector === 'chat')
+                .filter((row) => row.source_connector === 'slack')
                 .map((row) => [
                   row.channel,
                   {
@@ -91,7 +91,7 @@ function setup(sourceRows = rows) {
           return sourceRows.filter(
             (row) => row.source_connector === 'calendar' || row.source_connector === 'ical'
           );
-        return sourceRows.filter((row) => row.source_connector === 'chat');
+        return sourceRows.filter((row) => row.source_connector === 'slack');
       },
     }),
   };
@@ -108,9 +108,9 @@ function setup(sourceRows = rows) {
     principalId: 'limited-reader',
     agentId: 'agent',
     actions: ['source.recent', 'schedule.upcoming'],
-    connectors: ['chat', 'calendar', 'ical'],
+    connectors: ['slack', 'calendar', 'ical'],
     scopes: [],
-    channels: { chat: ['room-a'], calendar: ['main'], ical: ['lodging'] },
+    channels: { slack: ['room-a'], calendar: ['main'], ical: ['lodging'] },
   };
   return { dispatch, access };
 }
@@ -143,10 +143,10 @@ describe('report source reads', () => {
       data: {
         channels: [
           {
-            source: 'chat',
+            source: 'slack',
             channel: 'room-a',
             channelName: 'Room A',
-            key: 'chat:room-a',
+            key: 'slack:room-a',
             count: 1,
             latest: {
               author: 'Writer',
@@ -155,7 +155,7 @@ describe('report source reads', () => {
             },
           },
         ],
-        failedConnectors: [{ connector: 'chat', channels: ['Room A'], error: 'poll failed' }],
+        failedConnectors: [{ connector: 'slack', channels: ['Room A'], error: 'poll failed' }],
       },
     });
     const listed = (result as { data: { channels: Array<Record<string, unknown>> } }).data
@@ -187,12 +187,12 @@ describe('report source reads', () => {
     });
     expect(
       await dispatch(
-        { action: 'source.recent', input: { since: now - 60_000, channels: ['chat:nowhere'] } },
+        { action: 'source.recent', input: { since: now - 60_000, channels: ['slack:nowhere'] } },
         { access }
       )
     ).toMatchObject({
       status: 'failed',
-      error: { code: 'invalid_input', message: expect.stringContaining('chat:nowhere') },
+      error: { code: 'invalid_input', message: expect.stringContaining('slack:nowhere') },
     });
   });
 

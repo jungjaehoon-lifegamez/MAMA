@@ -10,7 +10,6 @@ function action(exchanges: Array<{ at: number; owner: string; reply: string | nu
       calls.push([since, before]);
       return exchanges.filter((exchange) => exchange.at >= since && exchange.at < before);
     },
-    retentionMs: 7 * DAY,
     now: () => 10 * DAY,
   });
   return { exec: (input: unknown) => registration!.exec(input as never, {} as never), calls };
@@ -47,14 +46,14 @@ describe('owner.messages', () => {
     expect(whole.messages[0]!.reply).toHaveLength(500);
   });
 
-  it('takes ISO times with an offset and says when the span is older than what is kept', async () => {
+  it('takes ISO times with an offset without a retention warning', async () => {
     const { exec, calls } = action([]);
     const result = (await exec({
       since: '1970-01-02T09:00:00+09:00',
       before: '1970-01-03T09:00:00+09:00',
     })) as { retention?: string };
     expect(calls[0]).toEqual([DAY, 2 * DAY]);
-    expect(result.retention).toContain('seven days');
+    expect(result).not.toHaveProperty('retention');
     await expect(async () => exec({ since: '1970-01-02 09:00' })).rejects.toThrow(
       /ISO time with its offset/
     );

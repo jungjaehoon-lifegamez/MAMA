@@ -1,3 +1,4 @@
+import { chatFixture } from './chat-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   mkdirSync,
@@ -72,6 +73,7 @@ function message(overrides: Record<string, unknown> = {}): Record<string, unknow
 
 function intakeFor(received: OwnerMessageInput[]): TurnIntake {
   return {
+    recordOwnerReply: () => {},
     acceptOwnerMessage: vi.fn((input: OwnerMessageInput) => {
       received.push(input);
       return { inputId: 'accepted-1', state: 'accepted' };
@@ -636,4 +638,45 @@ describe('TelegramGateway', () => {
     expect(seams.api.sendPhoto).not.toHaveBeenCalled();
     await gateway.stop();
   });
+});
+
+it('archives the rendered reply once and failed intake recovery as host text', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'telegram-chat-'));
+  temporaryRoots.push(root);
+  const f = await chatFixture(root);
+  const gateway = await gatewayFor(f.intake, undefined, undefined, 'Synthetic interruption');
+  try {
+    await seams.handlers.get('message')!({ message: message() });
+    expect(f.replies()).toEqual([]);
+    await gateway.stop();
+    await gateway.deliverResponse('telegram:7:11', '||private reasoning|| <b>Sent &amp; saved</b>');
+    expect(f.replies()).toEqual([]);
+    await gateway.start();
+    await gateway.deliverResponse('telegram:7:11', 'ignored repeat');
+    expect(f.replies()).toEqual([{ author: 'agent-test', content: 'Sent & saved' }]);
+    await seams.handlers.get('message')!({ message: { ...message(), message_id: 13 } });
+    f.failProjectionAck();
+    await expect(gateway.deliverResponse('telegram:7:13', '<b>Archive retry</b>')).rejects.toThrow(
+      'synthetic projection acknowledgement failure'
+    );
+    const sentCount =
+      seams.api.sendMessage.mock.calls.length + seams.api.editMessageText.mock.calls.length;
+    await gateway.recoverPendingResponses();
+    expect(
+      seams.api.sendMessage.mock.calls.length + seams.api.editMessageText.mock.calls.length
+    ).toBe(sentCount);
+    expect(
+      f.replies().filter((reply) => (reply as { content: string }).content === 'Archive retry')
+    ).toHaveLength(1);
+    f.failSave();
+    await expect(
+      seams.handlers.get('message')!({ message: { ...message(), message_id: 12 } })
+    ).rejects.toThrow('synthetic raw failure');
+    expect(f.mailbox.readInput('telegram:7:12', 'owner-test')).toBeNull();
+    await gateway.recoverPendingResponses();
+    expect(f.replies()).toContainEqual({ author: 'host', content: 'Synthetic interruption' });
+  } finally {
+    await gateway.stop();
+    await f.close();
+  }
 });

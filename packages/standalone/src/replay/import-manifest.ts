@@ -124,7 +124,9 @@ export function readImportManifest(path: string): ImportManifest {
   return normalizeManifest(parsed);
 }
 
-export function createCoreRawIndexSink(adapter: DatabaseInstance): RawIndexSink {
+export function createCoreRawIndexSink(
+  adapter: DatabaseInstance
+): (connectorName: string, items: NormalizedItem[]) => RawIndexProjection[] {
   return (connectorName: string, items: NormalizedItem[]) => {
     return mapNormalizedItemsToConnectorEventIndexInputs(connectorName, items).map((input) => {
       const record = upsertConnectorEventIndex(adapter, input);

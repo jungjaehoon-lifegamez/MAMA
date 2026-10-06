@@ -78,6 +78,7 @@ export interface NativeSessionRequest extends NativeTurnRequest {
   /** Per-turn Claude builtin role; catalog actions remain on the MCP surface. */
   nativeRole?: ClaudeToolRole;
   sourceMessageRef?: string;
+  sourceRefs?: readonly string[];
   access?: unknown;
   parentModelRunId?: string | null;
   /** Host-stated inclusive source-time ceiling for the current replay turn. */
@@ -143,6 +144,7 @@ function toolContext(value: HostExecutionContext | null): {
   modelRunId?: string;
   gatewayCallId?: string;
   sourceMessageRef?: string;
+  sourceRefs?: readonly string[];
   channelId?: string;
   replaySourceEndMs?: number;
 } {
@@ -154,6 +156,7 @@ function toolContext(value: HostExecutionContext | null): {
     ...(typeof context.sourceMessageRef === 'string'
       ? { sourceMessageRef: context.sourceMessageRef }
       : {}),
+    ...(Array.isArray(context.sourceRefs) ? { sourceRefs: context.sourceRefs as string[] } : {}),
     ...(typeof context.channelId === 'string' ? { channelId: context.channelId } : {}),
     ...(typeof context.replaySourceEndMs === 'number'
       ? { replaySourceEndMs: context.replaySourceEndMs }
@@ -385,6 +388,7 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
         ...(typeof current?.sourceMessageRef === 'string'
           ? { sourceMessageRef: current.sourceMessageRef }
           : {}),
+        ...(current?.sourceRefs === undefined ? {} : { sourceRefs: current.sourceRefs }),
         channelId: current?.channelId ?? current?.sessionKey ?? OWNER_RUNTIME_SESSION_KEY,
         agentId: options.actionSurface.ownerAccess.agentId,
         ...(replaySourceEndMs === undefined ? {} : { replaySourceEndMs }),
@@ -410,6 +414,7 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
             ...(facts.sourceMessageRef === undefined
               ? {}
               : { sourceMessageRef: facts.sourceMessageRef }),
+            ...(facts.sourceRefs === undefined ? {} : { sourceRefs: facts.sourceRefs }),
             ...(facts.channelId === undefined ? {} : { channelId: facts.channelId }),
             ...(facts.replaySourceEndMs === undefined
               ? {}

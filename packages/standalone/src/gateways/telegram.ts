@@ -245,9 +245,6 @@ export class TelegramGateway extends BaseGateway {
   }
 
   /** Delivered inbound identities; message and answer text stay in the durable runtime journal. */
-  recentDeliveredMessageRefs(): string[] {
-    return this.messageLedger.recentDeliveredMessageRefs();
-  }
 
   answered(sourceRef: string): boolean {
     return this.messageLedger.get(sourceRef)?.state === 'delivered';
@@ -396,7 +393,7 @@ export class TelegramGateway extends BaseGateway {
     if (durable?.state === 'processing' && this.activePresenters.has(ref)) return;
     if (durable?.state === 'processing' && this.intake.isPending?.(ref)) return;
     if (durable?.state === 'processing') {
-      this.messageLedger.markReady(ref, this.interruptedNotice, 'html-v1');
+      this.messageLedger.markInterrupted(ref, this.interruptedNotice, 'html-v1');
       await this.deliverReadyEntry(ref);
       return;
     }
@@ -499,6 +496,16 @@ export class TelegramGateway extends BaseGateway {
       } finally {
         this.activePresenters.delete(sourceRef);
       }
+      // All chunks are confirmed; archive before the ledger drops the ready text.
+      if (current.responseAuthor === undefined)
+        throw new Error('Telegram ready reply has no author');
+      this.intake.recordOwnerReply({
+        messageRef: sourceRef,
+        text: presenter.deliveredText,
+        occurredAt: this.messageLedger.get(sourceRef)!.updatedAt,
+        author: current.responseAuthor,
+        deliveryVerified: true,
+      });
       this.messageLedger.markDelivered(sourceRef);
       this.lastMessageAt = Date.now();
       this.emitEvent({
@@ -536,7 +543,7 @@ export class TelegramGateway extends BaseGateway {
           continue;
         }
         if (entry.state === 'processing' && !this.intake.isPending?.(entry.key)) {
-          this.messageLedger.markReady(entry.key, this.interruptedNotice, 'html-v1');
+          this.messageLedger.markInterrupted(entry.key, this.interruptedNotice, 'html-v1');
           await this.deliverReadyEntry(entry.key);
         }
       } catch (error) {

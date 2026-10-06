@@ -59,6 +59,7 @@ async function assembledPrompt(backend: 'codex' | 'claude', connectors: string[]
     createOwnerRuntime({
       backend,
       model: 'fixture-model',
+      rawPath: join(home, 'raw'),
       databasePath,
       socketPath: join(home, 'runtime.sock'),
       credentialPath: join(home, 'credential'),

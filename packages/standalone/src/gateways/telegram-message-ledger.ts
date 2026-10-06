@@ -28,6 +28,7 @@ export interface OwnerMessageLedgerEntry {
   updatedAt: number;
   ownerId: string;
   response?: string;
+  responseAuthor?: 'agent' | 'host';
   nextChunkIndex?: number;
   deliveryUncertain?: boolean;
   /** Missing on pre-formatting receipts, whose original chunk boundaries must survive. */
@@ -103,16 +104,6 @@ export class OwnerMessageLedger {
       .map((entry) => ({ ...entry }));
   }
 
-  /** Bounded inbound delivery receipts for startup conversation carry, newest first. */
-  recentDeliveredMessageRefs(): string[] {
-    this.prune();
-    return [...this.entries.values()]
-      .filter((entry) => entry.state === 'delivered' && !entry.key.startsWith('outbound:'))
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-      .slice(0, 20)
-      .map((entry) => entry.key);
-  }
-
   isOwnedByCurrentProcess(entry: OwnerMessageLedgerEntry): boolean {
     return entry.ownerId === this.ownerId;
   }
@@ -169,6 +160,23 @@ export class OwnerMessageLedger {
   }
 
   markReady(key: string, response: string, chunkFormat: TelegramChunkFormat = 'plain-v1'): void {
+    this.prepareResponse(key, response, chunkFormat, 'agent');
+  }
+
+  markInterrupted(
+    key: string,
+    response: string,
+    chunkFormat: TelegramChunkFormat = 'plain-v1'
+  ): void {
+    this.prepareResponse(key, response, chunkFormat, 'host');
+  }
+
+  private prepareResponse(
+    key: string,
+    response: string,
+    chunkFormat: TelegramChunkFormat,
+    responseAuthor: 'agent' | 'host'
+  ): void {
     if (response.length > MAX_RESPONSE_CHARS) {
       throw new Error('Owner message durable response exceeds its size limit');
     }
@@ -181,6 +189,7 @@ export class OwnerMessageLedger {
         ...entry,
         state: 'ready',
         response,
+        responseAuthor,
         chunkFormat,
         nextChunkIndex: 0,
         deliveryUncertain: false,
@@ -439,6 +448,9 @@ function isLedgerEntry(value: unknown): value is OwnerMessageLedgerEntry {
     item.ownerId.length <= 128 &&
     (item.response === undefined ||
       (typeof item.response === 'string' && item.response.length <= MAX_RESPONSE_CHARS)) &&
+    (item.responseAuthor === undefined ||
+      item.responseAuthor === 'agent' ||
+      item.responseAuthor === 'host') &&
     (item.nextChunkIndex === undefined ||
       (Number.isSafeInteger(item.nextChunkIndex) && (item.nextChunkIndex as number) >= 0)) &&
     (item.deliveryUncertain === undefined || typeof item.deliveryUncertain === 'boolean') &&

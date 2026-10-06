@@ -1,3 +1,4 @@
+import { chatFixture } from './chat-fixture.js';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -52,6 +53,7 @@ describe('Slack owner gateway', () => {
       token: 'fixture-bot-token',
       appToken: 'fixture-app-token',
       intake: {
+        recordOwnerReply: () => {},
         acceptOwnerMessage: (input) => {
           accepted.push(input);
           order.push('accepted');
@@ -145,6 +147,7 @@ describe('Slack owner gateway', () => {
       token: 'fixture-bot',
       appToken: 'fixture-app',
       intake: {
+        recordOwnerReply: () => {},
         acceptOwnerMessage: () => ({ state: 'accepted' }) as never,
         isPending: () => false,
       },
@@ -175,7 +178,7 @@ describe('Slack owner gateway', () => {
     const gateway = new SlackGateway({
       token: 'fixture-bot',
       appToken: 'fixture-app',
-      intake: { acceptOwnerMessage: accepted, isPending: () => false },
+      intake: { recordOwnerReply: () => {}, acceptOwnerMessage: accepted, isPending: () => false },
       config: {
         enabled: true,
         ownerChannelId: 'channel_test',
@@ -201,7 +204,10 @@ describe('Slack owner gateway', () => {
     const gateway = new SlackGateway({
       token: 'fixture-bot',
       appToken: 'fixture-app',
-      intake: { acceptOwnerMessage: () => ({ state: 'accepted' }) as never },
+      intake: {
+        recordOwnerReply: () => {},
+        acceptOwnerMessage: () => ({ state: 'accepted' }) as never,
+      },
       config: {
         enabled: true,
         ownerChannelId: 'channel_test',
@@ -241,6 +247,7 @@ describe('Slack owner gateway', () => {
       token: 'fixture-bot',
       appToken: 'fixture-app',
       intake: {
+        recordOwnerReply: () => {},
         acceptOwnerMessage: (input) => {
           accepted.push(input as never);
           return { state: 'accepted' } as never;
@@ -283,7 +290,10 @@ describe('Slack owner gateway', () => {
     const gateway = new SlackGateway({
       token: 'fixture-bot',
       appToken: 'fixture-app',
-      intake: { acceptOwnerMessage: () => ({ state: 'accepted' }) as never },
+      intake: {
+        recordOwnerReply: () => {},
+        acceptOwnerMessage: () => ({ state: 'accepted' }) as never,
+      },
       config: {
         enabled: true,
         ownerChannelId: 'channel_test',
@@ -318,7 +328,10 @@ describe('Slack owner gateway', () => {
     const gateway = new SlackGateway({
       token: 'fixture-bot',
       appToken: 'fixture-app',
-      intake: { acceptOwnerMessage: () => ({ state: 'accepted' }) as never },
+      intake: {
+        recordOwnerReply: () => {},
+        acceptOwnerMessage: () => ({ state: 'accepted' }) as never,
+      },
       config: {
         enabled: true,
         ownerChannelId: 'channel_test',
@@ -338,4 +351,64 @@ describe('Slack owner gateway', () => {
     );
     await gateway.stop();
   });
+});
+
+it('archives only sent replies once and failed intake recovery as host text', async () => {
+  const f = await chatFixture(root);
+  const gateway = new SlackGateway({
+    token: 'fixture-token',
+    appToken: 'fixture-app-token',
+    intake: f.intake,
+    config: { enabled: true, allowedChannels: ['channel_test'], ownerUserIds: ['user_owner'] },
+    messageLedgerPath: join(root, 'chat-ledger.json'),
+    interruptedNotice: 'Synthetic interruption',
+  });
+  await gateway.start();
+  const send = (mocks.webClients[0] as MockWebClient).chat.postMessage;
+  try {
+    await (gateway as unknown as { accept(input: unknown): Promise<void> }).accept({
+      channel: 'channel_test',
+      user: 'user_owner',
+      ts: '3.0',
+      text: 'owner input',
+    });
+    expect(f.replies()).toEqual([]);
+    await Promise.all([
+      gateway.deliverResponse('slack:channel_test:3.0', 'Sent reply'),
+      gateway.deliverResponse('slack:channel_test:3.0', 'Sent reply'),
+    ]);
+    expect(f.replies()).toEqual([{ author: 'agent-test', content: 'Sent reply' }]);
+    await (gateway as unknown as { accept(input: unknown): Promise<void> }).accept({
+      channel: 'channel_test',
+      user: 'user_owner',
+      ts: '5.0',
+      text: 'owner input',
+    });
+    f.failProjectionAck();
+    await expect(
+      gateway.deliverResponse('slack:channel_test:5.0', 'Archive retry')
+    ).rejects.toThrow('synthetic projection acknowledgement failure');
+    const sentCount = send.mock.calls.length;
+    await gateway.recoverPendingResponses();
+    expect(send.mock.calls.length).toBe(sentCount);
+    expect(
+      f.replies().filter((reply) => (reply as { content: string }).content === 'Archive retry')
+    ).toHaveLength(1);
+    f.failSave();
+    await expect(
+      (gateway as unknown as { accept(input: unknown): Promise<void> }).accept({
+        channel: 'channel_test',
+        user: 'user_owner',
+        ts: '4.0',
+        text: 'owner input',
+      })
+    ).rejects.toThrow('synthetic raw failure');
+    expect(f.mailbox.readInput('slack:channel_test:4.0', 'owner-test')).toBeNull();
+    await gateway.recoverPendingResponses();
+    expect(f.replies()).toContainEqual({ author: 'host', content: 'Synthetic interruption' });
+    expect(send).toHaveBeenCalled();
+  } finally {
+    await gateway.stop();
+    await f.close();
+  }
 });

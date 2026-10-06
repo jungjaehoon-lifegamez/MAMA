@@ -16,7 +16,16 @@ export interface OwnerMessageInput {
 
 export interface TurnIntake {
   acceptOwnerMessage(input: OwnerMessageInput): StimulusReceipt;
+  recordOwnerReply(input: OwnerReplyInput): void;
   isPending?(sourceMessageRef: string): boolean;
+}
+
+export interface OwnerReplyInput {
+  messageRef: string;
+  text: string;
+  occurredAt: number;
+  author: 'agent' | 'host';
+  deliveryVerified: boolean;
 }
 
 export interface TurnOutcomeBase {

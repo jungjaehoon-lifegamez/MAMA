@@ -5,15 +5,13 @@ export interface OwnerExchange {
   /** When the owner sent the message, epoch ms. */
   at: number;
   owner: string;
-  /** Your reply as the turn produced it; null while the turn has none. */
+  /** The delivered reply; null while the turn has none. */
   reply: string | null;
 }
 
 export interface OwnerMessagePorts {
   /** The owner's messages in [since, before), oldest first, each with your reply. */
   exchanges(since: number, before: number): readonly OwnerExchange[];
-  /** How long owner messages are kept; older conversation is gone. */
-  retentionMs: number;
   now?(): number;
 }
 
@@ -51,7 +49,7 @@ export function ownerMessageActionRegistrations(ports: OwnerMessagePorts): Actio
       contract: {
         name: 'owner.messages',
         summary:
-          "Read your conversation with the owner in a time span: each owner message with your reply, oldest first, in pages of 20 (50 max). A line longer than chars (400 by default) ends with …; read that span again with a larger chars. Messages are kept for seven days; for earlier days the owner's decisions are in the ledger, the lessons and the sources.",
+          'Read your conversation with the owner in a time span: each owner message with your reply, oldest first, in pages of 20 (50 max). A line longer than chars (400 by default) ends with …; read that span again with a larger chars.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -114,12 +112,6 @@ export function ownerMessageActionRegistrations(ports: OwnerMessagePorts): Actio
             reply: exchange.reply === null ? null : clip(exchange.reply, chars),
           })),
           nextOffset: next < all.length ? next : null,
-          ...(since < now - ports.retentionMs
-            ? {
-                retention:
-                  'Owner messages are kept for seven days; this span starts earlier, so older conversation is missing.',
-              }
-            : {}),
         };
       },
     },

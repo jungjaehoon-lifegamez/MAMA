@@ -1,3 +1,4 @@
+import { chatFixture } from './chat-fixture.js';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -69,6 +70,7 @@ describe('Discord owner gateway', () => {
     const gateway = new DiscordGateway({
       token: 'fixture-token',
       intake: {
+        recordOwnerReply: () => {},
         acceptOwnerMessage: (input) => {
           accepted.push(input);
           return { state: 'accepted' } as never;
@@ -128,7 +130,10 @@ describe('Discord owner gateway', () => {
     writeFileSync(filePath, 'result');
     const gateway = new DiscordGateway({
       token: 'fixture-token',
-      intake: { acceptOwnerMessage: () => ({ state: 'accepted' }) as never },
+      intake: {
+        recordOwnerReply: () => {},
+        acceptOwnerMessage: () => ({ state: 'accepted' }) as never,
+      },
       config: {
         enabled: true,
         ownerChannelId: 'channel_test',
@@ -167,7 +172,10 @@ describe('Discord owner gateway', () => {
     ledger.markReady('discord:channel_test:message_test', 'recovered response');
     const gateway = new DiscordGateway({
       token: 'fixture-token',
-      intake: { acceptOwnerMessage: () => ({ state: 'accepted' }) as never },
+      intake: {
+        recordOwnerReply: () => {},
+        acceptOwnerMessage: () => ({ state: 'accepted' }) as never,
+      },
       config: {
         enabled: true,
         ownerChannelId: 'channel_test',
@@ -210,6 +218,7 @@ describe('Discord owner gateway', () => {
     const gateway = new DiscordGateway({
       token: 'fixture-token',
       intake: {
+        recordOwnerReply: () => {},
         acceptOwnerMessage: () => ({ state: 'accepted' }) as never,
         isPending: () => false,
       },
@@ -244,7 +253,10 @@ describe('Discord owner gateway', () => {
     const ledgerPath = join(root, 'ledger.json');
     const gateway = new DiscordGateway({
       token: 'fixture-token',
-      intake: { acceptOwnerMessage: () => ({ state: 'accepted' }) as never },
+      intake: {
+        recordOwnerReply: () => {},
+        acceptOwnerMessage: () => ({ state: 'accepted' }) as never,
+      },
       config: {
         enabled: true,
         ownerChannelId: 'channel_test',
@@ -286,6 +298,7 @@ describe('Discord owner gateway', () => {
     const gateway = new DiscordGateway({
       token: 'fixture-token',
       intake: {
+        recordOwnerReply: () => {},
         acceptOwnerMessage: (input) => {
           accepted.push(input as never);
           return { state: 'accepted' } as never;
@@ -328,7 +341,7 @@ describe('Discord owner gateway', () => {
     const accepted = vi.fn(() => ({ state: 'accepted' }) as never);
     const gateway = new DiscordGateway({
       token: 'fixture-token',
-      intake: { acceptOwnerMessage: accepted, isPending: () => false },
+      intake: { recordOwnerReply: () => {}, acceptOwnerMessage: accepted, isPending: () => false },
       config: {
         enabled: true,
         ownerChannelId: 'channel_test',
@@ -349,4 +362,58 @@ describe('Discord owner gateway', () => {
     expect(send).not.toHaveBeenCalled();
     await gateway.stop();
   });
+});
+
+it('archives only sent replies once and failed intake recovery as host text', async () => {
+  const f = await chatFixture(root);
+  const gateway = new DiscordGateway({
+    token: 'fixture-token',
+    intake: f.intake,
+    config: { enabled: true, allowedChannels: ['channel_test'], ownerUserIds: ['user_owner'] },
+    messageLedgerPath: join(root, 'chat-ledger.json'),
+    interruptedNotice: 'Synthetic interruption',
+  });
+  await gateway.start();
+  const send = vi.fn(async () => ({ id: 'sent-test' }));
+  (mocks.clients[0] as MockClient).channels.fetch.mockResolvedValue({
+    isSendable: () => true,
+    send,
+  });
+  try {
+    await (gateway as unknown as { accept(input: unknown): Promise<void> }).accept(
+      ownerMessage('reply-test', 'user_owner')
+    );
+    expect(f.replies()).toEqual([]);
+    await Promise.all([
+      gateway.deliverResponse('discord:channel_test:reply-test', 'Sent reply'),
+      gateway.deliverResponse('discord:channel_test:reply-test', 'Sent reply'),
+    ]);
+    expect(f.replies()).toEqual([{ author: 'agent-test', content: 'Sent reply' }]);
+    await (gateway as unknown as { accept(input: unknown): Promise<void> }).accept(
+      ownerMessage('retry-test', 'user_owner')
+    );
+    f.failProjectionAck();
+    await expect(
+      gateway.deliverResponse('discord:channel_test:retry-test', 'Archive retry')
+    ).rejects.toThrow('synthetic projection acknowledgement failure');
+    const sentCount = send.mock.calls.length;
+    await gateway.recoverPendingResponses();
+    expect(send.mock.calls.length).toBe(sentCount);
+    expect(
+      f.replies().filter((reply) => (reply as { content: string }).content === 'Archive retry')
+    ).toHaveLength(1);
+    f.failSave();
+    await expect(
+      (gateway as unknown as { accept(input: unknown): Promise<void> }).accept(
+        ownerMessage('failed-test', 'user_owner')
+      )
+    ).rejects.toThrow('synthetic raw failure');
+    expect(f.mailbox.readInput('discord:channel_test:failed-test', 'owner-test')).toBeNull();
+    await gateway.recoverPendingResponses();
+    expect(f.replies()).toContainEqual({ author: 'host', content: 'Synthetic interruption' });
+    expect(send).toHaveBeenCalled();
+  } finally {
+    await gateway.stop();
+    await f.close();
+  }
 });

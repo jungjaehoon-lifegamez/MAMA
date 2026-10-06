@@ -157,7 +157,23 @@ export function ownerMemoryScopes(
 }
 
 export function createActionSurface(options: ActionSurfaceOptions): ActionSurface {
-  const core = coreActionRegistrations(options.knowledge, options.adapter)
+  const core = coreActionRegistrations(options.knowledge, options.adapter, {
+    ...(options.storedSourceReader === undefined || options.storedSourceReader === null
+      ? {}
+      : {
+          readObservationBody: (ref, context) => {
+            const { content } = options.storedSourceReader!.readObservation(
+              ref,
+              context.access,
+              context.readAllowance
+            );
+            // An empty excerpt would read as evidence that says nothing.
+            if (typeof content !== 'string')
+              throw new Error(`Stored observation ${ref} has no readable body`);
+            return content;
+          },
+        }),
+  })
     .filter(({ contract }) =>
       [
         'graph.query',
@@ -316,10 +332,10 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
         all.findIndex((candidate) => candidate.kind === scope.kind && candidate.id === scope.id) ===
         index
     ),
-    connectors: options.connectors ?? OWNER_CONNECTORS,
+    connectors: [...(options.connectors ?? OWNER_CONNECTORS), 'chat'],
     // The owner reads every channel of its own connectors; imported originals carry no
     // memory-scope tag, so without this their observations are invisible in the graph.
-    connectorWideRead: options.connectors ?? OWNER_CONNECTORS,
+    connectorWideRead: [...(options.connectors ?? OWNER_CONNECTORS), 'chat'],
     // The grant follows the same wiring as the registrations above.
     actions: OWNER_ACTIONS.filter((name) => {
       const messenger = /^deliver\.(telegram|discord|slack)\.file$/.exec(name)?.[1] as

@@ -41,11 +41,8 @@ import type { TimeZoneSetting } from './timezone.js';
 import { ownerHelpTopics, ownerSystemPrompt } from './owner-system-prompt.js';
 import { storedSourceFamilies } from '../connectors/framework/stored-index-read.js';
 import { createOwnerPolicyProvider, type OwnerPolicyProvider } from './owner-policy.js';
-import {
-  OWNER_MESSAGE_RETENTION_MS,
-  ownerExchangesBetween,
-  readSessionStartInput,
-} from './session-start-context.js';
+import { readSessionStartInput } from './session-start-context.js';
+import { ChatSources } from '../storage/chat-sources.js';
 import { createJevClient } from '../replay/jev-client.js';
 import { createRecordOrders, type RecordOrderEvent } from './record-orders.js';
 import { initTokenEstimator } from '@jungjaehoon/mama-core/runtime/token-estimator';
@@ -74,7 +71,7 @@ export interface OwnerRuntimeOptions {
   agentId: string;
   scopes: readonly MemoryScopeRef[];
   connectors?: readonly string[];
-  rawPath?: string;
+  rawPath: string;
   embedder?: KnowledgeOptions['embedder'];
   nativeSession?: NativeSessionHandle & Partial<Pick<NativeSession, 'callAction'>>;
   modelRun?: NativeModelRunPort;
@@ -101,7 +98,6 @@ export interface OwnerRuntimeOptions {
   formattingRoutes?: { reports: string; notifications: string };
   ownerPolicyProvider?: OwnerPolicyProvider;
   onOwnerResult?: StimulusDeliveryOptions['onOwnerResult'];
-  recentDeliveredOwnerMessages?: () => readonly string[];
   onSourceResult?: StimulusDeliveryOptions['onSourceResult'];
   onScheduledResult?: StimulusDeliveryOptions['onScheduledResult'];
   onStimulusDelivered?: StimulusDeliveryOptions['onDelivered'];
@@ -270,15 +266,19 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       adapter: database.adapter,
       embedder: runtimeEmbedder(options),
     });
-    if (options.rawPath !== undefined) rawStore = new RawStore(options.rawPath);
-    const storedSourceReader =
-      rawStore === undefined
-        ? null
-        : createStoredSourceReader({
-            adapter: database.adapter,
-            ownerPrincipalId: () => options.ownerPrincipalId,
-            rawStore: () => rawStore ?? null,
-          });
+    rawStore = new RawStore(options.rawPath);
+    const chat = new ChatSources(
+      rawStore,
+      database.adapter,
+      options.ownerPrincipalId,
+      options.agentId
+    );
+    const sourceStore = rawStore;
+    const storedSourceReader = createStoredSourceReader({
+      adapter: database.adapter,
+      ownerPrincipalId: () => options.ownerPrincipalId,
+      rawStore: () => sourceStore,
+    });
     const wikiPorts = options.wiki?.enabled
       ? (() => {
           if (options.wiki.vaultPath.trim() === '' || options.wiki.wikiDir.trim() === '') {
@@ -336,19 +336,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       ...(options.driveDelivery === undefined
         ? {}
         : { driveDelivery: { ...options.driveDelivery, workspaceDir: options.workspaceDir } }),
-      ownerMessages: {
-        exchanges: (since, before) => {
-          if (ownerMailbox === undefined) throw new Error('The owner mailbox is not open yet');
-          return ownerExchangesBetween(
-            ownerMailbox,
-            database.adapter,
-            options.ownerPrincipalId,
-            since,
-            before
-          );
-        },
-        retentionMs: OWNER_MESSAGE_RETENTION_MS,
-      },
+      ownerMessages: { exchanges: (since, before) => chat.exchanges(since, before) },
       // Both report paths read this procedure, scheduled and requested (2026-09-29 to 10-05), and
       // the owner's rules for reports reached neither: a scheduled order carries no lessons and a
       // request's three recalled lessons depend on its wording.
@@ -455,9 +443,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       ...(options.closeUncertain === undefined ? {} : { closeUncertain: options.closeUncertain }),
       sessionStart: (row) =>
         readSessionStartInput({
-          mailbox: intakeRuntime.mailbox!,
-          deliveredRefs: options.recentDeliveredOwnerMessages?.() ?? [],
-          current: row,
+          exchanges: chat.recentExchanges(row.stimulusId),
           records: () =>
             readMemoryRecordsInScopes(database.adapter, [...access.scopes], {
               status: 'active',
@@ -569,7 +555,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
     });
     ownerMailbox = intakeRuntime.mailbox;
     recordOrders.recover();
-    const intake = createStimulusIntake(intakeRuntime, options.ownerPrincipalId);
+    const intake = createStimulusIntake(intakeRuntime, options.ownerPrincipalId, chat);
     let stopped = false;
     return {
       runtime: intakeRuntime,

@@ -125,9 +125,6 @@ export class SlackGateway extends BaseGateway {
     await this.socket.disconnect();
     this.emitEvent({ type: 'disconnected', source: this.source, timestamp: new Date() });
   }
-  recentDeliveredMessageRefs(): string[] {
-    return this.ledger.recentDeliveredMessageRefs();
-  }
 
   answered(sourceRef: string): boolean {
     return this.ledger.get(sourceRef)?.state === 'delivered';
@@ -151,7 +148,7 @@ export class SlackGateway extends BaseGateway {
           continue;
         }
         if (source && entry.state === 'processing' && !this.intake.isPending?.(entry.key)) {
-          this.ledger.markReady(entry.key, this.interruptedNotice);
+          this.ledger.markInterrupted(entry.key, this.interruptedNotice);
           await this.deliverResponse(entry.key, this.interruptedNotice);
         } else if (entry.state === 'ready' && entry.response !== undefined) {
           if (source) await this.deliverResponse(entry.key, entry.response);
@@ -175,6 +172,9 @@ export class SlackGateway extends BaseGateway {
     if (entry.deliveryTarget !== `slack:${channel}`)
       throw new Error('Slack response destination conflicts with its accepted message');
     if (entry.state === 'delivered') return;
+    // Confirmed chunks must continue with the same durable response.
+    if (entry.state === 'ready' && entry.response !== response)
+      throw new Error('Ready reply conflicts with its durable ledger entry');
     if (entry.state === 'processing') this.ledger.markReady(sourceRef, response);
     await this.runInDestination(channel, () => this.sendChunks(channel, sourceRef, response));
   }
@@ -333,6 +333,8 @@ export class SlackGateway extends BaseGateway {
   }
   private async sendChunks(channel: string, key: string, text: string): Promise<void> {
     const entry = this.ledger.get(key)!;
+    // Another response call may have completed while this batch waited in the destination queue.
+    if (entry.state === 'delivered') return;
     if (entry.deliveryUncertain) throw new Error('Slack response delivery is uncertain');
     const chunks = splitForSlack(text);
     for (let i = entry.nextChunkIndex ?? 0; i < chunks.length; i++) {
@@ -344,6 +346,18 @@ export class SlackGateway extends BaseGateway {
         this.ledger.markDeliveryProgress(key, i, true);
         throw error;
       }
+    }
+    // Outbound reports and file deliveries have no owner message to answer.
+    if (key.startsWith('slack:')) {
+      // Recovery must retain whether the host or the agent produced the text.
+      if (entry.responseAuthor === undefined) throw new Error('Slack ready reply has no author');
+      this.intake.recordOwnerReply({
+        messageRef: key,
+        text: chunks.join('\n'),
+        occurredAt: this.ledger.get(key)!.updatedAt,
+        author: entry.responseAuthor,
+        deliveryVerified: true,
+      });
     }
     this.ledger.markDelivered(key);
     this.emitEvent({

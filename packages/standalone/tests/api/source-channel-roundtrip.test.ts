@@ -25,7 +25,7 @@ describe('source channel values', () => {
       const now = Date.now();
       for (const [index, channel] of ['room-a', 'room-a', 'room-b'].entries()) {
         upsertConnectorEventIndex(db.adapter, {
-          source_connector: 'chat',
+          source_connector: 'slack',
           source_type: 'message',
           source_id: `message-${index}`,
           channel,
@@ -57,7 +57,7 @@ describe('source channel values', () => {
         principalId: 'owner',
         agentId: 'agent',
         actions: ['source.recent', 'source.search'],
-        connectors: ['chat'],
+        connectors: ['slack'],
         scopes: [],
       };
 
@@ -66,12 +66,12 @@ describe('source channel values', () => {
         { access }
       )) as { data: { channels: Array<{ channel: string; channelName?: string; key: string }> } };
       const listed = recent.data.channels.find((entry) => entry.channelName === 'Room A')!;
-      expect(listed).toMatchObject({ channel: 'room-a', key: 'chat:room-a' });
+      expect(listed).toMatchObject({ channel: 'room-a', key: 'slack:room-a' });
 
       const found = (await dispatch(
         {
           action: 'source.search',
-          input: { source: 'chat', view: 'stored', query: 'release', channel: listed.channel },
+          input: { source: 'slack', view: 'stored', query: 'release', channel: listed.channel },
         },
         { access }
       )) as { status: string; data: { hits: Array<Record<string, unknown>> } };
