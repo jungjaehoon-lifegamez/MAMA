@@ -134,6 +134,7 @@ describe('outbound attempts', () => {
     const sink = vi.fn();
     const surface = createActionSurface({
       timeZone: createTimeZoneSetting('UTC'),
+      runtimeRoot: '/tmp/mama-test-runtime',
       configPath: '/tmp/mama-test-config.yaml',
       isOwnerMessageTurn: () => true,
       adapter: {

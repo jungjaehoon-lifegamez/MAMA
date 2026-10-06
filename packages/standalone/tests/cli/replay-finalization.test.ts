@@ -92,6 +92,7 @@ describe('replay finalization', () => {
         runtimeRoot: '/tmp/replay-session-test',
         actionSurface: createActionSurface({
           timeZone: createTimeZoneSetting('UTC'),
+          runtimeRoot: '/tmp/mama-test-runtime',
           configPath: '/tmp/mama-test-config.yaml',
           isOwnerMessageTurn: () => true,
           adapter: {} as never,

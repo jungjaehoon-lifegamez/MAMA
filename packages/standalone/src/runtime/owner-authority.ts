@@ -13,6 +13,7 @@
 import type { ActionContext, ActionRegistration, DatabaseInstance } from '@jungjaehoon/mama-core';
 
 export const RULE_KINDS = ['lesson', 'preference', 'constraint', 'workflow'] as const;
+export const POLICY_UPDATE_ACTION = 'manage.policy.update';
 
 const OWNER_CHAT_REF = /^(?:telegram|discord|slack):[^:]+:[^:]+$/;
 
@@ -44,7 +45,7 @@ export function ownerRuleIds(adapter: DatabaseInstance, ids: readonly string[]):
   );
 }
 
-function ownerSpeaking(context: ActionContext, ownerPrincipalId: string): boolean {
+export function ownerSpeaking(context: ActionContext, ownerPrincipalId: string): boolean {
   return (
     context.access.principalId === ownerPrincipalId &&
     context.session?.replaySourceEndMs === undefined &&
@@ -66,7 +67,7 @@ function targets(action: string, input: unknown): string[] {
   return named.filter((id): id is string => typeof id === 'string');
 }
 
-/** memory.save or memory.retire that refuses to change an owner rule outside an owner-chat turn. */
+/** Policy revisions have one writer; other owner rules change only in owner chat. */
 export function guardOwnerRules(
   registration: ActionRegistration,
   adapter: DatabaseInstance,
@@ -76,7 +77,40 @@ export function guardOwnerRules(
   return {
     ...registration,
     exec: async (input, context) => {
-      const owned = ownerRuleIds(adapter, targets(action, input));
+      const body = input as {
+        source?: { source_type?: unknown };
+        provenance?: { tool_name?: unknown };
+      };
+      const ids = targets(action, input);
+      const revisions =
+        ids.length === 0
+          ? []
+          : (
+              adapter
+                .prepare(
+                  `SELECT id, provenance_json FROM decisions WHERE id IN (${ids.map(() => '?').join(',')})`
+                )
+                .all(...ids) as Array<{ id: string; provenance_json: string | null }>
+            ).filter(
+              (row) =>
+                row.provenance_json !== null &&
+                (JSON.parse(row.provenance_json) as { tool_name?: unknown }).tool_name ===
+                  POLICY_UPDATE_ACTION
+            );
+      // Policy history has one writer even in owner chat; kind and topic confer no authority.
+      if (
+        revisions.length > 0 ||
+        body.source?.source_type === POLICY_UPDATE_ACTION ||
+        body.provenance?.tool_name === POLICY_UPDATE_ACTION ||
+        context.session?.toolName === POLICY_UPDATE_ACTION
+      ) {
+        const error = new Error(
+          `Owner policy revisions are written only by ${POLICY_UPDATE_ACTION}`
+        );
+        error.name = 'denied';
+        throw error;
+      }
+      const owned = ownerRuleIds(adapter, ids);
       if (owned.size > 0 && !ownerSpeaking(context, ownerPrincipalId)) {
         const error = new Error(
           `${[...owned].join(', ')} ${owned.size === 1 ? 'is an owner rule' : 'are owner rules'}: ` +

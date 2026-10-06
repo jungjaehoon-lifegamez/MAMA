@@ -93,6 +93,7 @@ The file is JSON in the `mama-backfill/1` format:
     {
       "path": "daily/2026-08/2026-08-03.md",
       "title": "2026-08-03",
+      "type": "daily",
       "content": "## Summary\n- ..."
     },
     {
@@ -106,15 +107,15 @@ The file is JSON in the `mama-backfill/1` format:
 
 ### What goes where
 
-| Part               | What it holds                                                                                                                    |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| `items`            | One entry per piece of work, with every change in the order it happened.                                                         |
-| `items[].mentions` | Lines about the work that change nothing, grouped by why they matter.                                                            |
-| `items[].links`    | Links to other items in the file, with a work link relation such as `builds_on` or `blocks`.                                     |
-| `links`            | Links that start from work already in MAMA, for example a later case that builds on one from this period.                        |
-| `lessons`          | What was learned, each with `appliesWhen`. These are lessons, not owner rules; only the owner sets rules.                        |
-| `wiki`             | New pages with `title` and `content`, or sections to `append` to an existing page. Existing pages are added to, never rewritten. |
-| `noUpdate`         | Lines that are not work, grouped by reason, so every line of the period is accounted for. They are checked, not stored.          |
+| Part               | What it holds                                                                                                                                                  |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `items`            | One entry per piece of work, with every change in the order it happened.                                                                                       |
+| `items[].mentions` | Lines about the work that change nothing, grouped by why they matter.                                                                                          |
+| `items[].links`    | Links to other items in the file, with a work link relation such as `builds_on` or `blocks`.                                                                   |
+| `links`            | Links that start from work already in MAMA, for example a later case that builds on one from this period.                                                      |
+| `lessons`          | What was learned, each with `appliesWhen`. These are lessons, not owner rules; only the owner sets rules.                                                      |
+| `wiki`             | New pages with `title`, `type` and `content`, or sections to `append` to an existing page. The type is required. Existing pages are added to, never rewritten. |
+| `noUpdate`         | Lines that are not work, grouped by reason, so every line of the period is accounted for. They are checked, not stored.                                        |
 
 ### Rules for writing it
 

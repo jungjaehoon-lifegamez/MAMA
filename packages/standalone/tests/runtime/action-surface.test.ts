@@ -7,6 +7,7 @@ describe('W1 action surface', () => {
   it('grants calendar reads and memory scopes to the owner by default', () => {
     const surface = createActionSurface({
       timeZone: createTimeZoneSetting('UTC'),
+      runtimeRoot: '/tmp/mama-test-runtime',
       configPath: '/tmp/mama-test-config.yaml',
       isOwnerMessageTurn: () => true,
       adapter: {} as DatabaseInstance,
@@ -28,6 +29,7 @@ describe('W1 action surface', () => {
     const surface = (driveDelivery?: object) =>
       createActionSurface({
         timeZone: createTimeZoneSetting('UTC'),
+        runtimeRoot: '/tmp/mama-test-runtime',
         configPath: '/tmp/mama-test-config.yaml',
         isOwnerMessageTurn: () => true,
         adapter: {} as DatabaseInstance,
@@ -55,6 +57,7 @@ describe('W1 action surface', () => {
   it('exposes the read-only viewer action and derives host tools from the catalog', () => {
     const surface = createActionSurface({
       timeZone: createTimeZoneSetting('UTC'),
+      runtimeRoot: '/tmp/mama-test-runtime',
       configPath: '/tmp/mama-test-config.yaml',
       isOwnerMessageTurn: () => true,
       adapter: {} as DatabaseInstance,
@@ -76,6 +79,8 @@ describe('W1 action surface', () => {
       'graph.query',
       'help',
       'judge',
+      'manage.policy.read',
+      'manage.policy.update',
       'manage.wiki.move',
       'manage.wiki.publish',
       'manage.wiki.read',
@@ -130,6 +135,7 @@ describe('W1 action surface', () => {
     const connectors = ['chatwork', 'slack', 'trello', 'kagemusha'];
     const surface = createActionSurface({
       timeZone: createTimeZoneSetting('UTC'),
+      runtimeRoot: '/tmp/mama-test-runtime',
       configPath: '/tmp/mama-test-config.yaml',
       isOwnerMessageTurn: () => true,
       adapter: {} as DatabaseInstance,
@@ -144,6 +150,7 @@ describe('W1 action surface', () => {
   it('rejects a work status outside the shared vocabulary before it reaches knowledge', async () => {
     const surface = createActionSurface({
       timeZone: createTimeZoneSetting('UTC'),
+      runtimeRoot: '/tmp/mama-test-runtime',
       configPath: '/tmp/mama-test-config.yaml',
       isOwnerMessageTurn: () => true,
       adapter: {} as DatabaseInstance,
@@ -184,6 +191,7 @@ describe('W1 action surface', () => {
     } as unknown as DatabaseInstance;
     const surface = createActionSurface({
       timeZone: createTimeZoneSetting('UTC'),
+      runtimeRoot: '/tmp/mama-test-runtime',
       configPath: '/tmp/mama-test-config.yaml',
       isOwnerMessageTurn: () => true,
       adapter,

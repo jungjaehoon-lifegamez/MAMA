@@ -20,6 +20,7 @@ function fixture() {
     db.exec(readFileSync(join(migrations, file), 'utf8'));
   const surface = createActionSurface({
     timeZone: createTimeZoneSetting('UTC'),
+    runtimeRoot: '/tmp/mama-test-runtime',
     configPath: '/tmp/mama-test-config.yaml',
     isOwnerMessageTurn: () => true,
     adapter: db as unknown as DatabaseInstance,

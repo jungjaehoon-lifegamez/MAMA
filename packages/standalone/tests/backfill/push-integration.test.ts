@@ -69,6 +69,7 @@ describe('backfill push through the owner actions', () => {
       ownerPrincipalId: 'owner',
       agentId: 'owner-agent',
       timeZone: createTimeZoneSetting('Asia/Seoul'),
+      runtimeRoot: root,
       configPath: join(root, 'config.yaml'),
       isOwnerMessageTurn: () => false,
     });
@@ -269,6 +270,7 @@ describe('backfill push through the owner actions', () => {
       ownerPrincipalId: 'owner',
       agentId: 'owner-agent',
       timeZone: createTimeZoneSetting('Asia/Seoul'),
+      runtimeRoot: root,
       configPath: join(root, 'config.yaml'),
       isOwnerMessageTurn: () => false,
       wikiPorts: {
@@ -320,7 +322,12 @@ describe('backfill push through the owner actions', () => {
           append: [{ section: '## Decisions', text: '- Bones stay near 150.' }],
           sources: ['src:spec'],
         },
-        { path: 'daily/2026-08-12.md', title: '2026-08-12', content: 'One spec settled.' },
+        {
+          path: 'daily/2026-08-12.md',
+          title: '2026-08-12',
+          type: 'daily',
+          content: 'One spec settled.',
+        },
       ]),
       ports()
     );
@@ -332,7 +339,9 @@ describe('backfill push through the owner actions', () => {
     expect(page).toContain('- Delivery is monthly.\n- Bones stay near 150.');
     await expect(
       pushBackfill(
-        file([{ path: 'projects/example.md', title: 'Example', content: 'Replaced.' }]),
+        file([
+          { path: 'projects/example.md', title: 'Example', type: 'entity', content: 'Replaced.' },
+        ]),
         ports()
       )
     ).rejects.toThrow('manage.wiki.publish: TOOL_ERROR');

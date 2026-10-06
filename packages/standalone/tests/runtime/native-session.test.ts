@@ -16,6 +16,7 @@ import { createNativeSession, type NativeDriverOptions } from '../../src/runtime
 function surface() {
   return createActionSurface({
     timeZone: createTimeZoneSetting('UTC'),
+    runtimeRoot: '/tmp/mama-test-runtime',
     configPath: '/tmp/mama-test-config.yaml',
     isOwnerMessageTurn: () => true,
     adapter: {} as DatabaseInstance,
@@ -109,6 +110,8 @@ describe('one owner native session', () => {
         'graph.query',
         'help',
         'judge',
+        'manage.policy.read',
+        'manage.policy.update',
         'manage.wiki.move',
         'manage.wiki.publish',
         'manage.wiki.read',

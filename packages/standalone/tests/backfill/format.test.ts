@@ -58,6 +58,7 @@ function validFile(): Record<string, unknown> {
       {
         path: 'daily/2026-08-28.md',
         title: '2026-08-28',
+        type: 'daily',
         content: 'All August items delivered.',
       },
       {
@@ -71,6 +72,15 @@ function validFile(): Record<string, unknown> {
 }
 
 describe('backfill file format', () => {
+  it.each([undefined, '', '   ', 'unknown'])(
+    'refuses a new wiki page without an explicit valid type (%s)',
+    (type) => {
+      const raw = validFile();
+      (raw.wiki as Array<Record<string, unknown>>)[0]!.type = type;
+      expect(() => parseBackfillFile(raw)).toThrow(/wiki\[0\].type/);
+    }
+  );
+
   it('reads a valid file with its times as epoch ms', () => {
     const file = parseBackfillFile(validFile());
 
@@ -129,7 +139,7 @@ describe('backfill file format', () => {
       'item still-b.revisions[1].at: is outside the period',
       'item still-b.appliesUntil: must follow every revision of the period',
       'wiki[0].path: must be a relative .md path inside the wiki',
-      'wiki[1]: carries either title and content (a new page) or append (an existing page)',
+      'wiki[1]: carries either title, type and content (a new page) or append (an existing page)',
       'wiki[2].append[0].section: must be a Markdown heading line',
     ])
       expect(message).toContain(expected);

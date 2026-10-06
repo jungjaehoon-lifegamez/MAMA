@@ -55,7 +55,7 @@ export function wikiActionRegistrations(ports: WikiPorts): ActionRegistration[] 
         name: 'manage.wiki.publish',
         recallableWrite: true,
         summary:
-          'Publish wiki pages in the configured vault. pages is an array of page objects with relative path, title and Markdown content string. Read an existing page first and pass its expectedContentVersion to update it; use null for a new versioned file. sourceRefs can name exact raw observations.',
+          'Publish wiki pages in the configured vault. pages is an array of page objects with required relative path, title, type and Markdown content string; type must be explicit and nonblank. Read an existing page first and pass its expectedContentVersion to update it; use null for a new versioned file. sourceRefs can name exact raw observations.',
         inputSchema: {
           type: 'object',
           required: ['pages'],
@@ -64,7 +64,7 @@ export function wikiActionRegistrations(ports: WikiPorts): ActionRegistration[] 
               type: 'array',
               items: {
                 type: 'object',
-                required: ['path', 'title', 'content'],
+                required: ['path', 'title', 'type', 'content'],
                 properties: {
                   path: { type: 'string', minLength: 1 },
                   title: { type: 'string', minLength: 1 },
@@ -227,7 +227,7 @@ export function wikiActionRegistrations(ports: WikiPorts): ActionRegistration[] 
               {
                 path,
                 title: page.title,
-                ...(page.type === null ? {} : { type: page.type }),
+                type: page.type ?? undefined,
                 ...(page.confidence === null ? {} : { confidence: page.confidence }),
                 content,
                 expectedContentVersion: current.version,

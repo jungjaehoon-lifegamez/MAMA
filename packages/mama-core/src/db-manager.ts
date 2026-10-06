@@ -424,7 +424,7 @@ export function insertPreparedDecision(
     decision.id,
     decision.topic,
     decision.decision,
-    decision.reasoning || null,
+    decision.reasoning ?? null,
     decision.outcome || null,
     decision.failure_reason || null,
     decision.limitation || null,
