@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type {
   ConnectorConfig,
   ConnectorHealth,
@@ -16,6 +16,8 @@ import {
 
 interface ICalEntityState {
   version: string;
+  // Absent on legacy states: keep their existing address until the version changes.
+  observationId?: string;
   firstSeenAt: number;
   start: string;
   startTimeZone?: string;
@@ -145,8 +147,15 @@ export class ICalConnector implements IConnector {
           const entityKey = `${feed.key}:${event.uid}`;
           const previous = this.entities[entityKey];
           const firstSeenAt = previous?.version === version ? previous.firstSeenAt : Date.now();
+          const observationId =
+            event.revisionTime === undefined
+              ? previous?.version === version
+                ? previous.observationId
+                : randomUUID()
+              : undefined;
           this.entities[entityKey] = {
             version,
+            ...(observationId === undefined ? {} : { observationId }),
             firstSeenAt,
             start: event.start,
             end: event.end,
@@ -161,7 +170,7 @@ export class ICalConnector implements IConnector {
           };
           output.push({
             source: 'ical',
-            sourceId: `${feed.key}:${event.uid}:${version}`,
+            sourceId: `${entityKey}:${version}${observationId === undefined ? '' : `:${observationId}`}`,
             sourceEntityId: entityKey,
             channel: feed.key,
             author: 'unknown',

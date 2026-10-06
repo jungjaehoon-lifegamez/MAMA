@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseICalendar } from '../../src/connectors/ical/parser.js';
@@ -250,6 +250,174 @@ describe('iCal connector', () => {
       modified[0]?.sourceId,
       summary[0]?.sourceId,
     ]);
+  });
+
+  it.each([false, true])(
+    'records A -> B -> A without LAST-MODIFIED and deduplicates unchanged polls (legacy state: %s)',
+    async (legacyState) => {
+      vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-09-28T12:00:00+09:00') });
+      process.env.MAMA_ICAL_URL_PRIMARY = 'https://example.invalid/calendar.ics';
+      const versionA = calendar.replace('LAST-MODIFIED:20260927T090000Z\r\n', '');
+      const versionB = versionA
+        .replace('Planning\\, review', 'Updated summary')
+        .replace('20261001T100000', '20261001T120000')
+        .replace('20261001T110000', '20261001T130000');
+      let body = versionA;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockImplementation(async () => ({ ok: true, text: async () => body }))
+      );
+      const path = statePath();
+      const root = stateDirs[stateDirs.length - 1]!;
+      const raw = new RawStore(join(root, 'raw'));
+      openRawStores.push(raw);
+      const database = await openCoreDatabase({ path: join(root, 'state.db') });
+      openDatabases.push(database);
+      const timeZone = createTimeZoneSetting('Asia/Seoul');
+      // Reload the connector each poll to exercise the persisted observation address.
+      const load = () =>
+        loadConnector(
+          'ical',
+          {
+            enabled: true,
+            pollIntervalMinutes: 5,
+            auth: { type: 'token' },
+            channels: { primary: { role: 'reference', name: 'Schedule', feedName: 'Feed' } },
+          },
+          { connectorStatePath: path, timeZone }
+        );
+      const projectPending = () => {
+        const pending = raw.listPendingProjections('ical', 100, 0);
+        for (const input of mapNormalizedItemsToConnectorEventIndexInputs('ical', pending)) {
+          upsertConnectorEventIndex(database.adapter, input);
+        }
+        raw.acknowledgeProjections(
+          'ical',
+          pending.map((item) => ({
+            revisionSourceId: item.sourceId,
+            pendingProjectionId: item.pendingProjectionId,
+          }))
+        );
+      };
+      const connector = await load();
+      const first = await connector.poll(new Date(0));
+      connector.commitPoll?.();
+      if (legacyState) {
+        // Seed the pre-deploy address and state, which only knew the content hash.
+        first[0]!.sourceId = `primary:event-1:${first[0]!.sourceCursor}`;
+        const state = JSON.parse(readFileSync(path, 'utf8'));
+        delete state.entities['primary:event-1'].observationId;
+        writeFileSync(path, JSON.stringify(state));
+      }
+      raw.save('ical', first);
+      projectPending();
+      const access: ActionContext['access'] = {
+        principalId: 'owner-test',
+        agentId: 'agent-test',
+        actions: ['schedule.upcoming'],
+        connectors: ['ical'],
+        scopes: [],
+      };
+      const dispatch = createDispatcher(
+        createCatalog(
+          reportSourceActionRegistrations({
+            adapter: database.adapter,
+            ownerPrincipalId: 'owner-test',
+            timeZone,
+          })
+        )
+      );
+
+      const unchanged = async (current: typeof first, revisionCount: number) => {
+        vi.setSystemTime(Date.now() + 60_000);
+        const reloaded = await load();
+        const listed = await reloaded.poll(new Date(0));
+        expect(listed[0]?.sourceId).toBe(current[0]?.sourceId);
+        expect(listed[0]?.timestamp).toEqual(current[0]?.timestamp);
+        raw.save('ical', listed);
+        reloaded.commitPoll?.();
+        expect(raw.getRevisions('ical', 'primary:event-1').items).toHaveLength(revisionCount);
+        expect(raw.listPendingProjections('ical', 100, 0)).toHaveLength(0);
+      };
+      await unchanged(first, 1);
+      body = versionB;
+      vi.setSystemTime(Date.now() + 60_000);
+      const changedConnector = await load();
+      const changed = await changedConnector.poll(new Date(0));
+      raw.save('ical', changed);
+      projectPending();
+      changedConnector.commitPoll?.();
+      expect(await dispatch({ action: 'schedule.upcoming', input: {} }, { access })).toMatchObject({
+        status: 'completed',
+        data: { returned: 1, events: [{ title: 'Updated summary', start: '20261001T120000' }] },
+      });
+      await unchanged(changed, 2);
+      body = versionA;
+      vi.setSystemTime(Date.now() + 60_000);
+      const returnedConnector = await load();
+      const returned = await returnedConnector.poll(new Date(0));
+      // The original producer throws "Immutable raw producer replay conflict" here.
+      raw.save('ical', returned);
+      expect(returned[0]?.sourceId).not.toBe(first[0]?.sourceId);
+      expect(returned[0]?.sourceCursor).toBe(first[0]?.sourceCursor);
+      expect(returned[0]?.timestamp.getTime()).toBe(Date.now());
+      expect(
+        raw.getRevisions('ical', 'primary:event-1').items.map((item) => item.sourceId)
+      ).toEqual([first[0]?.sourceId, changed[0]?.sourceId, returned[0]?.sourceId]);
+      expect(raw.listPendingProjections('ical', 100, 0)).toHaveLength(1);
+      projectPending();
+      returnedConnector.commitPoll?.();
+      expect(await dispatch({ action: 'schedule.upcoming', input: {} }, { access })).toMatchObject({
+        status: 'completed',
+        data: { returned: 1, events: [{ title: 'Planning, review', start: '20261001T100000' }] },
+      });
+      await unchanged(returned, 3);
+    }
+  );
+
+  it('re-lists LAST-MODIFIED versions at their original addresses and revision times', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-09-28T12:00:00+09:00') });
+    process.env.MAMA_ICAL_URL_PRIMARY = 'https://example.invalid/calendar.ics';
+    const changed = calendar.replace('20260927T090000Z', '20260927T091000Z');
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce({ ok: true, text: async () => calendar })
+        .mockResolvedValueOnce({ ok: true, text: async () => changed })
+        .mockResolvedValueOnce({ ok: true, text: async () => calendar })
+    );
+    const path = statePath();
+    const raw = new RawStore(join(stateDirs[stateDirs.length - 1]!, 'raw'));
+    openRawStores.push(raw);
+    const connector = await loadConnector(
+      'ical',
+      {
+        enabled: true,
+        pollIntervalMinutes: 5,
+        auth: { type: 'token' },
+        channels: { primary: { role: 'reference', name: 'Schedule' } },
+      },
+      { connectorStatePath: path, timeZone: createTimeZoneSetting('Asia/Seoul') }
+    );
+    const addresses: string[] = [];
+    for (const revisionTime of [
+      '2026-09-27T09:00:00Z',
+      '2026-09-27T09:10:00Z',
+      '2026-09-27T09:00:00Z',
+    ]) {
+      const listed = await connector.poll(new Date(0));
+      expect(listed[0]?.sourceId).toBe(`primary:event-1:${listed[0]?.sourceCursor}`);
+      expect(listed[0]?.timestamp.getTime()).toBe(Date.parse(revisionTime));
+      raw.save('ical', listed);
+      connector.commitPoll?.();
+      addresses.push(listed[0]!.sourceId);
+      vi.setSystemTime(Date.now() + 60_000);
+    }
+    expect(addresses[2]).toBe(addresses[0]);
+    expect(addresses[1]).not.toBe(addresses[0]);
+    expect(raw.getRevisions('ical', 'primary:event-1').items).toHaveLength(2);
+    expect(raw.listPendingProjections('ical', 100, 0)).toHaveLength(2);
   });
 
   it('emits future removals as cancelled versions and forgets past removals', async () => {
