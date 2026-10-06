@@ -467,6 +467,7 @@ export class TelegramGateway extends BaseGateway {
         },
       },
       {
+        log: this.log,
         resumeFromChunk: this.messageLedger.get(sourceRef)?.nextChunkIndex ?? 0,
         chunkFormat: this.messageLedger.get(sourceRef)?.chunkFormat ?? 'html-v1',
         withDelivery: (send) => this.runInChatQueue(String(chatId), send, true),
