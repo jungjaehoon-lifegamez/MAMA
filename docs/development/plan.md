@@ -48,10 +48,9 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
 
 ## Next, in order
 
-1. W38: conversations with MAMA are kept as raw sources ([work list](work/owner-chat.md)). Deployed
-   and backfilled on 2026-10-06 (#429): 126 owner messages and 222 replies stored; 20 of 26 owner
-   rules cite a stored message. Left: one live owner turn stores its message and reply, and a
-   correction's provenance returns the message.
+1. W38: done on 2026-10-06 (#429; [work list](work/owner-chat.md)). 126 owner messages and 222
+   replies backfilled; the first live owner turn stored its message and reply, and the correction
+   it saved returns the owner's words through its provenance.
 2. W37: standing owner rules move into the owner policy ([work list](work/owner-rules.md)), with
    protected revision records, the call shapes of #415/#416/#426 removed, a wiki publish without a
    type refused instead of filed as `entity`, and situational report rules relocated before the
