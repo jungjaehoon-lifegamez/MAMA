@@ -54,7 +54,6 @@ import {
   type StimulusIntake,
   type TurnLesson,
 } from './stimulus-delivery.js';
-import { ownerRulesBlock, type OwnerRuleLine } from './turn-orders.js';
 
 export interface OwnerRuntimeOptions {
   /** Native shell commands that open a network connection, reported as they start (W35). */
@@ -110,8 +109,6 @@ export interface OwnerRuntimeOptions {
   onRecordOrderEvent?: (event: RecordOrderEvent) => void;
   /** Lesson recall for a turn; defaults to memory.search over the owner's guidance. */
   lessons?: StimulusDeliveryOptions['lessons'];
-  /** The record order's owner-rule index; defaults to the active owner rules in the owner's scopes. */
-  ownerRules?: StimulusDeliveryOptions['ownerRules'];
   /** A lesson search that did not complete; the turn goes on with what the others found. */
   onLessonSearchFailed?: (reason: string) => void;
   /** A live delta acked without a turn (only history lines). */
@@ -203,25 +200,12 @@ function isOwnerGuidanceRecord(record: MemoryRecord): boolean {
   return (RULE_KINDS as readonly string[]).includes(record.kind);
 }
 
-/**
- * The record order's index: the owner's rules among active guidance, as memory reads them; a rule
- * saved without an applies-when line shows its own words.
- */
-export function ownerRuleLines(
-  records: readonly MemoryRecord[],
-  ownerRules: ReadonlySet<string>
-): OwnerRuleLine[] {
-  return records
-    .filter((record) => ownerRules.has(record.id))
-    .map((record) => ({ topic: record.topic, when: record.applies_when ?? record.summary }));
-}
-
 /** Active guidance among the search hits, in the search's own order. */
 export function guidanceInSearchOrder(
   hitIds: readonly string[],
   records: readonly MemoryRecord[],
   limit: number,
-  ownerRules: ReadonlySet<string>
+  ownerRuleRecordIds: ReadonlySet<string>
 ): TurnLesson[] {
   const active = new Map(
     records
@@ -238,7 +222,7 @@ export function guidanceInSearchOrder(
               topic: record.topic,
               summary: record.summary,
               ...(record.applies_when ? { appliesWhen: record.applies_when } : {}),
-              ownerRule: ownerRules.has(record.id),
+              ownerRule: ownerRuleRecordIds.has(record.id),
             },
           ]
         : [];
@@ -338,11 +322,6 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         ? {}
         : { driveDelivery: { ...options.driveDelivery, workspaceDir: options.workspaceDir } }),
       ownerMessages: { exchanges: (since, before) => chat.exchanges(since, before) },
-      // Both report paths read this procedure, scheduled and requested (2026-09-29 to 10-05), and
-      // the owner's rules for reports reached neither: a scheduled order carries no lessons and a
-      // request's three recalled lessons depend on its wording.
-      helpTopicContext: async (topic) =>
-        topic === 'full-report' ? ownerRulesBlock(await ownerRules()) : '',
       helpTopics: ownerHelpTopics(
         options.backend,
         options.wiki?.enabled ?? false,
@@ -358,22 +337,6 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           })()),
     });
     const access: JudgmentAccess = surface.ownerAccess;
-    // Every active owner rule, oldest first as memory reads them; learned lessons stay on recall.
-    const ownerRules =
-      options.ownerRules ??
-      (async (): Promise<OwnerRuleLine[]> => {
-        const active = await readMemoryRecordsInScopes(database.adapter, [...access.scopes], {
-          kind: [...RULE_KINDS],
-          status: 'active',
-        });
-        return ownerRuleLines(
-          active,
-          ownerRuleIds(
-            database.adapter,
-            active.map((record) => record.id)
-          )
-        );
-      });
     const standingText = ownerSystemPrompt(
       options.backend,
       null,
@@ -503,7 +466,6 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           const hitIds = hits.map((hit) => hit.id);
           return guidanceInSearchOrder(hitIds, active, 10, ownerRuleIds(database.adapter, hitIds));
         }),
-      ownerRules,
       recordOrders,
       ...(options.onOwnerResult === undefined ? {} : { onOwnerResult: options.onOwnerResult }),
       ...(options.onSourceResult === undefined ? {} : { onSourceResult: options.onSourceResult }),

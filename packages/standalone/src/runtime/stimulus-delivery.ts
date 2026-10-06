@@ -24,11 +24,9 @@ import {
   liveDeltaLines,
   ownerMessageOrder,
   parseRecordOrder,
-  recordOrderLines,
   scheduledReportOrder,
   sessionStartBlock,
   type Lesson,
-  type OwnerRuleLine,
   type SessionStartInput,
 } from './turn-orders.js';
 import { localDateKey, localStamp, type TimeZoneSetting } from './timezone.js';
@@ -94,8 +92,6 @@ export interface StimulusDeliveryOptions {
   timeZone: TimeZoneSetting;
   /** Top lessons for a turn's text, most relevant first. */
   lessons?: (text: string) => Promise<readonly TurnLesson[]>;
-  /** The owner's active rules, indexed on every record order. */
-  ownerRules?: () => Promise<readonly OwnerRuleLine[]>;
   recordOrders?: RecordOrderPort;
   readResult?: (row: MailboxRow) => NativeTurnResultRecord | null;
   onUncertain?: StimulusDelivery['onUncertain'];
@@ -496,13 +492,7 @@ type TurnPlan =
   | {
       kind: 'turn';
       lessonQuery: string | null;
-      /** Record orders carry the owner's rules as an index. */
-      ownerRuleIndex?: true;
-      render: (
-        lessons: readonly Lesson[],
-        now: Date,
-        ownerRules: readonly OwnerRuleLine[]
-      ) => string;
+      render: (lessons: readonly Lesson[], now: Date) => string;
     };
 
 /** What a row's turn says, by kind; a live delta with only history lines has no turn. */
@@ -548,23 +538,13 @@ function planTurn(row: MailboxRow, options: StimulusDeliveryOptions): TurnPlan {
       const record = parseRecordOrder(row.payload);
       return {
         kind: 'turn',
-        // The notify turn's recall on the lines the record turn writes from: when W23 split
-        // Kagemusha's one delta turn in two, the lessons stayed with the notify turn only.
-        lessonQuery: recordOrderLines(record)
-          .map((line) => line.text)
-          .join(' '),
-        ownerRuleIndex: true,
-        render: (lessons, now, ownerRules) =>
-          deltaRecordOrder(
-            record,
-            now,
-            {
-              backend: options.backend,
-              timeZone: zone,
-              wikiEnabled: options.wikiEnabled ?? false,
-            },
-            { lessons, ownerRules }
-          ),
+        lessonQuery: null,
+        render: (_lessons, now) =>
+          deltaRecordOrder(record, now, {
+            backend: options.backend,
+            timeZone: zone,
+            wikiEnabled: options.wikiEnabled ?? false,
+          }),
       };
     }
     if (row.channelKey === REPORT_CHANNEL)
@@ -645,15 +625,11 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
       const text = (blocks: readonly string[]): ContentBlock[] => [
         { type: 'text', text: blocks.filter((block) => block !== '').join('\n\n') },
       ];
-      const result = await context.run(text([plan.render([], new Date(), [])]), {
+      const result = await context.run(text([plan.render([], new Date())]), {
         onModelRunStarted: (id: string) => {
           modelRunId = id;
         },
         prepareSessionContent: async ({ isNewSession }) => {
-          // Read before the lessons are picked: picking marks them shown, and a read that throws
-          // here retries the turn, which would then skip the lessons it never showed.
-          const ownerRules =
-            plan.ownerRuleIndex && options.ownerRules ? await options.ownerRules() : [];
           const lessons = await pickLessons(plan.lessonQuery, isNewSession);
           const start = isNewSession
             ? sessionStartBlock(
@@ -662,7 +638,7 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
                 { timeZone: options.timeZone.get() }
               )
             : '';
-          return text([start, plan.render(lessons, new Date(), ownerRules)]);
+          return text([start, plan.render(lessons, new Date())]);
         },
         sessionKey: OWNER_RUNTIME_SESSION_KEY,
         source: row.kind,

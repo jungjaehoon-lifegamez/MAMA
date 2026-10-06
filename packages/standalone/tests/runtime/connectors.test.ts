@@ -566,12 +566,11 @@ describe('connector runtime', () => {
       // The notify order carries the message bodies; the record order carries every ref.
       expect(notifyText).toContain('<<<UNTRUSTED-CONTENT source=source_delta>>>');
       expect(notifyText).toContain('second source body');
-      const recordText = deltaRecordOrder(
-        recordOrderPayload(recordRow!, 1),
-        new Date(),
-        { backend: 'codex', timeZone: 'UTC', wikiEnabled: false },
-        { lessons: [], ownerRules: [] }
-      );
+      const recordText = deltaRecordOrder(recordOrderPayload(recordRow!, 1), new Date(), {
+        backend: 'codex',
+        timeZone: 'UTC',
+        wikiEnabled: false,
+      });
       const listed = recordText
         .split('\n')
         .find((line) => line.startsWith('observations: '))!
