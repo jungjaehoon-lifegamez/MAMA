@@ -30,6 +30,8 @@ const createDelivery = (
     timeZone: createTimeZoneSetting('Asia/Seoul'),
   });
 
+const chatPorts = { saveOwnerMessage: () => 'observation-test', saveReply: () => {} };
+
 const homes: string[] = [];
 const runtimes: RuntimeHandle[] = [];
 const databases: Array<Awaited<ReturnType<typeof openCoreDatabase>>> = [];
@@ -85,7 +87,7 @@ async function boot(
     },
   });
   runtimes.push(runtime);
-  return { runtime, home, intake: createStimulusIntake(runtime, 'owner') };
+  return { runtime, home, intake: createStimulusIntake(runtime, 'owner', chatPorts) };
 }
 
 describe('one stimulus intake and delivery', () => {
@@ -98,7 +100,8 @@ describe('one stimulus intake and delivery', () => {
           return { inputId: 'file-input', state: 'accepted' };
         },
       },
-      'owner'
+      'owner',
+      chatPorts
     );
     intake.acceptOwnerMessage({
       id: 'file-input',
@@ -1084,7 +1087,8 @@ describe('one stimulus intake and delivery', () => {
           return { inputId: stimulus.id, state: 'accepted' };
         },
       },
-      'owner'
+      'owner',
+      chatPorts
     );
 
     intake.acceptSourceDelta({

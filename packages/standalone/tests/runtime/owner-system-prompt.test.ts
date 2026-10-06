@@ -252,7 +252,8 @@ describe('owner standing prompt', () => {
             return { inputId: stimulus.id, state: 'accepted' };
           },
         },
-        'owner-test'
+        'owner-test',
+        { saveOwnerMessage: () => 'observation-test', saveReply: () => {} }
       ).acceptSourceDelta(delta);
       let replayText = '';
       await createStimulusDelivery({ backend, timeZone: createTimeZoneSetting('UTC') }).deliver(
@@ -290,7 +291,7 @@ describe('owner standing prompt', () => {
         ownerPrincipalId: 'owner-test',
         agentId: 'agent-test',
         // The owner runtime always passes the owner conversation; the daily topic names it.
-        ownerMessages: { exchanges: () => [], retentionMs: 1 },
+        ownerMessages: { exchanges: () => [] },
       });
       // Codex calls its tools by name; Claude calls the same names inside its one tool, code_act.
       const exposedNames =

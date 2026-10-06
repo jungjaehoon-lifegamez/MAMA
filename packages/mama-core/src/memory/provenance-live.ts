@@ -61,7 +61,11 @@ export interface EventRow {
  */
 const RETIRED_MEMORY_STATUSES = new Set(['superseded', 'contradicted', 'stale']);
 
+export type ObservationBodyReadResult = string | { status: 'body_unavailable' };
+
 export interface LiveProvenanceOptions {
+  /** Exact external body read supplied by the consumer; inline observations need no port. */
+  readObservationBody?: (observationId: string) => ObservationBodyReadResult;
   /** Scopes active NOW. Not the scopes the memory was written under. */
   scopes: MemoryScopeRef[];
   /** Raw connectors this caller may read. Empty means NO raw events, never all. */
@@ -107,6 +111,9 @@ export interface LiveProvenanceOptions {
  * `unsupported_ref` - a tool that was wired, callable, and answered nothing.
  */
 export function parseSourceRef(ref: string): ParsedSourceRef {
+  if (ref.startsWith('obs_')) {
+    return { kind: 'observation', observationId: ref };
+  }
   const separator = ref.indexOf(':');
   if (separator <= 0 || separator === ref.length - 1) {
     return { kind: 'unsupported' };
@@ -406,7 +413,13 @@ async function loadRecord(
   // canonical graph. Compact run provenance alone may name only the input that
   // woke the agent; it must not hide those exact observed supports.
   const seenObservations = new Set(
-    sourceRefs.flatMap((ref) => (ref.kind === 'raw' ? [ref.eventIndexId] : []))
+    sourceRefs.flatMap((ref) =>
+      ref.kind === 'raw'
+        ? [ref.eventIndexId]
+        : ref.kind === 'observation'
+          ? [ref.observationId]
+          : []
+    )
   );
   const links = adapter
     .prepare(
@@ -508,6 +521,19 @@ export async function resolveMemoryProvenanceLive(
       )
     : null;
 
+  const indexedEvent = (row: EventRow): IndexedEvent => {
+    const event = toIndexedEvent(row);
+    // Raw observations keep their bodies outside core; a missing excerpt is not evidence.
+    if (row.content === null && isEventVisibleNow(event, options)) {
+      if (!options.readObservationBody)
+        throw new Error('External observation body reader is required for provenance');
+      const body = options.readObservationBody(event.eventIndexId);
+      if (typeof body === 'string') event.content = body;
+      else event.bodyStatus = body.status;
+    }
+    return event;
+  };
+
   return resolveMemoryProvenance(memoryId, {
     lookupMemoryProvenance: () => record,
     lookupEvent: (connector, eventIndexId) => {
@@ -515,14 +541,14 @@ export async function resolveMemoryProvenanceLive(
       if (!row) {
         return null;
       }
-      const event = toIndexedEvent(row);
+      const event = indexedEvent(row);
       // The id is a hash of connector plus source id, so a connector mismatch means the
       // ref was rewritten rather than that the event moved. Treat it as gone, not as data.
       return event.connector === connector ? event : null;
     },
     lookupObservation: (observationId) => {
       const row = statement.get(observationId) as EventRow | undefined;
-      return row ? toIndexedEvent(row) : null;
+      return row ? indexedEvent(row) : null;
     },
     ...(options.redact === undefined ? {} : { redact: options.redact }),
     isSupportVisible: (support) => {

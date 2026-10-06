@@ -471,7 +471,10 @@ describe('connector runtime', () => {
         } as const;
       },
     };
-    const intake = createStimulusIntake(runtime, 'owner');
+    const intake = createStimulusIntake(runtime, 'owner', {
+      saveOwnerMessage: () => 'observation-test',
+      saveReply: () => {},
+    });
     writeFileSync(
       configPath,
       JSON.stringify({

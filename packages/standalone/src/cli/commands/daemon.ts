@@ -72,7 +72,6 @@ export interface DaemonLogger {
 }
 
 export interface DaemonGateway {
-  recentDeliveredMessageRefs(): string[];
   /** This owner message has a delivered answer, an interruption notice included. */
   answered(sourceRef: string): boolean;
   recoverPendingResponses(): Promise<void>;
@@ -305,6 +304,7 @@ function loggedOwnerIntake(intake: StimulusIntake, logger: DaemonLogger): TurnIn
         throw error;
       }
     },
+    recordOwnerReply: (input) => intake.recordOwnerReply(input),
     ...(intake.isPending === undefined ? {} : { isPending: intake.isPending }),
   };
 }
@@ -513,8 +513,6 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       },
       ownerPolicyProvider,
       deliveryReady: () => deliveryReady,
-      recentDeliveredOwnerMessages: () =>
-        [...gateways.values()].flatMap((active) => active.recentDeliveredMessageRefs()),
       ...(options.mode === 'replay'
         ? {}
         : {

@@ -59,6 +59,7 @@ async function setup() {
   const options = {
     backend: 'codex' as const,
     model: 'fixture-model',
+    rawPath: join(root, 'raw'),
     databasePath: join(root, 'state.db'),
     socketPath: join(root, 'runtime.sock'),
     credentialPath: join(root, 'credential'),

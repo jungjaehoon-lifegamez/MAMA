@@ -11,6 +11,7 @@ import { createDispatcher, type ActionDispatcher } from '../../src/api/dispatch.
 import { appendOperationToolTrace } from '../../src/runtime/tool-trace-store.js';
 import { appendObservationVersion } from '../../src/knowledge/observations.js';
 import { Mailbox } from '../../src/runtime/mailbox.js';
+import { resolveMemoryProvenanceLive } from '../../src/memory/provenance-live.js';
 
 const ACCESS = {
   principalId: 'principal-test',
@@ -598,6 +599,105 @@ describe('Story M1: memory.save through the unified action path', () => {
   });
 
   describe('Story M3b: memory.read:provenance through dispatch', () => {
+    it('lists an observation once when both a source ref and a derived_from link name it', async () => {
+      const observation = appendObservationVersion(getAdapter(), {
+        source: 'source-test',
+        sourceId: 'message-test',
+        body: 'Original evidence',
+        observedAt: Date.now(),
+        contentHash: createHash('sha256').update('Original evidence').digest('hex'),
+      });
+      const access = { ...ACCESS, connectors: ['source-test'], connectorWideRead: ['source-test'] };
+      const saved = await dispatch(
+        {
+          action: 'memory.save',
+          operationId: 'op-dedupe-test',
+          input: {
+            topic: 'dedupe-test',
+            kind: 'fact',
+            summary: 'A supported claim',
+            details: 'Evidence',
+            source: { package: 'test-product', source_type: 'test' },
+            links: [
+              {
+                relation: 'derived_from',
+                target: { kind: 'observation', id: observation.observationId },
+              },
+            ],
+          },
+        },
+        { access, session: { sourceRefs: [observation.observationId] } }
+      );
+      expect(saved.status).toBe('completed');
+      const result = await dispatch(
+        {
+          action: 'memory.read:provenance',
+          input: { memory_id: (saved.data as { id: string }).id },
+        },
+        { access }
+      );
+      expect(result.status).toBe('completed');
+      expect((result.data as { events: unknown[] }).events).toEqual([
+        expect.objectContaining({ eventIndexId: observation.observationId }),
+      ]);
+    });
+
+    it('keeps resolving supports when one indexed body is unavailable, but throws for fatal reads', async () => {
+      const observations = ['available-test', 'missing-test'].map((sourceId) =>
+        appendObservationVersion(getAdapter(), {
+          source: 'source-test',
+          sourceId,
+          observedAt: Date.now(),
+          bodyLocation: { kind: 'raw', connectorName: 'source-test', revisionSourceId: sourceId },
+          contentHash: createHash('sha256').update(sourceId).digest('hex'),
+        })
+      );
+      const access = { ...ACCESS, connectors: ['source-test'], connectorWideRead: ['source-test'] };
+      const saved = await saveVia(
+        'External evidence',
+        ACCESS.scopes,
+        'op-external-provenance',
+        access
+      );
+      const memoryId = (saved.data as { id: string }).id;
+      getAdapter()
+        .prepare('UPDATE decisions SET source_refs_json = ? WHERE id = ?')
+        .run(
+          JSON.stringify(observations.map((observation) => observation.observationId)),
+          memoryId
+        );
+      const options = {
+        scopes: ACCESS.scopes,
+        connectors: ['source-test'],
+        wideConnectors: ['source-test'],
+      };
+      const result = await resolveMemoryProvenanceLive(getAdapter(), memoryId, {
+        ...options,
+        readObservationBody: (ref) =>
+          ref === observations[0]!.observationId
+            ? 'Exact original'
+            : { status: 'body_unavailable' as const },
+      });
+      expect(result).toMatchObject({
+        status: 'partial',
+        events: [{ eventIndexId: observations[0]!.observationId, excerpt: 'Exact original' }],
+        unresolved: [{ eventIndexId: observations[1]!.observationId, reason: 'body_unavailable' }],
+      });
+      await expect(resolveMemoryProvenanceLive(getAdapter(), memoryId, options)).rejects.toThrow(
+        'External observation body reader is required'
+      );
+      for (const reason of ['HASH_MISMATCH', 'stored_source_out_of_scope']) {
+        await expect(
+          resolveMemoryProvenanceLive(getAdapter(), memoryId, {
+            ...options,
+            readObservationBody: () => {
+              throw new Error(reason);
+            },
+          })
+        ).rejects.toThrow(reason);
+      }
+    });
+
     it('resolves the owner-readable observation edges and scheduled cause of a new memory', async () => {
       const content = 'A preserved Chatwork correction was checked before the memory was saved';
       const observation = appendObservationVersion(getAdapter(), {

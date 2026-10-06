@@ -33,6 +33,8 @@ import {
 } from './turn-orders.js';
 import { localDateKey, localStamp, type TimeZoneSetting } from './timezone.js';
 import { messageWithCauses } from '../utils/error-message.js';
+import type { ChatSources } from '../storage/chat-sources.js';
+import type { OwnerReplyInput } from '../gateways/turn-contract.js';
 
 export const OWNER_RUNTIME_SESSION_KEY = 'owner:runtime';
 
@@ -56,6 +58,7 @@ export interface StimulusIntake {
   accept(stimulus: Stimulus): StimulusReceipt;
   isPending?(sourceMessageRef: string): boolean;
   acceptOwnerMessage(input: OwnerMessageInput): StimulusReceipt;
+  recordOwnerReply(input: OwnerReplyInput): void;
   acceptSourceDelta(delta: SourceDelta): StimulusReceipt;
   acceptScheduled(input: ScheduledInput): StimulusReceipt;
 }
@@ -192,7 +195,8 @@ function sourcePayload(delta: SourceDelta): JsonValue {
 
 export function createStimulusIntake(
   runtime: Pick<RuntimeHandle, 'accept' | 'mailbox'>,
-  principalId: string
+  principalId: string,
+  chat: Pick<ChatSources, 'saveOwnerMessage' | 'saveReply'>
 ): StimulusIntake {
   const ownerPayload = (input: OwnerMessageInput): JsonValue =>
     input.payload === undefined ? { text: input.text } : { text: input.text, input: input.payload };
@@ -210,16 +214,20 @@ export function createStimulusIntake(
       }
       return row?.status === 'pending';
     },
-    acceptOwnerMessage: (input) =>
-      runtime.accept({
+    recordOwnerReply: (input) => chat.saveReply(input),
+    acceptOwnerMessage: (input) => {
+      const observationRef = chat.saveOwnerMessage(input);
+      return runtime.accept({
         id: input.id,
         kind: 'owner_message',
         principalId,
         channelKey: input.channelKey,
         occurredAt: input.occurredAt,
+        refs: [{ refId: input.id, observationRef }],
         ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
         payload: ownerPayload(input),
-      }),
+      });
+    },
     acceptSourceDelta: (delta) =>
       runtime.accept({
         id: sourceDeltaStimulusId(delta),
@@ -660,6 +668,9 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
         source: row.kind,
         channelId: row.channelKey,
         sourceMessageRef: row.stimulusId,
+        ...(row.kind === 'owner_message'
+          ? { sourceRefs: row.refs.map((ref) => ref.observationRef!) }
+          : {}),
         ...(replaySourceEndMs === undefined ? {} : { replaySourceEndMs }),
       });
       // A commit failure withholds result provenance, but the opened run still identifies this turn.

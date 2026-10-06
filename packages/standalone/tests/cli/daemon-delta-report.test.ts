@@ -193,7 +193,6 @@ async function boot(
               sendFile: async () => ({ sentAs: 'file', size: 0 }),
               deliverResponse: async () => {},
               recoverPendingResponses: async () => {},
-              recentDeliveredMessageRefs: () => [],
               answered: () => false,
               start: async () => {},
               stop: async () => {},

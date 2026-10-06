@@ -48,6 +48,7 @@ beforeEach(async () => {
     downloadsDir: join(root, 'downloads'),
     config: { allowedChats: ['7'], ownerUserIds: ['9'], polling: false },
     intake: {
+      recordOwnerReply: () => {},
       acceptOwnerMessage: (input) => {
         received.push(input);
         return { inputId: input.id, state: 'accepted' };

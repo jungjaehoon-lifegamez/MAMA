@@ -65,6 +65,7 @@ function config(root: string, backend: 'codex' | 'claude' = 'codex'): W1Config {
 
 function ownerDouble(order: string[]) {
   const intake: TurnIntake = {
+    recordOwnerReply: () => {},
     acceptOwnerMessage: vi.fn(() => ({ inputId: 'owner-input', state: 'accepted' })),
   };
   return {

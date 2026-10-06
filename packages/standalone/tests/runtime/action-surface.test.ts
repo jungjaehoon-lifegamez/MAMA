@@ -64,7 +64,7 @@ describe('W1 action surface', () => {
       connectors: ['chatwork', 'slack', 'trello', 'kagemusha'],
       scopes: [{ kind: 'project', id: 'workspace-test' }],
       judge: { ask: async () => ({}) },
-      ownerMessages: { exchanges: () => [], retentionMs: 1 },
+      ownerMessages: { exchanges: () => [] },
       // Only Telegram is wired for files, as the daemon wires it when file_delivery is on.
       attachmentPorts: { telegram: () => null },
     });
@@ -138,7 +138,7 @@ describe('W1 action surface', () => {
       agentId: 'agent-test',
       connectors,
     });
-    expect(surface.ownerAccess.connectorWideRead).toEqual(connectors);
+    expect(surface.ownerAccess.connectorWideRead).toEqual([...connectors, 'chat']);
   });
 
   it('rejects a work status outside the shared vocabulary before it reaches knowledge', async () => {

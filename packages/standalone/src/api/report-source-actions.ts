@@ -146,6 +146,7 @@ function recentAction(ports: ReportReadPorts): ActionRegistration {
     exec: (input, context) => {
       const values = input as Record<string, unknown>;
       const requested = values.channels === undefined ? null : new Set(values.channels as string[]);
+      const chatChannels = [...(requested ?? [])].filter((key) => key.startsWith('chat:'));
       const now = Date.now();
       const since = sinceTime(values.since, now);
       const perChannel = values.perChannel === undefined ? 5 : (values.perChannel as number);
@@ -164,12 +165,14 @@ function recentAction(ports: ReportReadPorts): ActionRegistration {
           `SELECT source_connector, source_id, source_entity_id, channel, author, content, source_timestamp_ms,
                 current_observation_id, metadata_json
          FROM connector_event_index WHERE (${visibility.sql}) AND source_timestamp_ms >= ?
+           AND (source_connector != 'chat' ${chatChannels.length === 0 ? '' : `OR source_connector || ':' || channel IN (${chatChannels.map(() => '?').join(',')})`})
            ${sourceCeiling === undefined || sourceCeiling === null ? '' : 'AND source_timestamp_ms <= ?'}
          ORDER BY source_timestamp_ms DESC, source_id DESC LIMIT ?`
         )
         .all(
           ...visibility.params,
           since,
+          ...chatChannels,
           ...(sourceCeiling === undefined || sourceCeiling === null ? [] : [sourceCeiling]),
           RECENT_SCAN_LIMIT + 1
         ) as Row[];

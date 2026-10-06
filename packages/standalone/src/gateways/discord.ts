@@ -90,10 +90,6 @@ export class DiscordGateway extends BaseGateway {
     this.emitEvent({ type: 'disconnected', source: this.source, timestamp: new Date() });
   }
 
-  recentDeliveredMessageRefs(): string[] {
-    return this.ledger.recentDeliveredMessageRefs();
-  }
-
   answered(sourceRef: string): boolean {
     return this.ledger.get(sourceRef)?.state === 'delivered';
   }
@@ -116,7 +112,7 @@ export class DiscordGateway extends BaseGateway {
           continue;
         }
         if (source && entry.state === 'processing' && !this.intake.isPending?.(entry.key)) {
-          this.ledger.markReady(entry.key, this.interruptedNotice);
+          this.ledger.markInterrupted(entry.key, this.interruptedNotice);
           await this.deliverResponse(entry.key, this.interruptedNotice);
         } else if (entry.state === 'ready' && entry.response !== undefined) {
           if (source) await this.deliverResponse(entry.key, entry.response);
@@ -141,6 +137,9 @@ export class DiscordGateway extends BaseGateway {
     if (entry.deliveryTarget !== `discord:${channelId}`)
       throw new Error('Discord response destination conflicts with its accepted message');
     if (entry.state === 'delivered') return;
+    // Confirmed chunks must continue with the same durable response.
+    if (entry.state === 'ready' && entry.response !== response)
+      throw new Error('Ready reply conflicts with its durable ledger entry');
     if (entry.state === 'processing') this.ledger.markReady(sourceRef, response);
     await this.runInDestination(channelId, () => this.sendChunks(channelId, sourceRef, response));
   }
@@ -298,6 +297,8 @@ export class DiscordGateway extends BaseGateway {
 
   private async sendChunks(channelId: string, key: string, text: string): Promise<void> {
     const entry = this.ledger.get(key)!;
+    // Another response call may have completed while this batch waited in the destination queue.
+    if (entry.state === 'delivered') return;
     if (entry.deliveryUncertain) throw new Error('Discord response delivery is uncertain');
     const channel = await this.client.channels.fetch(channelId);
     if (!channel?.isSendable()) throw new Error('Discord target channel cannot receive messages');
@@ -310,6 +311,21 @@ export class DiscordGateway extends BaseGateway {
       } catch (error) {
         this.ledger.markDeliveryProgress(key, i, true);
         throw error;
+      }
+    }
+    // Outbound reports and file deliveries have no owner message to answer.
+    if (key.startsWith('discord:')) {
+      // Legacy ready entries cannot distinguish an agent reply from a host notice.
+      if (entry.responseAuthor === undefined) {
+        this.log(`discord reply archive skipped key=${key} reason=missing_response_author`);
+      } else {
+        this.intake.recordOwnerReply({
+          messageRef: key,
+          text: entry.response!,
+          occurredAt: this.ledger.get(key)!.updatedAt,
+          author: entry.responseAuthor,
+          deliveryVerified: true,
+        });
       }
     }
     this.ledger.markDelivered(key);

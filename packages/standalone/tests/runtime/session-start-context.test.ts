@@ -1,16 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { MemoryRecord } from '@jungjaehoon/mama-core';
-import type { JsonValue } from '@jungjaehoon/mama-core/knowledge';
-import { Mailbox, type StimulusKind } from '@jungjaehoon/mama-core/runtime/mailbox';
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
-import { TelegramMessageLedger } from '../../src/gateways/telegram-message-ledger.js';
-import {
-  ownerExchangesBetween,
-  readSessionStartInput,
-} from '../../src/runtime/session-start-context.js';
+import { RawStore } from '../../src/storage/source-archive.js';
+import { ChatSources } from '../../src/storage/chat-sources.js';
+import { readSessionStartInput } from '../../src/runtime/session-start-context.js';
 
 const cleanup: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
@@ -22,138 +18,100 @@ async function fixture() {
   cleanup.push(() => rmSync(root, { recursive: true, force: true }));
   const database = await openCoreDatabase({ path: join(root, 'state.db') });
   cleanup.push(() => database.close());
-  const mailbox = new Mailbox(database.adapter);
-  const ledgerPath = join(root, 'ledger.json');
-  const ledger = new TelegramMessageLedger(ledgerPath);
-  const add = (
-    ref: string,
-    kind: StimulusKind,
-    payload: JsonValue,
-    response: string,
-    options: {
-      principalId?: string;
-      delivered?: 'delivered' | 'ready' | null;
-      finished?: boolean;
-    } = {}
-  ) => {
-    const principalId = options.principalId ?? 'owner';
-    const id = mailbox.enqueue({
-      id: ref,
-      kind,
-      principalId,
-      channelKey: kind === 'scheduled' ? 'operator:record' : 'room',
-      occurredAt: Number(ref.replace(/\D/g, '')) || 1,
-      payload,
-    })!;
-    if (options.finished === false) return mailbox.readInput(ref, principalId)!;
-    const delivery = mailbox.nativeInputs.prepare(id);
-    const dispatch = {
-      backend: 'claude' as const,
-      sessionId: 'native',
-      inputId: delivery.invocationId!,
-    };
-    mailbox.nativeInputs.dispatch(id, dispatch);
-    mailbox.nativeInputs.accept(id, dispatch);
-    mailbox.nativeInputs.storeResult(id, {
-      response,
-      turns: 1,
-      history: [],
-      totalUsage: { input_tokens: 1, output_tokens: 1 },
-      stopReason: 'end_turn',
-      modelRunId: null,
-      modelRunProvenance: 'backend_no_run',
+  const raw = new RawStore(join(root, 'raw'));
+  cleanup.push(() => raw.close());
+  const chat = new ChatSources(raw, database.adapter, 'owner-test', 'agent-test');
+  const add = (index: number, delivered = true, principal = 'owner-test') => {
+    const store = new ChatSources(raw, database.adapter, principal, 'agent-test');
+    const messageRef = `telegram:room-test:${index}`;
+    store.saveOwnerMessage({
+      id: messageRef,
+      channelKey: 'room-test',
+      occurredAt: index,
+      text: `request ${index}`,
     });
-    mailbox.nativeInputs.settle(id);
-    mailbox.ack(id);
-    if (kind === 'owner_message' && options.delivered !== null) {
-      ledger.claim(ref);
-      ledger.markReady(ref, response);
-      if ((options.delivered ?? 'delivered') === 'delivered') ledger.markDelivered(ref);
-    }
-    return mailbox.readInput(ref, principalId)!;
+    if (delivered)
+      store.saveReply({
+        messageRef,
+        text: `<b>answer ${index}</b>`,
+        occurredAt: index + 1,
+        author: 'agent',
+        deliveryVerified: true,
+      });
+    return messageRef;
   };
-  return { database, mailbox, ledgerPath, add };
+  return { chat, add };
 }
 
-const liveDelta = (text: string) => ({
-  refs: [
-    {
-      connector: 'chat',
-      channelName: 'client room',
-      author: 'sender',
-      contentPreview: text,
-      observationRef: `obs-${text}`,
-      sourceAt: new Date().toISOString(),
-    },
-  ],
-});
-
-describe('owner exchanges by span', () => {
-  it("reads the owner's messages in a span with their replies, oldest first", async () => {
+describe('session start context', () => {
+  it('reads a verified delivery revision after an unverified backfill reply', async () => {
     const f = await fixture();
-    f.add('telegram:owner:100', 'owner_message', { text: 'before the span' }, 'early');
-    f.add('telegram:owner:200', 'owner_message', { text: 'decide the page rule' }, 'noted');
-    f.add('telegram:owner:250', 'owner_message', { text: 'still running' }, '', {
-      finished: false,
-    });
-    f.add('record:batch:1', 'scheduled', { order: 'record' }, '[ack]');
-    f.add('telegram:owner:300', 'owner_message', { text: 'after the span' }, 'late');
-    f.add('telegram:other:220', 'owner_message', { text: 'another principal' }, 'x', {
-      principalId: 'someone-else',
-    });
-    expect(ownerExchangesBetween(f.mailbox, f.database.adapter, 'owner', 150, 300)).toEqual([
-      { at: 200, owner: 'decide the page rule', reply: 'noted' },
-      { at: 250, owner: 'still running', reply: null },
+    const messageRef = f.add(1, false);
+    const reply = {
+      messageRef,
+      text: 'Recovered reply',
+      occurredAt: 2,
+      author: 'agent' as const,
+      deliveryVerified: false,
+    };
+    f.chat.saveReply(reply);
+    expect(f.chat.exchanges(1, 2)).toEqual([{ at: 1, owner: 'request 1', reply: null }]);
+    f.chat.saveReply({ ...reply, occurredAt: 4, deliveryVerified: true });
+    expect(f.chat.exchanges(1, 2)).toEqual([
+      { at: 1, owner: 'request 1', reply: 'Recovered reply' },
+    ]);
+    expect(f.chat.recentExchanges('current')).toEqual([
+      { at: 1, owner: 'request 1', answer: 'Recovered reply' },
     ]);
   });
-});
 
-describe('session start context', () => {
-  it('gathers the last delivered owner exchanges, the checkpoint and the latest decisions', async () => {
+  it('reads delivered chat older than seven days, excluding other principals and the current message', async () => {
     const f = await fixture();
-    f.add('owner:1', 'owner_message', { text: 'request 1' }, '<b>answer 1</b>');
-    f.add('owner:2', 'owner_message', { text: 'request 2' }, 'answer 2', { delivered: 'ready' });
-    f.add('owner:3', 'owner_message', { text: 'request 3' }, 'answer 3', {
-      principalId: 'someone-else',
+    f.add(1);
+    f.add(2, false);
+    f.chat.saveReply({
+      messageRef: 'telegram:room-test:2',
+      text: 'Unverified model output',
+      occurredAt: 3,
+      author: 'agent',
+      deliveryVerified: false,
     });
-    f.add('delta:4', 'source_delta', liveDelta('files sent'), '[ack]');
-    f.add(
-      'replay:5',
-      'source_delta',
-      // A replay window carries message text in its refs too; it is still not a live change.
-      { ...liveDelta('replayed history'), replay: { windowStartMs: 1, windowEndMs: 2 } },
-      'window done'
-    );
-    f.add('record:6', 'scheduled', { order: 'record' }, '[ack]');
-    f.add('delta:7', 'source_delta', liveDelta('pending'), '[notify] x', { finished: false });
-    const current = f.add('owner:8', 'owner_message', { text: 'now' }, 'answer 8');
+    f.add(3, true, 'member-test');
+    const current = f.add(8);
+    const now = 30 * 86_400_000;
     const records = [
       { topic: 'older', summary: 'old decision', created_at: 1_000 },
       { topic: 'newer', summary: 'new decision', created_at: 3_600_000 * 2 },
     ] as unknown as MemoryRecord[];
     const input = await readSessionStartInput({
-      mailbox: f.mailbox,
-      deliveredRefs: new TelegramMessageLedger(f.ledgerPath).recentDeliveredMessageRefs(),
-      current,
+      exchanges: f.chat.recentExchanges(current),
       records: async () => records,
       checkpoint: async () => ({
         summary: 'Mid full report',
         nextSteps: 'publish the board',
         createdAt: 3_600_000,
       }),
-      now: 3_600_000 * 3,
+      now,
     });
-    // Only delivered owner exchanges of this principal, the current one left out, oldest first;
-    // messenger markup is stripped and source changes, record orders and replays are not carried.
-    expect(input.exchanges).toEqual([{ at: 1, owner: 'request 1', answer: 'answer 1' }]);
+    expect(f.chat.exchanges(2, 3)).toEqual([{ at: 2, owner: 'request 2', reply: null }]);
+    expect(input.exchanges).toEqual([{ at: 1, owner: 'request 1', answer: '<b>answer 1</b>' }]);
     expect(input.checkpoint).toEqual({
       summary: 'Mid full report',
       nextSteps: 'publish the board',
-      ageHours: 2,
+      ageHours: (now - 3_600_000) / 3_600_000,
     });
-    expect(input.decisions).toEqual([
-      { topic: 'newer', summary: 'new decision', ageHours: 1 },
-      { topic: 'older', summary: 'old decision', ageHours: (3_600_000 * 3 - 1_000) / 3_600_000 },
+    expect(input.decisions.map((record) => record.topic)).toEqual(['newer', 'older']);
+  });
+
+  it('carries only the latest ten delivered exchanges, oldest first', async () => {
+    const f = await fixture();
+    for (let i = 1; i <= 12; i++) f.add(i);
+    expect(f.chat.recentExchanges('current').map((exchange) => exchange.at)).toEqual([
+      3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+    ]);
+    expect(f.chat.exchanges(4, 6)).toEqual([
+      { at: 4, owner: 'request 4', reply: '<b>answer 4</b>' },
+      { at: 5, owner: 'request 5', reply: '<b>answer 5</b>' },
     ]);
   });
 });

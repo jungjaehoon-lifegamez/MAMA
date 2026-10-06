@@ -227,6 +227,7 @@ export function readReplaySourceEvents(
          LEFT JOIN observation_versions o ON o.observation_id = e.current_observation_id
         WHERE COALESCE(e.event_datetime, e.source_timestamp_ms) >= ?
           AND COALESCE(e.event_datetime, e.source_timestamp_ms) < ?
+          AND e.source_connector != 'chat'
         ORDER BY source_at_ms ASC, connector ASC, channel_key ASC, e.source_id ASC, raw_row_id ASC`
     )
     .all(fromMs, untilMs) as ReplayIndexRow[];

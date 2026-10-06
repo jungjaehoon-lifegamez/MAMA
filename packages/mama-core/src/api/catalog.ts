@@ -21,7 +21,10 @@ import {
   retireMemoryRecord,
   saveJudgmentRecord,
 } from '../memory/api.js';
-import { resolveMemoryProvenanceLive } from '../memory/provenance-live.js';
+import {
+  resolveMemoryProvenanceLive,
+  type ObservationBodyReadResult,
+} from '../memory/provenance-live.js';
 import {
   readDecisionListing,
   readProjectDecisions,
@@ -765,6 +768,11 @@ export function coreActionRegistrations(
   knowledge: Knowledge,
   adapter: DatabaseInstance,
   deps?: {
+    /** The consumer reads an externally stored observation's exact body under this caller. */
+    readObservationBody?: (
+      observationId: string,
+      context: ActionContext
+    ) => ObservationBodyReadResult;
     /**
      * The host's effect-ledger read port for `work.changes`. The
      * `evidence_effects` store is host-opened, so the catalog takes the port —
@@ -1612,6 +1620,9 @@ export function coreActionRegistrations(
           maxObservedMs: allowance?.maxObservedMs ?? null,
           maxSourceMs: allowance?.maxSourceMs ?? null,
           principalId: context.access.principalId,
+          ...(deps?.readObservationBody === undefined
+            ? {}
+            : { readObservationBody: (ref: string) => deps.readObservationBody!(ref, context) }),
           redact: (text: string) => sanitizeRecallText(text) ?? '',
         });
       },

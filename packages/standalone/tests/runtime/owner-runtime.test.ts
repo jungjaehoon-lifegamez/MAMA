@@ -22,6 +22,7 @@ describe('owner runtime assembly', () => {
     const owner = await createOwnerRuntime({
       backend: 'claude',
       model: 'fixture-model',
+      rawPath: join(home, 'raw'),
       databasePath: join(home, 'state.db'),
       socketPath: join(home, 'runtime.sock'),
       credentialPath: join(home, 'credential'),
@@ -83,6 +84,7 @@ describe('owner runtime assembly', () => {
     const owner = await createOwnerRuntime({
       backend: 'codex',
       model: 'test-model',
+      rawPath: join(home, 'raw'),
       databasePath: join(home, 'state.db'),
       socketPath: join(home, 'runtime.sock'),
       credentialPath: join(home, 'credential'),
@@ -125,6 +127,7 @@ describe('owner runtime assembly', () => {
     const owner = await createOwnerRuntime({
       backend: 'codex',
       model: 'test-model',
+      rawPath: join(home, 'raw'),
       databasePath: join(home, 'state.db'),
       socketPath: join(home, 'runtime.sock'),
       credentialPath: join(home, 'credential'),
@@ -167,6 +170,7 @@ describe('owner runtime assembly', () => {
     const owner = await createOwnerRuntime({
       backend: 'codex',
       model: 'test-model',
+      rawPath: join(home, 'raw'),
       databasePath: join(home, 'state.db'),
       socketPath: join(home, 'runtime.sock'),
       credentialPath: join(home, 'credential'),
@@ -223,6 +227,7 @@ describe('owner runtime assembly', () => {
     const owner = await createOwnerRuntime({
       backend: 'codex',
       model: 'test-model',
+      rawPath: join(home, 'raw'),
       databasePath: join(home, 'state.db'),
       socketPath: join(home, 'runtime.sock'),
       credentialPath: join(home, 'credential'),
