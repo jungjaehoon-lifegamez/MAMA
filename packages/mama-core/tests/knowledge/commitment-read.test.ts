@@ -40,7 +40,7 @@ async function createCommitment(
       scopes,
     },
     auth,
-    { adapter: getAdapter() }
+    { adapter: getAdapter(), embedder: null }
   );
   return receipt.work!.commitmentId;
 }
@@ -99,7 +99,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     const page = readWork(getAdapter(), { commitmentId }, access);
@@ -136,7 +136,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     const values = readWork(getAdapter(), { commitmentId }, access).items[0].values;
@@ -157,7 +157,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     const view = readWork(getAdapter(), { commitmentId }, access).items[0];
@@ -183,7 +183,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     const current = readWork(getAdapter(), { commitmentId }, access).items[0];
@@ -221,7 +221,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     await appendJudgment(
       {
@@ -238,7 +238,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     await appendJudgment(
       {
@@ -256,7 +256,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     await appendJudgment(
       {
@@ -274,7 +274,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     await appendJudgment(
       {
@@ -292,7 +292,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     await appendJudgment(
       {
@@ -305,7 +305,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     const chain = readWork(getAdapter(), { commitmentId, history: 'chain' }, access).items[0];
@@ -404,7 +404,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     await appendJudgment(
       {
@@ -421,7 +421,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     const hiddenRecord = getAdapter()
@@ -467,7 +467,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     getAdapter()
       .prepare(
@@ -500,7 +500,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     const commitmentId = created.work!.commitmentId;
     // A backfill appends the earlier period after the live revisions were written.
@@ -516,7 +516,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     const current = readWork(getAdapter(), { commitmentId, history: 'all' }, access).items[0];
@@ -546,7 +546,7 @@ describe('knowledge/commitments: reading owner work back', () => {
           scopes: access.scopes,
         },
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       );
     await expect(revise(at, at)).rejects.toThrow(/appliesUntil/);
     await expect(revise(at)).rejects.toThrow(/appliesUntil/);
@@ -566,7 +566,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     const commitmentId = created.work!.commitmentId;
     await appendJudgment(
@@ -585,7 +585,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     const before = readWork(getAdapter(), { commitmentId, asOf: firstEventAt - 1 }, access);
@@ -612,7 +612,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     await appendJudgment(
       {
@@ -631,7 +631,7 @@ describe('knowledge/commitments: reading owner work back', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     const assignments = getAdapter()

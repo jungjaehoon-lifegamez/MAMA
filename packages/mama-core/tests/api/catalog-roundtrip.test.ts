@@ -45,7 +45,7 @@ describe('Story R2: action catalog and dispatch roundtrip', () => {
 
   beforeAll(async () => {
     dbPath = await initTestDB('catalog-roundtrip');
-    knowledge = createKnowledge({ adapter: getAdapter() });
+    knowledge = createKnowledge({ adapter: getAdapter(), embedder: null });
   });
 
   beforeEach(() => {

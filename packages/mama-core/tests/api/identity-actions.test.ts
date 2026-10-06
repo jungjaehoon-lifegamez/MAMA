@@ -26,7 +26,7 @@ describe('Story R2: graph.identity.correct through the action surface', () => {
 
   beforeAll(async () => {
     dbPath = await initTestDB('identity-actions');
-    knowledge = createKnowledge({ adapter: getAdapter() });
+    knowledge = createKnowledge({ adapter: getAdapter(), embedder: null });
     dispatch = createDispatcher(createCatalog(coreActionRegistrations(knowledge, getAdapter())));
   });
 
@@ -220,7 +220,7 @@ describe('Story R3: graph.node.put through the action surface', () => {
 
   beforeAll(async () => {
     dbPath = await initTestDB('node-put-actions');
-    knowledge = createKnowledge({ adapter: getAdapter() });
+    knowledge = createKnowledge({ adapter: getAdapter(), embedder: null });
     dispatch = createDispatcher(createCatalog(coreActionRegistrations(knowledge, getAdapter())));
   });
 

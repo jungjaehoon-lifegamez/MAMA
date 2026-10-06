@@ -171,7 +171,7 @@ export async function appendOutcomeAmendment(
       event: { reason: input.eventReason ?? `outcome amendment for ${decisionId}` },
     },
     unsignedWriteAccess(scopes),
-    { adapter }
+    { adapter, embedder: null }
   );
   return { recordId: receipt.recordId, commandId: receipt.commandId };
 }

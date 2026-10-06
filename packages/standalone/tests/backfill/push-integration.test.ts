@@ -62,7 +62,7 @@ describe('backfill push through the owner actions', () => {
     source('src:lesson', '2026-08-18T18:44:00+09:00');
     source('src:live', SEP_FIRST);
 
-    const knowledge = createKnowledge({ adapter: handle.adapter });
+    const knowledge = createKnowledge({ adapter: handle.adapter, embedder: null });
     const surface = createActionSurface({
       adapter: handle.adapter,
       knowledge,
@@ -266,7 +266,7 @@ describe('backfill push through the owner actions', () => {
     );
     const surface = createActionSurface({
       adapter: handle.adapter,
-      knowledge: createKnowledge({ adapter: handle.adapter }),
+      knowledge: createKnowledge({ adapter: handle.adapter, embedder: null }),
       ownerPrincipalId: 'owner',
       agentId: 'owner-agent',
       timeZone: createTimeZoneSetting('Asia/Seoul'),

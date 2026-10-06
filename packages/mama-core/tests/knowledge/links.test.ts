@@ -35,7 +35,7 @@ describe('knowledge/links: appending an edge the agent judged', () => {
 
   beforeAll(async () => {
     dbPath = await initTestDB('knowledge-links');
-    knowledge = createKnowledge({ adapter: getAdapter() });
+    knowledge = createKnowledge({ adapter: getAdapter(), embedder: null });
   });
 
   beforeEach(() => {

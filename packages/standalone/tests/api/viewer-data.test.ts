@@ -34,7 +34,7 @@ describe('viewer data shaping', () => {
     const root = mkdtempSync(join(tmpdir(), 'mama-viewer-graph-data-'));
     const handle = await openCoreDatabase({ path: join(root, 'memory.db') });
     try {
-      const knowledge = createKnowledge({ adapter: handle.adapter });
+      const knowledge = createKnowledge({ adapter: handle.adapter, embedder: null });
       const access = {
         principalId: 'principal-viewer',
         agentId: 'agent-viewer',

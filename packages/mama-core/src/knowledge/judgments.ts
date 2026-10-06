@@ -94,8 +94,8 @@ export interface DestinationRef {
 
 export interface JudgmentKnowledgeOptions {
   adapter: DatabaseInstance;
-  /** Absent, records are written without a vector. */
-  embedder?: MemoryEmbedder;
+  /** The caller's embedder, or null to write text-only records without a vector. */
+  embedder: MemoryEmbedder | null;
 }
 
 export class JudgmentError extends Error {
@@ -573,7 +573,7 @@ async function appendJudgmentOnAdapter(
   adapter: DatabaseInstance,
   command: JudgmentCommand,
   access: JudgmentAccess,
-  embedder?: JudgmentKnowledgeOptions['embedder']
+  embedder: JudgmentKnowledgeOptions['embedder']
 ): Promise<JudgmentReceipt> {
   requireText(command.commandId, 'commandId');
   requireText(command.topic, 'topic');
@@ -979,10 +979,22 @@ export async function appendJudgment(
       'appendJudgment requires an explicit adapter; the process-global store is not a write path'
     );
   }
+  requireEmbedderChoice(options);
   return appendJudgmentOnAdapter(options.adapter, command, access, options.embedder);
 }
 
+// Untyped callers otherwise write records that similarity search can never find.
+function requireEmbedderChoice(options: JudgmentKnowledgeOptions): void {
+  if (options.embedder === undefined) {
+    throw new JudgmentError(
+      'INVALID_COMMAND',
+      'Writing knowledge requires an embedder, or null for text-only records'
+    );
+  }
+}
+
 export function createJudgmentWriter(options: JudgmentKnowledgeOptions) {
+  requireEmbedderChoice(options);
   return {
     appendJudgment: (command: JudgmentCommand, access: JudgmentAccess) =>
       appendJudgmentOnAdapter(options.adapter, command, access, options.embedder),

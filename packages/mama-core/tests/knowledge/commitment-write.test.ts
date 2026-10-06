@@ -66,7 +66,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     expect(written.revision).toBe(1);
@@ -93,7 +93,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     expect(
@@ -121,7 +121,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     const records = adapter.prepare('SELECT COUNT(*) AS n FROM decisions').get() as { n: number };
@@ -142,7 +142,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     await reviseWork(
       {
@@ -154,7 +154,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     await expect(
@@ -168,7 +168,7 @@ describe('knowledge/commitments: committing owner work', () => {
           scopes: access.scopes,
         },
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toThrow(/stale/i);
 
@@ -188,7 +188,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     await expect(
@@ -201,7 +201,7 @@ describe('knowledge/commitments: committing owner work', () => {
           scopes: access.scopes,
         },
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toThrow(/set, clear, or link/i);
   });
@@ -217,7 +217,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     const second = await createWork(
       {
@@ -229,7 +229,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     // The edge's subject is the revision's own record, committed atomically.
@@ -262,7 +262,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     expect(revised.revision).toBe(2);
 
@@ -276,7 +276,7 @@ describe('knowledge/commitments: committing owner work', () => {
   });
 
   it('revisions inherit the create topic, and the host links none of them', async () => {
-    const knowledge = createKnowledge({ adapter: getAdapter() });
+    const knowledge = createKnowledge({ adapter: getAdapter(), embedder: null });
     const created = await knowledge.createWork(
       {
         commandId: 'work-chain-create',
@@ -344,7 +344,7 @@ describe('knowledge/commitments: committing owner work', () => {
   });
 
   it('a revision keeps a topic the caller supplies', async () => {
-    const knowledge = createKnowledge({ adapter: getAdapter() });
+    const knowledge = createKnowledge({ adapter: getAdapter(), embedder: null });
     const created = await knowledge.createWork(
       {
         commandId: 'work-topic-create',
@@ -383,7 +383,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     await expect(
@@ -397,7 +397,7 @@ describe('knowledge/commitments: committing owner work', () => {
           scopes: access.scopes,
         },
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toThrow(/reference/i);
   });
@@ -412,7 +412,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     await expect(
       withdrawWork(
@@ -423,7 +423,7 @@ describe('knowledge/commitments: committing owner work', () => {
           scopes: access.scopes,
         } as unknown as Parameters<typeof withdrawWork>[0],
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toThrow();
   });
@@ -438,7 +438,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     const withdrawn = await withdrawWork(
       {
@@ -449,7 +449,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     expect(
@@ -479,7 +479,7 @@ describe('knowledge/commitments: committing owner work', () => {
           scopes: access.scopes,
         },
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toThrow(/withdrawn/i);
   });
@@ -492,8 +492,8 @@ describe('knowledge/commitments: committing owner work', () => {
       set: { title: 'Once' },
       scopes: access.scopes,
     };
-    const first = await createWork(command, access, { adapter: getAdapter() });
-    const second = await createWork(command, access, { adapter: getAdapter() });
+    const first = await createWork(command, access, { adapter: getAdapter(), embedder: null });
+    const second = await createWork(command, access, { adapter: getAdapter(), embedder: null });
 
     expect(second.commitmentId).toBe(first.commitmentId);
     expect(second.revision).toBe(1);
@@ -512,7 +512,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     await reviseWork(
       {
@@ -524,7 +524,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     const view = readWork(
@@ -555,7 +555,7 @@ describe('knowledge/commitments: committing owner work', () => {
           scopes: access.scopes,
         },
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toThrow(/RFC 3339/);
 
@@ -569,7 +569,7 @@ describe('knowledge/commitments: committing owner work', () => {
           scopes: access.scopes,
         },
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toThrow(/RFC 3339/);
   });
@@ -584,7 +584,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     const view = readWork(getAdapter(), { commitmentId: written.commitmentId }, access).items[0];
@@ -602,7 +602,7 @@ describe('knowledge/commitments: committing owner work', () => {
           scopes: access.scopes,
         },
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toThrow(/ISO date/);
 
@@ -616,7 +616,7 @@ describe('knowledge/commitments: committing owner work', () => {
           scopes: access.scopes,
         },
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toThrow(/ISO date/);
   });
@@ -631,7 +631,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     await expect(
@@ -645,7 +645,7 @@ describe('knowledge/commitments: committing owner work', () => {
           scopes: access.scopes,
         },
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toThrow(/RFC 3339/);
 
@@ -664,7 +664,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
 
     const view = readWork(getAdapter(), { commitmentId: written.commitmentId }, access).items[0];
@@ -682,7 +682,7 @@ describe('knowledge/commitments: committing owner work', () => {
           scopes: access.scopes,
         },
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toThrow(/deadlineOffsetMinutes/);
 
@@ -696,7 +696,7 @@ describe('knowledge/commitments: committing owner work', () => {
           scopes: access.scopes,
         },
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toThrow(/deadlineOffsetMinutes/);
 
@@ -709,7 +709,7 @@ describe('knowledge/commitments: committing owner work', () => {
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     const view = readWork(getAdapter(), { commitmentId: written.commitmentId }, access).items[0];
     expect(view.values.deadlineOffsetMinutes).toBe(540);

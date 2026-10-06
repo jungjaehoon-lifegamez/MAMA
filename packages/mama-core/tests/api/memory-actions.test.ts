@@ -38,7 +38,7 @@ describe('Story M1: memory.save through the unified action path', () => {
 
   beforeAll(async () => {
     dbPath = await initTestDB('memory-actions');
-    knowledge = createKnowledge({ adapter: getAdapter() });
+    knowledge = createKnowledge({ adapter: getAdapter(), embedder: null });
     dispatch = createDispatcher(createCatalog(coreActionRegistrations(knowledge, getAdapter())));
   });
 
@@ -928,7 +928,7 @@ describe('Story M5: source.ingest through the unified action path', () => {
 
   beforeAll(async () => {
     dbPath = await initTestDB('source-ingest-actions');
-    knowledge = createKnowledge({ adapter: getAdapter() });
+    knowledge = createKnowledge({ adapter: getAdapter(), embedder: null });
     dispatch = createDispatcher(createCatalog(coreActionRegistrations(knowledge, getAdapter())));
   });
 
@@ -1066,7 +1066,7 @@ describe('memory.read:experience through the unified action path', () => {
 
   beforeAll(async () => {
     dbPath = await initTestDB('experience-read-actions');
-    const knowledge = createKnowledge({ adapter: getAdapter() });
+    const knowledge = createKnowledge({ adapter: getAdapter(), embedder: null });
     dispatch = createDispatcher(createCatalog(coreActionRegistrations(knowledge, getAdapter())));
   });
 

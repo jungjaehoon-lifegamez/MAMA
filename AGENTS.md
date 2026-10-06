@@ -86,9 +86,6 @@ cd packages/mama-core && npx vitest run -t "pattern"
   data or the owner decision that requires it. Do not build from imagination.
 - **The agent judges, the host provides.** Meaning, relevance, identity and roles are not coded as
   rules. The host provides collection, storage, search, execution, permissions and receipts.
-- **Similarity search needs the index.** Records meant for similarity search enter the semantic
-  index: pass the embedder wherever core knowledge is constructed, and verify lexical and semantic
-  search separately.
 - **Relocate before you delete.** Before removing a host step, lane brief or policy line, name the
   place where its domain knowledge and owner corrections will reach the agent, and confirm it with
   one real owner turn.

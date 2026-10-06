@@ -176,7 +176,7 @@ describe('Story R2: client/ipc — describe, call, getOperation over a real Unix
 
   beforeAll(async () => {
     dbPath = await initTestDB('ipc-actions');
-    knowledge = createKnowledge({ adapter: getAdapter() });
+    knowledge = createKnowledge({ adapter: getAdapter(), embedder: null });
 
     const catalog = createCatalog([
       ...coreActionRegistrations(knowledge, getAdapter()),

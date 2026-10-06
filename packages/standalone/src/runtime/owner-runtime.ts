@@ -71,7 +71,7 @@ export interface OwnerRuntimeOptions {
   scopes: readonly MemoryScopeRef[];
   connectors?: readonly string[];
   rawPath: string;
-  embedder?: KnowledgeOptions['embedder'];
+  embedder?: NonNullable<KnowledgeOptions['embedder']>;
   nativeSession?: NativeSessionHandle & Partial<Pick<NativeSession, 'callAction'>>;
   modelRun?: NativeModelRunPort;
   effort?: RuntimeEffort;

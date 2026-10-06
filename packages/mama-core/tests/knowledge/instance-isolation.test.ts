@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { createKnowledge } from '../../src/knowledge/index.js';
+import { appendJudgment, createJudgmentWriter } from '../../src/knowledge/judgments.js';
 import { openDatabase, type DatabaseHandle } from '../../src/storage/database.js';
 
 const ACCESS = {
@@ -34,11 +35,61 @@ describe('Story R1: knowledge instance isolation', () => {
     return handle;
   }
 
+  it('requires an explicit embedder choice and stores vectors only when supplied', async () => {
+    const { adapter } = await openIsolated('embedder-choice');
+    const vector = new Float32Array(1024).fill(0.25);
+    for (const construct of [createKnowledge, createJudgmentWriter]) {
+      for (const options of [{ adapter }, { adapter, embedder: undefined }]) {
+        expect(() => Reflect.apply(construct, undefined, [options])).toThrow(
+          /embedder.*null.*text-only/
+        );
+      }
+      for (const embedder of [null, { embed: async () => vector }]) {
+        const writer = construct({ adapter, embedder });
+        const receipt = await writer.appendJudgment(
+          {
+            commandId: `${construct.name}-${embedder === null ? 'text' : 'vector'}`,
+            topic: 'embedder-choice',
+            summary: 'Store a record with the selected indexing mode',
+            recordKind: 'judgment',
+          },
+          ACCESS
+        );
+        expect(
+          adapter.prepare('SELECT id FROM decisions WHERE id = ?').get(receipt.recordId)
+        ).toEqual({ id: receipt.recordId });
+        const stored = adapter
+          .prepare(
+            'SELECT embedding FROM embeddings WHERE rowid = (SELECT rowid FROM decisions WHERE id = ?)'
+          )
+          .get(receipt.recordId) as { embedding: Buffer } | undefined;
+        if (embedder === null) {
+          expect(stored).toBeUndefined();
+        } else {
+          expect(stored?.embedding).toEqual(Buffer.from(vector.buffer));
+        }
+      }
+    }
+    // The public write path refuses the omission too; work writes go through it.
+    await expect(
+      Reflect.apply(appendJudgment, undefined, [
+        {
+          commandId: 'direct-without-embedder',
+          topic: 'embedder-choice',
+          summary: 'A direct write that names no embedder',
+          recordKind: 'judgment',
+        },
+        ACCESS,
+        { adapter },
+      ])
+    ).rejects.toThrow(/embedder.*null.*text-only/);
+  });
+
   it('a judgment written on one instance is invisible on another', async () => {
     const first = await openIsolated('a');
     const second = await openIsolated('b');
-    const knowledgeA = createKnowledge({ adapter: first.adapter });
-    const knowledgeB = createKnowledge({ adapter: second.adapter });
+    const knowledgeA = createKnowledge({ adapter: first.adapter, embedder: null });
+    const knowledgeB = createKnowledge({ adapter: second.adapter, embedder: null });
 
     const receipt = await knowledgeA.appendJudgment(
       {

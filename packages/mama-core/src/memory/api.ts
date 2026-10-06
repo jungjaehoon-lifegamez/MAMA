@@ -1046,7 +1046,7 @@ export async function retireMemoryRecord(
       event: { reason: `Retired ${id} as ${input.status}: ${reason}` },
     },
     access,
-    { adapter }
+    { adapter, embedder: null }
   );
   return { success: true, id, status: input.status, reason, receiptId: receipt.recordId };
 }

@@ -19,7 +19,7 @@ describe('Story R1: knowledge.queryGraph over real adapter', () => {
 
   beforeAll(async () => {
     dbPath = await initTestDB('graph-roundtrip');
-    knowledge = createKnowledge({ adapter: getAdapter() });
+    knowledge = createKnowledge({ adapter: getAdapter(), embedder: null });
   });
 
   beforeEach(() => {

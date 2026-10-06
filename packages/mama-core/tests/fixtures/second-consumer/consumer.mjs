@@ -18,7 +18,7 @@ try {
   });
   try {
     const embedder = { embed: async () => null };
-    const knowledge = createKnowledge({ adapter: db.adapter, embedder });
+    const knowledge = createKnowledge({ adapter: db.adapter, embedder: null });
     const scopes = [{ kind: 'workbench', id: 'bench-1' }];
     const access = { principalId: 'bench-principal', agentId: 'bench-agent', scopes };
 
