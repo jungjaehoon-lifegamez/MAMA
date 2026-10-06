@@ -30,6 +30,13 @@ import type {
   HostToolDefinition,
 } from '@jungjaehoon/mama-core/runtime/drivers/types';
 import { CodexRuntimeProcess } from '@jungjaehoon/mama-core/runtime/runtime-process';
+import Database from 'better-sqlite3';
+import { readdirSync } from 'node:fs';
+import {
+  beginModelRun,
+  commitModelRun,
+  failModelRun,
+} from '@jungjaehoon/mama-core/runtime/model-run-store';
 const roots: string[] = [];
 
 interface FixtureTurn {
@@ -306,7 +313,15 @@ rl.on('line', line => {
     const usageSeqPath = ${JSON.stringify(join(root, 'usage-seq'))};
     const useq = fs.existsSync(usageSeqPath) ? Number(fs.readFileSync(usageSeqPath, 'utf8')) : 0;
     fs.writeFileSync(usageSeqPath, String(useq + 1));
-    if (mode === 'usage-no-total') {
+    if (mode === 'usage-compaction') {
+    const compact = (method, turnId=id) => send({jsonrpc:'2.0',method,params:{threadId:message.params.threadId,turnId,item:{id:'compact-'+id,type:'contextCompaction'}}});
+    compact('item/completed','prior-turn');
+    compact('item/started');
+    compact('item/completed');
+    send({jsonrpc:'2.0',method:'thread/tokenUsage/updated',params:{threadId:message.params.threadId,turnId:id,tokenUsage:{last:{inputTokens:8,outputTokens:6,cachedInputTokens:3,cacheWriteInputTokens:2},total:{inputTokens:8+8*useq,outputTokens:6+6*useq,cachedInputTokens:3+3*useq,cacheWriteInputTokens:2+2*useq}}}});
+    } else if (mode === 'usage-missing') {
+    send({jsonrpc:'2.0',method:'thread/tokenUsage/updated',params:{threadId:message.params.threadId,turnId:id,tokenUsage:{last:{inputTokens:0,outputTokens:0}}}});
+    } else if (mode === 'usage-no-total') {
     send({jsonrpc:'2.0',method:'thread/tokenUsage/updated',params:{threadId:message.params.threadId,turnId:id,tokenUsage:{last:{inputTokens:3,outputTokens:2,cachedInputTokens:1}}}});
     send({jsonrpc:'2.0',method:'thread/tokenUsage/updated',params:{threadId:message.params.threadId,turnId:id,tokenUsage:{last:{inputTokens:5,outputTokens:4,cachedInputTokens:2}}}});
     } else if (mode === 'usage-mixed-total') {
@@ -816,6 +831,98 @@ describe('Story: Codex app-server process', () => {
       usage: { input_tokens: 8, output_tokens: 6, cache_read_input_tokens: 3 },
     });
     await proc.stop();
+  });
+
+  it('commits Codex cached input, cache writes and an explicit context compaction item', async () => {
+    const item = fixture('usage-compaction');
+    const driver = new CodexAppServerProcess(item.options);
+    const db = new Database(':memory:');
+    const migrations = join(__dirname, '../../../mama-core/db/migrations');
+    for (const file of readdirSync(migrations)
+      .filter((name) => /^\d{3}-.+\.sql$/.test(name))
+      .sort()) {
+      db.exec(readFileSync(join(migrations, file), 'utf8'));
+    }
+    const pool = new SessionPool();
+    const native = createNativeSessionRunner({
+      agent: {
+        backendType: 'codex',
+        reportsModelRuns: true,
+        prompt: driver.prompt.bind(driver),
+      } as never,
+      backend: 'codex',
+      model: 'fixture-model',
+      maxTurns: 10,
+      isGatewayMode: true,
+      runTokenBudget: 0,
+      sessionPool: pool,
+      turnPolicy: () => ({ channelKey: 'fixture-lane', systemLayers: [] }),
+      executionContext: () => null,
+      hostToolDefinitions: () => [],
+      callTool: async () => ({ success: true }),
+      modelRun: {
+        begin: async () => beginModelRun(db, {}).model_run_id,
+        commit: async (...args) => {
+          commitModelRun(db, ...args);
+        },
+        fail: async (...args) => {
+          failModelRun(db, ...args);
+        },
+      },
+    });
+    try {
+      await native.runTurn([{ type: 'text', text: 'fixture' }]);
+      expect(db.prepare('SELECT * FROM model_runs').get()).toMatchObject({
+        status: 'committed',
+        token_count: 14,
+        input_tokens: 8,
+        output_tokens: 6,
+        cache_read_input_tokens: 3,
+        cache_creation_input_tokens: 2,
+        compaction_count: 1,
+      });
+      await native.runTurn([{ type: 'text', text: 'next' }]);
+      const rows = db.prepare('SELECT * FROM model_runs').all();
+      expect(rows).toHaveLength(2);
+      expect(rows[1]).toMatchObject({
+        input_tokens: 8,
+        cache_read_input_tokens: 3,
+        cache_creation_input_tokens: 2,
+        compaction_count: 1,
+      });
+    } finally {
+      await driver.stop();
+      pool.dispose();
+      db.close();
+    }
+  });
+
+  it('keeps omitted Codex cache fields absent while preserving explicit zero tokens', async () => {
+    const item = fixture('usage-missing');
+    const driver = new CodexAppServerProcess(item.options);
+    try {
+      const result = await driver.prompt('fixture');
+      expect(result.usage).toEqual({ input_tokens: 0, output_tokens: 0, compaction_count: 0 });
+    } finally {
+      await driver.stop();
+    }
+  });
+
+  it('reports observed Codex usage with a failed turn', async () => {
+    const item = fixture('failed');
+    const driver = new CodexAppServerProcess(item.options);
+    try {
+      await expect(driver.prompt('fixture')).rejects.toMatchObject({
+        usage: {
+          input_tokens: 8,
+          output_tokens: 6,
+          cache_read_input_tokens: 3,
+          compaction_count: 0,
+        },
+      });
+    } finally {
+      await driver.stop();
+    }
   });
 
   it('keeps accumulated per-call usage when a cumulative total arrives mid-turn', async () => {

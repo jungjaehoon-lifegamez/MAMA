@@ -47,6 +47,13 @@ function invocation(prompt: IModelRunner['prompt'], onAccepted?: PromptCallbacks
     runScope: { streamCallbacks: onAccepted ? { onAccepted } : undefined },
     toolExecutionContext: null,
     totalUsage: { input_tokens: 0, output_tokens: 0 },
+    runUsage: {
+      input_tokens: null,
+      cache_read_input_tokens: null,
+      cache_creation_input_tokens: null,
+      output_tokens: null,
+      compaction_count: null,
+    },
     tracksSessionPolicy: false,
   } as NativePromptContext<HostExecutionContext>;
   let effects = 0;
