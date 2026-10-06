@@ -7,13 +7,13 @@ Rules: [AGENTS.md](../../AGENTS.md). Keep this plan under 200 lines and each che
 ## Where things stand
 
 - The owner flow runs on the installed daemon from this folder, in one owner session ([check](checks.md#w1-cutover)).
-- C1 passed once after a restart, for production work ([check](checks.md#owner-checks-after-the-1952-restart-c1-c2-c3-c4-2026-10-04-20252030)).
+- C1 answered 22 of 23 open production items after a restart; the owner has not accepted it yet ([check](checks.md#owner-checks-after-the-1952-restart-c1-c2-c3-c4-2026-10-04-20252030)).
 - C2 was accepted for owner chat turns on 2026-10-06 ([check](checks.md#c2c5-owner-acceptance-and-monitoring-stopped-2026-10-06)).
 - C3 passed twice, including a new session after a restart ([check](checks.md#owner-checks-after-the-1952-restart-c1-c2-c3-c4-2026-10-04-20252030)).
 - C4 passed on a requested full report following the owner's rules; its board pipeline equals the ledger ([check](checks.md#c4-full-reports-against-the-ledger-420424-2026-10-05)).
 - C5 was accepted for owner chat turns on 2026-10-06; no restart repeat ran ([check](checks.md#c2c5-owner-acceptance-and-monitoring-stopped-2026-10-06)).
 - C6 passes with search through the packed core's public exports (W3, W4's search half; [check](checks.md#c6-with-search-a-consumer-searches-its-own-records-without-a-model-w4-2026-10-05)).
-- Standing owner rules have no policy write path. Reminder and daily turns get no rule (W37, 2026-10-06; [check](checks.md#how-corrections-reach-each-turn-kind-w37-decided-2026-10-06)).
+- Standing owner rules have no write path: `owner-policy.ts` only reads the file (W37, 2026-10-06; [check](checks.md#how-corrections-reach-each-turn-kind-w37-decided-2026-10-06)).
 
 ## Owner checks
 
@@ -48,13 +48,14 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
 
 ## Next, in order
 
-1. W37: standing owner rules move into the owner policy ([work list](work/owner-rules.md)). Owner chat
-   turns get the write path; every turn kind then carries the rules before the rule index goes.
-   W37.1 also removes the call shapes #415, #416 and #426 put into the corrections and daily
-   procedures (owner, 2026-10-06): `help` gives the contracts and a wrong call is refused. The
-   daily page's path and its type `daily` stay; they are domain facts, not call shapes.
-2. W38: conversations with MAMA are kept as raw sources ([work list](work/owner-chat.md)). The
-   remaining mailbox messages and orphan replies were snapshotted in the testbed on 2026-10-06.
+1. W38: conversations with MAMA are kept as raw sources ([work list](work/owner-chat.md)). It goes
+   first: W37's policy records cite the owner message as a stored original, and messages after the
+   10-06 snapshot leave the mailbox from 10-13. W38 also deletes the 1,000 lines of
+   `conversation-record.ts` and `session-store.ts`, an unused earlier version of it.
+2. W37: standing owner rules move into the owner policy ([work list](work/owner-rules.md)), with
+   protected revision records, the call shapes of #415/#416/#426 removed, a wiki publish without a
+   type refused instead of filed as `entity`, and situational report rules relocated before the
+   rule index goes.
 3. Team flow: [research](research/team-members-research.md) and
    [program comparison](research/letta-mama-program-comparison.md). Owner, 2026-10-06: separate
    agent sessions for the common session, the owner session and each team member; each keeps
@@ -65,17 +66,17 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    writer's whole access, and scoped recall picks candidates before filtering. Forwarding client
    feedback to a team destination is a delivery question here; it gets no separate route.
    Then write the first-member spec and plan.
-4. Collection check, no build: whether the Chatwork room that keeps timing out loses messages or
-   catches up on the next poll.
-5. Core: [W11's candidates](checks.md#w11-core-subtraction-2026-10-05) are the unused memory-agent
-   vocabulary (`AuditNotice`, `MemoryConsultResult`, consult intents and ack statuses) and the
-   removed code's tables, after a data check on every database.
-   [W8's Drive delivery check](checks.md#a-second-owner-and-drive-delivery-409-w8-2026-10-05) needs a
-   delivery bound to a work revision, then a read of its version, link, hash and receipt.
-6. W23's program measures: compactions per day, input size per turn, reply wait, and recovery when
-   a restart lands during a record order. W26: the next one-day replay writes its records and
-   receipts without touching the live session. September is not re-imported; live changes and
-   corrections complete it (owner, 2026-09-29).
+4. Core: a knowledge construction without an embedder writes records without a vector and says
+   nothing (`mama-core/src/knowledge/judgments.ts:97`); the 10-03 check found 178 revisions written
+   that way. Make the embedder an explicit argument, `null` for text-only, as W4 did for recall.
+   Then the AGENTS.md index rule can go. [W11's candidates](checks.md#w11-core-subtraction-2026-10-05)
+   follow: the unused memory-agent vocabulary (`AuditNotice`, `MemoryConsultResult`, consult
+   intents and ack statuses) and the removed code's tables, after a data check on every database.
+5. W23's program measures: compactions per day, input size per turn, reply wait, and recovery when
+   a restart lands during a record order. W26: replay runs every stimulus under
+   `OWNER_RUNTIME_SESSION_KEY` (`runtime/stimulus-delivery.ts:659`); check whether a replay resumes
+   the live native session and give it its own session if it does, then run a one-day replay.
+   September is not re-imported; live changes and corrections complete it (owner, 2026-09-29).
 
 ## Waiting
 
@@ -88,8 +89,10 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
   writes. Settle both when a consumer needs catalog search.
 - W11: the native turn's background-task registry remains a removal candidate.
 - W28: the next unrecorded batch shows the live waiting → retry → recorded trace.
-- Search: a paraphrase that shares no word with the case it means misses the vector channel.
-  Check it on the next owner question that fails that way.
+- Chatwork: one failing room drops the whole poll (`connectors/chatwork/index.ts:216`) and a room
+  reads its latest 100 messages. No loss is observed: MAMA's daily Chatwork counts from 09-30 to
+  10-06 equal or exceed Kagemusha's. Fix it when a room's backlog could pass 100 between
+  successful polls.
 - `codex/core-unused-runtime` (101 lines of unused memory-agent contracts out of core; needs a core
   release) merges after the items in "Next" are done (owner, 2026-10-06).
 
@@ -98,7 +101,12 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
 1. Telegram placeholder and streaming delivery (W25). Explained to the owner on 2026-10-06.
 2. Whether W37.4 also removes the record order's lesson recall ([owner-rules.md](work/owner-rules.md)).
    Explained to the owner on 2026-10-06.
-3. Two project names and an asset name stayed in the check log's history from 2026-09-30 to
+3. Paraphrase search: four reproduced paraphrases miss the August case in the vector channel
+   ([check](checks.md#fts5-terms-as-quoted-text-and-a-trigram-index-for-korean-and-japanese-words-410-411-2026-10-05)),
+   and the vector top-K is chosen before filtering (`mama-core/src/memory/api.ts:1152`). The
+   reviews suggest a bounded investigation now, not waiting for an owner question; no algorithm is
+   chosen.
+4. Two project names and an asset name stayed in the check log's history from 2026-09-30 to
    2026-10-06 (removed from the current file). Whether to rewrite the git history.
 
 ## History
