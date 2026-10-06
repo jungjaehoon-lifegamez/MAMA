@@ -56,7 +56,12 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    protected revision records, the call shapes of #415/#416/#426 removed, a wiki publish without a
    type refused instead of filed as `entity`, and situational report rules relocated before the
    rule index goes.
-3. Team flow: [research](research/team-members-research.md) and
+3. W25 (owner, 2026-10-06): a Telegram reply shows the typing action and a `⏳` placeholder at
+   once and is replaced by the final answer; no streaming edits. The ledger delivers into the
+   placeholder, and an interrupted turn turns the placeholder into the interruption notice.
+   Measured since 09-29: 123 owner messages took 54 s on average to answer, 11 over three minutes,
+   with nothing shown meanwhile.
+4. Team flow: [research](research/team-members-research.md) and
    [program comparison](research/letta-mama-program-comparison.md). Owner, 2026-10-06: separate
    agent sessions for the common session, the owner session and each team member; each keeps
    common memory apart from each member's memory, and the owner's agent cannot read a member's
@@ -66,13 +71,18 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    writer's whole access, and scoped recall picks candidates before filtering. Forwarding client
    feedback to a team destination is a delivery question here; it gets no separate route.
    Then write the first-member spec and plan.
-4. Core: a knowledge construction without an embedder writes records without a vector and says
+5. Paraphrase search, bounded (owner, 2026-10-06): reproduce the four paraphrases that miss the
+   August case in the vector channel
+   ([check](checks.md#fts5-terms-as-quoted-text-and-a-trigram-index-for-korean-and-japanese-words-410-411-2026-10-05))
+   and find where each drops out: the embedding, the vector top-K chosen before filtering
+   (`mama-core/src/memory/api.ts:1152`), or later ranking. No algorithm is chosen in advance.
+6. Core: a knowledge construction without an embedder writes records without a vector and says
    nothing (`mama-core/src/knowledge/judgments.ts:97`); the 10-03 check found 178 revisions written
    that way. Make the embedder an explicit argument, `null` for text-only, as W4 did for recall.
    Then the AGENTS.md index rule can go. [W11's candidates](checks.md#w11-core-subtraction-2026-10-05)
    follow: the unused memory-agent vocabulary (`AuditNotice`, `MemoryConsultResult`, consult
    intents and ack statuses) and the removed code's tables, after a data check on every database.
-5. W23's program measures: compactions per day, input size per turn, reply wait, and recovery when
+7. W23's program measures: compactions per day, input size per turn, reply wait, and recovery when
    a restart lands during a record order. W26: replay runs every stimulus under
    `OWNER_RUNTIME_SESSION_KEY` (`runtime/stimulus-delivery.ts:659`); check whether a replay resumes
    the live native session and give it its own session if it does, then run a one-day replay.
@@ -80,7 +90,6 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
 
 ## Waiting
 
-- W25: Telegram placeholder and streaming replies wait for the owner's decision.
 - W12: live Discord and Slack turns wait for an enabled messenger.
 - W13: the hosted Pages build waits for the next docs deployment.
 - W2, W4, W29: person edges and the remaining revision/wiki index, including page citations
@@ -98,15 +107,7 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
 
 ## Owner decisions still open
 
-1. Telegram placeholder and streaming delivery (W25). Explained to the owner on 2026-10-06.
-2. Whether W37.4 also removes the record order's lesson recall ([owner-rules.md](work/owner-rules.md)).
-   Explained to the owner on 2026-10-06.
-3. Paraphrase search: four reproduced paraphrases miss the August case in the vector channel
-   ([check](checks.md#fts5-terms-as-quoted-text-and-a-trigram-index-for-korean-and-japanese-words-410-411-2026-10-05)),
-   and the vector top-K is chosen before filtering (`mama-core/src/memory/api.ts:1152`). The
-   reviews suggest a bounded investigation now, not waiting for an owner question; no algorithm is
-   chosen.
-4. Two project names and an asset name stayed in the check log's history from 2026-09-30 to
+1. Two project names and an asset name stayed in the check log's history from 2026-09-30 to
    2026-10-06 (removed from the current file). Whether to rewrite the git history.
 
 ## History
