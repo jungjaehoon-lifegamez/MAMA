@@ -9,7 +9,7 @@ nav_order: 6
 Establish the promised owner result before publishing. Builds, test counts, package installation
 and delivery receipts support that evidence; they do not establish it alone. Use
 [the intent workflow](intent-workflow.md) and record remaining failures in
-[the check log](../rebuild/checks.md).
+[the check log](checks.md).
 
 ## Prepare the candidate
 
@@ -61,9 +61,11 @@ behaviour and environment differences; they should not be the first evaluation o
 ## Review privacy and the commit
 
 Scan the working tree, every added line and commit message on the release branch, and the PR body
-for private names, business content, identifiers, addresses and credentials. Remove findings and
-repeat the scan. The rebuild's [privacy gate](../rebuild/docs-cleanup.md)
-requires the owner's go-ahead before pushing or opening the PR.
+for private names, business content, identifiers, addresses and credentials. Include every added
+line and commit message in the branch history, plus the PR body. Remove findings, rewrite a commit
+if it contains private material, and repeat the scan until clean. Check links for deleted files and
+check new claims against the current code. Wait for the owner's go-ahead before pushing or opening
+the PR.
 
 Stage named files. Pass the commit message through `git commit -F <message-file>` and inspect
 `git log` before reporting the commit. Do not add local planning folders through blanket staging.

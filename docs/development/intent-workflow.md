@@ -46,7 +46,7 @@ not proof of answer quality. A saved correction is not proof of changed behaviou
 3. Run the smallest useful test, then the installed and real-owner checks needed for the claim.
 4. Read back work revisions, source evidence, board or wiki changes and delivery results. For files,
    compare the actual artifact with the request and base version; preserve originals and new versions.
-5. Add 3–5 lines to [checks](../rebuild/checks.md): result, command or evidence, evidence level and
+5. Add 3–5 lines to [checks](checks.md): result, command or evidence, evidence level and
    what still fails. Use **met**, **partial**, **not met** or **unverified** for each check.
 6. Keep completed sub-tasks separate from completion of the overall purpose.
 

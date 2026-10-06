@@ -22,6 +22,10 @@ changes. Reusing a topic or finding similar text does not automatically supersed
 record. Explicit links preserve how a conclusion evolved, including failed approaches and the
 reason for changing direction.
 
+The agent states a link and its reason when it connects a work item, memory, person or source
+observation. A work link can be added without revising the item. A wrong link remains in history;
+the agent can append a `contradicts` link to that link and explain the correction.
+
 MAMA OS uses `memory.save`; the development-memory MCP uses `save`. Their schemas and default
 databases differ. See [actions](../reference/actions.md) and [MCP tools](../reference/mcp-tools.md).
 
@@ -39,6 +43,11 @@ databases differ. See [actions](../reference/actions.md) and [MCP tools](../refe
 Memory search combines vector and lexical candidates, applies scope and status filters, and can
 include related graph records. Ranking is not confidence that the content is true. Read the
 history and original evidence before treating an old statement as a current fact.
+
+Search can show links from a direct hit and records reached through those links, with the
+relationship and reason. Start with a matching item, follow its links to related work and
+revisions, then read the cited source messages. Similar text alone does not establish that two
+items are the same case.
 
 Source search is a separate path over the retained source index. It supports connector, channel
 and source-time filters, substring text matching and pagination. Results include source and

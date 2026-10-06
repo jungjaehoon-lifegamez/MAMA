@@ -13,7 +13,7 @@ One entry per work item: result, evidence, what still fails. 3-5 lines each.
   kept, integrity ok. The original was only read.
 - Still open: release/publish jobs would publish the stub standalone if a release tag is pushed. The daemon
   is stopped until the W1 cutover.
-  Later state: see [W1 cutover](#w1-cutover) and [current product facts](product-facts.md); this is the W0 snapshot, not the current standalone or daemon status.
+  Later state: see [W1 cutover](#w1-cutover) and [current product facts](https://github.com/jungjaehoon-lifegamez/MAMA/blob/81695ecbc/docs/rebuild/product-facts.md); this is the W0 snapshot, not the current standalone or daemon status.
 
 ## W1 slice 3 — 2026-09-25
 
@@ -921,7 +921,7 @@ The implementation writes raw/index data during import only. Replay is the owner
 ## D2 documentation pass 1 — 2026-09-27
 
 - Result: all 27 D2 pages written or updated; 37 retired files read first, with 35 paths removed and two rewritten in place. Current knowledge was carried forward; no archive folder was added.
-- Evidence: source-checked CLI/config/viewer/MCP references; the owner action table is generated from 19 actual runtime registrations. The [pass-1 report](docs-pass1-report.md) records paths, line counts and validation.
+- Evidence: source-checked CLI/config/viewer/MCP references; the owner action table is generated from 19 actual runtime registrations. The [pass-1 report](https://github.com/jungjaehoon-lifegamez/MAMA/blob/81695ecbc/docs/rebuild/docs-pass1-report.md) records paths, line counts and validation.
 - Verification: combined documentation relative-link check has no unresolved paths; catalog grants and generated rows match. Security content is retained except the onboarding and Telegram environment-token addition.
 - Remaining: README/website/CHANGELOG/TODOS are pass 2; fresh-machine onboarding, packaged viewer assets and owner-result verification are not established by this documentation pass. `git rm` could not write the sandbox-protected index, so deletions remain unstaged; no commit.
 - 2026-09-27 03:40 KST: docs pass 1: 35 obsolete pages deleted (no archive), 27 pages written or updated in
@@ -1072,14 +1072,14 @@ The implementation writes raw/index data during import only. Replay is the owner
 
 ### Review F3 — final verification and limits
 
-- All 19 items fixed after red/green verification; detailed file counts and commands: [review-f3-results.md](review-f3-results.md). No standalone edits or commits.
+- All 19 items fixed after red/green verification; detailed file counts and commands: [review-f3-results.md](https://github.com/jungjaehoon-lifegamez/MAMA/blob/81695ecbc/docs/rebuild/review-f3-results.md). No standalone edits or commits.
 - Core focused 93/93; full core 870 pass / 44 fail across 7 socket-dependent files (listen EPERM and its cleanup error). MCP 139/139; plugin 170/170; build, typecheck and changed-file lint pass.
 - Live owner acceptance and deployment remain untested. MAMA MCP decision save was refused by the tool approval policy (never); contract decisions are retained in the result document.
 
 ### F4 — Codex re-verification of F1–F3 (2026-09-27)
 
 - Codex re-read all 49 items against the code: resolved except eight, listed in
-  [review-fixes.md](review-fixes.md) §F4 (attachment write race, symlinked delivery root, MCP checkpoint
+  [review-fixes.md](https://github.com/jungjaehoon-lifegamez/MAMA/blob/81695ecbc/docs/rebuild/review-fixes.md) §F4 (attachment write race, symlinked delivery root, MCP checkpoint
   secret scan, Telegram recovery blocking polling, regenerated report key, sibling attachment, recursive
   edge CTE, Trello failed-board count). All eight fixed with a red/green test each; a re-download of the
   same attachment still replaces the earlier file (temp file + rename in the rechecked directory).
@@ -1405,7 +1405,7 @@ The implementation writes raw/index data during import only. Replay is the owner
 
 ### The agent links records with a reason; the host writes no edge (2026-09-30)
 
-- Result: `work.link` and `work.list` view `links` in MAMA OS; `save` `links`/`replaces`, `link` and `get_decision` in the MCP; one core `appendLink` under both, appending an edge with its reason and no revision, and correcting a wrong link by a newer `contradicts` edge. The host revision chain, the evolution rules and the similarity view are gone; an amendment keeps the values it replaced. Plan: `docs/rebuild/memory-edges.md` v6.
+- Result: `work.link` and `work.list` view `links` in MAMA OS; `save` `links`/`replaces`, `link` and `get_decision` in the MCP; one core `appendLink` under both, appending an edge with its reason and no revision, and correcting a wrong link by a newer `contradicts` edge. The host revision chain, the evolution rules and the similarity view are gone; an amendment keeps the values it replaced. Plan: [edge-tools record](https://github.com/jungjaehoon-lifegamez/MAMA/blob/81695ecbc/docs/rebuild/memory-edges.md) v6.
 - Evidence: record turns wrote 0 precedent links in 18 bench runs; answers given the `cases` topic wrote one in 12 of 12, 16 of 17 pointing at a real precedent (`memory-edges-evidence.md`). The development memory held 690 host similarity links and 185 parsed from reasoning text. Tests: core 970, standalone 1,205, MCP 142, plugin 171.
 - Verified before merge (2026-09-30), on copies:
   - Development memory (schema 80, 1,311 decisions): the branch's MCP server listed `link` and `get_decision`; a save with `links`, a link after it, a retried link (same edge, `replayed`), a correction, and reads from both ends all worked, and no host edge was written. `get_decision` labelled a similarity link from 1.12.1 `host` and a parsed one `agent_text`. The first run exposed migration 084 deleting all 414 scope bindings on the way to 099 (fixed in this PR); a fresh copy then kept 414 bindings, 14 scopes, 710 checkpoints and 950 decision edges, with clean foreign-key and integrity checks.
@@ -1660,3 +1660,78 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Fixes: #420 the pipeline gives the local due day of an exact due time. #421 the full-report procedure carries the owner rule index; both report paths read it (21 scheduled and 4 requested from 09-29 to 10-05). #422 the owner's rules set the order and the board pipeline comes from `work.list pipeline`. #423 time lines state the year and weekday: a requested report called Monday 10-05 a Sunday, the weekday it had in 2025. #424 (owner) the report names open items by importance and settles items past their deadline.
 - Evidence: a requested report at 21:20 opened 12 rule bodies but kept the default layout and built a pipeline of 22 of 41 rows by hand. At 21:55 it opened 13, followed the owner's order (actions, decisions, deadline risk, changes, client signals, work, schedule and lodging), built the pipeline from `work.list` (41 of 41 rows, all 41 due dates equal to the ledger) and dated the days right.
 - Owner: the text need not name every open item, and an inquiry with only a promised reply need not be reported, or treated the same in every run. Scheduled reports read the same procedure; the owner accepted them without a separate run. Left: at 21:55 a 19:40 exchange sat under "no change since the last report".
+
+### C2/C5 owner acceptance and monitoring stopped (2026-10-06)
+
+- Owner decision: "모니터링은 안해도된다 통과했다고 봐야겠어". C2 and C5 are accepted for the current owner-flow check; the dedicated heartbeat is paused and no further C2/C5 monitoring or forced repeat is requested.
+- Observed C2: input 2180 answered from the task ledger and source reads, identified TF as complete and was delivered. The late redraw exchange and acknowledgement were still omitted; acceptance is the owner's judgment, not a claim that every requested detail was present.
+- Observed C5: input 2182 saved the correction on its first `memory.save`; 2183's general status retained lodging, and 2185's production question excluded it. The stored rule is active and all answers were delivered. Both post-correction answers ran in the correction's existing native session.
+- Evidence boundary: no restart or new-session repeat was performed. Keep that observation distinct from owner acceptance. The forward completion-wrapup/precedent-link check and tonight's first daily publish remain separate; this decision does not authorize a daemon restart, code integration or release.
+
+### Telegram-first team member research (2026-10-06)
+
+- Scope: the owner asked to research how comparable projects add, isolate and authorize team members, and selected Telegram first. [Research](research/team-members-research.md) compares current official OpenClaw, NanoClaw, Letta, LibreChat and LangGraph/LangSmith docs with the current code.
+- Result: recommend one bot with verified human principals, private sessions/workspaces, explicit shared-data and action grants, scoped recipients and revoke handling. The prior owner-initiated forward-registration decision is retained as an option; an owner-issued invite followed by approval is an alternative, not an adopted replacement.
+- Evidence: current Telegram admission, intake, session and host-tool dispatch are owner-bound. Core principal/grant APIs and read/action checks exist but are not wired into a member flow; both live principal and active grant tables are empty although the product runs its fixed owner principal. A first-pairing-to-owner rule must not be copied into this running installation.
+- Still open: enrollment choice, the first real member's source/action scope and native execution isolation; then real registration, grant, private/shared reads, authorized work, revoke and restart evidence. This research registers nobody and changes no runtime policy, credentials or deployed code.
+
+### Letta accumulated-memory handling research (2026-10-06)
+
+- Current official Conversations and MemFS docs distinguish automatic active-context compaction, searchable message history, and agent-owned long-term Git memory; compaction can lose exact wording or provenance while history remains available.
+- Root memories enter every turn; indexed subdirectories are read on demand. MemFS has no default vector index; optional semantic/hybrid search needs an extension and QMD. Cloud message search and local full-text history search are separate paths.
+- Configured dreaming, memory doctor and repository reorganization address lessons, placement, duplication and prompt growth; Git versions/worktrees and attached organization repositories support concurrent edits and sharing.
+- Limit: this is a documented mechanism review, not a workload benchmark or accuracy proof. [Research](research/team-members-research.md) retains MAMA's original/revision evidence and marks automatic consolidation or storage changes as unapproved proposals; runtime remains unchanged.
+
+### Letta limitations for MAMA team design (2026-10-06)
+
+- Verified official contracts: lossy compaction, no default MemFS vector index, root prompt loading, extra dreaming/review model usage, Git-synchronized cloud shared memory, agent-level durable memory, and Admin visibility across organization conversations.
+- Inferred risks: missed retrieval, incorrect lesson reuse, stale shared work reads and semantic conflicts despite text merges. Private conversations alone do not establish per-human durable-memory isolation inside one shared agent.
+- MAMA implication: retain structured work revisions/source evidence, and design shared-state freshness plus caller/data/action/recipient permissions for individual priorities. These risks also require validation in MAMA.
+- Evidence boundary: no Letta leakage or concurrency bug was reproduced and no performance comparison ran. [Research](research/team-members-research.md) records constraints and inferences separately; no runtime, enrollment or deployed policy changed.
+
+### MAMA limitations under the same comparison (2026-10-06)
+
+- Current main 81695ecbc still injects owner access at native-session and host-tool dispatch. Existing core principal/scope APIs do not constitute a wired personal/shared member runtime.
+- Prior owner evidence shows record-to-answer omissions, four non-overlapping paraphrase retrieval misses, rule-body reads absent in 14 record turns on 10-05, and a new exchange labeled no change despite C4's 41/41 pipeline match. Keep their timestamps and accepted C2/C5 status.
+- Code risk: stimulus delivery cannot observe native compaction and suppresses repeat lesson attachments within a session day. Rule indexes and report procedures are separate available paths; this does not prove every correction is lost.
+- Limits: no new live owner flow, large-scale or multi-member benchmark ran, and C2/C5 monitoring stays paused. [Research](research/team-members-research.md) records the gap between durable records and consistent use without claiming Letta is more accurate or changing runtime policy.
+
+### Owner correction: distinguish agent and program problems (2026-10-06)
+
+- Owner premise: models improve; compare agent judgment/tool-use problems separately from host-program constraints. The earlier omission, unread-rule, search and report observations are not automatically program defects.
+- Causal rule: check supplied context, exact tool input/result, index/source availability and persisted effects. Available evidence ignored is an agent behavior; unavailable/corrupt data or denied/misrouted execution is a host issue; untraced cases remain unresolved.
+- Confirmed program gap: current native turns and host-tool calls inject owner access; model improvement does not wire member grants or private/shared execution boundaries. Unobservable native compaction is an observation limitation, not proof of lost corrections when rules remain queryable.
+- [Research](research/team-members-research.md) now classifies the previous comparison by this premise. C2/C5 acceptance and paused monitoring remain; no runtime behavior or implementation plan changed.
+
+### Program-only Letta/MAMA comparison and scoped search reproduction (2026-10-06)
+
+- [Research](research/letta-mama-program-comparison.md) compares current Letta Code/App Server contracts with main 81695ecbc, separating program defects, missing member wiring, extension tradeoffs and unmeasured scale risks from agent judgment.
+- Reproduced twice in new test DBs with deterministic embeddings and public core 6.0.0 APIs: one allowed-scope vector hit becomes zero after adding 25 higher-scoring foreign-scope records; limit 100 does not restore it, while a topic pre-filter does. Source confirms vector top-K precedes scope filtering; no foreign record was returned and no existing owner failure is attributed to this probe.
+- Existing tests under temporary HOME: core input/result recovery, session ownership and principal grants 41/41; product work revisions 18/18 including stale rejection and overlapping writes. These verify program contracts, not new owner/team acceptance.
+- Still unimplemented: real member identity/grants through ingress, native sessions/files and delivery. Search embedder injection is partial and vectors load/scan globally; no scaled latency/cost claim. Local proof artifacts saved; live DB/config/daemon and C2/C5 paused monitoring unchanged.
+
+### Team research checkpoint after owner critique (2026-10-06)
+
+- Owner asked to organize and save a MAMA checkpoint. Checkpoint 734 stores Goal, Evidence, Unfinished and Next Briefing; its complete summary was read back unchanged.
+- Research remains partial: local search reproduction is not an end-to-end team plan, the 20-candidate budget itself is not the defect, and neither a new restriction nor a specific search fix is approved. Latest research/plan text now states this boundary.
+- Resume with the full enrollment → identity → personal/shared agent/session/memory → current grants → host/native execution → common work updates → delivery → revoke/restart flow, separating evidence levels and agent behavior from program contracts before writing the spec/plan.
+- Still open: DM-to-common-work transfer, private-data admin visibility, channel audience, enrollment and actual grants. Preserve main dirty docs, the unmerged core worktree and C2/C5 acceptance/paused monitoring; this checkpoint changed no runtime or production configuration.
+
+### How corrections reach each turn kind; W37 decided (2026-10-06)
+
+- Result (10-05 21:30 to 10-06 15:34, UTC+9, owner session transcripts and `tool_traces`): owner message turns 6 of 6 carried recalled lessons; delta notify 33 of 108; delta record 8 of 108, and all 108 carried the owner rule index (25, then 26 lines) yet opened no rule body and made no `memory.search`. Scheduled and requested full reports opened 13 to 14 rule bodies through `help('full-report')`. Reminder (6) and daily (2) turns carry no rule; both dailies opened new sessions.
+- Evidence: `owner-policy.md` unchanged since 09-29 15:54; none of the 26 active owner rules is in it as written. Record turns moved 13 items to `review` without opening the reviewer rule (not checked against it). The three `done` writes were silence closes in report turns. The completion rule has met no FIX or delivery close since its two misses on 10-05. The C2/C5 acceptance (inputs 2180–2185) covered owner chat turns only.
+- Owner decision: standing rules move into the owner policy, written only in owner chat turns, and the index is removed afterwards ([owner-rules.md](work/owner-rules.md), W37). Correction to an earlier statement in chat: 2 of the 26 rules date from 09-26 and 11 from 09-29, not all from after 09-29.
+- Owner correction (same day): what a better model fixes is left out of product work, or the work never ends. W37 stands on the missing write path and the turn kinds that get no rule; the unopened index and the missed closes are model behavior, and W37.3 checks delivery, not obedience.
+
+### Pre-team program gaps against Letta (2026-10-06)
+
+- Result: three gaps a better model cannot close. (1) Acked owner messages are pruned after seven days and the owner's Telegram chat is stored as no source; 6 of the 26 active owner rules already cite a message pruned by its ack time; the text survives only in the Claude CLI transcript, which MAMA neither owns nor reads. The seven-day retention was noted when `owner.messages` was designed (09-29), not decided as a discard. (2) A write without explicit scopes binds to the writer's whole access, so all 4,801 records (4,624 work revisions, the owner's rules and lessons) sit in all 32 connector-named scopes; one memory grant on any of them would open everything. (3) The scoped recall order already reproduced. W37 is the fourth.
+- Letta (official docs and source, current Letta Code versus the legacy V1 API): keeps every message after compaction; memory is per agent and shared only by explicit attachment; its retired V1 SQL path had the same limit-then-filter order. Approver records are not documented there either.
+- Not pre-team: one serialized owner session (owner wait 2 s on average, 1 of 127 over 60 s since 09-29), approvals, native isolation and owner registration are team design inputs. Details: [letta-mama-program-comparison.md](research/letta-mama-program-comparison.md).
+
+### Owner chat as a raw source: feasibility and Kagemusha (2026-10-06)
+
+- Kagemusha: the chat handler records the owner's message before the turn and the reply after it in `channel_messages`, the same table as every monitored channel (`runtime/monitoring-runtime.ts`), indexes both for search, and leaves the chat out of deltas at the read (`agent-awareness.ts:377`, `getNewSince(sinceId, ['telegram'])`). 650 owner and 648 reply rows since 03-08. MAMA already imports the owner's chat with Kagemusha as a raw source (649 `kagemusha:telegram` events); its chat with MAMA is not one.
+- MAMA: owner questions live only in the mailbox (pruned seven days after ack); replies outlive it in `native_turn_results` (87 of 87 owner turns before 09-29 keep their response). A provenance read follows `derived_from` observation links, which an owner message cannot have today, although the corrections guide expects one.
+- Feasible with existing parts: collect-only raw save plus projection indexes an item without a delta (the import path); no source reader treats collect-only items differently. The write point is `createStimulusIntake.acceptOwnerMessage` (`runtime/stimulus-delivery.ts`), the one door for all messengers; the `telegram` polling connector cannot be used because the gateway owns the bot's updates (it is disabled).

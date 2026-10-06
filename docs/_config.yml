@@ -21,7 +21,10 @@ relative_links:
   collections: true
 
 exclude:
-  - rebuild
+  - development/plan.md
+  - development/checks.md
+  - development/work
+  - development/research
   - website
   - superpowers
   - sdd

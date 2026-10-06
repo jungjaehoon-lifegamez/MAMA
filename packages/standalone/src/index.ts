@@ -1,2 +1,2 @@
-// The product layer is rebuilt per docs/rebuild/plan.md.
+// The product layer follows docs/development/plan.md.
 export {};

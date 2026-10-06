@@ -4,7 +4,7 @@ The shared engine for storage, records and revisions, evidence links, memory, se
 runtime drivers. Consumers supply their own database, principals, source access and product
 vocabulary through public exports. Core does not require the MAMA OS daemon.
 
-Version **6.0.0**; Node.js 22.13+. This README describes the current rebuild checkout.
+Version **6.0.0**; Node.js 22.13+. This README describes the current checkout.
 See [architecture](../../docs/explanation/architecture.md) and
 [the shared-engine goal](../../INTENT.md).
 
@@ -95,14 +95,14 @@ tests/                      package tests
 The highest migration is **100**, `100-decision-trigram-index.sql`.
 Migration files cover **001–042** and **061–100**; there is no 043 file.
 **044–060 are reserved** by the retired chain's `schema_version` entries and must never be
-reused. Add schema changes after 100, not into a gap. See [migrations](db/migrations).
+reused. Add schema changes after 100, not into a gap. See the [latest migration](db/migrations/100-decision-trigram-index.sql).
 
 ## Development
 
 Build with `pnpm install` and `pnpm build` at the repository root.
 Run `pnpm typecheck` or `pnpm test` inside this package; use a temporary home and explicit
 database path as described in [testing](../../docs/development/testing.md).
-The packed second-consumer check is tracked in [the rebuild plan](../../docs/rebuild/plan.md);
+The packed second-consumer check is tracked in [the development plan](../../docs/development/plan.md);
 package tests alone do not establish that goal.
 
 [Documentation](../../docs/index.md) · [MIT](../../LICENSE).
