@@ -57,16 +57,11 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
 3. W25: the `⏳` placeholder replaced by the answer has been live since 0.51.1 (owner confirmed
    2026-10-07). Left: delete the presenter's unused streaming hooks and log a failed placeholder
    send. No typing action and no streaming edits (owner, 2026-10-06).
-4. Team flow: [research](research/team-members-research.md) and
-   [program comparison](research/letta-mama-program-comparison.md). Owner, 2026-10-06: separate
-   agent sessions for the common session, the owner session and each team member; each keeps
-   common memory apart from each member's memory, and the owner's agent cannot read a member's
-   chat by default. Analyze enrollment, identity, sessions and memory, grants, native tools,
-   work-record updates, delivery, revoke and restart as one flow. Settle the memory ownership
-   contract before any member gets a memory grant: a write without explicit scopes binds to the
-   writer's whole access, and scoped recall picks candidates before filtering. Forwarding client
-   feedback to a team destination is a delivery question here; it gets no separate route.
-   Then write the first-member spec and plan.
+4. Team flow: the whole member flow is analysed in [team-flow.md](work/team-flow.md) (2026-10-07,
+   two independent reviews merged and checked). Core has the mechanisms; the product wires every
+   principal path to the owner; two core gaps (registering the existing `owner` principal; work
+   reads that ignore read-only scopes and fail on a partial ledger) block a read-only member
+   before any wiring. Next: the owner's four blocking decisions, then the ten-step slice.
 5. Paraphrase search, bounded (owner, 2026-10-06): reproduce the four paraphrases that miss the
    August case in the vector channel
    ([check](checks.md#fts5-terms-as-quoted-text-and-a-trigram-index-for-korean-and-japanese-words-410-411-2026-10-05))
