@@ -162,15 +162,23 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       ? {}
       : {
           readObservationBody: (ref, context) => {
-            const { content } = options.storedSourceReader!.readObservation(
-              ref,
-              context.access,
-              context.readAllowance
-            );
-            // An empty excerpt would read as evidence that says nothing.
-            if (typeof content !== 'string')
-              throw new Error(`Stored observation ${ref} has no readable body`);
-            return content;
+            try {
+              const { content } = options.storedSourceReader!.readObservation(
+                ref,
+                context.access,
+                context.readAllowance
+              );
+              // An empty excerpt would read as evidence that says nothing.
+              if (typeof content !== 'string')
+                throw new Error(`Stored observation ${ref} has no readable body`);
+              return content;
+            } catch (error) {
+              // The reader throws the raw store's reason; a missing version is distinct from an
+              // integrity or access failure.
+              if (error instanceof Error && error.message === 'VERSION_NOT_FOUND')
+                return { status: 'body_unavailable' as const };
+              throw error;
+            }
           },
         }),
   })

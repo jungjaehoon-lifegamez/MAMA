@@ -76,13 +76,109 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-async function call(action: string, input: unknown) {
-  const result = await surface.dispatch({ action, input }, { access: surface.ownerAccess });
+async function call(action: string, input: unknown, operationId?: string) {
+  const result = await surface.dispatch(
+    { action, input, ...(operationId === undefined ? {} : { operationId }) },
+    { access: surface.ownerAccess }
+  );
   expect(result.status).toBe('completed');
   return (result as { data: Record<string, unknown> }).data;
 }
 
 describe('owner chat raw sources', () => {
+  it('stores a reply in the stored message channel even when the ref has a different prefix', async () => {
+    const input = { ...message, channelKey: 'delivery-test' };
+    intake.acceptOwnerMessage(input);
+    intake.recordOwnerReply({
+      messageRef: input.id,
+      text: 'Channel-bound answer',
+      occurredAt: input.occurredAt + 1,
+      author: 'agent',
+      deliveryVerified: true,
+    });
+    const hits = (await call('source.search', { source: 'chat', query: 'Channel-bound answer' }))
+      .hits as Array<{ observationRef: string }>;
+    expect(
+      await call('source.read', { source: 'chat', observationRef: hits[0]!.observationRef })
+    ).toMatchObject({ channel: 'telegram:delivery-test' });
+  });
+
+  it('refuses to save a reply whose owner message is not stored', () => {
+    expect(() =>
+      chat.saveReply({
+        messageRef: message.id,
+        text: 'Unattached answer',
+        occurredAt: message.occurredAt + 1,
+        author: 'agent',
+        deliveryVerified: true,
+      })
+    ).toThrow('Owner message is not stored');
+    expect(
+      database.adapter
+        .prepare(
+          "SELECT COUNT(*) AS count FROM connector_event_index WHERE source_connector = 'chat'"
+        )
+        .get()
+    ).toEqual({ count: 0 });
+  });
+
+  it('reports one missing raw version without losing other provenance, while hash and access failures stay fatal', async () => {
+    const first = chat.saveOwnerMessage(message);
+    const second = chat.saveOwnerMessage({
+      ...message,
+      id: `${message.id}-second`,
+      text: 'Second original',
+    });
+    const saved = await call(
+      'memory.save',
+      {
+        topic: 'external-provenance',
+        kind: 'fact',
+        summary: 'Two supports',
+        details: 'Both originals',
+        source: { package: 'test-product', source_type: 'test' },
+        links: [first, second].map((id) => ({
+          relation: 'derived_from',
+          target: { kind: 'observation', id },
+        })),
+      },
+      'op-external-provenance'
+    );
+    const readVersion = raw.readVersion.bind(raw);
+    const reader = vi
+      .spyOn(raw, 'readVersion')
+      .mockImplementation((connector, sourceId, hash) =>
+        sourceId === message.id
+          ? { status: 'version_unavailable', reason: 'VERSION_NOT_FOUND' }
+          : readVersion(connector, sourceId, hash)
+      );
+    expect(await call('memory.read:provenance', { memory_id: saved.id })).toMatchObject({
+      status: 'partial',
+      events: [{ eventIndexId: second, excerpt: 'Second original' }],
+      unresolved: [{ eventIndexId: first, reason: 'body_unavailable' }],
+    });
+    reader.mockReturnValue({ status: 'version_unavailable', reason: 'HASH_MISMATCH' });
+    const mismatch = await surface.dispatch(
+      { action: 'memory.read:provenance', input: { memory_id: saved.id } },
+      { access: surface.ownerAccess }
+    );
+    expect(mismatch).toMatchObject({
+      status: 'failed',
+      error: { message: expect.stringContaining('HASH_MISMATCH') },
+    });
+    reader.mockImplementation(() => {
+      throw new Error('stored_source_out_of_scope');
+    });
+    const refusal = await surface.dispatch(
+      { action: 'memory.read:provenance', input: { memory_id: saved.id } },
+      { access: surface.ownerAccess }
+    );
+    expect(refusal).toMatchObject({
+      status: 'failed',
+      error: { message: expect.stringContaining('stored_source_out_of_scope') },
+    });
+  });
+
   it('returns the owner message in correction provenance, without carrying it into scheduled turns', async () => {
     intake.acceptOwnerMessage(message);
     let index = 0;
@@ -242,8 +338,13 @@ describe('owner chat raw sources', () => {
         .get()
     ).toEqual({ count: 0 });
     expect(
-      ownerReplyItem({ ...reply, deliveryVerified: false }, 'owner-test', 'agent-test').metadata
-    ).toMatchObject({ deliveryVerified: false });
+      ownerReplyItem(
+        { ...reply, deliveryVerified: false },
+        'owner-test',
+        'agent-test',
+        'backfill-channel'
+      )
+    ).toMatchObject({ channel: 'backfill-channel', metadata: { deliveryVerified: false } });
   });
 
   it('reads exchanges older than seven days from chat for owner.messages and session start', async () => {

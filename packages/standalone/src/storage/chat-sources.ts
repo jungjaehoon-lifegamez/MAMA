@@ -28,12 +28,13 @@ export function ownerMessageItem(input: OwnerMessageInput, principalId: string):
 export function ownerReplyItem(
   input: OwnerReplyInput,
   principalId: string,
-  agentId: string
+  agentId: string,
+  channel: string
 ): NormalizedItem {
   return {
     source: 'chat',
     sourceId: `${input.messageRef}:reply`,
-    channel: input.messageRef.slice(0, input.messageRef.lastIndexOf(':')),
+    channel,
     author: input.author === 'host' ? 'host' : agentId,
     content: input.text,
     timestamp: new Date(input.occurredAt),
@@ -61,7 +62,13 @@ export class ChatSources {
   }
 
   saveReply(input: OwnerReplyInput): void {
-    this.save(ownerReplyItem(input, this.principalId, this.agentId));
+    const message = this.adapter
+      .prepare(
+        "SELECT channel FROM connector_event_index WHERE source_connector = 'chat' AND source_id = ? AND json_extract(metadata_json, '$.kind') = 'owner_message'"
+      )
+      .get(input.messageRef) as { channel: string } | undefined;
+    if (!message) throw new Error(`Owner message is not stored: ${input.messageRef}`);
+    this.save(ownerReplyItem(input, this.principalId, this.agentId, message.channel));
   }
 
   private save(item: NormalizedItem): string {

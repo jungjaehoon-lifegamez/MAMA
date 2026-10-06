@@ -349,15 +349,18 @@ export class SlackGateway extends BaseGateway {
     }
     // Outbound reports and file deliveries have no owner message to answer.
     if (key.startsWith('slack:')) {
-      // Recovery must retain whether the host or the agent produced the text.
-      if (entry.responseAuthor === undefined) throw new Error('Slack ready reply has no author');
-      this.intake.recordOwnerReply({
-        messageRef: key,
-        text: chunks.join('\n'),
-        occurredAt: this.ledger.get(key)!.updatedAt,
-        author: entry.responseAuthor,
-        deliveryVerified: true,
-      });
+      // Legacy ready entries cannot distinguish an agent reply from a host notice.
+      if (entry.responseAuthor === undefined) {
+        this.log(`slack reply archive skipped key=${key} reason=missing_response_author`);
+      } else {
+        this.intake.recordOwnerReply({
+          messageRef: key,
+          text: entry.response!,
+          occurredAt: this.ledger.get(key)!.updatedAt,
+          author: entry.responseAuthor,
+          deliveryVerified: true,
+        });
+      }
     }
     this.ledger.markDelivered(key);
     this.emitEvent({

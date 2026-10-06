@@ -497,15 +497,18 @@ export class TelegramGateway extends BaseGateway {
         this.activePresenters.delete(sourceRef);
       }
       // All chunks are confirmed; archive before the ledger drops the ready text.
-      if (current.responseAuthor === undefined)
-        throw new Error('Telegram ready reply has no author');
-      this.intake.recordOwnerReply({
-        messageRef: sourceRef,
-        text: presenter.deliveredText,
-        occurredAt: this.messageLedger.get(sourceRef)!.updatedAt,
-        author: current.responseAuthor,
-        deliveryVerified: true,
-      });
+      // Legacy ready entries cannot distinguish an agent reply from a host notice.
+      if (current.responseAuthor === undefined) {
+        this.log(`telegram reply archive skipped key=${sourceRef} reason=missing_response_author`);
+      } else {
+        this.intake.recordOwnerReply({
+          messageRef: sourceRef,
+          text: current.response!,
+          occurredAt: this.messageLedger.get(sourceRef)!.updatedAt,
+          author: current.responseAuthor,
+          deliveryVerified: true,
+        });
+      }
       this.messageLedger.markDelivered(sourceRef);
       this.lastMessageAt = Date.now();
       this.emitEvent({

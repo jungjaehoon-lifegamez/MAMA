@@ -640,7 +640,7 @@ describe('TelegramGateway', () => {
   });
 });
 
-it('archives the rendered reply once and failed intake recovery as host text', async () => {
+it('archives the durable reply once and interrupted recovery as host text', async () => {
   const root = mkdtempSync(join(tmpdir(), 'telegram-chat-'));
   temporaryRoots.push(root);
   const f = await chatFixture(root);
@@ -649,11 +649,18 @@ it('archives the rendered reply once and failed intake recovery as host text', a
     await seams.handlers.get('message')!({ message: message() });
     expect(f.replies()).toEqual([]);
     await gateway.stop();
-    await gateway.deliverResponse('telegram:7:11', '||private reasoning|| <b>Sent &amp; saved</b>');
+    const response = '||private reasoning|| <b>' + 'x'.repeat(4500) + '</b> &amp; saved';
+    await gateway.deliverResponse('telegram:7:11', response);
     expect(f.replies()).toEqual([]);
     await gateway.start();
     await gateway.deliverResponse('telegram:7:11', 'ignored repeat');
-    expect(f.replies()).toEqual([{ author: 'agent-test', content: 'Sent & saved' }]);
+    const archived = f.replies() as Array<{ author: string; content: string }>;
+    expect(archived).toHaveLength(1);
+    expect(archived[0]!.author).toBe('agent-test');
+    expect(Buffer.from(archived[0]!.content).equals(Buffer.from(response))).toBe(true);
+    expect(
+      seams.api.sendMessage.mock.calls.length + seams.api.editMessageText.mock.calls.length
+    ).toBeGreaterThan(1);
     await seams.handlers.get('message')!({ message: { ...message(), message_id: 13 } });
     f.failProjectionAck();
     await expect(gateway.deliverResponse('telegram:7:13', '<b>Archive retry</b>')).rejects.toThrow(
@@ -666,7 +673,9 @@ it('archives the rendered reply once and failed intake recovery as host text', a
       seams.api.sendMessage.mock.calls.length + seams.api.editMessageText.mock.calls.length
     ).toBe(sentCount);
     expect(
-      f.replies().filter((reply) => (reply as { content: string }).content === 'Archive retry')
+      f
+        .replies()
+        .filter((reply) => (reply as { content: string }).content === '<b>Archive retry</b>')
     ).toHaveLength(1);
     f.failSave();
     await expect(
@@ -674,9 +683,42 @@ it('archives the rendered reply once and failed intake recovery as host text', a
     ).rejects.toThrow('synthetic raw failure');
     expect(f.mailbox.readInput('telegram:7:12', 'owner-test')).toBeNull();
     await gateway.recoverPendingResponses();
+    expect(f.replies()).not.toContainEqual({ author: 'host', content: 'Synthetic interruption' });
+    await seams.handlers.get('message')!({ message: { ...message(), message_id: 14 } });
+    f.mailbox.ack(f.mailbox.readInput('telegram:7:14', 'owner-test')!.id);
+    await gateway.recoverPendingResponses();
     expect(f.replies()).toContainEqual({ author: 'host', content: 'Synthetic interruption' });
   } finally {
     await gateway.stop();
     await f.close();
+  }
+});
+
+it('delivers an authorless legacy ready entry once without archiving it', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'telegram-legacy-'));
+  temporaryRoots.push(root);
+  const path = join(root, 'ledger.json');
+  const key = 'telegram:7:11';
+  const ledger = new TelegramMessageLedger(path);
+  ledger.claim(key);
+  ledger.markReady(key, 'Legacy answer');
+  const stored = JSON.parse(readFileSync(path, 'utf8'));
+  delete stored.entries[0].responseAuthor;
+  writeFileSync(path, JSON.stringify(stored));
+  const recordOwnerReply = vi.fn();
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const gateway = await gatewayFor({ ...intakeFor([]), recordOwnerReply }, path);
+  try {
+    await gateway.recoverPendingResponses();
+    expect(seams.api.sendMessage).toHaveBeenCalledOnce();
+    expect(new TelegramMessageLedger(path).get(key)?.state).toBe('delivered');
+    expect(recordOwnerReply).not.toHaveBeenCalled();
+    expect(
+      log.mock.calls.filter(([line]) =>
+        String(line).includes(`reply archive skipped key=${key} reason=missing_response_author`)
+      )
+    ).toHaveLength(1);
+  } finally {
+    await gateway.stop();
   }
 });

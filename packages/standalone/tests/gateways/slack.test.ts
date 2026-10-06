@@ -1,6 +1,6 @@
 import { chatFixture } from './chat-fixture.js';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -353,7 +353,7 @@ describe('Slack owner gateway', () => {
   });
 });
 
-it('archives only sent replies once and failed intake recovery as host text', async () => {
+it('archives only sent replies once and interrupted recovery as host text', async () => {
   const f = await chatFixture(root);
   const gateway = new SlackGateway({
     token: 'fixture-token',
@@ -405,10 +405,84 @@ it('archives only sent replies once and failed intake recovery as host text', as
     ).rejects.toThrow('synthetic raw failure');
     expect(f.mailbox.readInput('slack:channel_test:4.0', 'owner-test')).toBeNull();
     await gateway.recoverPendingResponses();
+    expect(f.replies()).not.toContainEqual({ author: 'host', content: 'Synthetic interruption' });
+    await (gateway as unknown as { accept(input: unknown): Promise<void> }).accept({
+      channel: 'channel_test',
+      user: 'user_owner',
+      ts: '7.0',
+      text: 'owner input',
+    });
+    f.mailbox.ack(f.mailbox.readInput('slack:channel_test:7.0', 'owner-test')!.id);
+    await gateway.recoverPendingResponses();
     expect(f.replies()).toContainEqual({ author: 'host', content: 'Synthetic interruption' });
     expect(send).toHaveBeenCalled();
   } finally {
     await gateway.stop();
     await f.close();
+  }
+});
+
+it('archives a reply longer than the transport limit byte-for-byte from the ledger', async () => {
+  const f = await chatFixture(root);
+  const gateway = new SlackGateway({
+    token: 'fixture-token',
+    appToken: 'fixture-app-token',
+    intake: f.intake,
+    config: { enabled: true, allowedChannels: ['channel_test'], ownerUserIds: ['user_owner'] },
+    messageLedgerPath: join(root, 'long-ledger.json'),
+  });
+  const send = (mocks.webClients[0] as MockWebClient).chat.postMessage;
+  await gateway.start();
+  try {
+    await (gateway as unknown as { accept(input: unknown): Promise<void> }).accept({
+      channel: 'channel_test',
+      user: 'user_owner',
+      ts: '6.0',
+      text: 'owner input',
+    });
+    const response = 'x'.repeat(40100) + '  \nexact ending';
+    await gateway.deliverResponse('slack:channel_test:6.0', response);
+    expect(send.mock.calls.length).toBeGreaterThan(1);
+    const archived = f.replies() as Array<{ author: string; content: string }>;
+    expect(archived).toHaveLength(1);
+    expect(archived[0]!.author).toBe('agent-test');
+    expect(Buffer.from(archived[0]!.content).equals(Buffer.from(response))).toBe(true);
+  } finally {
+    await gateway.stop();
+    await f.close();
+  }
+});
+
+it('delivers an authorless legacy ready entry once without archiving it', async () => {
+  const path = join(root, 'legacy-ledger.json');
+  const key = 'slack:channel_test:legacy-test';
+  const ledger = new OwnerMessageLedger(path);
+  ledger.claim(key, { deliveryTarget: 'slack:channel_test', payloadIdentity: 'a'.repeat(64) });
+  ledger.markReady(key, 'Legacy answer');
+  const stored = JSON.parse(readFileSync(path, 'utf8'));
+  delete stored.entries[0].responseAuthor;
+  writeFileSync(path, JSON.stringify(stored));
+  const recordOwnerReply = vi.fn();
+  const logs: string[] = [];
+  const gateway = new SlackGateway({
+    token: 'fixture-token',
+    appToken: 'fixture-app-token',
+    intake: { recordOwnerReply, acceptOwnerMessage: () => ({ state: 'accepted' }) as never },
+    config: { enabled: true, allowedChannels: ['channel_test'], ownerUserIds: ['user_owner'] },
+    messageLedgerPath: path,
+    log: (line) => logs.push(line),
+  });
+  const send = (mocks.webClients[0] as MockWebClient).chat.postMessage;
+  await gateway.start();
+  try {
+    await gateway.recoverPendingResponses();
+    expect(send).toHaveBeenCalledOnce();
+    expect(new OwnerMessageLedger(path).get(key)?.state).toBe('delivered');
+    expect(recordOwnerReply).not.toHaveBeenCalled();
+    expect(logs).toEqual([
+      expect.stringContaining(`reply archive skipped key=${key} reason=missing_response_author`),
+    ]);
+  } finally {
+    await gateway.stop();
   }
 });

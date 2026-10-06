@@ -28,6 +28,8 @@ export type ResolutionFailure =
   | 'legacy_unscoped'
   /** The referenced event is no longer in the index. */
   | 'event_deleted'
+  /** The event is indexed, but its exact stored body version is unavailable. */
+  | 'body_unavailable'
   /** The event exists but is not visible under the scope active now. */
   | 'outside_scope'
   /** The ref shape is not one this resolver knows how to dereference. */
@@ -140,6 +142,7 @@ export interface IndexedEvent {
   /** Source/event occurrence time, separate from host capture time. */
   sourceAt?: string | null;
   content: string;
+  bodyStatus?: 'body_unavailable';
   /**
    * The scope recorded on the event, or null when it was indexed before scoped
    * indexing existed. Carried on the event so visibility is a pure function of it -
@@ -291,6 +294,10 @@ export function resolveMemoryProvenance(
     if (!deps.isVisible(event)) {
       // Named, but nothing about it disclosed - not the channel, not a word of content.
       unresolved.push({ kind: 'event', eventIndexId, reason: 'outside_scope' });
+      continue;
+    }
+    if (event.bodyStatus === 'body_unavailable') {
+      unresolved.push({ kind: 'event', eventIndexId, reason: 'body_unavailable' });
       continue;
     }
     events.push({
