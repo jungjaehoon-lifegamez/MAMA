@@ -65,15 +65,12 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    principal path to the owner; two core gaps (registering the existing `owner` principal; work
    reads that ignore read-only scopes and fail on a partial ledger) block a read-only member
    before any wiring. Next: the owner's four blocking decisions, then the ten-step slice.
-6. Paraphrase search: measured on 2026-10-07
-   ([check](checks.md#where-the-four-paraphrases-lose-the-august-case-2026-10-07)). Three
-   paraphrases put the August case's closing revision at cosine rank 52, 65 and 149, outside the
-   20 vector candidates; the fourth reaches rank 16 and fusion drops it, because a vector-only hit
-   scores below every one of the 50 lexical hits. Choosing the top-K before the scope filter costs
-   nothing here. EmbeddingGemma 2 (2026-10-07,
-   [check](checks.md#embeddinggemma-2-against-e5-on-the-owner-search-checks-2026-10-07)) moves
-   two of the four paraphrases into the 20 candidates and widens the cosine band, but loses two
-   anchor cases. Next: a fusion change, measured with both embeddings on the search checks.
+6. Paraphrase search: closed on 2026-10-07 without a host change
+   ([check](checks.md#fusion-variants-with-both-embeddings-2026-10-07)). Three paraphrases sit
+   outside the vector candidates; four fusions on e5 and on EmbeddingGemma 2 either move nothing
+   or bring one paraphrase in while admitting the case that must stay out and reordering most real
+   queries' top five. The record holds none of the paraphrases' words; the agent's own rephrasing
+   reached the case live (4580). The embedding switch waits with the Drive files below.
 7. Core: a knowledge construction without an embedder writes records without a vector and says
    nothing (`mama-core/src/knowledge/judgments.ts:97`); the 10-03 check found 178 revisions written
    that way. Make the embedder an explicit argument, `null` for text-only, as W4 did for recall.
@@ -104,8 +101,7 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
   [check](checks.md#drive-files-through-the-streamed-drive-2026-10-07)): the shared drives stream
   through Google Drive for desktop, so files are read locally without the API. Candidate layers: a
   metadata index of every file; EmbeddingGemma 2 vectors for files that work items cite as
-  evidence; documents by page. Pose search needs pose keypoints, not only an embedding. Waits for
-  the text embedding decision (item 6), the daemon's read access to the streamed drive, and the
+  evidence; documents by page. Pose search needs pose keypoints, not only an embedding. Decided together with the embedding switch (item 6); waits for the daemon's read access to the streamed drive, and the
   owner's use case for pose search.
 - `codex/core-unused-runtime` (101 lines of unused memory-agent contracts out of core; needs a core
   release) merges after the items in "Next" are done (owner, 2026-10-06).
