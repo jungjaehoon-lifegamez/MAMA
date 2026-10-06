@@ -57,11 +57,9 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
 3. W25: done on 2026-10-07 (#432). The `⏳` placeholder replaced by the answer has been live since
    0.51.1; the presenter's unused streaming hooks are gone and a failed placeholder send is logged.
    Released with W37 and W38 in mama-os 0.66.0 and mama-core 6.1.0, live from 01:41 KST.
-4. iCal: an event that returned to an earlier version (A → B → A) without `LAST-MODIFIED` is sent
-   again under its stored version address with a new first-seen time, and the raw archive refuses
-   it as a forged replay (`storage/source-archive.ts:546`). One save covers the whole poll, so every
-   iCal feed has failed each poll since 2026-10-07 00:03 KST. Fix it so a return to an earlier
-   version is recorded as the event's current state and the poll saves again.
+4. iCal: done on 2026-10-07 (#434). An event without `LAST-MODIFIED` that returns to an earlier
+   version is recorded as a new observation; the live poll saves again, and the returned event reads
+   as current instead of cancelled.
 5. Team flow: the whole member flow is analysed in [team-flow.md](work/team-flow.md) (2026-10-07,
    two independent reviews merged and checked). Core has the mechanisms; the product wires every
    principal path to the owner; two core gaps (registering the existing `owner` principal; work
