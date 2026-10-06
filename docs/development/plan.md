@@ -48,10 +48,10 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
 
 ## Next, in order
 
-1. W38: conversations with MAMA are kept as raw sources ([work list](work/owner-chat.md)). It goes
-   first: W37's policy records cite the owner message as a stored original, and messages after the
-   10-06 snapshot leave the mailbox from 10-13. W38 also deletes the 1,000 lines of
-   `conversation-record.ts` and `session-store.ts`, an unused earlier version of it.
+1. W38: conversations with MAMA are kept as raw sources ([work list](work/owner-chat.md)). Deployed
+   and backfilled on 2026-10-06 (#429): 126 owner messages and 222 replies stored; 20 of 26 owner
+   rules cite a stored message. Left: one live owner turn stores its message and reply, and a
+   correction's provenance returns the message.
 2. W37: standing owner rules move into the owner policy ([work list](work/owner-rules.md)), with
    protected revision records, the call shapes of #415/#416/#426 removed, a wiki publish without a
    type refused instead of filed as `entity`, and situational report rules relocated before the
