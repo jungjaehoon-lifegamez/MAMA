@@ -740,9 +740,7 @@ describe('one stimulus intake and delivery', () => {
       },
     });
 
-  it('gives a record order the lessons for its lines and the owner rules as an index', async () => {
-    // The rule for a closing item was not among 40 hits for the card move that closed one, so a
-    // record turn's text cannot recall it; the index lets the agent read it when it decides.
+  it('leaves record orders without recall and keeps lessons for the next owner message', async () => {
     const queries: string[] = [];
     const prompts: string[] = [];
     const delivery = createDelivery({
@@ -751,84 +749,29 @@ describe('one stimulus intake and delivery', () => {
         queries.push(text);
         return [{ id: 'lesson-1', topic: 'cards', summary: 'cite the card', ownerRule: false }];
       },
-      ownerRules: async () => [
-        { topic: 'close_wrapup', when: 'when an item is fixed or delivered' },
-        { topic: 'unnamed_feedback', when: 'when a message names no item' },
-      ],
     });
     for (const n of [1, 2])
       await delivery.deliver(
         recordRow(n, `card ${n} moved to delivered`),
         context((text) => prompts.push(text))
       );
-    expect(queries).toEqual(['card 1 moved to delivered', 'card 2 moved to delivered']);
-    expect(prompts[0]).toContain('- [learned] cards: cite the card');
-    // Every record order carries the whole index; a lesson is shown once per session day.
+    expect(queries).toEqual([]);
     for (const prompt of prompts) {
-      expect(prompt).toContain('<owner_rules>');
-      expect(prompt).toContain('- close_wrapup: when an item is fixed or delivered');
-      expect(prompt).toContain('- unnamed_feedback: when a message names no item');
-      expect(prompt).toContain('memory.search({topicPrefix: topic})');
+      expect(prompt).not.toContain('<lessons>');
+      expect(prompt).not.toContain('<owner_rules>');
+      expect(prompt).toContain("help({topic: 'record'}) has the recording rules");
     }
-    expect(prompts[1]).not.toContain('cite the card');
-  });
-
-  it('keeps the lessons for a retry when the owner rules cannot be read', async () => {
-    const prompts: string[] = [];
-    let reads = 0;
-    const delivery = createDelivery({
-      recordOrders: recordOrders(),
-      lessons: async () => [
-        { id: 'lesson-1', topic: 'cards', summary: 'cite the card', ownerRule: false },
-      ],
-      ownerRules: async () => {
-        reads += 1;
-        if (reads === 1) throw new Error('database is locked');
-        return [{ topic: 'close_wrapup', when: 'when an item is fixed' }];
-      },
-    });
-    await expect(
-      delivery.deliver(
-        recordRow(1, 'card moved'),
-        context((text) => prompts.push(text))
-      )
-    ).rejects.toThrow('database is locked');
     await delivery.deliver(
-      recordRow(1, 'card moved'),
-      context((text) => prompts.push(text))
-    );
-    expect(prompts).toHaveLength(1);
-    expect(prompts[0]).toContain('- [learned] cards: cite the card');
-  });
-
-  it('shows an owner rule topic whole, since the agent reads the rule by it', async () => {
-    const topic = `rules/${'long_topic_'.repeat(10)}end`;
-    let prompt = '';
-    await createDelivery({
-      recordOrders: recordOrders(),
-      ownerRules: async () => [{ topic, when: 'when it applies' }],
-    }).deliver(
-      recordRow(1, 'card moved'),
-      context((text) => (prompt = text))
-    );
-    expect(prompt).toContain(`- ${topic}: when it applies`);
-  });
-
-  it('indexes the owner rules on record orders only', async () => {
-    const prompts: string[] = [];
-    await createDelivery({
-      recordOrders: recordOrders(),
-      ownerRules: async () => [{ topic: 'close_wrapup', when: 'when an item is fixed' }],
-    }).deliver(
       claimed({
-        stimulusId: 'telegram:1:9',
+        stimulusId: 'owner-message',
         kind: 'owner_message',
-        channelKey: 'c',
-        payload: { text: 'report' },
+        channelKey: 'owner-chat',
+        payload: { text: 'card moved to delivered' },
       }),
       context((text) => prompts.push(text))
     );
-    expect(prompts[0]).not.toContain('<owner_rules>');
+    expect(queries).toEqual(['card moved to delivered']);
+    expect(prompts[2]).toContain('- [learned] cards: cite the card');
   });
 
   it.each(['full', 'reminder'] as const)(

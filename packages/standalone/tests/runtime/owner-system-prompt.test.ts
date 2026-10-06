@@ -53,6 +53,15 @@ describe('owner standing prompt', () => {
     const prompt = ownerPrompt('codex');
     const topics = ownerHelpTopics('codex', true);
     const procedures = Object.values(topics).join('\n');
+    expect(topics['full-report']).toContain('The owner policy carries the standing report rules');
+    expect(topics['full-report']).toContain(
+      'read situational owner rules on reports with memory.search before writing'
+    );
+    expect(topics['full-report']).not.toContain('they come with this procedure');
+    expect(topics.record).toContain('The owner policy carries the standing recording rules');
+    expect(topics.record).toContain(
+      'read situational owner rules on recording with memory.search before writing'
+    );
     for (const heading of [
       '## Messenger format',
       '## Behaviour and boundaries',
@@ -188,8 +197,7 @@ describe('owner standing prompt', () => {
             attempt: 1,
           },
           now,
-          { backend, timeZone: 'UTC', wikiEnabled: true },
-          { lessons: [], ownerRules: [] }
+          { backend, timeZone: 'UTC', wikiEnabled: true }
         ),
         deltaNotifyOrder([], 'room', now, [], { timeZone: 'UTC' }),
       ];

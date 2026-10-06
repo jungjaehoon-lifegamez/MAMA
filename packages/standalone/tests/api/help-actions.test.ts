@@ -125,30 +125,6 @@ describe('help action', () => {
     await expect(run({ topic: 'toString' })).rejects.toThrow('unknown topic: toString');
   });
 
-  it('adds what the product holds for a procedure, and fails when it cannot read it', async () => {
-    const withContext = (topicContext: (topic: string) => Promise<string>) =>
-      helpActionRegistrations({
-        contracts: () => contracts,
-        topics: () => ({ 'full-report': 'Full report procedure text.', record: 'Recording text.' }),
-        topicContext,
-      })[0]!;
-    const rules = withContext(async (topic) =>
-      topic === 'full-report'
-        ? '<owner_rules>\n- report_order: writing a report\n</owner_rules>'
-        : ''
-    );
-    expect(await rules.exec({ topic: 'full-report' } as never, {} as never)).toBe(
-      'Full report procedure text.\n\n<owner_rules>\n- report_order: writing a report\n</owner_rules>'
-    );
-    expect(await rules.exec({ topic: 'record' } as never, {} as never)).toBe('Recording text.');
-    const failing = withContext(async () => {
-      throw new Error('owner rules unreadable');
-    });
-    await expect(failing.exec({ topic: 'full-report' } as never, {} as never)).rejects.toThrow(
-      'owner rules unreadable'
-    );
-  });
-
   it('returns each contract as text for dotted and Codex names alike', async () => {
     for (const name of ['work.list', 'work_list']) {
       expect(await run({ actions: [name] })).toBe(

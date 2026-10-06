@@ -164,7 +164,7 @@ describe('owner runtime assembly', () => {
       await owner.stop();
     }
   });
-  it('reads the full-report procedure with the owner rule index, and no other procedure', async () => {
+  it('reads report and recording rules from the policy and memory through their procedures', async () => {
     const home = mkdtempSync(join(tmpdir(), 'mama-owner-report-rules-'));
     homes.push(home);
     const owner = await createOwnerRuntime({
@@ -181,7 +181,6 @@ describe('owner runtime assembly', () => {
       agentId: 'agent',
       scopes: [{ kind: 'global', id: 'system' }],
       nativeSession: { stop: async () => {} },
-      ownerRules: async () => [{ topic: 'report_order', when: 'writing a full report' }],
       maxTurns: 20,
       timeout: 1_000,
     });
@@ -192,8 +191,11 @@ describe('owner runtime assembly', () => {
       expect(record.status).toBe('completed');
       if (report.status !== 'completed' || record.status !== 'completed') return;
       expect(report.data).toContain('Full report');
-      expect(report.data).toContain('<owner_rules>');
-      expect(report.data).toContain('- report_order: writing a full report');
+      expect(report.data).toContain('The owner policy carries the standing report rules');
+      expect(report.data).toContain('read situational owner rules on reports with memory.search');
+      expect(report.data).not.toContain('<owner_rules>');
+      expect(record.data).toContain('The owner policy carries the standing recording rules');
+      expect(record.data).toContain('read situational owner rules on recording with memory.search');
       expect(record.data).not.toContain('<owner_rules>');
     } finally {
       await owner.stop();
