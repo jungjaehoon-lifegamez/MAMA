@@ -161,6 +161,33 @@ export function ownerPolicyActionRegistrations(
         updating = true;
         try {
           const current = readOwnerPolicy(ports.runtimeRoot);
+          // A lost response is retried with the same operation id.
+          const recorded = ports.adapter
+            .prepare(
+              `SELECT d.id AS revisionId, d.reasoning AS text, b.record_id AS baseRevisionId
+               FROM judgment_commands r JOIN decisions d ON d.id = r.record_id
+               LEFT JOIN judgment_commands b ON b.command_id = ?
+               WHERE r.command_id = ?`
+            )
+            .get(`${context.operationId}:base`, `${context.operationId}:revision`) as
+            | { revisionId: string; text: string; baseRevisionId: string | null }
+            | undefined;
+          if (recorded) {
+            const recordedFingerprint = ownerPolicyFingerprint(recorded.text);
+            if (current.fingerprint !== recordedFingerprint) {
+              if (current.fingerprint !== fingerprint)
+                throw namedError(
+                  'conflict',
+                  'Owner policy fingerprint changed; read it again with manage.policy.read'
+                );
+              replaceOwnerPolicy(ports.runtimeRoot, recorded.text);
+            }
+            return {
+              revisionId: recorded.revisionId,
+              baseRevisionId: recorded.baseRevisionId,
+              fingerprint: recordedFingerprint,
+            };
+          }
           if (fingerprint !== current.fingerprint)
             throw namedError(
               'conflict',

@@ -174,6 +174,83 @@ describe('owner policy actions', () => {
     expect(fs.readFileSync(join(root, 'owner-policy.md'), 'utf8')).toBe(original);
   });
 
+  it.each([true, false])(
+    'returns the original outcome without writes on a same-id retry (base revision: %s)',
+    async (hasBase) => {
+      if (!hasBase) fs.rmSync(join(root, 'owner-policy.md'));
+      const update = surface.catalog.entry('manage.policy.update');
+      const context = { ...ownerTurn(), operationId: 'retry-success' };
+      const input = {
+        text: 'List actions first.\n',
+        fingerprint: hash(hasBase ? original : ''),
+        reason: 'Actions need priority',
+      };
+      const result = await update.exec(input, context);
+      const records = revisions();
+      expect(result).toEqual({
+        revisionId: records.at(-1)!.id,
+        baseRevisionId: hasBase ? records[0].id : null,
+        fingerprint: hash(input.text),
+      });
+      const write = vi.spyOn(fs, 'writeFileSync');
+      const rename = vi.spyOn(fs, 'renameSync');
+
+      expect(await update.exec(input, context)).toEqual(result);
+      expect(revisions()).toEqual(records);
+      expect(write).not.toHaveBeenCalled();
+      expect(rename).not.toHaveBeenCalled();
+      expect(fs.readFileSync(join(root, 'owner-policy.md'), 'utf8')).toBe(input.text);
+    }
+  );
+
+  it('completes the rename once on a same-id retry after a stop before rename', async () => {
+    const update = surface.catalog.entry('manage.policy.update');
+    const context = { ...ownerTurn(), operationId: 'retry-interrupted' };
+    const input = {
+      text: 'List actions first.\n',
+      fingerprint: hash(original),
+      reason: 'Actions need priority',
+    };
+    const rename = vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      throw new Error('Synthetic stop before rename');
+    });
+    await expect(update.exec(input, context)).rejects.toThrow('Synthetic stop before rename');
+    const records = revisions();
+    expect(records.map((record) => record.reasoning)).toEqual([original, input.text]);
+    expect(fs.readFileSync(join(root, 'owner-policy.md'), 'utf8')).toBe(original);
+    const expected = {
+      revisionId: records[1].id,
+      baseRevisionId: records[0].id,
+      fingerprint: hash(input.text),
+    };
+
+    expect(await update.exec(input, context)).toEqual(expected);
+    expect(fs.readFileSync(join(root, 'owner-policy.md'), 'utf8')).toBe(input.text);
+    expect(await update.exec(input, context)).toEqual(expected);
+    expect(rename).toHaveBeenCalledTimes(2);
+    expect(revisions()).toEqual(records);
+    expect(fs.readdirSync(root).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('refuses a same-id retry after a foreign edit', async () => {
+    const update = surface.catalog.entry('manage.policy.update');
+    const context = { ...ownerTurn(), operationId: 'retry-foreign-edit' };
+    const input = {
+      text: 'List actions first.\n',
+      fingerprint: hash(original),
+      reason: 'Actions need priority',
+    };
+    await update.exec(input, context);
+    const records = revisions();
+    fs.writeFileSync(join(root, 'owner-policy.md'), 'Foreign edit\n');
+    const rename = vi.spyOn(fs, 'renameSync');
+
+    await expect(update.exec(input, context)).rejects.toMatchObject({ name: 'conflict' });
+    expect(revisions()).toEqual(records);
+    expect(rename).not.toHaveBeenCalled();
+    expect(fs.readFileSync(join(root, 'owner-policy.md'), 'utf8')).toBe('Foreign edit\n');
+  });
+
   it('supports an absent policy and preserves an empty replacement text in history', async () => {
     fs.rmSync(join(root, 'owner-policy.md'));
     expect(await call('manage.policy.read', {})).toMatchObject({
