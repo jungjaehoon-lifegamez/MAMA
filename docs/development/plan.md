@@ -100,6 +100,13 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
   reads its latest 100 messages. No loss is observed: MAMA's daily Chatwork counts from 09-30 to
   10-06 equal or exceed Kagemusha's. Fix it when a room's backlog could pass 100 between
   successful polls.
+- Drive files and multimodal search (prepared 2026-10-07,
+  [check](checks.md#drive-files-through-the-streamed-drive-2026-10-07)): the shared drives stream
+  through Google Drive for desktop, so files are read locally without the API. Candidate layers: a
+  metadata index of every file; EmbeddingGemma 2 vectors for files that work items cite as
+  evidence; documents by page. Pose search needs pose keypoints, not only an embedding. Waits for
+  the text embedding decision (item 6), the daemon's read access to the streamed drive, and the
+  owner's use case for pose search.
 - `codex/core-unused-runtime` (101 lines of unused memory-agent contracts out of core; needs a core
   release) merges after the items in "Next" are done (owner, 2026-10-06).
 
