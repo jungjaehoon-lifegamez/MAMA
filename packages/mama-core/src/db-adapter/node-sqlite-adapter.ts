@@ -298,6 +298,15 @@ export interface MigrationSource {
 /** The core is one source among others; it is only first because others build on it. */
 export const CORE_MIGRATION_SOURCE = 'core';
 
+/** The columns migration 101 adds to model_runs. */
+const MODEL_RUN_USAGE_COLUMNS = [
+  'input_tokens',
+  'cache_read_input_tokens',
+  'cache_creation_input_tokens',
+  'output_tokens',
+  'compaction_count',
+] as const;
+
 export class NodeSQLiteAdapter implements DatabaseInstance {
   private transactionDepth = 0;
   private config: SQLiteAdapterConfig;
@@ -1058,6 +1067,22 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
         '033-create-model-runs-and-tool-traces.sql',
         'model run provenance'
       );
+    }
+
+    // Migration 101 only alters model_runs: where the table came from the repair above, its
+    // statements were skipped as "no such table". Add the columns that are missing.
+    if (
+      fs.existsSync(path.join(migrationsDir, '101-model-run-usage.sql')) &&
+      this.tableExists('model_runs')
+    ) {
+      const columns = this.tableColumns('model_runs');
+      const missing = MODEL_RUN_USAGE_COLUMNS.filter((column) => !columns.has(column));
+      for (const column of missing) {
+        this.exec(`ALTER TABLE model_runs ADD COLUMN ${column} INTEGER`);
+      }
+      if (missing.length > 0) {
+        info('[node-sqlite-adapter] Repaired skipped model run usage migration');
+      }
     }
 
     // Also repairs databases already stamped 68 by the former generic duplicate

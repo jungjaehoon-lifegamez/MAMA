@@ -108,6 +108,24 @@ describe('per-run usage', () => {
       }
     }
   );
+  it.each(['committed', 'failed'] as const)('refuses invalid usage on a %s run', (status) => {
+    const db = database();
+    try {
+      const id = beginModelRun(db, {}).model_run_id;
+      const finish = status === 'committed' ? commitModelRun : failModelRun;
+      for (const value of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+        expect(() => finish(db, id, 'fixture', 17, { ...fields, input_tokens: value })).toThrow(
+          'model_runs.input_tokens must be a non-negative safe integer'
+        );
+      }
+      expect(db.prepare('SELECT status FROM model_runs WHERE model_run_id = ?').get(id)).toEqual({
+        status: 'running',
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   it('migrates a database at 100 and leaves existing usage NULL', () => {
     const db = database(100);
     try {

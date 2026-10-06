@@ -107,6 +107,15 @@ function requireTokenCount(value: number | undefined): number | undefined {
   return value;
 }
 
+function requireUsage(usage: Partial<ModelRunUsage> | undefined): void {
+  for (const [field, value] of Object.entries(usage ?? {})) {
+    if (value === undefined || value === null) continue;
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error(`model_runs.${field} must be a non-negative safe integer`);
+    }
+  }
+}
+
 function normalizeCost(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
@@ -559,6 +568,7 @@ export function commitModelRun(
 ): ModelRunRecord {
   const summaryValue = nullableString(summary);
   const measuredTokens = requireTokenCount(tokenCount);
+  requireUsage(usage);
   const existing = requireModelRun(adapter, modelRunId);
   if (existing.status !== 'running') {
     return resolveExistingCommittedRun(existing, summaryValue, measuredTokens, usage);
@@ -615,6 +625,7 @@ export function failModelRun(
 ): ModelRunRecord {
   const errorSummaryValue = nullableString(errorSummary);
   const measuredTokens = requireTokenCount(tokenCount);
+  requireUsage(usage);
   const existing = requireModelRun(adapter, modelRunId);
   if (existing.status !== 'running') {
     return resolveExistingFailedRun(existing, errorSummaryValue, measuredTokens, usage);
