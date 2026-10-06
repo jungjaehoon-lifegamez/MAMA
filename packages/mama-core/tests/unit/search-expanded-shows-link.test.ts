@@ -167,7 +167,7 @@ describe('search results show the link an expanded record came through', () => {
 
   it('says which revision of a work item a hit is, and the item head', async () => {
     const { createKnowledge } = await import('../../src/knowledge/index.js');
-    const knowledge = createKnowledge({ adapter: await adapter() });
+    const knowledge = createKnowledge({ adapter: await adapter(), embedder: null });
     const access = {
       principalId: 'principal-search',
       agentId: 'agent-search',

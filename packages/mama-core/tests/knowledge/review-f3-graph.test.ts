@@ -12,7 +12,7 @@ beforeAll(async () => {
   dbPath = await initTestDB('f3-graph');
 });
 afterAll(async () => cleanupTestDB(dbPath));
-const knowledge = () => createKnowledge({ adapter: getAdapter() });
+const knowledge = () => createKnowledge({ adapter: getAdapter(), embedder: null });
 const node = (name: string, scopes = [scope]) =>
   createNode(getAdapter(), { kind: 'item', name, scopes });
 

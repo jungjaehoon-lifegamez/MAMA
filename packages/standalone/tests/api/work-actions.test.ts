@@ -24,6 +24,60 @@ const access: ActionContext['access'] = {
 };
 
 describe('minimal work actions', () => {
+  it('requires an explicit embedder choice and indexes work only when supplied', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'work-embedder-choice-'));
+    const handle = await openCoreDatabase({ path: join(root, 'memory.db') });
+    try {
+      for (const options of [
+        { adapter: handle.adapter },
+        { adapter: handle.adapter, embedder: undefined },
+      ]) {
+        expect(() => Reflect.apply(createKnowledge, undefined, [options])).toThrow(
+          /embedder.*null.*text-only/
+        );
+      }
+      const vector = new Float32Array(1024).fill(0.25);
+      for (const embedder of [null, { embed: async () => vector }]) {
+        const knowledge = createKnowledge({ adapter: handle.adapter, embedder });
+        const dispatch = createDispatcher(
+          createCatalog(
+            minimalWorkActionRegistrations({ observationExists: () => true, knowledge })
+          )
+        );
+        const result = await dispatch(
+          {
+            action: 'work.create',
+            operationId: embedder === null ? 'text-work' : 'vector-work',
+            input: {
+              topic: 'embedder-choice',
+              summary: 'Store work with the selected indexing mode',
+              set: { title: 'Check indexing' },
+            },
+          },
+          { access }
+        );
+        expect(result.status).toBe('completed');
+        const { recordRef } = (result as { data: { recordRef: { id: string } } }).data;
+        expect(knowledge.readWork({}, access).items).toEqual(
+          expect.arrayContaining([expect.objectContaining({ latestJudgmentRef: recordRef })])
+        );
+        const stored = handle.adapter
+          .prepare(
+            'SELECT embedding FROM embeddings WHERE rowid = (SELECT rowid FROM decisions WHERE id = ?)'
+          )
+          .get(recordRef.id) as { embedding: Buffer } | undefined;
+        if (embedder === null) {
+          expect(stored).toBeUndefined();
+        } else {
+          expect(stored?.embedding).toEqual(Buffer.from(vector.buffer));
+        }
+      }
+    } finally {
+      await handle.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('judges a date deadline against the configured local midnight', async () => {
     const knowledge = {
       readWork: vi.fn().mockReturnValue({
@@ -381,7 +435,7 @@ describe('minimal work actions', () => {
     const root = mkdtempSync(join(tmpdir(), 'mama-work-actions-'));
     const handle = await openCoreDatabase({ path: join(root, 'memory.db') });
     try {
-      const knowledge = createKnowledge({ adapter: handle.adapter });
+      const knowledge = createKnowledge({ adapter: handle.adapter, embedder: null });
       const dispatch = createDispatcher(
         createCatalog(minimalWorkActionRegistrations({ observationExists: () => true, knowledge }))
       );
@@ -430,7 +484,7 @@ describe('minimal work actions', () => {
     const root = mkdtempSync(join(tmpdir(), 'mama-work-revise-'));
     const handle = await openCoreDatabase({ path: join(root, 'memory.db') });
     try {
-      const knowledge = createKnowledge({ adapter: handle.adapter });
+      const knowledge = createKnowledge({ adapter: handle.adapter, embedder: null });
       const dispatch = createDispatcher(
         createCatalog(minimalWorkActionRegistrations({ observationExists: () => true, knowledge }))
       );

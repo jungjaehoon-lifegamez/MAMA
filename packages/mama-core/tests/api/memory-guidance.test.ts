@@ -22,7 +22,7 @@ describe('scoped guidance memory actions', () => {
 
   beforeAll(async () => {
     dbPath = await initTestDB('memory-guidance');
-    const knowledge = createKnowledge({ adapter: getAdapter() });
+    const knowledge = createKnowledge({ adapter: getAdapter(), embedder: null });
     dispatch = createDispatcher(createCatalog(coreActionRegistrations(knowledge, getAdapter())));
   });
 

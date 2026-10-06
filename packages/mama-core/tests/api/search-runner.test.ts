@@ -64,9 +64,13 @@ describe('the model this library opens', () => {
     const dispatchWith = (runner?: TextCompletion) =>
       createDispatcher(
         createCatalog(
-          coreActionRegistrations(createKnowledge({ adapter: getAdapter() }), getAdapter(), {
-            ...(runner ? { runner: () => runner } : {}),
-          })
+          coreActionRegistrations(
+            createKnowledge({ adapter: getAdapter(), embedder: null }),
+            getAdapter(),
+            {
+              ...(runner ? { runner: () => runner } : {}),
+            }
+          )
         )
       );
 

@@ -44,7 +44,7 @@ beforeEach(async () => {
   surface = createActionSurface({
     runtimeRoot: root,
     adapter: database.adapter,
-    knowledge: createKnowledge({ adapter: database.adapter }),
+    knowledge: createKnowledge({ adapter: database.adapter, embedder: null }),
     ownerPrincipalId: 'owner-test',
     agentId: 'agent-test',
     timeZone: createTimeZoneSetting('UTC'),

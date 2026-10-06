@@ -24,7 +24,10 @@ describe('F3 authority and serialization contracts', () => {
   const dispatch = () =>
     createDispatcher(
       createCatalog(
-        coreActionRegistrations(createKnowledge({ adapter: getAdapter() }), getAdapter())
+        coreActionRegistrations(
+          createKnowledge({ adapter: getAdapter(), embedder: null }),
+          getAdapter()
+        )
       )
     );
 
@@ -48,7 +51,7 @@ describe('F3 authority and serialization contracts', () => {
 
   it('F3.10 refuses a foreign-scoped outcome amendment even with read access', async () => {
     const db = getAdapter();
-    const knowledge = createKnowledge({ adapter: db });
+    const knowledge = createKnowledge({ adapter: db, embedder: null });
     const foreign = { kind: 'project', id: 'scope-b' };
     const saved = await knowledge.appendJudgment(
       {

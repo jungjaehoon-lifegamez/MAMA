@@ -33,7 +33,7 @@ describe('Story R3: runtime.start/stop — the single owner of the action socket
   beforeAll(async () => {
     await initTestDB('runtime-lifecycle');
     const adapter = getAdapter();
-    const knowledge = createKnowledge({ adapter });
+    const knowledge = createKnowledge({ adapter, embedder: null });
     catalog = createCatalog(coreActionRegistrations(knowledge, adapter));
     dispatch = createDispatcher(catalog);
     dir = mkdtempSync(join(tmpdir(), 'mama-runtime-'));

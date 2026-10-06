@@ -31,7 +31,7 @@ describe('work.link and work.list view links', () => {
   beforeEach(async () => {
     root = mkdtempSync(join(tmpdir(), 'mama-work-link-'));
     handle = await openCoreDatabase({ path: join(root, 'memory.db') });
-    knowledge = createKnowledge({ adapter: handle.adapter });
+    knowledge = createKnowledge({ adapter: handle.adapter, embedder: null });
     const registration = minimalWorkActionRegistrations({
       knowledge,
       observationExists: () => false,

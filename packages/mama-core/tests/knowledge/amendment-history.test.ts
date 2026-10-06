@@ -38,7 +38,7 @@ describe('knowledge/judgments: amendments keep what they replaced', () => {
     const decision = await appendJudgment(
       { commandId: 'amend-base', topic: 'rollout', summary: 'Roll out', recordKind: 'judgment' },
       access,
-      { adapter }
+      { adapter, embedder: null }
     );
     const target = { kind: 'memory' as const, id: decision.recordId };
     const first = await appendJudgment(
@@ -50,7 +50,7 @@ describe('knowledge/judgments: amendments keep what they replaced', () => {
         amends: [{ target, outcome: 'SUCCESS' }],
       },
       access,
-      { adapter }
+      { adapter, embedder: null }
     );
     const second = await appendJudgment(
       {
@@ -61,7 +61,7 @@ describe('knowledge/judgments: amendments keep what they replaced', () => {
         amends: [{ target, outcome: 'FAILED', failureReason: 'rolled back' }],
       },
       access,
-      { adapter }
+      { adapter, embedder: null }
     );
 
     expect(payload(first.recordId).replacedValues).toEqual([
@@ -80,7 +80,7 @@ describe('knowledge/judgments: amendments keep what they replaced', () => {
     const earlier = await appendJudgment(
       { commandId: 'replace-old', topic: 'policy', summary: 'Old policy', recordKind: 'judgment' },
       access,
-      { adapter }
+      { adapter, embedder: null }
     );
     const later = await appendJudgment(
       {
@@ -91,7 +91,7 @@ describe('knowledge/judgments: amendments keep what they replaced', () => {
         replaces: [{ id: earlier.recordId, reason: 'the owner changed the policy' }],
       },
       access,
-      { adapter }
+      { adapter, embedder: null }
     );
 
     const replaced = payload(later.recordId).replacedValues as Array<{
@@ -109,7 +109,7 @@ describe('knowledge/judgments: amendments keep what they replaced', () => {
     const earlier = await appendJudgment(
       { commandId: 'reasonless-old', topic: 'p', summary: 'Old', recordKind: 'judgment' },
       access,
-      { adapter }
+      { adapter, embedder: null }
     );
     await expect(
       appendJudgment(
@@ -122,7 +122,7 @@ describe('knowledge/judgments: amendments keep what they replaced', () => {
           replaces: [{ id: earlier.recordId, reason: ' ' }],
         },
         access,
-        { adapter }
+        { adapter, embedder: null }
       )
     ).rejects.toThrow(/replaces reason must be nonblank/);
   });

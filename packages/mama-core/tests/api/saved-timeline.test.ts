@@ -57,7 +57,7 @@ describe('memory.read:timeline', () => {
   beforeAll(async () => {
     dbPath = await initTestDB('saved-timeline');
     const adapter = getAdapter();
-    const knowledge = createKnowledge({ adapter });
+    const knowledge = createKnowledge({ adapter, embedder: null });
     insertRecord('lesson_early', 'lesson', 1_000, SCOPES[0], null);
     insertRecord('fact_owner', 'fact', 2_000, SCOPES[0], 'telegram:chat-1:42');
     insertRecord('fact_elsewhere', 'fact', 2_500, { kind: 'project', id: 'other-scope' }, null);

@@ -6,8 +6,8 @@
  * met the published package: its files list, its exports map or its install. Here the tarball is
  * packed and installed outside the repository, Node's exports map refuses any private subpath,
  * and the consumer runs with no MAMA setting and a home directory of its own. It keeps no vectors:
- * the embedder it writes and searches with answers null, so the core's model must never load (on
- * this install its first search used to start a model download).
+ * it writes with embedder: null and searches with an embedder that answers null, so the model must
+ * never load (on this install its first search used to start a model download).
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import {

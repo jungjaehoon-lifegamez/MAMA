@@ -53,7 +53,7 @@ beforeEach(async () => {
   );
   surface = createActionSurface({
     adapter: database.adapter,
-    knowledge: createKnowledge({ adapter: database.adapter }),
+    knowledge: createKnowledge({ adapter: database.adapter, embedder: null }),
     ownerPrincipalId: 'owner-test',
     agentId: 'agent-test',
     connectors: ['slack'],

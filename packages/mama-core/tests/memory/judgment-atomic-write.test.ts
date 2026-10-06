@@ -54,7 +54,7 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
           ...(reasoning === undefined ? {} : { reasoning }),
         },
         access,
-        { adapter }
+        { adapter, embedder: null }
       );
       expect(
         adapter.prepare('SELECT reasoning FROM decisions WHERE id = ?').get(saved.recordId)
@@ -75,7 +75,7 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
         modelRunId,
       },
       agentAccess,
-      { adapter }
+      { adapter, embedder: null }
     );
     const work = await createWork(
       {
@@ -88,7 +88,7 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
         modelRunId,
       },
       agentAccess,
-      { adapter }
+      { adapter, embedder: null }
     );
     for (const id of [basis.recordId, work.recordRef.id]) {
       expect(
@@ -128,7 +128,7 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
         modelRunId: nextRunId,
       },
       agentAccess,
-      { adapter }
+      { adapter, embedder: null }
     );
     expect(
       adapter
@@ -163,7 +163,7 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
           links: [{ relation: 'mentions', target: { kind: 'registry', id: 'missing' } }],
         },
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toMatchObject({
       code: 'REFERENCE_NOT_FOUND',
@@ -187,7 +187,7 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
           links: [{ relation: 'mentions', target: unsupported }],
         },
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toMatchObject({ code: 'REFERENCE_NOT_FOUND' });
     expect(getAdapter().prepare('SELECT COUNT(*) AS n FROM decisions').get()).toEqual({ n: 0 });
@@ -219,8 +219,13 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
       replaces: [{ id: 'memory-old', reason: 'new evidence' }],
       scopes: access.scopes,
     };
-    const receipt = await appendJudgment(command, access, { adapter: getAdapter() });
-    expect(await appendJudgment(command, access, { adapter: getAdapter() })).toEqual(receipt);
+    const receipt = await appendJudgment(command, access, {
+      adapter: getAdapter(),
+      embedder: null,
+    });
+    expect(
+      await appendJudgment(command, access, { adapter: getAdapter(), embedder: null })
+    ).toEqual(receipt);
     expect(
       getAdapter()
         .prepare(
@@ -248,10 +253,11 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
       recordKind: 'judgment' as const,
       scopes: access.scopes,
     };
-    await appendJudgment(command, access, { adapter: getAdapter() });
+    await appendJudgment(command, access, { adapter: getAdapter(), embedder: null });
     await expect(
       appendJudgment({ ...command, summary: 'different payload' }, access, {
         adapter: getAdapter(),
+        embedder: null,
       })
     ).rejects.toMatchObject({ code: 'COMMAND_CONFLICT' });
     expect(getAdapter().prepare('SELECT COUNT(*) AS n FROM decisions').get()).toEqual({ n: 1 });
@@ -264,7 +270,7 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
       summary: 'scope-bound payload',
       recordKind: 'judgment' as const,
     };
-    await appendJudgment(command, access, { adapter: getAdapter() });
+    await appendJudgment(command, access, { adapter: getAdapter(), embedder: null });
     await expect(
       appendJudgment(
         command,
@@ -272,7 +278,7 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
           ...access,
           scopes: [{ kind: 'project', id: 'other-scope' }],
         },
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toMatchObject({ code: 'COMMAND_CONFLICT' });
     expect(getAdapter().prepare('SELECT COUNT(*) AS n FROM decisions').get()).toEqual({ n: 1 });
@@ -339,7 +345,7 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     const commitmentId = create.work!.commitmentId;
     const revised = await appendJudgment(
@@ -357,7 +363,7 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     expect(revised.work?.revision).toBe(2);
     expect(
@@ -383,7 +389,7 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
           scopes: access.scopes,
         },
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toMatchObject({ code: 'STALE_REVISION' });
     expect(getAdapter().prepare('SELECT COUNT(*) AS n FROM decisions').get()).toEqual({ n: 2 });
@@ -400,7 +406,7 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     const commitmentId = create.work!.commitmentId;
     await appendJudgment(
@@ -413,7 +419,7 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
         scopes: access.scopes,
       },
       access,
-      { adapter: getAdapter() }
+      { adapter: getAdapter(), embedder: null }
     );
     await expect(
       appendJudgment(
@@ -426,7 +432,7 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
           scopes: access.scopes,
         },
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toMatchObject({ code: 'COMMITMENT_WITHDRAWN' });
   });
@@ -449,7 +455,7 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
           projections: { recordIdentity: { itemId: 'reg_nonexistent', actors: [] } },
         },
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toMatchObject({ code: 'unknown_node' });
     expect(getAdapter().prepare('SELECT COUNT(*) AS n FROM decisions').get()).toEqual({ n: 0 });
@@ -470,7 +476,7 @@ describe('Story R1/TG-03/TG-04/TG-05/TG-06: atomic agent judgment writes', () =>
           },
         },
         access,
-        { adapter: getAdapter() }
+        { adapter: getAdapter(), embedder: null }
       )
     ).rejects.toMatchObject({ code: 'wrong_kind' });
     expect(getAdapter().prepare('SELECT COUNT(*) AS n FROM decisions').get()).toEqual({ n: 0 });

@@ -58,7 +58,9 @@ describe('an advertised core action over the real client route', () => {
       project_id: PROJECT,
       created_at: 1_700_000_000_000,
     });
-    const catalog = createCatalog(coreActionRegistrations(createKnowledge({ adapter }), adapter));
+    const catalog = createCatalog(
+      coreActionRegistrations(createKnowledge({ adapter, embedder: null }), adapter)
+    );
 
     runtime = await startRuntime({
       paths: { socketPath },
