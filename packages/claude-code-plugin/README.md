@@ -22,7 +22,7 @@ Restart Claude Code. These commands select local plugin files, but the manifest
 published MCP package with `npx -y @jungjaehoon/mama-server`.
 For this branch's server code, use the local stdio configuration in
 [development-memory setup](../../docs/start/claude-code-plugin.md). That guide also describes the
-released marketplace path; published packages may lag this rebuild.
+released marketplace path; published packages may lag this checkout.
 
 Verify a save/search round trip, then save a checkpoint and resume it in a fresh session.
 

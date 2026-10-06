@@ -72,4 +72,4 @@ The PR should explain the concrete problem, resulting behaviour, validation and 
 Do not present a passing test suite as proof that the overall product purpose is complete.
 
 Before publication, follow [the release process](release-process.md), including the privacy review
-and the owner's go-ahead for the rebuild push and PR.
+and the owner's go-ahead before the push and PR.
