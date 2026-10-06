@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.66.0] - 2026-10-07
+
+### Added
+
+- Owner messages and delivered replies are saved as raw items of a `chat` connector, bound to the
+  owner. An owner message is saved before its mailbox row is accepted, and a failed save fails the
+  intake. Each messenger saves the text it actually sent when the reply is marked delivered.
+- An owner turn passes the message's observation as the session's source ref, so a correction's
+  provenance returns the owner's words.
+- `manage.policy.read` returns the owner policy, its fingerprint and whether it differs from the
+  latest revision. `manage.policy.update`, refused outside an owner chat turn and on a stale
+  fingerprint, records the reason and the full text as an owner-scoped revision carrying the owner
+  message, then replaces the file. A retry with the same operation id returns the first outcome.
+- A memory write that would replace, retire or impersonate a policy revision is refused.
+
+### Changed
+
+- `owner.messages` and the session start read the stored conversation. Replay windows and
+  `source.recent`'s default list leave `chat` out; a named chat channel and `source.search` reach
+  it.
+- The corrections procedure sends a standing correction to the owner policy and a situational one
+  to `memory.save`. The full-report and record procedures say the policy carries the standing rules
+  and the agent reads situational rules with `memory.search` before writing.
+- `manage.wiki.publish` refuses a page without a type instead of filing it as an entity; the
+  backfill format requires the type.
+- A failed Telegram placeholder send is logged.
+
+### Removed
+
+- The owner rule index on record orders and in `help({topic: 'full-report'})`, and the lessons
+  recalled on record orders.
+- The call shapes in the corrections and daily procedures; the daily page keeps its path, title
+  and type.
+- The conversation record and session store, the mailbox-backed exchange readers, and the unused
+  Telegram streaming callbacks, queued marker, edit throttle and HTML closer.
+
 ## [0.65.0] - 2026-10-05
 
 ### Added

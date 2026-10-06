@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.1.0] - 2026-10-07
+
+### Added
+
+- Live provenance resolves a bare observation handle (`obs_…`) as an observation ref.
+- `coreActionRegistrations` takes `readObservationBody`, a port that reads an observation body the
+  consumer keeps outside core, under the caller's context. Provenance reports `body_unavailable`
+  when the port cannot return the exact stored body.
+
+### Changed
+
+- Live provenance throws when a visible observation has no body in core and the consumer supplied
+  no `readObservationBody`; a missing excerpt is not evidence.
+
+### Fixed
+
+- `insertPreparedDecision` keeps an empty reasoning as an empty string instead of NULL.
+
 ## [6.0.0] - 2026-10-05
 
 ### Removed (breaking)

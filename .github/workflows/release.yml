@@ -144,13 +144,12 @@ jobs:
       - name: Extract changelog
         id: changelog
         run: |
-          # Extract latest changelog section
-          if [[ ! -f CHANGELOG.md ]]; then
-            echo "::warning::CHANGELOG.md not found, using placeholder"
-            CHANGELOG="No changelog available for this release."
-          else
-            # Skip [Unreleased] section, get first real version section
-            CHANGELOG=$(awk '/^## \[.*\]/{if(/Unreleased/) next; if(found) exit; found=1} found' CHANGELOG.md | head -100)
+          # The section whose heading names this release's MAMA OS version, as the tag does
+          VERSION="${{ steps.versions.outputs.mama_os }}"
+          CHANGELOG=$(awk -v heading="mama-os [$VERSION]" 'index($0, "## ") == 1 { if (found) exit; found = index($0, heading) > 0 } found' CHANGELOG.md)
+          if [[ -z "$CHANGELOG" ]]; then
+            echo "::error::CHANGELOG.md has no section for mama-os [$VERSION]"
+            exit 1
           fi
           echo "content<<EOF" >> $GITHUB_OUTPUT
           echo "$CHANGELOG" >> $GITHUB_OUTPUT

@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.66.0] / mama-core [6.1.0] - 2026-10-07
+
+Conversations with MAMA are kept as sources, so a correction's evidence returns the owner's own
+words. The owner's standing rules live in one policy file that every session carries, and the
+agent changes it only when the owner asks in chat. The package changelogs list every change.
+
+### Added
+
+- Each owner message and each delivered reply is kept as a `chat` source. A correction saved in an
+  owner turn points at the owner's message, and its provenance returns that text.
+- `manage.policy.read` and `manage.policy.update`: the agent reads the owner policy and, in an
+  owner chat turn only, replaces it. Every change is kept as a revision with the owner's message.
+- mama-core: provenance resolves an observation handle and reads a body kept outside core through
+  a port the consumer supplies.
+
+### Changed
+
+- `owner.messages` and a new session's start read the stored conversation.
+- The corrections procedure sends a standing correction to the owner policy and a situational one
+  to memory. A wiki page published without a type is refused.
+
+### Removed
+
+- The owner rule index on record orders and the full report, and the lessons recalled on record
+  orders: standing rules arrive in the owner policy, and the agent reads situational rules with
+  `memory.search` before it writes.
+- The call shapes in the corrections and daily procedures, and unused Telegram streaming code.
+
+### Fixed
+
+- The GitHub release notes carry this version's changelog section. Since the headings began with
+  `mama-os`, they carried a July entry instead.
+
 ## mama-os [0.65.0] / mama-core [6.0.0] - 2026-10-05
 
 The owner's rules reach every record turn and every full report. A full report follows the
