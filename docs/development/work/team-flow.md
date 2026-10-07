@@ -17,6 +17,9 @@ dependent path to the owner, and two core gaps block a read-only member before a
 - 2026-10-07: the owner cannot see a member's personal records (chat, memory bound to the member,
   unshared work, workspace files) unless the member allows it. Members get document and image
   work through their agent: native file and shell tools inside a workspace of their own.
+- 2026-10-07: a member's own computer connects through MCP and exposes only the drives or
+  folders the member chooses; members' personal files do not go up to a Drive folder MAMA reads
+  with the owner's account.
 - 2026-10-06: no separate feedback-forwarding route; forwarding to a team destination is delivery.
 - Telegram first. Enrollment by owner forward (`forward_origin.sender_user.id`, chosen 2026-08-15);
   an owner-issued invite link is the alternative to compare.
@@ -80,6 +83,11 @@ before the boundaries exist. Core steps need a core release before the product s
 5. Consent: a member shares an item in their own turn (an appended revision binds it to a shared
    scope), or grants the owner standing read of their scope (core grants need an owner grantor
    today) (blocks step 8).
+6. Member computer: where processing runs (the MAMA Mac in a scratch area deleted after the turn,
+   or the member's computer through a command tool limited to the chosen folders), the network
+   path (a private network, or the existing tunnel with Access), and what a write may do in the
+   member's folders (blocks the file work after the read-only slice). Whatever the agent reads
+   still enters the member's session on the MAMA Mac.
 
 Can wait until the step that needs them: the serial chain or lanes (step 6); owner policy text in a
 member session (step 6); revoke
