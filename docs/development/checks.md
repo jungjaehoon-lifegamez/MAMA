@@ -1837,3 +1837,9 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Result: from the 05:19 deploy to 16:40, 197 model runs, all Claude, recorded their usage; none compacted. Summed over a run's calls, input including cache averaged 386,283 tokens and reached 1,983,283 in one run.
 - Evidence: `model_runs` columns from migration 101, read back on the live database.
 - Still open: a full day, and per-call context size; a run's cache reads add up over its calls, so the run sum is not the context size of one call.
+
+### One-day replay: estimate before any run (2026-10-07)
+
+- Result: not run. Replay mode starts no collector and no messenger and delivers nothing to the owner (`cli/commands/daemon.ts:617`), but it starts the viewer, so a copy of the home needs another viewer port to run beside the live daemon. Finalization moves the connector poll cursors in whatever home it runs in, so on the live home it also rewrites the day's ledger the live turns already wrote.
+- Evidence: from the 05:19 deploy to 16:40, record turns took a median of 556,294 input tokens (cache included) and 516 output tokens per run; source notices 270,917 and 6. The last eight days brought 11 to 167 source deltas a day. A replay window is a record-like turn, so one day costs roughly 28 to 95 million input tokens, mostly cache reads, depending on the window count.
+- Still open: the window count for a chosen day (the feeder's preflight counts it without a model call, but needs a one-day manifest), and whether the Claude CLI login holds under a swapped `HOME`. Run on a copy of the home with the viewer port changed, after the owner's go-ahead.

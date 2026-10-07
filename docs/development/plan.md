@@ -89,7 +89,9 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    run records its tokens and compactions (#437); replay windows run in their own session (#436).
    First live numbers: 197 runs from 05:19 to 16:40 on 10-07, all with usage, no compaction
    ([check](checks.md#w23-first-live-usage-2026-10-07)). Left: a full day of runs, and the
-   one-day replay, which waits for a cost estimate and the owner's go-ahead. September is not
+   one-day replay: about 28 to 95 million input tokens, mostly cache reads, to run on a copy of the
+   home ([estimate](checks.md#one-day-replay-estimate-before-any-run-2026-10-07)); it waits for
+   the owner's go-ahead. September is not
    re-imported; live changes and corrections complete it (owner, 2026-09-29).
 9. Release: mama-core 7.0.0 (breaking: knowledge writes name their embedder (#435); the unused
    memory-agent contracts from `codex/core-unused-runtime`; migration 101; migration 102 drops the
