@@ -89,9 +89,9 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    run records its tokens and compactions (#437); replay windows run in their own session (#436).
    First live numbers: 197 runs from 05:19 to 16:40 on 10-07, all with usage, no compaction
    ([check](checks.md#w23-first-live-usage-2026-10-07)). Left: a full day of runs, and the
-   one-day replay: about 28 to 95 million input tokens, mostly cache reads, to run on a copy of the
-   home ([estimate](checks.md#one-day-replay-estimate-before-any-run-2026-10-07)); it waits for
-   the owner's go-ahead. September is not
+   one-day replay ran on a copy of the home with the Codex backend on 2026-10-07
+   ([check](checks.md#one-day-replay-on-a-copy-with-the-codex-backend-2026-10-07)): its own
+   session, the owner session untouched, 2.6 million input tokens for one window. September is not
    re-imported; live changes and corrections complete it (owner, 2026-09-29).
 9. Release: done on 2026-10-07 (#440; [check](checks.md#release-mama-core-700-and-mama-os-0670-2026-10-07)).
    mama-core 7.0.0 and mama-os 0.67.0 are published and live from 17:32 KST with migration 102.
@@ -118,6 +118,9 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
   metadata index of every file; EmbeddingGemma 2 vectors for files that work items cite as
   evidence; documents by page. Pose search needs pose keypoints, not only an embedding. Decided together with the embedding switch (item 6); waits for the daemon's read access to the streamed drive, and the
   owner's use case for pose search.
+- `work.list` with `ids` but no `view=detail` or `view=links` throws a plain `Error`
+  (`api/work-actions.ts:994`), so the agent sees `internal_error` for its own input mistake; it
+  should be an input error (found in the 10-07 replay).
 - A push from the live checkout runs the pre-push hook, which rebuilt the live core dist while the
   daemon ran from it (2026-10-07 01:44; the daemon survived). Open.
 
