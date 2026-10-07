@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.67.0] - 2026-10-07
+
+### Added
+
+- Each owner model run records its token usage and compaction count (mama-core migration 101).
+
+### Changed
+
+- A source delta carrying `replay` runs under `owner:replay` instead of the owner session;
+  finishing a replay resets both sessions, so the next owner turn starts with startup context.
+- The knowledge construction names its embedder (mama-core 7.0.0).
+
+### Fixed
+
+- An iCal event without `LAST-MODIFIED` that returns to an earlier version gets an observation
+  id and is recorded again, so the iCal poll saves and the event reads as current instead of
+  cancelled. State saved before keeps its address until the event changes.
+
 ## [0.66.0] - 2026-10-07
 
 ### Added
