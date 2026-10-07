@@ -46,30 +46,8 @@ export type MemoryKindFilter = MemoryKind | [MemoryKind, ...MemoryKind[]];
 export const MEMORY_STATUSES = ['active', 'superseded', 'contradicted', 'stale'] as const;
 export type MemoryStatus = (typeof MEMORY_STATUSES)[number];
 
-export const MEMORY_TRUTH_STATUSES = ['active', 'superseded', 'contradicted', 'stale'] as const;
-export type MemoryTruthStatus = (typeof MEMORY_TRUTH_STATUSES)[number];
-
 export const MEMORY_EDGE_TYPES = ['supersedes', 'builds_on', 'synthesizes', 'contradicts'] as const;
 export type MemoryEdgeType = (typeof MEMORY_EDGE_TYPES)[number];
-
-export const MEMORY_AGENT_ACTIONS = [
-  'save',
-  'supersede',
-  'contradict',
-  'mark_stale',
-  'quarantine',
-  'no_op',
-] as const;
-export type MemoryAgentAction = (typeof MEMORY_AGENT_ACTIONS)[number];
-
-export const MEMORY_CONSULT_INTENTS = [
-  'bootstrap_session',
-  'validate_claim',
-  'get_relevant_truth',
-  'check_conflicts',
-  'explain_history',
-] as const;
-export type MemoryConsultIntent = (typeof MEMORY_CONSULT_INTENTS)[number];
 
 export interface MemoryScopeRef {
   kind: MemoryScopeKind;
@@ -353,23 +331,6 @@ export interface AuditFindingRecord {
   status: 'open' | 'notified' | 'resolved' | 'dismissed';
   created_at: number;
   resolved_at?: number;
-}
-
-export interface AuditNotice {
-  type: 'direction_alert' | 'truth_conflict' | 'truth_update' | 'memory_warning';
-  severity: 'low' | 'medium' | 'high';
-  summary: string;
-  evidence: Array<{ type: 'conversation' | 'memory' | 'event'; ref: string; excerpt?: string }>;
-  recommended_action: 'recheck' | 'consult_memory' | 'avoid_claim' | 'use_truth_snapshot';
-  relevant_memories: Array<{ id: string; topic: string; summary: string }>;
-}
-
-export interface MemoryConsultResult {
-  status: 'ok' | 'conflict' | 'uncertain' | 'no_relevant_memory';
-  summary: string;
-  evidence: Array<{ type: 'memory' | 'event'; ref: string; excerpt?: string }>;
-  truth_snapshot?: Array<{ id: string; topic: string; summary: string; status: string }>;
-  recommended_action?: string;
 }
 
 export function createEmptyRecallBundle(query: string): RecallBundle {

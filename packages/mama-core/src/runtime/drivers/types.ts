@@ -579,8 +579,3 @@ export type StreamCallbacks = PromptCallbacks;
 
 /** Which door a tool call came through. */
 export type GatewayExecutionSurface = 'model_tool' | 'reactive_internal' | 'direct';
-
-/** Somewhere a run can park work it started and must not lose. */
-export interface BackgroundTaskRegistry {
-  register(task: Promise<unknown>): void;
-}
