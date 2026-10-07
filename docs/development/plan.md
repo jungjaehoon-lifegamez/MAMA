@@ -81,8 +81,8 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    [release](checks.md#release-mama-core-700-and-mama-os-0670-2026-10-07)). Knowledge writes name
    their embedder or `null` and refuse the omission (#435); the memory-agent vocabulary and the
    native turn's background-task registry (W11) went (#438); migration 102 dropped the six tables of
-   the modules 6.0.0 removed (#439), live from 17:32. Development memory keeps them until the plugin
-   and the MCP server move to core 7.
+   the modules 6.0.0 removed (#439), live from 17:32. The plugin and the MCP server moved to core 7
+   in the next release (item 9); development memory migrates when a new session installs them.
 8. W23 and W26: built on 2026-10-07 and live from 05:19 KST
    ([W23](checks.md#w23-each-model-run-records-its-usage-and-compactions-437-2026-10-07),
    [W26](checks.md#w26-replay-windows-run-in-a-session-of-their-own-436-2026-10-07)). Each model
@@ -97,6 +97,10 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    mama-core 7.0.0 and mama-os 0.67.0 are published and live from 17:32 KST with migration 102.
    The GitHub release list was cleaned: 121 releases now carry their own changelog section,
    package versions and the title `MAMA vX.Y.Z`.
+   Then mama-os 0.67.1, mama-server 2.5.0 and plugin 2.2.0 (#443,
+   [check](checks.md#release-mama-os-0671-mama-server-250-and-plugin-220-2026-10-07)): the server
+   and the plugin run on core 7, and mama-os carries the `work.list` input errors (#441); live from
+   19:26 KST.
 
 ## Waiting
 
