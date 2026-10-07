@@ -71,11 +71,6 @@ function historyToolResult(result: InternalToolResultBlock): InternalToolResultB
   return block as InternalToolResultBlock;
 }
 
-/** Background work a tool started that the run must outlive its own turns to drain. */
-export interface BackgroundTaskRegistry {
-  register(task: Promise<unknown>): void;
-}
-
 /**
  * What the entry reads from the caller's wider options object. The caller's own type
  * is much wider and names things the core has no business knowing; this is the part
@@ -204,7 +199,6 @@ export interface SessionLanes {
 
 /** What a run's tool call may touch, plus the run-local fields this entry adds. */
 type RunLocalContext<TToolContext extends HostExecutionContext> = TToolContext & {
-  backgroundTasks?: BackgroundTaskRegistry;
   procedureStimulus?: string;
   procedureRefs?: unknown;
   gatewayCallId?: string;
@@ -277,12 +271,6 @@ export interface NativeSessionHost<
     prompt: string;
     response: string;
   }): void | Promise<void>;
-}
-
-async function drainBackgroundTasks(tasks: Promise<unknown>[]): Promise<void> {
-  for (let index = 0; index < tasks.length; index += 1) {
-    await tasks[index];
-  }
 }
 
 function withExecutionSurface<TToolContext extends HostExecutionContext>(
@@ -803,16 +791,6 @@ export class NativeSessionRunner<TToolContext extends HostExecutionContext = Hos
         }`
       );
     }
-    const childTasks: Promise<unknown>[] = [];
-    const backgroundTasks: BackgroundTaskRegistry = {
-      register(task: Promise<unknown>): void {
-        const observedTask = Promise.resolve(task);
-        observedTask.catch(() => {
-          // Re-thrown later by the child's release drain.
-        });
-        childTasks.push(observedTask);
-      },
-    };
     let childContext: TToolContext | null;
     let bridge: HostToolBridge;
     // The child's model run is already OPEN. Anything that throws while assembling its
@@ -826,7 +804,6 @@ export class NativeSessionRunner<TToolContext extends HostExecutionContext = Hos
       childContext = base
         ? ({
             ...base,
-            backgroundTasks,
             subagentThreadId: info.agentThreadId,
           } as RunLocalContext<TToolContext>)
         : null;
@@ -867,15 +844,6 @@ export class NativeSessionRunner<TToolContext extends HostExecutionContext = Hos
           return;
         }
         released = true;
-        try {
-          await drainBackgroundTasks(childTasks);
-        } catch (error) {
-          logger.warn(
-            `subagent background drain failed: ${
-              error instanceof Error ? error.message : String(error)
-            }`
-          );
-        }
         try {
           if (outcome.status === 'completed') {
             await host.modelRun?.commit(
@@ -1052,22 +1020,10 @@ export class NativeSessionRunner<TToolContext extends HostExecutionContext = Hos
     let ownedModelRunId: string | null = null;
     let ownedModelRunCommitted = false;
     let nativeEffects = new NativeEffectReplayBoundary();
-    const pendingBackgroundTasks: Promise<unknown>[] = [];
-    const backgroundTasks: BackgroundTaskRegistry = {
-      register(task: Promise<unknown>): void {
-        const observedTask = Promise.resolve(task);
-        observedTask.catch(() => {
-          // Re-thrown later by drainBackgroundTasks; attach now to prevent unhandled rejections.
-        });
-        pendingBackgroundTasks.push(observedTask);
-      },
-    };
-
     const withRunLocals = (context: TToolContext | null): TToolContext | null =>
       context
         ? ({
             ...context,
-            backgroundTasks,
             procedureStimulus: runPrompt,
             procedureRefs: request?.procedureRefs,
           } as RunLocalContext<TToolContext>)
@@ -1389,19 +1345,6 @@ export class NativeSessionRunner<TToolContext extends HostExecutionContext = Hos
           ? { status: 'interrupted', error: `parent stopped: ${stoppedBy}` }
           : { status: 'completed' }
       );
-      // Draining background work and committing the run are separate failures and get
-      // separate catches. Sharing one meant a rejected background task skipped the commit
-      // and was then reported as `commit_failed` - naming a failure that was never even
-      // attempted, which is the exact habit this provenance state exists to break.
-      try {
-        await drainBackgroundTasks(pendingBackgroundTasks);
-      } catch (backgroundError) {
-        logger.warn(
-          `background task drain failed: ${
-            backgroundError instanceof Error ? backgroundError.message : String(backgroundError)
-          }`
-        );
-      }
       try {
         if (ownedModelRunId && host.modelRun) {
           await host.modelRun.commit(

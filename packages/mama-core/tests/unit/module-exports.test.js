@@ -86,6 +86,17 @@ describe('Story M1.1: Core Module Exports', () => {
         expect(core[removed]).toBeUndefined();
       }
     });
+
+    it('leaves retired memory-agent vocabulary out of the public memory types subpath', async () => {
+      const types = await import('../../src/memory/types.js');
+      for (const removed of [
+        'MEMORY_TRUTH_STATUSES',
+        'MEMORY_AGENT_ACTIONS',
+        'MEMORY_CONSULT_INTENTS',
+      ]) {
+        expect(types[removed]).toBeUndefined();
+      }
+    });
   });
 
   describe('package root model-run exports', () => {

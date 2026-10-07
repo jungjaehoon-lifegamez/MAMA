@@ -7,6 +7,67 @@ import { SessionPool } from '../../src/runtime/session-pool.js';
 import type { HostExecutionContext, IModelRunner } from '../../src/runtime/drivers/types.js';
 
 describe('native caller attribution', () => {
+  it.each(['parent', 'child'])(
+    'preserves consumer-owned context fields for a %s tool caller',
+    async (callerKind) => {
+      const pool = new SessionPool();
+      const marker = { queue: 'consumer-work' };
+      let observed: unknown;
+      let runCount = 0;
+      const agent = {
+        backendType: 'claude',
+        stop: async () => {},
+        prompt: async (_text, callbacks) => {
+          callbacks?.onInputDispatch?.({
+            backend: 'claude',
+            sessionId: 'consumer-session',
+            inputId: 'input',
+          });
+          observed = await runner.withToolCaller(
+            {
+              session_id: 'consumer-session',
+              tool_use_id: 'read-context',
+              ...(callerKind === 'child' ? { agent_id: 'consumer-child' } : {}),
+            },
+            async (context) => context.backgroundTasks
+          );
+          return {
+            response: 'done',
+            session_id: 'consumer-session',
+            usage: { input_tokens: 0, output_tokens: 0 },
+          };
+        },
+      } as IModelRunner;
+      const runner = createNativeSessionRunner({
+        agent,
+        backend: 'claude',
+        model: 'fixture',
+        maxTurns: 10,
+        isGatewayMode: false,
+        runTokenBudget: 0,
+        sessionPool: pool,
+        turnPolicy: () => ({ channelKey: 'consumer-lane', systemLayers: [] }),
+        executionContext: (request) => ({ ...request, backgroundTasks: marker }),
+        hostToolDefinitions: () => [],
+        callTool: async () => ({}),
+        modelRun: {
+          begin: async () => `run-${++runCount}`,
+          commit: async () => {},
+          fail: async () => {},
+        },
+      });
+      try {
+        await runner.runTurn([{ type: 'text', text: 'read the consumer context' }], {
+          sessionKey: 'consumer-lane',
+          prepareAccess: async () => ({ grant: 'consumer' }),
+        });
+        expect(observed).toBe(marker);
+      } finally {
+        pool.dispose();
+      }
+    }
+  );
+
   it.each(['background-known', 'fixture-agent'])(
     'keeps background children on their originating turn and permits SendMessage resume to %s',
     async (recipient) => {
