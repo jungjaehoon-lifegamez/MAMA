@@ -77,12 +77,13 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    or bring one paraphrase in while admitting the case that must stay out and reordering most real
    queries' top five. The record holds none of the paraphrases' words; the agent's own rephrasing
    reached the case live (4580). The embedding switch waits with the Drive files below.
-7. Core: done in part on 2026-10-07
-   ([check](checks.md#knowledge-writes-name-their-embedder-the-removed-modules-tables-435-2026-10-07)).
-   Knowledge writes name their embedder or `null` and refuse the omission (#435, breaking: the next
-   core release is a major one); the AGENTS.md index rule went. Twelve tables of the modules 6.0.0
-   removed have no reader or writer; dropping them deletes 623 development-memory rows, so it
-   waits for the owner. The memory-agent vocabulary goes with item 9.
+7. Core: done on 2026-10-07
+   ([check](checks.md#knowledge-writes-name-their-embedder-the-removed-modules-tables-435-2026-10-07),
+   [release](checks.md#release-mama-core-700-and-mama-os-0670-2026-10-07)). Knowledge writes name
+   their embedder or `null` and refuse the omission (#435); the memory-agent vocabulary and the
+   native turn's background-task registry (W11) went (#438); migration 102 dropped the six tables of
+   the modules 6.0.0 removed (#439), live from 17:32. Development memory keeps them until the plugin
+   and the MCP server move to core 7.
 8. W23 and W26: built on 2026-10-07 and live from 05:19 KST
    ([W23](checks.md#w23-each-model-run-records-its-usage-and-compactions-437-2026-10-07),
    [W26](checks.md#w26-replay-windows-run-in-a-session-of-their-own-436-2026-10-07)). Each model
@@ -106,7 +107,6 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
   through it, wait for an owner answer that needs them.
 - W4: catalog `memory.search` takes no consumer embedder, and its error behaviour differs from
   writes. Settle both when a consumer needs catalog search.
-- W11: the native turn's background-task registry remains a removal candidate.
 - W28: the next unrecorded batch shows the live waiting → retry → recorded trace.
 - Chatwork: one failing room drops the whole poll (`connectors/chatwork/index.ts:216`) and a room
   reads its latest 100 messages. No loss is observed: MAMA's daily Chatwork counts from 09-30 to
@@ -121,8 +121,14 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
 - `work.list` with `ids` but no `view=detail` or `view=links` throws a plain `Error`
   (`api/work-actions.ts:994`), so the agent sees `internal_error` for its own input mistake; it
   should be an input error (found in the 10-07 replay).
-- A push from the live checkout runs the pre-push hook, which rebuilt the live core dist while the
-  daemon ran from it (2026-10-07 01:44; the daemon survived). Open.
+- A commit in the live checkout can rebuild the live dist while the daemon runs from it. The
+  pre-commit hook (`.husky/pre-commit`) runs `turbo run test --filter="...[HEAD^1]"`, and `test`
+  depends on `build` (`turbo.json`), so a docs commit right after a release commit selects core and
+  MAMA OS and runs `clean-dist && tsc` and `pnpm clean && tsc` on production: the docs commit at
+  17:37:00 on 10-07 rewrote the core dist at 17:37:07 and the MAMA OS dist at 17:37:42 under a
+  daemon started at 17:32 (also 01:44, first blamed on a pre-push hook that does not exist). The
+  daemon survived both. The filter compares against the parent of the last commit instead of the
+  staged change, and a failing filtered run falls back to the whole suite, so a failure can pass.
 
 ## Owner decisions still open
 
