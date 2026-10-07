@@ -270,7 +270,7 @@ function workListFilter(input: Record<string, unknown>): WorkListFilter {
     ...(status === undefined ? {} : { status }),
     ...(input.stage === undefined ? {} : { stage: workListString(input.stage, 'stage') }),
     ...(input.project === undefined ? {} : { project: workListString(input.project, 'project') }),
-    ...(input.text === undefined ? {} : { text: workListString(input.text, 'text') }),
+    ...(input.text === undefined ? {} : { text: workListQuery(input.text) }),
     ...(input.asOf === undefined ? {} : { asOf: workListAsOf(input.asOf) }),
     ...(input.changedSince === undefined
       ? {}
@@ -346,6 +346,15 @@ function workListTokens(value: string): string[] {
   return normalized.split(/[^\p{L}\p{N}]+/gu).filter((token) => token.length > 0);
 }
 
+/** A text query is checked once, where the input is read, so an empty board cannot pass it. */
+function workListQuery(value: unknown): string {
+  const query = workListString(value, 'text') as string;
+  if (workListTokens(query).length === 0) {
+    throw invalidInput('work.list text must contain searchable text');
+  }
+  return query;
+}
+
 function workListSearchFields(item: CommitmentView): { title: string; description: string } {
   const values = workListValueObject(item.values);
   return {
@@ -359,9 +368,6 @@ function workListLexicalScore(
   fields: { title: string; description: string }
 ): number {
   const queryTokens = [...new Set(workListTokens(query))];
-  if (queryTokens.length === 0) {
-    throw invalidInput('work.list text must contain searchable text');
-  }
   const fieldText = `${fields.title}\n${fields.description}`;
   const fieldTokens = new Set(workListTokens(fieldText));
   const overlap = queryTokens.filter((token) => fieldTokens.has(token)).length / queryTokens.length;

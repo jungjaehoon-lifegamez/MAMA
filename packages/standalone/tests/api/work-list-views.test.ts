@@ -164,6 +164,16 @@ describe('dispatched work.list failures', () => {
     });
   });
 
+  it('classifies unsearchable text as invalid input on an empty board', async () => {
+    const dispatch = dispatcher(makeReader([]).readWork);
+    expect(
+      await dispatch({ action: 'work.list', input: { text: '!!!' } }, { access })
+    ).toMatchObject({
+      status: 'failed',
+      error: { kind: 'invalid_input', code: 'invalid_input' },
+    });
+  });
+
   it('classifies a cursor combined with a different query as invalid input', async () => {
     const dispatch = dispatcher(makeReader([view(1), view(2)]).readWork);
     const first = await dispatch({ action: 'work.list', input: { limit: 1 } }, { access });
