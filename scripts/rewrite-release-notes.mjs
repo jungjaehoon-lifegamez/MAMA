@@ -14,7 +14,7 @@ const backupIndex = args.indexOf('--backup');
 const backupPath = resolve(
   backupIndex >= 0
     ? args[backupIndex + 1]
-    : `../mama-release-notes-backup-${new Date().toISOString().slice(0, 10)}.json`
+    : `../mama-release-notes-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
 );
 const sampleIndex = args.indexOf('--sample');
 const sampleTag = sampleIndex >= 0 ? args[sampleIndex + 1] : null;
@@ -47,11 +47,19 @@ const sections = new Map();
   flush();
 }
 
+// A package that did not exist yet at a tag shows a dash; any other Git failure stops the run.
 function packageVersion(tag, dir) {
   try {
-    return JSON.parse(run('git', ['show', `${tag}:packages/${dir}/package.json`])).version;
-  } catch {
-    return '—';
+    return JSON.parse(
+      execFileSync('git', ['show', `${tag}:packages/${dir}/package.json`], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    ).version;
+  } catch (error) {
+    const stderr = String(error.stderr ?? '');
+    if (/does not exist in|exists on disk, but not in/.test(stderr)) return '—';
+    throw error;
   }
 }
 
@@ -95,13 +103,30 @@ ${changelog}
 const releases = JSON.parse(
   run('gh', ['api', '--paginate', '--slurp', `repos/${repo}/releases`])
 ).flat();
+// Package versions come from each tag, so a checkout without the tags must not plan anything.
+const missingTags = releases
+  .map((release) => release.tag_name)
+  .filter((tag) => /^v\d+\.\d+\.\d+$/.test(tag))
+  .filter((tag) => {
+    try {
+      run('git', ['rev-parse', '--verify', '--quiet', `refs/tags/${tag}`]);
+      return false;
+    } catch {
+      return true;
+    }
+  });
+if (missingTags.length > 0) {
+  throw new Error(`Local tags missing (run git fetch --tags): ${missingTags.join(' ')}`);
+}
+// The first snapshot is the one a restore needs, so an existing backup is never overwritten.
 writeFileSync(
   backupPath,
   JSON.stringify(
     releases.map((r) => ({ id: r.id, tag: r.tag_name, name: r.name, body: r.body })),
     null,
     1
-  )
+  ),
+  { flag: 'wx' }
 );
 
 const plan = { rewrite: [], unchanged: [], skipped: [] };
