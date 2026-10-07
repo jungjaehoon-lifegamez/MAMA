@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.0.0] - 2026-10-07
+
+### Changed (breaking)
+
+- `createKnowledge`, `createJudgmentWriter` and `appendJudgment` require `embedder:
+MemoryEmbedder | null`; `null` writes text-only records, and leaving it out throws, also for
+  untyped callers (#435).
+
+### Removed (breaking)
+
+- `MEMORY_TRUTH_STATUSES`, `MEMORY_AGENT_ACTIONS`, `MEMORY_CONSULT_INTENTS` and their types,
+  `AuditNotice`, `MemoryConsultResult`, and both `BackgroundTaskRegistry` declarations with the
+  native runtime's background-task registration and drain (#438).
+- Migration 102 drops `ranker_model_versions`, `search_ranker_settings`, `search_feedback`,
+  `channel_summaries`, `channel_summary_state` and `memory_truth`, the tables of the modules
+  6.0.0 removed (#439).
+
+### Added
+
+- Migration 101: `model_runs` records `input_tokens`, `cache_read_input_tokens`,
+  `cache_creation_input_tokens`, `output_tokens` and `compaction_count`, as each backend reports
+  them (Codex input includes cached input; Claude's excludes cache reads and writes); the model-run
+  commit and fail ports take this usage and validate it like `token_count`. The repair path adds
+  the columns to a `model_runs` table it rebuilds (#437).
+- The Claude driver counts `compact_boundary` events and the Codex driver counts completed
+  `contextCompaction` items; a failed, timed-out or stopped prompt carries its usage (#437).
+
+### Fixed
+
+- A consumer's own `backgroundTasks` context field is no longer overwritten on parent or child
+  tool calls (#438).
+
 ## [6.1.0] - 2026-10-07
 
 ### Added

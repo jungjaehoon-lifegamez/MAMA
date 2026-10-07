@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.67.0] / mama-core [7.0.0] - 2026-10-07
+
+Every model run records its token usage and context compactions, replay windows run in a session
+of their own, and an iCal event that returns to an earlier version reads as current again.
+mama-core 7.0.0 requires knowledge writes to name their embedder, drops unused contracts and
+the tables of the modules 6.0.0 removed. The package changelogs list every change.
+
+### Added
+
+- Each model run records input, cache-read, cache-creation and output tokens and how many times
+  the session compacted (mama-core migration 101).
+
+### Changed
+
+- Replay windows run in their own session; finishing a replay resets it and the owner session.
+- mama-core 7.0.0: `createKnowledge`, `createJudgmentWriter` and `appendJudgment` need an
+  `embedder`, or `null` for text-only records, and refuse the omission.
+
+### Removed
+
+- mama-core 7.0.0: the unused memory-agent contracts and the tool background-task registry, and
+  (migration 102) the tables of the learned ranker, search feedback, channel summaries and the
+  memory bootstrap.
+
+### Fixed
+
+- An iCal event without `LAST-MODIFIED` that returns to an earlier version no longer stops every
+  iCal poll, and reads as current instead of cancelled.
+
 ## mama-os [0.66.0] / mama-core [6.1.0] - 2026-10-07
 
 Conversations with MAMA are kept as sources, so a correction's evidence returns the owner's own
