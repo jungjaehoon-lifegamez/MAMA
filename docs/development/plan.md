@@ -117,17 +117,10 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
   metadata index of every file; EmbeddingGemma 2 vectors for files that work items cite as
   evidence; documents by page. Pose search needs pose keypoints, not only an embedding. Decided together with the embedding switch (item 6); waits for the daemon's read access to the streamed drive, and the
   owner's use case for pose search.
-- `work.list` with `ids` but no `view=detail` or `view=links` throws a plain `Error`
-  (`api/work-actions.ts:994`), so the agent sees `internal_error` for its own input mistake; it
-  should be an input error (found in the 10-07 replay).
-- A commit in the live checkout can rebuild the live dist while the daemon runs from it. The
-  pre-commit hook (`.husky/pre-commit`) runs `turbo run test --filter="...[HEAD^1]"`, and `test`
-  depends on `build` (`turbo.json`), so a docs commit right after a release commit selects core and
-  MAMA OS and runs `clean-dist && tsc` and `pnpm clean && tsc` on production: the docs commit at
-  17:37:00 on 10-07 rewrote the core dist at 17:37:07 and the MAMA OS dist at 17:37:42 under a
-  daemon started at 17:32 (also 01:44, first blamed on a pre-push hook that does not exist). The
-  daemon survived both. The filter compares against the parent of the last commit instead of the
-  staged change, and a failing filtered run falls back to the whole suite, so a failure can pass.
+- CI's change filter (`.github/workflows/ci.yml`) runs no standalone tests for a change under
+  `scripts/`, though `tests/replay/september-verification.test.ts` runs a root script, and no MCP
+  server tests for a plugin-only change, though `tests/unit/server-env.test.js` imports the
+  plugin's `scripts/db-path.js` (found in the #442 review). The pre-commit hook covers the first.
 
 ## Owner decisions still open
 
