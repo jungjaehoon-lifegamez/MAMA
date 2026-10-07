@@ -56,7 +56,15 @@ export interface PrincipalRepository {
   ): void;
   suspend(principalId: string, now: number): void;
   offboard(principalId: string, now: number): void;
+  /**
+   * Without principalId, retain identity-based minting. A named id must be nonblank.
+   * An active named owner returns exists, binding an unbound identity in the same transaction.
+   * Named registration returns conflict for an identity bound elsewhere, another active
+   * owner, or a named principal with a different kind/status; no rows change on conflict.
+   * Keep the three result words for existing callers rather than add conflict details.
+   */
   ensureOwner(input: {
+    principalId?: string;
     connector: string;
     namespace: string;
     externalId: string;
@@ -102,10 +110,6 @@ interface PrincipalDatabaseRow {
   principal_id: string;
   kind: PrincipalKind;
   status: PrincipalStatus;
-}
-
-interface PrincipalKindRow {
-  kind: PrincipalKind;
 }
 
 interface MemberDatabaseRow {
@@ -254,8 +258,8 @@ export function createPrincipalRepository(
        connector, namespace, external_id, principal_id, created_at
      ) VALUES (?, ?, ?, ?, ?)`
   );
-  const selectPrincipalKindStatement = adapter.prepare(
-    'SELECT kind FROM principals WHERE principal_id = ?'
+  const selectPrincipalStatement = adapter.prepare(
+    'SELECT principal_id, kind, status FROM principals WHERE principal_id = ?'
   );
   const updatePrincipalStatusStatement = adapter.prepare(
     'UPDATE principals SET status = ?, updated_at = ? WHERE principal_id = ?'
@@ -416,7 +420,7 @@ export function createPrincipalRepository(
     status: Extract<PrincipalStatus, 'suspended' | 'offboarded'>,
     now: number
   ): void {
-    const principal = selectPrincipalKindStatement.get(principalId) as PrincipalKindRow | undefined;
+    const principal = selectPrincipalStatement.get(principalId) as PrincipalDatabaseRow | undefined;
     if (!principal) {
       throw new Error(`Principal not found: ${principalId}`);
     }
@@ -427,13 +431,49 @@ export function createPrincipalRepository(
   }
 
   function ensureOwner(input: {
+    principalId?: string;
     connector: string;
     namespace: string;
     externalId: string;
     now: number;
   }): 'created' | 'exists' | 'conflict' {
+    if (input.principalId !== undefined && input.principalId.trim().length === 0) {
+      throw new Error('principalId must be nonblank');
+    }
     return adapter.transaction(() => {
       const existing = resolveByExternal(input.connector, input.namespace, input.externalId);
+      if (input.principalId !== undefined) {
+        if (existing && existing.principalId !== input.principalId) return 'conflict';
+        const named = selectPrincipalStatement.get(input.principalId) as
+          | PrincipalDatabaseRow
+          | undefined;
+        if (named && (named.kind !== 'owner' || named.status !== 'active')) return 'conflict';
+        const activeOwner = selectActiveOwnerStatement.get() as
+          | { principal_id: string }
+          | undefined;
+        if (activeOwner && activeOwner.principal_id !== input.principalId) return 'conflict';
+        if (named) {
+          if (!existing) {
+            bindIdentity(
+              input.principalId,
+              input.connector,
+              input.namespace,
+              input.externalId,
+              input.now
+            );
+          }
+          return 'exists';
+        }
+        insertPrincipalStatement.run(input.principalId, 'owner', null, input.now, input.now);
+        bindIdentity(
+          input.principalId,
+          input.connector,
+          input.namespace,
+          input.externalId,
+          input.now
+        );
+        return 'created';
+      }
       if (existing) {
         return existing.kind === 'owner' ? 'exists' : 'conflict';
       }
