@@ -93,12 +93,10 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    home ([estimate](checks.md#one-day-replay-estimate-before-any-run-2026-10-07)); it waits for
    the owner's go-ahead. September is not
    re-imported; live changes and corrections complete it (owner, 2026-09-29).
-9. Release: mama-core 7.0.0 (breaking: knowledge writes name their embedder (#435); the unused
-   memory-agent contracts from `codex/core-unused-runtime`; migration 101; migration 102 drops the
-   twelve unused tables if the owner approves) and mama-os 0.67.0 (#434, #436, #437). At the
-   release the GitHub release list is cleaned (owner, 2026-10-07): each `vX.Y.Z` release carries
-   its own changelog section and package versions under the title `MAMA vX.Y.Z`. GitHub orders
-   releases by date, so the order itself does not change.
+9. Release: done on 2026-10-07 (#440; [check](checks.md#release-mama-core-700-and-mama-os-0670-2026-10-07)).
+   mama-core 7.0.0 and mama-os 0.67.0 are published and live from 17:32 KST with migration 102.
+   The GitHub release list was cleaned: 121 releases now carry their own changelog section,
+   package versions and the title `MAMA vX.Y.Z`.
 
 ## Waiting
 
