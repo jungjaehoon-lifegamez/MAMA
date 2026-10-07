@@ -1,3 +1,4 @@
+import { invalidInput } from '../utils/invalid-input.js';
 import type { ActionContract, ActionRegistration } from '@jungjaehoon/mama-core';
 
 type Schema = Record<string, unknown>;
@@ -150,12 +151,6 @@ function helpText(contract: ActionContract): string {
   for (const example of contract.examples ?? [])
     lines.push(`example (${example.title}): ${JSON.stringify(example.input)}`);
   return lines.join('\n');
-}
-
-function invalidInput(message: string): Error {
-  const error = new Error(message);
-  error.name = 'invalid_input';
-  return error;
 }
 
 export interface HelpActionPorts {

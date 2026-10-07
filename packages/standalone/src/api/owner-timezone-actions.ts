@@ -1,3 +1,4 @@
+import { invalidInput } from '../utils/invalid-input.js';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -15,12 +16,6 @@ export interface OwnerTimeZoneActionPorts {
 function denied(): Error {
   const error = new Error('owner.timezone.set is available only in an owner message turn');
   error.name = 'denied';
-  return error;
-}
-
-function invalidInput(message: string): Error {
-  const error = new Error(message);
-  error.name = 'invalid_input';
   return error;
 }
 

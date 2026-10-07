@@ -1,10 +1,5 @@
+import { invalidInput } from '../utils/invalid-input.js';
 import type { ActionRegistration } from '@jungjaehoon/mama-core';
-
-function invalidInput(message: string): Error {
-  const error = new Error(message);
-  error.name = 'invalid_input';
-  return error;
-}
 
 /**
  * Kagemusha's `contract_no_update`: a record order that finds nothing to record says so, with

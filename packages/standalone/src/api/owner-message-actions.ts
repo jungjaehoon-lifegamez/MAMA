@@ -1,3 +1,4 @@
+import { invalidInput } from '../utils/invalid-input.js';
 import type { ActionRegistration } from '@jungjaehoon/mama-core';
 import { offsetIsoTime } from './work-actions.js';
 
@@ -19,12 +20,6 @@ const DEFAULT_CHARS = 400;
 const MAX_CHARS = 4_000;
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
-
-function invalidInput(message: string): Error {
-  const error = new Error(message);
-  error.name = 'invalid_input';
-  return error;
-}
 
 function time(value: unknown, field: string): number {
   const parsed = offsetIsoTime(value);
