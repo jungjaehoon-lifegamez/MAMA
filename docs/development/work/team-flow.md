@@ -20,6 +20,9 @@ dependent path to the owner, and two core gaps block a read-only member before a
 - 2026-10-07: a member's own computer connects through MCP and exposes only the drives or
   folders the member chooses; members' personal files do not go up to a Drive folder MAMA reads
   with the owner's account.
+- 2026-10-07: first members keep their personal records on the MAMA Mac behind this boundary,
+  and each member can export all their personal records to their own computer and delete them
+  from the server. A member's own MAMA on their computer comes later.
 - 2026-10-06: no separate feedback-forwarding route; forwarding to a team destination is delivery.
 - Telegram first. Enrollment by owner forward (`forward_origin.sender_user.id`, chosen 2026-08-15);
   an owner-issued invite link is the alternative to compare.
@@ -71,6 +74,7 @@ before the boundaries exist. Core steps need a core release before the product s
 | 8   | product | The owner's reads stop at member records: `chat` leaves the owner short-circuit and connector-wide reads; the owner agent's native reads of the DB files, raw stores and member workspaces are denied (it has never used them: 0 of 98 Bash and 6 Read traces); the viewer applies the same access | Owner `source.read` of a member chat item is `stored_source_out_of_scope`; owner `memory.search` and the viewer show no member-only record; the owner agent's native read of the DB is refused |
 | 9   | product | Admission: the gateway resolves a private-chat sender with `resolveByExternal` before the drop                                                                                                                                                                                                     | The member's mailbox row, chat rows and ledger target carry the member; an unenrolled sender is still dropped; `daemon.log` clean                                                              |
 | 10  | product | Restart and revoke, as decided                                                                                                                                                                                                                                                                     | A member message in flight at restart gets its real answer; after revoke the next read of the item is unavailable                                                                              |
+| 11  | product | A member exports all their personal records (chat, memory bound to them, unshared work) to their computer, and deletes them from the server; both only in the member's own turn                                                                                                                    | The export holds exactly the member-scoped rows; after deletion the member's personal records read back as none, and the owner's counts are unchanged                                          |
 
 ## Decisions needed before the slice, in blocking order
 
