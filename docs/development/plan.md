@@ -62,15 +62,14 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
 4. iCal: done on 2026-10-07 (#434). An event without `LAST-MODIFIED` that returns to an earlier
    version is recorded as a new observation; the live poll saves again, and the returned event reads
    as current instead of cancelled.
-5. Team flow: the whole member flow is analysed in [team-flow.md](work/team-flow.md) (2026-10-07,
-   two independent reviews merged and checked). Core has the mechanisms; the product wires every
-   principal path to the owner; two core gaps (registering the existing `owner` principal; work
-   reads that ignore read-only scopes and fail on a partial ledger) block a read-only member
-   before any wiring. The owner decided on 10-07 that members' personal records stay hidden from
-   the owner without consent, that members get file work through their agent, that a member's
-   Windows computer connects with chosen folders, and that first members keep records on the
-   server with export and delete rights. Next: five decisions (enrollment, partition and write
-   default, action set, member session isolation, consent), then the eleven-step slice.
+5. Team flow: the whole member flow is analysed in [team-flow.md](work/team-flow.md) (2026-10-07;
+   two reviews merged, then the plan reviewed again by Codex and Opus and the changing points
+   checked in code, [check](checks.md#team-plan-review-codex-and-opus-2026-10-07)). The product
+   wires every principal path to the owner; in core, work and graph reads ignore read grants, a
+   revision rebinds its item to the writer's scopes, and nothing exports or erases a member's
+   records. Next: core steps A1–A3 depend on no open decision and can start; B1 (export and erase)
+   waits for the erasure exception; the product steps wait for eight decisions (enrollment,
+   partition and default, member role, isolation, consent, erasure, member alerts, member computer).
 6. Paraphrase search: closed on 2026-10-07 without a host change
    ([check](checks.md#fusion-variants-with-both-embeddings-2026-10-07)). Three paraphrases sit
    outside the vector candidates; four fusions on e5 and on EmbeddingGemma 2 either move nothing
