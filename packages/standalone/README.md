@@ -4,7 +4,7 @@ One owner agent on Claude or Codex watches connected work, keeps task revisions 
 answers on Telegram, publishes reports and a board, and recalls corrections.
 [mama-core](../mama-core/README.md) supplies the shared engine.
 
-Current manifest: **0.67.0**. Install with `npm install -g @jungjaehoon/mama-os` (Node.js 22.13+)
+Current manifest: **0.67.1**. Install with `npm install -g @jungjaehoon/mama-os` (Node.js 22.13+)
 and follow [owner setup](../../docs/start/owner-setup.md).
 
 ## Start and operate

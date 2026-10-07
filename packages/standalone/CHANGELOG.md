@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.67.1] - 2026-10-07
+
+### Fixed
+
+- `work.list` input mistakes return `invalid_input` instead of `internal_error`: an unknown view,
+  `ids` without `view=detail` or `view=links`, wrong field types or ranges, times without an
+  offset, text with no searchable characters (checked once, so an empty board no longer lets it
+  through), and malformed or foreign cursors. Stored-state, visibility and host-invariant failures
+  keep their class.
+
 ## [0.67.0] - 2026-10-07
 
 ### Added

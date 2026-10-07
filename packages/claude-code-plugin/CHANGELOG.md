@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-10-07
+
+### Changed
+
+- Runs on mama-core 7.0.0. On first start the database migrates to schema 102: model runs gain
+  usage columns (101), and the tables of the learned ranker, search feedback, channel summaries
+  and the memory bootstrap are dropped (102), with the rows older plugin versions wrote to
+  `memory_truth`. The plugin read none of them.
+
 ## [2.1.5] - 2026-10-01
 
 ### Removed
