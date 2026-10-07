@@ -19,7 +19,7 @@
 
 import type { DatabaseAdapter } from '../db-manager.js';
 import type { JudgmentAccess, JudgmentKnowledgeOptions } from './judgments.js';
-import { JudgmentError, admittedScopeIds, appendJudgment } from './judgments.js';
+import { JudgmentError, readableScopeIds, referenceExists, appendJudgment } from './judgments.js';
 import type {
   JudgmentEventMeta,
   JudgmentReceipt,
@@ -203,7 +203,7 @@ function readJudgmentSummary(
   recordId: string,
   admitted: readonly string[]
 ): string | null {
-  if (!recordVisible(adapter, recordId, admitted)) return null;
+  if (!referenceExists(adapter, { kind: 'memory', id: recordId }, admitted)) return null;
   const row = adapter.prepare('SELECT summary FROM decisions WHERE id = ?').get(recordId) as
     | { summary: unknown }
     | undefined;
@@ -232,36 +232,6 @@ function buildChain(
 }
 
 /**
- * Whether the caller may read this commitment.
- *
- * A commitment carries no scope of its own; its head record does, through the
- * same `memory_scope_bindings` every judgment read uses. An unbound record has
- * no partition boundary to violate and stays readable, exactly as
- * `referenceExists` decides it for a memory ref.
- */
-function recordVisible(
-  adapter: DatabaseAdapter,
-  recordId: string,
-  admitted: readonly string[]
-): boolean {
-  const row = adapter
-    .prepare('SELECT COUNT(*) AS bindings FROM memory_scope_bindings WHERE memory_id = ?')
-    .get(recordId) as { bindings: number } | undefined;
-  if (!row) return false;
-  if (row.bindings === 0) return true;
-  if (admitted.length === 0) return false;
-  const placeholders = admitted.map(() => '?').join(', ');
-  return (
-    adapter
-      .prepare(
-        `SELECT 1 FROM memory_scope_bindings
-          WHERE memory_id = ? AND scope_id IN (${placeholders}) LIMIT 1`
-      )
-      .get(recordId, ...admitted) !== undefined
-  );
-}
-
-/**
  * Read owner work: one commitment, or a bounded page of them.
  *
  * `asOf` selects revisions by their source event time when recorded, or by the
@@ -280,7 +250,7 @@ export function readWork(
   query: WorkRead,
   access: JudgmentAccess
 ): CommitmentPage {
-  const admitted = admittedScopeIds(access);
+  const admitted = readableScopeIds(access);
   const limit = parseLimit(query.limit);
   const afterTaskId = parseCursor(query.cursor);
   const asOf = parseAsOf(query.asOf);
@@ -301,21 +271,39 @@ export function readWork(
   const reasons: string[] = [];
   let rows: CommitmentRow[];
   let total: number | null = null;
+  // Visibility follows the current head; unbound heads remain readable by everyone.
+  // Apply it before LIMIT so hidden rows neither shorten pages nor enter totals.
+  const visible = `(NOT EXISTS (
+    SELECT 1 FROM memory_scope_bindings b WHERE b.memory_id = commitments.head_record_id
+  )${
+    admitted.length === 0
+      ? ''
+      : ` OR EXISTS (
+    SELECT 1 FROM memory_scope_bindings b WHERE b.memory_id = commitments.head_record_id
+      AND b.scope_id IN (${admitted.map(() => '?').join(', ')})
+  )`
+  })`;
 
   if (query.commitmentId !== undefined) {
     rows = adapter
-      .prepare('SELECT * FROM commitments WHERE commitment_id = ?')
-      .all(query.commitmentId) as CommitmentRow[];
+      .prepare(`SELECT * FROM commitments WHERE commitment_id = ? AND ${visible}`)
+      .all(query.commitmentId, ...admitted) as CommitmentRow[];
   } else if (query.rowId !== undefined) {
     rows = adapter
-      .prepare('SELECT * FROM commitments WHERE row_id = ?')
-      .all(query.rowId) as CommitmentRow[];
+      .prepare(`SELECT * FROM commitments WHERE row_id = ? AND ${visible}`)
+      .all(query.rowId, ...admitted) as CommitmentRow[];
   } else {
     // One extra row decides whether another page exists without a second count.
     rows = adapter
-      .prepare('SELECT * FROM commitments WHERE row_id > ? ORDER BY row_id ASC LIMIT ?')
-      .all(afterTaskId, limit + 1) as CommitmentRow[];
-    total = (adapter.prepare('SELECT COUNT(*) AS n FROM commitments').get() as { n: number }).n;
+      .prepare(
+        `SELECT * FROM commitments WHERE row_id > ? AND ${visible} ORDER BY row_id ASC LIMIT ?`
+      )
+      .all(afterTaskId, ...admitted, limit + 1) as CommitmentRow[];
+    total = (
+      adapter
+        .prepare(`SELECT COUNT(*) AS n FROM commitments WHERE ${visible}`)
+        .get(...admitted) as { n: number }
+    ).n;
   }
 
   const hasMore =
@@ -323,14 +311,9 @@ export function readWork(
   const pageRows = hasMore ? rows.slice(0, limit) : rows;
 
   const items: CommitmentView[] = [];
-  let scopeHidden = 0;
   // Bounded revisions leave the fold once the read time reaches their bound.
   const readTime = asOf ?? Date.now();
   for (const row of pageRows) {
-    if (!recordVisible(adapter, row.head_record_id, admitted)) {
-      scopeHidden += 1;
-      continue;
-    }
     const assignments = adapter
       .prepare(
         asOf === null
@@ -384,11 +367,6 @@ export function readWork(
   if (hasMore) {
     reasons.push('more commitments follow this page');
   }
-  if (scopeHidden > 0) {
-    // Named, never silent: a page short by rows the caller cannot read is a
-    // different answer from a page that is short because there is no more work.
-    reasons.push(`${scopeHidden} commitment(s) outside the caller's scopes`);
-  }
 
   return {
     items,
@@ -396,7 +374,7 @@ export function readWork(
     coverage: {
       returned: items.length,
       total,
-      complete: !hasMore && scopeHidden === 0,
+      complete: !hasMore,
       reasons,
     },
   };
@@ -417,6 +395,7 @@ export interface WorkCommand {
   /** What the caller is committing to, in its own words. */
   summary: string;
   reasoning?: string;
+  /** Omitted on create: access defaults; omitted on revision: the item's current bindings. */
   scopes?: MemoryScopeRef[];
   /** Carried onto the record so a commitment names what caused it. */
   sourceRefs?: string[];

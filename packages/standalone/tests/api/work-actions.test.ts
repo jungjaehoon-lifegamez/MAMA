@@ -24,6 +24,101 @@ const access: ActionContext['access'] = {
 };
 
 describe('minimal work actions', () => {
+  it('lists visible work when other commitments are hidden', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'work-visible-'));
+    const handle = await openCoreDatabase({ path: join(root, 'core.db') });
+    try {
+      const knowledge = createKnowledge({ adapter: handle.adapter, embedder: null });
+      const hiddenScope = { kind: 'project', id: 'scope-hidden' };
+      const writer = { ...access, scopes: [...access.scopes, hiddenScope] };
+      for (const [commandId, scopes] of [
+        ['hidden', [hiddenScope]],
+        ['visible', access.scopes],
+        ['unbound', []],
+      ] as const) {
+        await knowledge.createWork(
+          {
+            commandId,
+            topic: 'scope-test',
+            summary: commandId,
+            set: { title: commandId, status: 'pending' },
+            scopes: [...scopes],
+          },
+          writer
+        );
+      }
+      const result = await runWorkListView(
+        { view: 'items' },
+        {
+          knowledge,
+          access,
+          timeZone: createTimeZoneSetting('UTC'),
+        }
+      );
+      expect(result).toMatchObject({ total: 2, returned: 2, nextCursor: null });
+      expect(result.view).toBe('items');
+      if (result.view !== 'items') throw new Error('Expected work items');
+      expect(result.tasks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ title: 'visible' }),
+          expect.objectContaining({ title: 'unbound' }),
+        ])
+      );
+    } finally {
+      await handle.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['work.create', 'work.revise'])(
+    'rejects explicit empty scopes for %s',
+    async (action) => {
+      const root = mkdtempSync(join(tmpdir(), 'work-empty-scope-'));
+      const handle = await openCoreDatabase({ path: join(root, 'core.db') });
+      try {
+        const knowledge = createKnowledge({ adapter: handle.adapter, embedder: null });
+        const item = await knowledge.createWork(
+          {
+            commandId: 'scope-item',
+            topic: 'scope-test',
+            summary: 'initial',
+            set: { title: 'initial' },
+          },
+          access
+        );
+        const dispatch = createDispatcher(
+          createCatalog(
+            minimalWorkActionRegistrations({
+              observationExists: () => true,
+              knowledge,
+            })
+          )
+        );
+        const result = await dispatch(
+          {
+            action,
+            operationId: 'empty-scope',
+            input: {
+              summary: 'empty scope',
+              scopes: [],
+              set: { title: 'changed' },
+              ...(action === 'work.create'
+                ? { topic: 'scope-test' }
+                : { commitmentId: item.commitmentId }),
+            },
+          },
+          { access }
+        );
+        expect(result).toMatchObject({ status: 'failed', error: { code: 'invalid_input' } });
+        expect(knowledge.readWork({}, access).items).toHaveLength(1);
+        expect(knowledge.readWork({}, access).items[0].revision).toBe(1);
+      } finally {
+        await handle.close();
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
+
   it('requires an explicit embedder choice and indexes work only when supplied', async () => {
     const root = mkdtempSync(join(tmpdir(), 'work-embedder-choice-'));
     const handle = await openCoreDatabase({ path: join(root, 'memory.db') });

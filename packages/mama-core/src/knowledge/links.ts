@@ -4,7 +4,7 @@ import type { DatabaseAdapter } from '../db-manager.js';
 import { canonicalizeJSON } from '../canonicalize.js';
 import type { RecordLink } from '../memory/judgment-types.js';
 import {
-  admittedScopeIds,
+  readableScopeIds,
   getTwinEdge,
   insertTwinEdge,
   JudgmentError,
@@ -107,8 +107,8 @@ function assertReachable(
   access: JudgmentAccess
 ): void {
   // The same rule a record's own links follow (judgments.ts): the ends sit in the caller's
-  // admitted scopes, and an edge target has both of its ends there.
-  const scopeIds = admittedScopeIds(access);
+  // readable scopes, and an edge target has both of its ends there.
+  const scopeIds = readableScopeIds(access);
   for (const ref of refs) {
     if (!referenceExists(adapter, ref as never, scopeIds)) {
       // Echo only the caller's own input: an unavailable id reads the same whether wrong or outside scope.

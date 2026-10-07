@@ -35,6 +35,8 @@ export interface JudgmentAccess {
   /** Host-stated origin of authored links; a mechanical import is code, not an agent turn. */
   edgeSource?: TwinEdgeSource;
   scopes: readonly MemoryScopeRef[];
+  /** Scopes for a new judgment or commitment when the command omits scopes. */
+  defaultScopes?: readonly MemoryScopeRef[];
   /**
    * Scopes admitted for READS only, beside `scopes`.
    *
@@ -144,7 +146,7 @@ function scopeKey(scope: MemoryScopeRef): string {
   return `${scope.kind}\0${scope.id}`;
 }
 
-/** Scopes the caller was admitted to; bounds what the command may reference.
+/** Write scopes the caller was admitted to; bounds mutation targets.
  * Exported for the sibling source-ingest command path; not part of the public API. */
 export function admittedScopeIds(access: JudgmentAccess): string[] {
   const seen = new Set<string>();
@@ -160,9 +162,23 @@ export function admittedScopeIds(access: JudgmentAccess): string[] {
   });
 }
 
+/** Read authority for sibling knowledge readers and citations. */
+export function readableScopes(access: JudgmentAccess): MemoryScopeRef[] {
+  return [
+    ...new Map(
+      [...access.scopes, ...(access.readScopes ?? [])].map((scope) => [scopeKey(scope), scope])
+    ).values(),
+  ];
+}
+
+export function readableScopeIds(access: JudgmentAccess): string[] {
+  admittedScopeIds(access);
+  return admittedScopeIds({ ...access, scopes: readableScopes(access) });
+}
+
 /**
  * Scopes bound to the new record. An explicit `scopes: []` declares an
- * unscoped record (legacy parity); an omitted field inherits the access scope.
+ * unscoped record (legacy parity); callers resolve judgment defaults before this check.
  * Exported for the sibling source-ingest command path; not part of the public API.
  */
 export function boundScopeIdsFor(
@@ -283,7 +299,7 @@ function validateCommandFields(command: JudgmentCommand): void {
   }
 }
 
-/** Whether a link may name this target under the caller's admitted write scopes. */
+/** Whether a reference is available under the supplied read or write authority. */
 export function referenceExists(
   adapter: Pick<DatabaseAdapter, 'prepare'>,
   reference: WorkReference,
@@ -569,6 +585,50 @@ function workPatch(value: WorkAssignment | undefined): OwnerWorkPatch {
   return value?.set ?? {};
 }
 
+function recordScopes(
+  adapter: Pick<DatabaseAdapter, 'prepare'>,
+  recordId: string
+): MemoryScopeRef[] {
+  return adapter
+    .prepare(
+      `SELECT s.kind, s.external_id AS id
+    FROM memory_scope_bindings b JOIN memory_scopes s ON s.id = b.scope_id
+    WHERE b.memory_id = ? ORDER BY b.is_primary DESC, b.rowid`
+    )
+    .all(recordId) as MemoryScopeRef[];
+}
+
+/** Resolve omitted revision scopes from the item, or the original write on replay. */
+function effectiveJudgmentCommand(
+  adapter: Pick<DatabaseAdapter, 'prepare'>,
+  command: JudgmentCommand,
+  access: JudgmentAccess
+): JudgmentCommand & { scopes: MemoryScopeRef[] } {
+  if (command.scopes !== undefined) return { ...command, scopes: command.scopes };
+  if (command.work && command.work.operation !== 'create') {
+    const binding = adapter
+      .prepare(
+        "SELECT receipt_key FROM command_bindings WHERE command_id = ? AND action = 'judgment.append'"
+      )
+      .get(command.commandId) as { receipt_key: string } | undefined;
+    if (binding) return { ...command, scopes: recordScopes(adapter, binding.receipt_key) };
+    const current = adapter
+      .prepare('SELECT head_record_id FROM commitments WHERE commitment_id = ?')
+      .get(command.work.commitmentId) as { head_record_id: string } | undefined;
+    if (!current)
+      throw new JudgmentError(
+        'REFERENCE_NOT_FOUND',
+        `Commitment is unavailable: ${command.work.commitmentId}`
+      );
+    return { ...command, scopes: recordScopes(adapter, current.head_record_id) };
+  }
+  const scopes = access.defaultScopes ?? access.scopes;
+  if (scopes.length === 0 && access.defaultScopes === undefined) {
+    throw new JudgmentError('INVALID_SCOPE', 'At least one judgment scope is required');
+  }
+  return { ...command, scopes: [...scopes] };
+}
+
 async function appendJudgmentOnAdapter(
   adapter: DatabaseInstance,
   command: JudgmentCommand,
@@ -589,13 +649,14 @@ async function appendJudgmentOnAdapter(
   validateBounds(command);
   validateCommandFields(command);
   const admittedScopeIdList = admittedScopeIds(access);
-  const boundScopeIdList = boundScopeIdsFor(access, command);
-  const effectiveScopes = command.scopes ?? [...access.scopes];
-  const effectiveCommand = command.scopes ? command : { ...command, scopes: [...access.scopes] };
-  const hash = commandHash(effectiveCommand);
+  const readableScopeIdList = readableScopeIds(access);
+  let effectiveCommand = effectiveJudgmentCommand(adapter, command, access);
+  let boundScopeIdList = boundScopeIdsFor(access, effectiveCommand);
+  let effectiveScopes = effectiveCommand.scopes;
+  let hash = commandHash(effectiveCommand);
   const replay = assertReplay(adapter, command, access, hash);
   if (replay) {
-    validateLinks(adapter, command.links ?? [], admittedScopeIdList);
+    validateLinks(adapter, command.links ?? [], readableScopeIdList);
     for (const replacement of command.replaces ?? []) {
       if (!referenceExists(adapter, { kind: 'memory', id: replacement.id }, admittedScopeIdList)) {
         throw new JudgmentError('REFERENCE_NOT_FOUND', 'A replacement target is unavailable');
@@ -604,7 +665,7 @@ async function appendJudgmentOnAdapter(
     validateAmends(adapter, command.amends ?? [], admittedScopeIdList);
     return replay;
   }
-  validateLinks(adapter, command.links ?? [], admittedScopeIdList);
+  validateLinks(adapter, command.links ?? [], readableScopeIdList);
   validateAmends(adapter, command.amends ?? [], admittedScopeIdList);
 
   const recordId = recordIdForCommand(command);
@@ -620,6 +681,11 @@ async function appendJudgmentOnAdapter(
     ? adapter.transactionImmediate.bind(adapter)
     : adapter.transaction.bind(adapter);
   transaction(() => {
+    // Embedding yielded: use the head under the write transaction, not an earlier snapshot.
+    effectiveCommand = effectiveJudgmentCommand(adapter, command, access);
+    boundScopeIdList = boundScopeIdsFor(access, effectiveCommand);
+    effectiveScopes = effectiveCommand.scopes;
+    hash = commandHash(effectiveCommand);
     const bindingResult = adapter
       .prepare(
         `INSERT OR IGNORE INTO command_bindings
@@ -849,6 +915,16 @@ async function appendJudgmentOnAdapter(
             'REFERENCE_NOT_FOUND',
             `Commitment is unavailable: ${work.commitmentId}`
           );
+        }
+        if (
+          command.scopes !== undefined &&
+          !referenceExists(
+            adapter,
+            { kind: 'memory', id: current.head_record_id },
+            admittedScopeIdList
+          )
+        ) {
+          throw new JudgmentError('REFERENCE_NOT_FOUND', 'A revision target is unavailable');
         }
         // Only revise may omit the revision (it appends to the head); withdraw always states it.
         if (

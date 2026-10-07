@@ -26,6 +26,7 @@ import {
   getTwinEdge,
   listTwinEdgesForRefs,
   JudgmentError,
+  readableScopes,
   type JudgmentAccess,
 } from './judgments.js';
 import { getObservationVersion } from './observations.js';
@@ -1234,7 +1235,7 @@ function graphAccessInput(access: JudgmentAccess): {
   max_source_ms?: number | null;
 } {
   return {
-    scopes: access.scopes.map((scope) => ({ kind: scope.kind, id: scope.id })),
+    scopes: readableScopes(access),
     connectors: access.connectors ? [...access.connectors] : undefined,
     connector_wide_read: access.connectorWideRead ? [...access.connectorWideRead] : undefined,
     project_refs: access.projectRefs ? [...access.projectRefs] : undefined,
@@ -1331,7 +1332,7 @@ function resolveSearchSeeds(
   const wants = (kind: WorkReference['kind']) => !search.kinds || search.kinds.includes(kind);
   const seeds: TwinRef[] = [];
   if (wants('registry')) {
-    for (const node of resolveAliasCandidates(adapter, text, { scopes: access.scopes })) {
+    for (const node of resolveAliasCandidates(adapter, text, { scopes: readableScopes(access) })) {
       seeds.push({ kind: 'registry', id: node.id });
     }
   }
@@ -1344,17 +1345,29 @@ function resolveSearchSeeds(
     // would lose nonadjacent hits.
     const literalTerms = ftsMatchTerms(ftsWords(text), 'AND');
     if (ftsTable && literalTerms !== null) {
-      const rows = adapter
-        .prepare(
-          `SELECT d.id AS id
-             FROM decisions_fts JOIN decisions d ON decisions_fts.rowid = d.rowid
-            WHERE decisions_fts MATCH ?
-            ORDER BY rank
-            LIMIT ?`
-        )
-        .all(literalTerms, SEARCH_SEED_LIMIT) as Array<{ id: string }>;
-      for (const row of rows) {
-        seeds.push({ kind: 'memory', id: row.id });
+      // Read ranked matches in chunks until the limit holds visible ones, so matches the caller
+      // cannot see do not crowd out those it can.
+      const statement = adapter.prepare(
+        `SELECT d.id AS id
+           FROM decisions_fts JOIN decisions d ON decisions_fts.rowid = d.rowid
+          WHERE decisions_fts MATCH ?
+          ORDER BY rank
+          LIMIT ? OFFSET ?`
+      );
+      let found = 0;
+      for (let offset = 0; found < SEARCH_SEED_LIMIT; offset += SEARCH_SEED_LIMIT) {
+        const rows = statement.all(literalTerms, SEARCH_SEED_LIMIT, offset) as Array<{
+          id: string;
+        }>;
+        const refs = rows.map((row): TwinRef => ({ kind: 'memory', id: row.id }));
+        const visible = visibleTwinRefKeysRecursive(adapter, refs, visibility);
+        for (const ref of refs) {
+          if (found < SEARCH_SEED_LIMIT && visible.has(`${ref.kind}\0${ref.id}`)) {
+            seeds.push(ref);
+            found += 1;
+          }
+        }
+        if (rows.length < SEARCH_SEED_LIMIT) break;
       }
     }
   }
@@ -1626,8 +1639,8 @@ function hydrateRegistryNode(
   if (!node) {
     return null;
   }
-  const admitted =
-    access.scopes.length > 0 ? access.scopes : [{ kind: 'global' as const, id: '*' }];
+  const readable = readableScopes(access);
+  const admitted = readable.length > 0 ? readable : [{ kind: 'global' as const, id: '*' }];
   const aliasRows = adapter
     .prepare(
       `SELECT DISTINCT alias_display FROM registry_aliases
@@ -1639,7 +1652,7 @@ function hydrateRegistryNode(
     .all(node.id, ...admitted.map((scope) => `${scope.kind}:${scope.id}`)) as Array<{
     alias_display: string;
   }>;
-  const children = listNodes(adapter, { parentId: node.id, scopes: access.scopes });
+  const children = listNodes(adapter, { parentId: node.id, scopes: readable });
   const touching = listFilteredEdges(adapter, [ref], { visibility: ctx.visibility });
   const unresolved: Array<{ edgeId: string; endpoint: 'from' | 'to' }> = [];
   for (const projection of projectCurrentEdges(adapter, touching, ctx.visibility)) {
@@ -2203,7 +2216,7 @@ export function queryGraph(
     case 'overview': {
       // The name-free entry point: the registry's visible roots are the named
       // anchors a caller picks before narrowing into neighbors/detail.
-      const roots = listNodes(adapter, { parentId: null, scopes: access.scopes });
+      const roots = listNodes(adapter, { parentId: null, scopes: readableScopes(access) });
       if (roots.length > limit) reasons.add('limit_reached');
       for (const node of roots.slice(0, limit)) {
         addRefNode({ kind: 'registry', id: node.id }, sequence++);
