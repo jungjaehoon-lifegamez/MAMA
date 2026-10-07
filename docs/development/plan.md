@@ -53,7 +53,9 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    it saved returns the owner's words through its provenance.
 2. W37: done on 2026-10-06 (#430, #431; [work list](work/owner-rules.md)). Standing rules live in
    the owner policy (22 moved, 5 situational, accepted by the owner); the rule index and the record
-   order's recall are gone. Left to observe: the 08:00 full report and the 09:00 reminder.
+   order's recall are gone. On 10-07 the 08:00 full report and the 09:00 reminder published on
+   their first call in a session that opened the full policy
+   ([check](checks.md#w373-reports-under-the-merged-owner-policy-2026-10-07)).
 3. W25: done on 2026-10-07 (#432). The `⏳` placeholder replaced by the answer has been live since
    0.51.1; the presenter's unused streaming hooks are gone and a failed placeholder send is logged.
    Released with W37 and W38 in mama-os 0.66.0 and mama-core 6.1.0, live from 01:41 KST.
@@ -64,7 +66,11 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    two independent reviews merged and checked). Core has the mechanisms; the product wires every
    principal path to the owner; two core gaps (registering the existing `owner` principal; work
    reads that ignore read-only scopes and fail on a partial ledger) block a read-only member
-   before any wiring. Next: the owner's four blocking decisions, then the ten-step slice.
+   before any wiring. The owner decided on 10-07 that members' personal records stay hidden from
+   the owner without consent, that members get file work through their agent, that a member's
+   Windows computer connects with chosen folders, and that first members keep records on the
+   server with export and delete rights. Next: five decisions (enrollment, partition and write
+   default, action set, member session isolation, consent), then the eleven-step slice.
 6. Paraphrase search: closed on 2026-10-07 without a host change
    ([check](checks.md#fusion-variants-with-both-embeddings-2026-10-07)). Three paraphrases sit
    outside the vector candidates; four fusions on e5 and on EmbeddingGemma 2 either move nothing
@@ -74,16 +80,23 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
 7. Core: done in part on 2026-10-07
    ([check](checks.md#knowledge-writes-name-their-embedder-the-removed-modules-tables-435-2026-10-07)).
    Knowledge writes name their embedder or `null` and refuse the omission (#435, breaking: the next
-   core release is a major one); the AGENTS.md index rule went. Ten tables of the modules 6.0.0
+   core release is a major one); the AGENTS.md index rule went. Twelve tables of the modules 6.0.0
    removed have no reader or writer; dropping them deletes 623 development-memory rows, so it
-   waits for the owner. The memory-agent vocabulary is the `codex/core-unused-runtime` branch.
+   waits for the owner. The memory-agent vocabulary goes with item 9.
 8. W23 and W26: built on 2026-10-07 and live from 05:19 KST
    ([W23](checks.md#w23-each-model-run-records-its-usage-and-compactions-437-2026-10-07),
    [W26](checks.md#w26-replay-windows-run-in-a-session-of-their-own-436-2026-10-07)). Each model
    run records its tokens and compactions (#437); replay windows run in their own session (#436).
-   Left: read compactions per day and input size per turn after a day of live runs, and the
+   First live numbers: 197 runs from 05:19 to 16:40 on 10-07, all with usage, no compaction
+   ([check](checks.md#w23-first-live-usage-2026-10-07)). Left: a full day of runs, and the
    one-day replay, which waits for a cost estimate and the owner's go-ahead. September is not
    re-imported; live changes and corrections complete it (owner, 2026-09-29).
+9. Release: mama-core 7.0.0 (breaking: knowledge writes name their embedder (#435); the unused
+   memory-agent contracts from `codex/core-unused-runtime`; migration 101; migration 102 drops the
+   twelve unused tables if the owner approves) and mama-os 0.67.0 (#434, #436, #437). At the
+   release the GitHub release list is cleaned (owner, 2026-10-07): each `vX.Y.Z` release carries
+   its own changelog section and package versions under the title `MAMA vX.Y.Z`. GitHub orders
+   releases by date, so the order itself does not change.
 
 ## Waiting
 
@@ -105,8 +118,8 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
   metadata index of every file; EmbeddingGemma 2 vectors for files that work items cite as
   evidence; documents by page. Pose search needs pose keypoints, not only an embedding. Decided together with the embedding switch (item 6); waits for the daemon's read access to the streamed drive, and the
   owner's use case for pose search.
-- `codex/core-unused-runtime` (101 lines of unused memory-agent contracts out of core; needs a core
-  release) merges after the items in "Next" are done (owner, 2026-10-06).
+- A push from the live checkout runs the pre-push hook, which rebuilt the live core dist while the
+  daemon ran from it (2026-10-07 01:44; the daemon survived). Open.
 
 ## Owner decisions still open
 

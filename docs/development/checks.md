@@ -1825,3 +1825,15 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Result: a source delta carrying `replay` runs under `owner:replay`; live turns keep `owner:runtime`. The Codex backend keeps each key's thread record on disk, so before this a `mama replay` run resumed the live owner thread. Finalization resets both sessions, so the next live turn gets startup context (R7). Live from 05:19 KST, with #435 and #437 (boot clean; migration 101 applied in 4 ms).
 - Evidence: a replay window uses the replay key while an owner message and a scheduled row carrying `replay` do not; with the Codex registry on disk a replay turn starts its own thread and leaves the owner's record byte for byte. Standalone 1,432 tests pass.
 - Still open: the one-day replay in item 8 costs model runs and needs the daemon stopped; it waits for an estimate and the owner's go-ahead.
+
+### W37.3: reports under the merged owner policy (2026-10-07)
+
+- Result: after the 05:19 restart the session opened with the full owner policy ("durable session missing; opening the full policy"). The 08:00 full report read `help` three times and published all four slots on its first `report.publish` call (08:00:38); the 09:00 reminder published on its first call (09:00:26).
+- Evidence: `tool_traces` for 07:59–09:10 show no failed call; `daemon.log` shows `published slots: pipeline, briefing, action_required, decisions` and then `action_required`.
+- Still open: the report's content against the owner's rules is judged by the owner, not by these traces.
+
+### W23: first live usage (2026-10-07)
+
+- Result: from the 05:19 deploy to 16:40, 197 model runs, all Claude, recorded their usage; none compacted. Summed over a run's calls, input including cache averaged 386,283 tokens and reached 1,983,283 in one run.
+- Evidence: `model_runs` columns from migration 101, read back on the live database.
+- Still open: a full day, and per-call context size; a run's cache reads add up over its calls, so the run sum is not the context size of one call.
