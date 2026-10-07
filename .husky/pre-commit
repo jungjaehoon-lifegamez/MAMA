@@ -53,14 +53,21 @@ git diff --quiet -- README.md packages/*/README.md || git add README.md packages
 
 # Run typecheck for standalone package
 echo "Running typecheck..."
-pnpm --filter @jungjaehoon/mama-os typecheck || pnpm --filter @jungjaehoon/mama-standalone typecheck
+pnpm --filter @jungjaehoon/mama-os typecheck
 
-# Run tests for changed packages only (faster commits)
-# Uses turbo for caching benefits
-echo "Running tests for changed packages..."
-MAMA_FORCE_TIER_3=true CI=true pnpm turbo run test \
-  --filter="...[HEAD^1]" \
-  --cache-dir=.turbo \
-  --concurrency=1 2>&1 || MAMA_FORCE_TIER_3=true CI=true pnpm turbo run test \
-  --cache-dir=.turbo \
-  --concurrency=1
+# Run tests for the packages this commit stages, and their dependents. `test` depends on `build`
+# (turbo.json), and the daemon runs from the live checkout's dist, so a commit that stages no
+# package (docs only) must select none. Turbo's `[HEAD]` filter also counts unstaged changes, so
+# the packages come from the index; staged root package-manager or Turbo configuration selects all.
+STAGED_FILTERS=$(git diff --cached --name-only --no-renames HEAD | awk -F/ '
+  /^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|turbo\.json)$/ { print "--filter=...{./packages/*}"; next }
+  $1 == "packages" && NF > 2 { print "--filter=...{./packages/" $2 "}" }
+' | sort -u)
+if [ -n "$STAGED_FILTERS" ]; then
+  echo "Running tests for staged packages..."
+  set -f
+  MAMA_FORCE_TIER_3=true CI=true pnpm turbo run test $STAGED_FILTERS --cache-dir=.turbo --concurrency=1 2>&1
+  set +f
+else
+  echo "No package staged; package tests skipped."
+fi
