@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.67.1] / mama-server [2.5.0] / plugin [2.2.0] - 2026-10-07
+
+The MCP server and the Claude Code plugin move to mama-core 7, and a wrong `work.list` call comes
+back as an input error the agent can correct. The package changelogs list every change.
+
+### Changed
+
+- mama-server 2.5.0 and plugin 2.2.0 run on mama-core 7.0.0. On first start the development
+  memory database migrates to schema 102: model runs gain usage columns (101), and the tables of
+  the learned ranker, search feedback, channel summaries and the memory bootstrap are dropped
+  (102), with the rows older plugin versions wrote to `memory_truth`. Neither package read them.
+
+### Fixed
+
+- `work.list` input mistakes (an unknown view, `ids` without `view=detail` or `view=links`, wrong
+  field types or ranges, times without an offset, text with no searchable characters, malformed
+  or foreign cursors) return `invalid_input` instead of `internal_error`.
+
 ## mama-os [0.67.0] / mama-core [7.0.0] - 2026-10-07
 
 Every model run records its token usage and context compactions, replay windows run in a session
