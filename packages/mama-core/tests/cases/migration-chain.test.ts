@@ -153,9 +153,10 @@ describe('Case-First Memory Substrate (migration 030, consolidated Phase 1+2+3)'
     expect(tableExists(db, 'connector_event_index_fts')).toBe(false);
     expect(triggerExists(db, 'trg_connector_event_index_ai')).toBe(false);
 
-    expect(tableExists(db, 'search_feedback')).toBe(true);
-    expect(tableExists(db, 'ranker_model_versions')).toBe(true);
-    expect(tableExists(db, 'search_ranker_settings')).toBe(true);
+    // Migration 102 drops the learned ranker and search feedback tables with their modules.
+    expect(tableExists(db, 'search_feedback')).toBe(false);
+    expect(tableExists(db, 'ranker_model_versions')).toBe(false);
+    expect(tableExists(db, 'search_ranker_settings')).toBe(false);
 
     expect(tableExists(db, 'case_links')).toBe(true);
     expect(tableExists(db, 'case_links_revoked_wiki_tombstones')).toBe(true);
