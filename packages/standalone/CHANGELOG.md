@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.68.1] - 2026-10-07
+
+### Fixed
+
+- `mama register-owner` binds every ID in `telegram.owner_user_ids` to the owner principal instead
+  of refusing more than one; a conflict on any of them writes nothing.
+
 ## [0.68.0] - 2026-10-07
 
 ### Added

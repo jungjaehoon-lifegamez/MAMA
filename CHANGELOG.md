@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.68.1] - 2026-10-07
+
+### Fixed
+
+- `mama register-owner` binds every Telegram ID the configuration names as the owner's to the one
+  owner principal; it refused a configuration with more than one, although the gateway admits each
+  of them as the owner. If any of them belongs to someone else, nothing is written.
+
 ## mama-os [0.68.0] / mama-core [7.1.0] - 2026-10-07
 
 The first core steps toward team members. A principal granted read access to some work can now

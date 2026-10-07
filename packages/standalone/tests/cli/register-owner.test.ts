@@ -117,10 +117,42 @@ describe('manual owner registration command', () => {
     }
   );
 
-  it('refuses multiple authorized senders instead of treating them as one identity', async () => {
+  it('binds every id the gateway admits as the owner to the one owner principal', async () => {
+    const output = vi.spyOn(console, 'log').mockImplementation(() => {});
     writeConfig({ owner_user_ids: ['1001', '1002'] });
-    await expect(runRegisterOwner()).rejects.toThrow('telegram.owner_user_ids');
-    expect(readRows()).toEqual({ principals: [], identities: [] });
+    expect(await runRegisterOwner()).toBe('created');
+    const rows = readRows();
+    expect(rows.principals).toHaveLength(1);
+    expect(rows.identities).toEqual([
+      expect.objectContaining({ principal_id: OWNER_PRINCIPAL_ID, external_id: '1001' }),
+      expect.objectContaining({ principal_id: OWNER_PRINCIPAL_ID, external_id: '1002' }),
+    ]);
+    expect(await runRegisterOwner()).toBe('exists');
+    expect(readRows()).toEqual(rows);
+    expect(output.mock.calls).toEqual([
+      ['created principals=1 identities=2'],
+      ['exists principals=1 identities=2'],
+    ]);
+  });
+
+  it('writes nothing when one of several owner ids belongs to someone else', async () => {
+    const adapter = createAdapter({ dbPath });
+    adapter.connect();
+    try {
+      createPrincipalRepository(adapter).registerMember({
+        connector: 'telegram',
+        namespace: 'private',
+        externalId: '1002',
+        now: 1,
+      });
+    } finally {
+      adapter.disconnect();
+    }
+    writeConfig({ owner_user_ids: ['1001', '1002'] });
+    const before = readRows();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    expect(await runRegisterOwner()).toBe('conflict');
+    expect(readRows()).toEqual(before);
   });
 
   it('reports an identity conflict without printing the sender or changing rows', async () => {

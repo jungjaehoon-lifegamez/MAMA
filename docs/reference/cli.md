@@ -9,17 +9,17 @@ nav_order: 3
 Use `mama` from `@jungjaehoon/mama-os` to configure and run the owner agent. Start with
 [owner setup](../start/owner-setup.md). Running `mama` without a command prints the supported syntax.
 
-| Command                  | What it does                                                                                                                                      |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mama init`              | Prompts in a terminal and writes a new installation. No flags are supported.                                                                      |
-| `mama secret set <NAME>` | Prompts with echo disabled and atomically updates one supported secret in `~/.mama/auth.env`. Restart the daemon afterward.                       |
-| `mama secret list`       | Prints configured secret names only. It does not print values.                                                                                    |
-| `mama register-owner`    | Registers the owner once as the principal that grants team members access, bound to the Telegram owner ID. Prints the result and row counts only. |
-| `mama daemon`            | Runs the daemon in the foreground until stopped. It expects the credentials in its environment.                                                   |
-| `mama replay`            | Runs the historical replay using the configured database and prepared import manifest, then stops.                                                |
-| `mama backfill <file>`   | Checks a backfill file and writes the period it describes through the owner's actions, then stops.                                                |
-| `mama status`            | Prints `running` or `stopped` from the PID record and process check.                                                                              |
-| `mama stop`              | Sends SIGTERM to the recorded daemon PID.                                                                                                         |
+| Command                  | What it does                                                                                                                                        |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mama init`              | Prompts in a terminal and writes a new installation. No flags are supported.                                                                        |
+| `mama secret set <NAME>` | Prompts with echo disabled and atomically updates one supported secret in `~/.mama/auth.env`. Restart the daemon afterward.                         |
+| `mama secret list`       | Prints configured secret names only. It does not print values.                                                                                      |
+| `mama register-owner`    | Registers the owner once as the principal that grants team members access, bound to every Telegram owner ID. Prints the result and row counts only. |
+| `mama daemon`            | Runs the daemon in the foreground until stopped. It expects the credentials in its environment.                                                     |
+| `mama replay`            | Runs the historical replay using the configured database and prepared import manifest, then stops.                                                  |
+| `mama backfill <file>`   | Checks a backfill file and writes the period it describes through the owner's actions, then stops.                                                  |
+| `mama status`            | Prints `running` or `stopped` from the PID record and process check.                                                                                |
+| `mama stop`              | Sends SIGTERM to the recorded daemon PID.                                                                                                           |
 
 ## Create an installation
 

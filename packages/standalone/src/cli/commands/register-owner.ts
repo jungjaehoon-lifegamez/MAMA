@@ -12,6 +12,9 @@ import { OWNER_PRINCIPAL_ID } from './daemon.js';
 
 type OwnerResult = ReturnType<PrincipalRepository['ensureOwner']>;
 
+/** Rolls back every binding when one owner id belongs to someone else. */
+class OwnerConflict extends Error {}
+
 /** Register against the daemon's existing schema, without starting its runtime or collectors. */
 export async function runRegisterOwner(
   args: readonly string[] = [],
@@ -20,36 +23,51 @@ export async function runRegisterOwner(
   if (args.length !== 0) throw new CliInputError('Usage: mama register-owner');
   const home = options.home ?? homedir();
   const config = loadConfig({ home, ...(options.configPath ? { path: options.configPath } : {}) });
-  // The ids the gateway admits as the owner, including the one config derives from a single
-  // allowed chat. Several ids would be several senders, not one identity.
-  if (config.telegram.owner_user_ids.length !== 1) {
-    throw new CliInputError('telegram.owner_user_ids must contain exactly one user id');
+  // Every id the gateway admits as the owner (explicit, or derived from a single allowed chat) is
+  // an identity of the one owner, so each binds to the owner principal. An id bound to anyone else
+  // is a conflict, and then nothing is written.
+  const ownerIds = config.telegram.owner_user_ids;
+  if (ownerIds.length === 0) {
+    throw new CliInputError('telegram.owner_user_ids must contain at least one user id');
   }
   const adapter = createAdapter({ dbPath: config.database.path });
-  let receipt: { result: OwnerResult; principals: number; identities: number };
+  let result: OwnerResult;
+  let counts: { principals: number; identities: number };
   try {
     adapter.connect();
-    receipt = adapter.transaction(() => {
-      const result = createPrincipalRepository(adapter).ensureOwner({
-        principalId: OWNER_PRINCIPAL_ID,
-        connector: 'telegram',
-        namespace: 'private',
-        externalId: config.telegram.owner_user_ids[0]!,
-        now: Date.now(),
+    try {
+      result = adapter.transaction(() => {
+        const repository = createPrincipalRepository(adapter);
+        const now = Date.now();
+        const results = ownerIds.map((externalId) =>
+          repository.ensureOwner({
+            principalId: OWNER_PRINCIPAL_ID,
+            connector: 'telegram',
+            namespace: 'private',
+            externalId,
+            now,
+          })
+        );
+        if (results.includes('conflict')) throw new OwnerConflict();
+        return results.includes('created') ? 'created' : 'exists';
       });
-      const principals = adapter.prepare('SELECT COUNT(*) AS count FROM principals').get() as {
-        count: number;
-      };
-      const identities = adapter
-        .prepare('SELECT COUNT(*) AS count FROM external_identities')
-        .get() as { count: number };
-      return { result, principals: principals.count, identities: identities.count };
-    });
+    } catch (error) {
+      if (!(error instanceof OwnerConflict)) throw error;
+      result = 'conflict';
+    }
+    counts = {
+      principals: (
+        adapter.prepare('SELECT COUNT(*) AS count FROM principals').get() as { count: number }
+      ).count,
+      identities: (
+        adapter.prepare('SELECT COUNT(*) AS count FROM external_identities').get() as {
+          count: number;
+        }
+      ).count,
+    };
   } finally {
     adapter.disconnect();
   }
-  console.log(
-    `${receipt.result} principals=${receipt.principals} identities=${receipt.identities}`
-  );
-  return receipt.result;
+  console.log(`${result} principals=${counts.principals} identities=${counts.identities}`);
+  return result;
 }
