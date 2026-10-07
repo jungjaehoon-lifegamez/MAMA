@@ -163,6 +163,18 @@ describe('work scopes and read grants', () => {
     expect(graph.edges.map((edge) => edge.id)).toContain(link.edgeId);
   });
 
+  it('finds a readable memory match that more hidden matches outrank', async () => {
+    for (let index = 0; index < 26; index += 1) {
+      await create(`alpha-alpha-alpha-hidden-${index}`, [hidden]);
+    }
+    const readable = await create('alpha-readable');
+    const graph = knowledge.queryGraph(
+      { view: 'detail', search: { text: 'alpha', kinds: ['memory'] } },
+      reader
+    );
+    expect(graph.nodes.map((node) => node.ref.id)).toEqual([readable.recordRef.id]);
+  });
+
   it('admits read grants in registry overview, alias search and child hydration', () => {
     const root = createNode(getAdapter(), {
       kind: 'item',

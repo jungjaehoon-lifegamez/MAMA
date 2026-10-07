@@ -1345,17 +1345,29 @@ function resolveSearchSeeds(
     // would lose nonadjacent hits.
     const literalTerms = ftsMatchTerms(ftsWords(text), 'AND');
     if (ftsTable && literalTerms !== null) {
-      const rows = adapter
-        .prepare(
-          `SELECT d.id AS id
-             FROM decisions_fts JOIN decisions d ON decisions_fts.rowid = d.rowid
-            WHERE decisions_fts MATCH ?
-            ORDER BY rank
-            LIMIT ?`
-        )
-        .all(literalTerms, SEARCH_SEED_LIMIT) as Array<{ id: string }>;
-      for (const row of rows) {
-        seeds.push({ kind: 'memory', id: row.id });
+      // Read ranked matches in chunks until the limit holds visible ones, so matches the caller
+      // cannot see do not crowd out those it can.
+      const statement = adapter.prepare(
+        `SELECT d.id AS id
+           FROM decisions_fts JOIN decisions d ON decisions_fts.rowid = d.rowid
+          WHERE decisions_fts MATCH ?
+          ORDER BY rank
+          LIMIT ? OFFSET ?`
+      );
+      let found = 0;
+      for (let offset = 0; found < SEARCH_SEED_LIMIT; offset += SEARCH_SEED_LIMIT) {
+        const rows = statement.all(literalTerms, SEARCH_SEED_LIMIT, offset) as Array<{
+          id: string;
+        }>;
+        const refs = rows.map((row): TwinRef => ({ kind: 'memory', id: row.id }));
+        const visible = visibleTwinRefKeysRecursive(adapter, refs, visibility);
+        for (const ref of refs) {
+          if (found < SEARCH_SEED_LIMIT && visible.has(`${ref.kind}\0${ref.id}`)) {
+            seeds.push(ref);
+            found += 1;
+          }
+        }
+        if (rows.length < SEARCH_SEED_LIMIT) break;
       }
     }
   }
