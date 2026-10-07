@@ -62,7 +62,7 @@ import { createTimeZoneSetting } from '../../runtime/timezone.js';
 import { createOutboundEventRecorder } from '../../api/security-events.js';
 import { startEgressProxy, type EgressProxy } from '../../runtime/egress-proxy.js';
 
-const OWNER_PRINCIPAL_ID = 'owner';
+export const OWNER_PRINCIPAL_ID = 'owner';
 const OWNER_AGENT_ID = 'owner-agent';
 const OWNER_MEMORY_SCOPES = ownerMemoryScopes(OWNER_PRINCIPAL_ID, OWNER_CONNECTORS);
 
