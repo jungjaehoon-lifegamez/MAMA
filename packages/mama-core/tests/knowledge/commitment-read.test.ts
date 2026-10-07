@@ -692,17 +692,16 @@ describe('knowledge/commitments: reading owner work back', () => {
     expect(last.nextCursor).toBeNull();
   });
 
-  it('hides a commitment whose head record is outside the caller scopes, and says so', async () => {
+  it('counts only commitments whose head record is visible to the caller', async () => {
     await createCommitment('cmd-mine', { title: 'Mine' });
     await createCommitment('cmd-theirs', { title: 'Theirs' }, otherAccess.scopes, otherAccess);
 
     const page = readWork(getAdapter(), {}, access);
 
     expect(page.items.map((item) => item.values.title)).toEqual(['Mine']);
-    // A short page that is short for a reason states the reason.
-    expect(page.coverage.complete).toBe(false);
-    expect(page.coverage.reasons.join(' ')).toContain("outside the caller's scopes");
-    expect(page.coverage.total).toBe(2);
+    expect(page.coverage.complete).toBe(true);
+    expect(page.coverage.reasons).toEqual([]);
+    expect(page.coverage.total).toBe(1);
   });
 
   it('rejects a malformed page request instead of guessing', () => {

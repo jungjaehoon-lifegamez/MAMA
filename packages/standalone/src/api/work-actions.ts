@@ -609,7 +609,6 @@ function workListReadVersion(items: readonly CommitmentView[]): string {
 
 function workListReadSnapshot(ctx: WorkListViewContext, filter: WorkListFilter): WorkListSnapshot {
   const items: CommitmentView[] = [];
-  const incompleteReasons: string[] = [];
   let cursor: string | undefined;
   for (;;) {
     const query: WorkRead = {
@@ -621,12 +620,6 @@ function workListReadSnapshot(ctx: WorkListViewContext, filter: WorkListFilter):
     };
     const page = ctx.knowledge.readWork(query, ctx.access);
     items.push(...page.items);
-    incompleteReasons.push(
-      ...page.coverage.reasons.filter((reason) => reason !== 'more commitments follow this page')
-    );
-    if (incompleteReasons.length > 0) {
-      throw new Error(`work.list read is incomplete: ${incompleteReasons.join('; ')}`);
-    }
     if (page.nextCursor === null) {
       break;
     }
@@ -1337,6 +1330,7 @@ const commandFields: Record<string, ActionSchemaObject> = {
   },
   scopes: {
     type: 'array',
+    minItems: 1,
     description: 'Work visibility scopes, e.g. [{"kind":"project","id":"project_123"}].',
     items: scopeRefSchema,
   },

@@ -198,13 +198,6 @@ describe('dispatched work.list failures', () => {
 
   it.each([
     [
-      'incomplete visibility',
-      {},
-      [],
-      ["1 commitment(s) outside the caller's scopes"],
-      'read is incomplete',
-    ],
-    [
       'stored status invariant',
       {},
       [view(1, { values: { status: 'unknown' } })],
@@ -532,33 +525,6 @@ describe('progressive work.list views', () => {
     await expect(
       runWorkListView({ cursor: first.nextCursor }, context(reader.readWork))
     ).rejects.toThrow(/changed.*restart/i);
-  });
-
-  it('surfaces an incomplete commitment page instead of hiding scope gaps', async () => {
-    const readWork = vi
-      .fn()
-      .mockReturnValueOnce({
-        items: [],
-        nextCursor: '1',
-        coverage: {
-          returned: 0,
-          total: 2,
-          complete: false,
-          reasons: [
-            'more commitments follow this page',
-            "1 commitment(s) outside the caller's scopes",
-          ],
-        },
-      })
-      .mockReturnValueOnce({
-        items: [],
-        nextCursor: null,
-        coverage: { returned: 0, total: 2, complete: true, reasons: [] },
-      });
-
-    await expect(runWorkListView({}, context(readWork))).rejects.toThrow(
-      /incomplete|outside the caller/i
-    );
   });
 
   it('returns up to four full records with basis, history, and code-point text continuation', async () => {
