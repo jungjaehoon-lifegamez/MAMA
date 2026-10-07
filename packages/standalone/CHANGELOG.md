@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.68.0] - 2026-10-07
+
+### Added
+
+- `mama register-owner` registers the owner as an active owner principal under the daemon's owner
+  id, bound to the one Telegram id config admits as the owner; run once, it prints only the result
+  and row counts (#444).
+
+### Changed
+
+- `work.list` returns the caller's visible work instead of failing when some is outside its
+  scopes, and `work.create`/`work.revise` need at least one scope when they state scopes (#445).
+
 ## [0.67.1] - 2026-10-07
 
 ### Fixed

@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.1.0] - 2026-10-07
+
+### Added
+
+- `ensureOwner` takes an optional `principalId`: it registers that id as the active owner and
+  binds the identity, reports `exists`, or returns `conflict` without writing (identity bound
+  elsewhere, another active owner, the id held by another kind or status). Without it, minting is
+  unchanged (#444).
+- `JudgmentAccess.defaultScopes`: a new judgment or commitment written without `scopes` binds
+  these, each within `scopes`; absent keeps binding all of `scopes` (#445).
+
+### Changed
+
+- Work reads (`readWork`, by id, row id and `history: 'chain'`) and graph reads (traversal, alias
+  seeds, overview, children) admit `scopes` plus `readScopes`. List pages select visible heads
+  before the limit, `coverage.total` counts visible commitments, `complete` is `!hasMore`, and
+  the hidden-row reason is gone; a hidden commitment reads like a missing one (#445).
+- Link targets (record links and `appendLink` endpoints and evidence) are checked against
+  readable scopes; `replaces` and `amends` stay on write scopes (#445).
+- A commitment revision or withdrawal without `scopes` binds the head's current scopes, each within
+  the writer's write scopes, instead of all of them; an unbound head stays unbound and a replay
+  rebuilds the original write's scopes. A revision with explicit `scopes` needs write access to
+  the item (#445).
+
+### Fixed
+
+- Graph memory search reads ranked matches until it holds 25 visible seeds, so hidden matches no
+  longer crowd out readable ones (#445).
+
 ## [7.0.0] - 2026-10-07
 
 ### Changed (breaking)

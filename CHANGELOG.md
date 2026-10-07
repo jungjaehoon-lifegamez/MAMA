@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.68.0] / mama-core [7.1.0] - 2026-10-07
+
+The first core steps toward team members. A principal granted read access to some work can now
+list, open and traverse exactly that work, a revision keeps the item's sharing, and the owner can
+be registered as a principal that grants access. Nothing changes for the owner's own reads. The
+package changelogs list every change.
+
+### Added
+
+- `mama register-owner` registers the owner once as an active owner principal under the id the
+  daemon already uses, so scopes can be granted (mama-core: `ensureOwner` takes `principalId`).
+- mama-core: `JudgmentAccess.defaultScopes` binds a new record written without scopes.
+
+### Changed
+
+- Work reads, revision chains and graph reads admit read grants as memory reads already did;
+  pages and totals count only what the caller can see, and nothing reports how much is hidden.
+- A revision written without scopes keeps its item's scopes instead of taking all of the
+  writer's; a revision with explicit scopes needs write access to the item.
+- `work.list` no longer fails when some work is outside the caller's scopes, and a work write
+  needs at least one scope.
+
+### Fixed
+
+- Graph search no longer misses a readable record that more hidden records outrank.
+
 ## mama-os [0.67.1] / mama-server [2.5.0] / plugin [2.2.0] - 2026-10-07
 
 The MCP server and the Claude Code plugin move to mama-core 7, and a wrong `work.list` call comes
