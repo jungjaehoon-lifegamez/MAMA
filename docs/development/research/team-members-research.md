@@ -168,3 +168,44 @@ Letta와 MAMA의 프로그램 비교는 데이터 소유권과 격리, 원문·�
 그 기준으로 [프로그램 구조를 다시 조사했다](letta-mama-program-comparison.md). 새 시험 DB에서 모델 호출 없이, 다른 scope 기록 25개 때문에 허용된 한 기억이 벡터 후보에서 사라지는 문제를 두 번 재현했다. 오너 고정 실행은 팀 기능 연결 과제로, embedder API 주입의 불완전함은 계약 제약으로, vector 전체 적재·순회는 규모 위험으로 분리한다. 기존 권한·세션·native 복구와 업무 revision 테스트 59개는 통과했다. 답변 누락이나 규칙 미조회는 프로그램 결함으로 합산하지 않으며, 코드는 수정하지 않았다.
 
 오너의 마지막 지적은 전체 분석이 계속 단편적이어서 팀 멤버 플랜을 진행할 수 없다는 것이다. 이 문서와 비교 보고서는 조사 메모이며 구현 계획의 완성 근거가 아니다. 다음 재개는 등록·신원부터 개인/공유 기억, 현재 권한, 실행·업무 반영·전달, 회수·재시작까지 한 흐름으로 분석한다. 20개 후보 예산 자체를 문제로 삼거나 새로운 제한으로 해결하지 않으며, 검색 재현을 전체 설계의 결론·필수 선행 수정으로 확대하지 않는다. 구현 spec·실행 계획은 아직 없다.
+
+## 2026-10-07 재조사: 개인 기록 비공개와 멤버 기기 연결 (OpenClaw, Letta)
+
+오늘 정한 오너 결정에 비추어 두 제품을 다시 조사했다. 결정은 다섯 가지다. 오너도 멤버의 허락 없이는 멤버 개인 기록을 보지 못한다. 멤버는 자기 작업 공간에서 문서·이미지 작업을 맡긴다. 멤버의 윈도우 PC는 멤버가 고른 폴더만 연결한다(OpenSSH, 전용 계정, NTFS 권한, SFTP 전용). 에이전트는 멤버 PC에 아무것도 설치하지 않는다. 3D 작업은 맥의 블렌더에서 한다. 공식 문서와 소스를 읽었고 실행하지 않았다. 출처는 OpenClaw 문서(2026.8.x)와 `openclaw/openclaw@2c38d13`, `openclaw-windows-node@839dad2`, Letta 문서와 `letta-ai/letta-code@4b028fa`, 보관된 V1 서버 `letta-ai/letta@56ba9c2`다.
+
+**개인 기록 비공개는 두 제품 모두 제공하지 않는다.**
+
+- OpenClaw는 Gateway 하나를 하나의 신뢰 영역으로 본다. 운영자는 "per-user tenant가 아니라 신뢰된 제어 역할"이다. 다른 사람의 세션을 읽는 것은 취약점이 아니라고 명시한다. 시크릿 대화도 Gateway 소유자에게는 숨겨지지 않는다. 사람을 서로 가리려면 Gateway, OS 사용자, 호스트를 따로 둬야 한다. 출처: [신뢰 모델](https://docs.openclaw.ai/gateway/security/trust-model), [세션](https://docs.openclaw.ai/concepts/session), [팀](https://docs.openclaw.ai/start/teams).
+- 에이전트끼리 서로의 세션을 읽는 것이 기본으로 켜져 있다. 출처: [`schema.help.runtime.ts#L588`](https://github.com/openclaw/openclaw/blob/2c38d132e031de010e16039b0ba73cf8b23888a5/src/config/schema.help.runtime.ts#L588-L589).
+- Letta의 Admin은 모든 에이전트와 대화를 동의 절차 없이 연다. 사람 단위 경계는 없고 에이전트 단위로만 나뉜다. 공유 에이전트의 기억은 모든 사용자에게 같다. 출처: [권한](https://docs.letta.com/teams/permissions), [conversations](https://docs.letta.com/concepts/conversations).
+- Letta의 V1 `identities`는 조직 필터만 하는 꼬리표였고, 지금은 deprecated다. 사용자와 에이전트의 연결과 접근 검사는 앱이 맡는다. 출처: [`identities.py`](https://github.com/letta-ai/letta/blob/56ba9c25552605eec89de8ed3dc6394b625c1993/letta/server/rest_api/routers/v1/identities.py#L25-L195), [통합 패턴](https://docs.letta.com/self-hosting/app-server/integration-patterns).
+- 따라서 MAMA의 결정은 두 제품보다 엄격하다. MAMA가 직접 강제해야 한다. 방법은 멤버 범위 바인딩, 오너 에이전트의 DB·원본·멤버 공간 직접 읽기 금지, 뷰어 필터다. "프로세스 운영자에게는 숨길 수 없다"는 OpenClaw의 명시는 MAMA가 밝힌 한계와 같다.
+
+**멤버 기기 연결은 두 제품 모두 자기 프로그램을 설치한다.**
+
+- OpenClaw는 기기를 "노드"로 붙인다. 윈도우에는 관리자 권한 없이 설치되는 네이티브 앱이 있다. 기기를 짝짓는 단계와, 기기가 제공하는 명령을 승인하는 단계가 따로 있다. 승인 목록을 넓히면 다시 승인해야 하고, 셸 실행은 Gateway 관리자 권한으로만 승인한다. 출처: [노드](https://docs.openclaw.ai/nodes), [윈도우](https://docs.openclaw.ai/platforms/windows), [짝짓기와 승인](https://docs.openclaw.ai/nodes/pairing-and-status).
+- OpenClaw의 파일 전송 경로 허용 목록은 Gateway 쪽에서 검사하고, 기기는 받은 요청을 그대로 수행한다. 출처: [`policy.ts#L125`](https://github.com/openclaw/openclaw/blob/2c38d132e031de010e16039b0ba73cf8b23888a5/extensions/file-transfer/src/shared/policy.ts#L125-L137), [`file-fetch.ts#L122`](https://github.com/openclaw/openclaw/blob/2c38d132e031de010e16039b0ba73cf8b23888a5/extensions/file-transfer/src/node-host/file-fetch.ts#L122-L135).
+- 명령 승인은 폴더 경계가 아니라고 OpenClaw 스스로 쓴다. 셸이 파일에 직접 닿는 한 호스트 쪽 경로 목록은 완전한 경계가 될 수 없다는 이유로 컨테이너 마운트를 권한다. 출처: [exec approvals](https://docs.openclaw.ai/tools/exec-approvals), [여러 폴더](https://docs.openclaw.ai/gateway/sandboxing/multiple-folders-for-one-agent).
+- Letta는 사용자 기기에서 자기 하네스를 돌린다. 하네스는 클라우드로 나가는 WebSocket을 열고, 원격에서 권한 모드를 고른다. 원격 UI의 `read_file`, `write_file`, `terminal_spawn`은 권한 모드와 샌드박스를 거치지 않는다. 출처: [BYOM](https://docs.letta.com/platform/computers/byom), [`file-commands.ts#L711`](https://github.com/letta-ai/letta-code/blob/4b028fab07c69edaac2ddb4f7b9a43573ff20d81/src/websocket/listener/file-commands.ts#L711).
+- Letta의 커널 샌드박스는 macOS와 Linux에만 있다. 윈도우 셸은 제한 없이 돈다. 출처: [`availability.ts#L117`](https://github.com/letta-ai/letta-code/blob/4b028fab07c69edaac2ddb4f7b9a43573ff20d81/src/sandbox/availability.ts#L117-L136).
+- 에이전트 셸에는 기기 소유자의 Letta 토큰이 들어간다. 출처: [`shell-env.ts#L331`](https://github.com/letta-ai/letta-code/blob/4b028fab07c69edaac2ddb4f7b9a43573ff20d81/src/tools/impl/shell-env.ts#L331-L332).
+- MAMA의 SFTP 전용 계정과 NTFS 권한은 폴더 경계를 멤버의 운영체제에 둔다. OpenClaw의 마운트 논리와 같은 방향이고, 두 제품의 윈도우 경로보다 강하다. 대신 멤버 PC에서 처리하려면 명령 실행 권한을 따로 열어야 한다.
+
+**MAMA로 옮길 장치 (장치만)**
+
+| 장치                                                                                                    | 출처                   | MAMA에서 쓰는 곳                                                                                      |
+| ------------------------------------------------------------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------- |
+| 미등록 발신자에게 최소 응답만 주는 짝짓기 단계(`/help`·`/status`·`/whoami`)와 모든 메시지의 작성자 표시 | 둘 다                  | 등록: 초대 링크 승인 전에는 조용히 버리는 대신 최소 응답만 준다. 메일박스 행마다 실제 발신자를 남긴다 |
+| 기기 인증과 기능 승인을 나누는 2단계 승인. 승인 목록을 넓히면 다시 승인한다                             | OpenClaw               | 멤버 PC: 폴더를 추가하거나 블렌더 연결 같은 기능을 켤 때 멤버가 설치 단계를 다시 거친다               |
+| 정확한 명령에 묶인 승인. 실행 전에 바뀌면 거부하고, 승인할 사람이 없으면 거부한다                       | OpenClaw               | 멤버 PC에서 명령을 열 때. 승인자는 오너가 아니라 멤버다                                               |
+| 서버가 덮어쓸 수 없는 기기 쪽 설정                                                                      | OpenClaw               | 이미 NTFS 권한이 그 역할을 한다                                                                       |
+| 공유할 것을 원 소유자가 고르는 공유. 읽기 전용이고, 회수하면 이후 읽기만 막으며, 이미 읽힌 것은 남는다  | OpenClaw Session Share | 허락 방식 (a) 항목별 공유의 의미를 이대로 정한다                                                      |
+| 출처나 참여자 단위의 기억 삭제                                                                          | OpenClaw               | 멤버 퇴장 시 개인 기록 삭제                                                                           |
+| 샌드박스가 없으면 세션을 시작하지 않는다. 실행 중에는 바꿀 수 없고, 호스트로 우회하지 않는다            | 둘 다                  | 멤버 세션. 오너 Claude 설정의 `failIfUnavailable: true`와 같은 방향                                   |
+| 실행기가 정한 신원을 한 번 읽고 환경에서 지운다. 자식 셸이 신원을 사칭하지 못한다                       | Letta                  | 멤버 세션의 principal                                                                                 |
+| 시크릿은 이름만 보이고 값은 실행 시점에 넣은 뒤 출력에서 지운다                                         | Letta                  | 멤버별 SSH 키. MAMA 도구가 쥐고 에이전트는 보지 않는다                                                |
+| 승인 요청에 막힌 경로, diff, 제안 규칙을 담고, 재연결 뒤 대기 중인 승인을 되살린다                      | Letta                  | 멤버 PC 명령 승인과 블렌더 실시간 조작 동의                                                           |
+
+**따르지 않을 것.** 다섯 가지다. 에이전트끼리 세션 읽기를 기본으로 켜는 것(OpenClaw). 승인을 우회하는 데스크톱 제어(OpenClaw). 원격 파일 명령이 권한 모드를 거치지 않는 것(Letta). 샌드박스가 없을 때 제한 없이 계속하는 것(Letta). 에이전트가 쓴 코드(mods)가 사용자 기기에서 실행되는 것과, 에이전트 셸에 기기 소유자 토큰이 들어가는 것(Letta).
+
+미확인으로 남은 것은 셋이다. OpenClaw 윈도우 앱의 기기 쪽 샌드박스("MXC")의 실체. Letta 클라우드가 다른 멤버나 Admin에게 남의 기기 선택을 허용하는지. 공유 런타임에서 누가 승인에 답하는지.
