@@ -58,10 +58,12 @@ pnpm --filter @jungjaehoon/mama-os typecheck
 # Run tests for the packages this commit stages, and their dependents. `test` depends on `build`
 # (turbo.json), and the daemon runs from the live checkout's dist, so a commit that stages no
 # package (docs only) must select none. Turbo's `[HEAD]` filter also counts unstaged changes, so
-# the packages come from the index; staged root package-manager or Turbo configuration selects all.
+# the packages come from the index. A staged root file other than `docs/` and root Markdown selects
+# all packages: package tests run root scripts, and root configuration applies to every package.
 STAGED_FILTERS=$(git diff --cached --name-only --no-renames HEAD | awk -F/ '
-  /^(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|turbo\.json)$/ { print "--filter=...{./packages/*}"; next }
-  $1 == "packages" && NF > 2 { print "--filter=...{./packages/" $2 "}" }
+  $1 == "packages" && NF > 2 { print "--filter=...{./packages/" $2 "}"; next }
+  $1 == "docs" || (NF == 1 && /\.md$/) { next }
+  { print "--filter=...{./packages/*}" }
 ' | sort -u)
 if [ -n "$STAGED_FILTERS" ]; then
   echo "Running tests for staged packages..."
