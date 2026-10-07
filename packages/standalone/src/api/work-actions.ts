@@ -1,3 +1,4 @@
+import { invalidInput } from '../utils/invalid-input.js';
 import { createHash } from 'node:crypto';
 import type { ActionContext, ActionRegistration, ActionSchemaObject } from '@jungjaehoon/mama-core';
 import type { TimeZoneSetting } from '../runtime/timezone.js';
@@ -165,14 +166,14 @@ const WORK_LIST_PRIORITIES = ['high', 'normal', 'low'] as const;
 function workListObject(value: unknown): Record<string, unknown> {
   if (value === undefined) return {};
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('work.list input must be an object');
+    throw invalidInput('work.list input must be an object');
   }
   return value as Record<string, unknown>;
 }
 
 function workListString(value: unknown, field: string): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== 'string') throw new Error(`work.list ${field} must be a string`);
+  if (typeof value !== 'string') throw invalidInput(`work.list ${field} must be a string`);
   return value;
 }
 
@@ -180,14 +181,14 @@ function workListStatuses(value: unknown): readonly PublicWorkStatus[] | undefin
   if (value === undefined) return undefined;
   const values = Array.isArray(value) ? value : [value];
   if (values.length === 0) {
-    throw new Error('work.list status must contain at least one status');
+    throw invalidInput('work.list status must contain at least one status');
   }
   const statuses = values.map((candidate) => {
     if (typeof candidate !== 'string') {
-      throw new Error('work.list status must be a string or an array of strings');
+      throw invalidInput('work.list status must be a string or an array of strings');
     }
     if (!WORK_LIST_STATUSES.includes(candidate as PublicWorkStatus)) {
-      throw new Error(`work.list status must be one of ${WORK_LIST_STATUSES.join('|')}`);
+      throw invalidInput(`work.list status must be one of ${WORK_LIST_STATUSES.join('|')}`);
     }
     return candidate as PublicWorkStatus;
   });
@@ -203,7 +204,7 @@ function workListInteger(
 ): number {
   if (value === undefined) return fallback;
   if (!Number.isSafeInteger(value) || (value as number) < minimum || (value as number) > maximum) {
-    throw new Error(`work.list ${field} must be an integer from ${minimum} to ${maximum}`);
+    throw invalidInput(`work.list ${field} must be an integer from ${minimum} to ${maximum}`);
   }
   return value as number;
 }
@@ -211,7 +212,7 @@ function workListInteger(
 function workListNonNegativeInteger(value: unknown, field: string, fallback: number): number {
   if (value === undefined) return fallback;
   if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    throw new Error(`work.list ${field} must be a non-negative integer`);
+    throw invalidInput(`work.list ${field} must be a non-negative integer`);
   }
   return value as number;
 }
@@ -219,7 +220,7 @@ function workListNonNegativeInteger(value: unknown, field: string, fallback: num
 function workListAsOf(value: unknown): number | undefined {
   if (value === undefined) return undefined;
   if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    throw new Error('work.list asOf must be a non-negative epoch-millisecond integer');
+    throw invalidInput('work.list asOf must be a non-negative epoch-millisecond integer');
   }
   return value as number;
 }
@@ -232,7 +233,9 @@ function workListTime(value: unknown, field: string): number {
   const parsed = offsetIsoTime(value);
   if (parsed !== undefined) return parsed;
   if (Number.isSafeInteger(value) && (value as number) >= 0) return value as number;
-  throw new Error(`work.list ${field} must be epoch milliseconds or an ISO time with its offset`);
+  throw invalidInput(
+    `work.list ${field} must be epoch milliseconds or an ISO time with its offset`
+  );
 }
 
 const OFFSET_ISO_PATTERN =
@@ -267,7 +270,7 @@ function workListFilter(input: Record<string, unknown>): WorkListFilter {
     ...(status === undefined ? {} : { status }),
     ...(input.stage === undefined ? {} : { stage: workListString(input.stage, 'stage') }),
     ...(input.project === undefined ? {} : { project: workListString(input.project, 'project') }),
-    ...(input.text === undefined ? {} : { text: workListString(input.text, 'text') }),
+    ...(input.text === undefined ? {} : { text: workListQuery(input.text) }),
     ...(input.asOf === undefined ? {} : { asOf: workListAsOf(input.asOf) }),
     ...(input.changedSince === undefined
       ? {}
@@ -317,7 +320,7 @@ function workListEventRevisions(
 
 function workListDueFilter(value: unknown): WorkListDue {
   if (typeof value !== 'string' || !(WORK_LIST_DUE as readonly string[]).includes(value)) {
-    throw new Error(`work.list due must be one of ${WORK_LIST_DUE.join('|')}`);
+    throw invalidInput(`work.list due must be one of ${WORK_LIST_DUE.join('|')}`);
   }
   return value as WorkListDue;
 }
@@ -343,6 +346,15 @@ function workListTokens(value: string): string[] {
   return normalized.split(/[^\p{L}\p{N}]+/gu).filter((token) => token.length > 0);
 }
 
+/** A text query is checked once, where the input is read, so an empty board cannot pass it. */
+function workListQuery(value: unknown): string {
+  const query = workListString(value, 'text') as string;
+  if (workListTokens(query).length === 0) {
+    throw invalidInput('work.list text must contain searchable text');
+  }
+  return query;
+}
+
 function workListSearchFields(item: CommitmentView): { title: string; description: string } {
   const values = workListValueObject(item.values);
   return {
@@ -356,9 +368,6 @@ function workListLexicalScore(
   fields: { title: string; description: string }
 ): number {
   const queryTokens = [...new Set(workListTokens(query))];
-  if (queryTokens.length === 0) {
-    throw new Error('work.list text must contain searchable text');
-  }
   const fieldText = `${fields.title}\n${fields.description}`;
   const fieldTokens = new Set(workListTokens(fieldText));
   const overlap = queryTokens.filter((token) => fieldTokens.has(token)).length / queryTokens.length;
@@ -655,19 +664,19 @@ function decodeWorkListCursor(
   dueDay: string | null
 ): WorkListCursor {
   if (value === '') {
-    throw new Error('work.list cursor is empty; omit cursor to start from the first page');
+    throw invalidInput('work.list cursor is empty; omit cursor to start from the first page');
   }
   if (typeof value !== 'string' || value.length > 4_096) {
-    throw new Error('work.list cursor is malformed; restart the items read from the first page');
+    throw invalidInput('work.list cursor is malformed; restart the items read from the first page');
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
   } catch {
-    throw new Error('work.list cursor is malformed; restart the items read from the first page');
+    throw invalidInput('work.list cursor is malformed; restart the items read from the first page');
   }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('work.list cursor is malformed; restart the items read from the first page');
+    throw invalidInput('work.list cursor is malformed; restart the items read from the first page');
   }
   const candidate = parsed as Partial<WorkListCursor>;
   if (
@@ -677,10 +686,10 @@ function decodeWorkListCursor(
     !Number.isSafeInteger(candidate.offset) ||
     (candidate.offset as number) < 0
   ) {
-    throw new Error('work.list cursor is malformed; restart the items read from the first page');
+    throw invalidInput('work.list cursor is malformed; restart the items read from the first page');
   }
   if (candidate.filter !== workListFingerprint(filter, dueDay)) {
-    throw new Error(
+    throw invalidInput(
       'work.list cursor belongs to a different query; restart the items read from the first page'
     );
   }
@@ -705,7 +714,7 @@ function workListTextWindow(value: string, offset: number, limit: number): WorkL
 
 function workListDetailIds(value: unknown): Array<string | number> {
   if (!Array.isArray(value) || value.length < 1 || value.length > WORK_LIST_MAX_DETAIL_IDS) {
-    throw new Error(`work.list detail ids must contain 1 to ${WORK_LIST_MAX_DETAIL_IDS} ids`);
+    throw invalidInput(`work.list detail ids must contain 1 to ${WORK_LIST_MAX_DETAIL_IDS} ids`);
   }
   const ids = value.map((id) => {
     if (
@@ -713,11 +722,13 @@ function workListDetailIds(value: unknown): Array<string | number> {
       (typeof id === 'string' && id.trim() === '') ||
       (typeof id === 'number' && (!Number.isSafeInteger(id) || id < 1))
     ) {
-      throw new Error('work.list detail ids must be nonblank commitment ids or positive row ids');
+      throw invalidInput(
+        'work.list detail ids must be nonblank commitment ids or positive row ids'
+      );
     }
     return id;
   });
-  if (new Set(ids).size !== ids.length) throw new Error('work.list detail ids must be distinct');
+  if (new Set(ids).size !== ids.length) throw invalidInput('work.list detail ids must be distinct');
   return ids;
 }
 
@@ -988,10 +999,10 @@ export async function runWorkListView(
     view !== 'pipeline' &&
     view !== 'links'
   ) {
-    throw new Error('work.list view must be one of overview|items|detail|pipeline|links');
+    throw invalidInput('work.list view must be one of overview|items|detail|pipeline|links');
   }
   if (input.ids !== undefined && view !== 'detail' && view !== 'links') {
-    throw new Error('work.list ids are only valid with view=detail or view=links');
+    throw invalidInput('work.list ids are only valid with view=detail or view=links');
   }
   if (view === 'detail') return workListDetail(input, ctx);
   if (view === 'links') return workListLinks(input, ctx);

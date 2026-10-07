@@ -1,3 +1,4 @@
+import { invalidInput } from '../utils/invalid-input.js';
 import type { ActionRegistration } from '@jungjaehoon/mama-core';
 import type { ActionContext } from '@jungjaehoon/mama-core';
 import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
@@ -79,12 +80,6 @@ function sinceTime(value: unknown, now: number): number {
 
 /** Rows scanned in host memory; each channel reports its full count and its latest lines. */
 const RECENT_SCAN_LIMIT = 20_000;
-
-function invalidInput(message: string): Error {
-  const error = new Error(message);
-  error.name = 'invalid_input';
-  return error;
-}
 
 function decodeMetadata(value: unknown): Record<string, unknown> {
   if (typeof value !== 'string' || value === '') return {};

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ActionContext } from '@jungjaehoon/mama-core';
+import { createCatalog, createDispatcher, type ActionContext } from '@jungjaehoon/mama-core';
 import type {
   CommitmentPage,
   CommitmentRevision,
@@ -113,6 +113,175 @@ function context(readWork: WorkListViewContext['knowledge']['readWork']): WorkLi
     timeZone: 'UTC',
   };
 }
+
+function dispatcher(readWork: WorkListViewContext['knowledge']['readWork']) {
+  return createDispatcher(
+    createCatalog(
+      workListActionRegistrations({
+        knowledge: { readWork, queryGraph: vi.fn() },
+        timeZone: createTimeZoneSetting('UTC'),
+      })
+    )
+  );
+}
+
+describe('dispatched work.list failures', () => {
+  const cursor = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
+
+  it.each([
+    ['non-object input', null],
+    ['unknown view', { view: 'unknown' }],
+    ['ids with items', { view: 'items', ids: ['commitment-1'] }],
+    ['wrong string type', { stage: 1 }],
+    ['empty statuses', { status: [] }],
+    ['wrong status type', { status: [1] }],
+    ['unknown status', { status: 'unknown' }],
+    ['limit outside the range', { limit: 51 }],
+    ['non-integer limit', { limit: 1.5 }],
+    ['negative text offset', { view: 'detail', ids: [1], text_offset: -1 }],
+    ['invalid asOf', { asOf: -1 }],
+    ['unparseable time', { changedSince: 'yesterday' }],
+    ['time without offset', { eventBefore: '2026-10-01T00:00:00' }],
+    ['unknown due filter', { due: 'unknown' }],
+    ['unsearchable text', { text: '!!!' }],
+    ['empty cursor', { cursor: '' }],
+    ['wrong cursor type', { cursor: 1 }],
+    ['oversized cursor', { cursor: 'x'.repeat(4_097) }],
+    ['non-JSON cursor', { cursor: 'not-json' }],
+    ['non-object cursor', { cursor: cursor(null) }],
+    ['invalid cursor fields', { cursor: cursor({ v: 2 }) }],
+    ['missing detail ids', { view: 'detail' }],
+    ['empty detail ids', { view: 'detail', ids: [] }],
+    ['too many detail ids', { view: 'detail', ids: [1, 2, 3, 4, 5] }],
+    ['blank detail id', { view: 'detail', ids: [' '] }],
+    ['non-positive row id', { view: 'detail', ids: [0] }],
+    ['duplicate detail ids', { view: 'detail', ids: [1, 1] }],
+  ])('classifies %s as invalid input', async (_description, input) => {
+    const dispatch = dispatcher(makeReader([view(1)]).readWork);
+    expect(await dispatch({ action: 'work.list', input }, { access })).toMatchObject({
+      status: 'failed',
+      error: { kind: 'invalid_input', code: 'invalid_input' },
+    });
+  });
+
+  it('classifies unsearchable text as invalid input on an empty board', async () => {
+    const dispatch = dispatcher(makeReader([]).readWork);
+    expect(
+      await dispatch({ action: 'work.list', input: { text: '!!!' } }, { access })
+    ).toMatchObject({
+      status: 'failed',
+      error: { kind: 'invalid_input', code: 'invalid_input' },
+    });
+  });
+
+  it('classifies a cursor combined with a different query as invalid input', async () => {
+    const dispatch = dispatcher(makeReader([view(1), view(2)]).readWork);
+    const first = await dispatch({ action: 'work.list', input: { limit: 1 } }, { access });
+    expect(first.status).toBe('completed');
+    const { nextCursor } = (first as { data: { nextCursor: string } }).data;
+    expect(nextCursor).toEqual(expect.any(String));
+    expect(
+      await dispatch(
+        { action: 'work.list', input: { cursor: nextCursor, status: 'pending' } },
+        { access }
+      )
+    ).toMatchObject({
+      status: 'failed',
+      error: {
+        kind: 'invalid_input',
+        code: 'invalid_input',
+        message:
+          'work.list cursor belongs to a different query; restart the items read from the first page',
+      },
+    });
+  });
+
+  it.each([
+    [
+      'incomplete visibility',
+      {},
+      [],
+      ["1 commitment(s) outside the caller's scopes"],
+      'read is incomplete',
+    ],
+    [
+      'stored status invariant',
+      {},
+      [view(1, { values: { status: 'unknown' } })],
+      [],
+      'status outside the contract',
+    ],
+    [
+      'missing history invariant',
+      { view: 'detail', ids: [1] },
+      [view(1)],
+      [],
+      'did not return revision history',
+    ],
+  ])(
+    'preserves the internal failure for %s',
+    async (_description, input, items, reasons, message) => {
+      const dispatch = dispatcher(() => ({
+        items,
+        nextCursor: null,
+        coverage: { returned: items.length, total: items.length, complete: false, reasons },
+      }));
+      expect(await dispatch({ action: 'work.list', input }, { access })).toMatchObject({
+        status: 'failed',
+        error: {
+          kind: 'internal',
+          code: 'internal_error',
+          message: expect.stringContaining(message),
+        },
+      });
+    }
+  );
+
+  it('preserves internal failures when an echoed version or issued cursor becomes stale', async () => {
+    const reader = makeReader([view(1), view(2)]);
+    const dispatch = dispatcher(reader.readWork);
+    const first = await dispatch({ action: 'work.list', input: { limit: 1 } }, { access });
+    expect(first.status).toBe('completed');
+    const { nextCursor, readVersion } = (
+      first as {
+        data: { nextCursor: string; readVersion: string };
+      }
+    ).data;
+    reader.state.items.push(view(3));
+    for (const [input, message] of [
+      [
+        { readVersion },
+        'work.list readVersion changed; restart the items read from the first page',
+      ],
+      [
+        { cursor: nextCursor },
+        'work.list board changed since this cursor was issued; restart the items read from the first page',
+      ],
+    ] as const) {
+      expect(await dispatch({ action: 'work.list', input }, { access })).toMatchObject({
+        status: 'failed',
+        error: { kind: 'internal', code: 'internal_error', message },
+      });
+    }
+  });
+
+  it('preserves the internal failure for an invalid host clock', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(-1);
+    try {
+      const dispatch = dispatcher(makeReader([view(1)]).readWork);
+      expect(await dispatch({ action: 'work.list', input: {} }, { access })).toMatchObject({
+        status: 'failed',
+        error: {
+          kind: 'internal',
+          code: 'internal_error',
+          message: 'work.list observed time must be a non-negative epoch-millisecond integer',
+        },
+      });
+    } finally {
+      clock.mockRestore();
+    }
+  });
+});
 
 describe('progressive work.list views', () => {
   it('finds what happened in a span by event time, each item with its revisions there', async () => {

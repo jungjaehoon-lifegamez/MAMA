@@ -1,3 +1,4 @@
+import { invalidInput } from '../utils/invalid-input.js';
 import type { ActionRegistration } from '@jungjaehoon/mama-core';
 import type { JevQuestions } from '../replay/jev-client.js';
 
@@ -20,12 +21,6 @@ const QUESTION_TYPES = ['noul', 'choice', 'score'] as const;
  * fit well inside this.
  */
 export const JUDGE_STATE_LIMIT = 6_000;
-
-function invalidInput(message: string): Error {
-  const error = new Error(message);
-  error.name = 'invalid_input';
-  return error;
-}
 
 const textOrStructure = {
   oneOf: [{ type: 'string', minLength: 1 }, { type: 'object' }, { type: 'array', minItems: 1 }],
