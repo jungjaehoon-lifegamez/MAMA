@@ -506,6 +506,9 @@ export function visibleTwinRefKeys(
         ) as Array<{ memory_id: string }>;
       bindings.forEach((row) => admittedBindings.add(row.memory_id));
     }
+    // Scope ids for the revision-history check, built once for the batch; that check runs only for
+    // a row no binding or legacy column admits.
+    const admittedScopeIds = hasScopes(visibility.scopes) ? visibility.scopes.map(scopeIdFor) : [];
     for (const row of rows) {
       const id = String(row.id);
       const status = typeof row.status === 'string' ? row.status : 'active';
@@ -517,12 +520,12 @@ export function visibleTwinRefKeys(
       const scopeVisible =
         !hasScopes(visibility.scopes) ||
         admittedBindings.has(id) ||
-        isCommitmentRevisionReadable(adapter, id, visibility.scopes.map(scopeIdFor)) ||
         (columns.has('memory_scope_kind') &&
           columns.has('memory_scope_id') &&
           visibility.scopes.some(
             (scope) => row.memory_scope_kind === scope.kind && row.memory_scope_id === scope.id
-          ));
+          )) ||
+        isCommitmentRevisionReadable(adapter, id, admittedScopeIds);
       if (
         !retired &&
         isWithinVisibilityTime(
