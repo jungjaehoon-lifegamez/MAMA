@@ -523,7 +523,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
               logger.error(
                 `stimulus parked uncertain kind=${row.kind ?? 'unknown'} mailbox_id=${row.id}`
               );
-              if (row.kind !== 'owner_message') return;
+              if (row.kind !== 'owner_message' || row.principalId !== OWNER_PRINCIPAL_ID) return;
               const selected = gateways.get(sourceForRef(row.stimulusId));
               if (!selected)
                 throw new Error('Owner messenger is not available for an interrupted response');

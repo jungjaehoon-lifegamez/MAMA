@@ -347,6 +347,12 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
   const prepareAccess =
     options.principal?.prepareAccess ?? (() => options.actionSurface.ownerAccess);
   const tools = actionToolDefinitions(options.actionSurface, options.principal?.prepareAccess());
+  // Core prepares a member's access before it builds the tool list or runs a tool; without it a
+  // member call must fail rather than reach the surface's owner default.
+  const memberAccess = (access: unknown): JudgmentAccess => {
+    if (!access) throw new Error(`No prepared access for ${options.principal!.principalId}`);
+    return access as JudgmentAccess;
+  };
   const runnerRef: { current?: NativeSessionRunner<HostExecutionContext> } = {};
   const bridge: NativeDriverOptions['createSubagentBridge'] = (info) =>
     runnerRef.current?.createSubagentBridge(info) ?? Promise.resolve(null);
@@ -460,7 +466,7 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
         ? tools
         : actionToolDefinitions(
             options.actionSurface,
-            (request as NativeSessionRequest).access as JudgmentAccess
+            memberAccess((request as NativeSessionRequest | undefined)?.access)
           ),
     ...(options.modelRun === undefined ? {} : { modelRun: options.modelRun }),
     callTool: async (name, input, context) => {
@@ -471,7 +477,7 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
       return modelToolResult(
         name,
         await options.actionSurface.hostToolCall(name, input, facts.gatewayCallId, {
-          ...(options.principal === undefined ? {} : { access: context!.access as JudgmentAccess }),
+          ...(options.principal === undefined ? {} : { access: memberAccess(context?.access) }),
           session: {
             ...(facts.modelRunId === undefined ? {} : { modelRunId: facts.modelRunId }),
             gatewayCallId: facts.gatewayCallId,

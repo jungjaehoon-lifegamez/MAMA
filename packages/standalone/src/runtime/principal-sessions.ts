@@ -25,7 +25,10 @@ export function createSerialTurnChain() {
   };
 }
 
-export function createPrincipalSessions(ownerPrincipalId: string) {
+export function createPrincipalSessions(
+  ownerPrincipalId: string,
+  unserved: Pick<StimulusDelivery, 'onUncertain' | 'onDead'> = {}
+) {
   const entries = new Map<string, SessionEntry>();
   const turnChain = createSerialTurnChain();
   const get = (id: string): SessionEntry => {
@@ -80,8 +83,11 @@ export function createPrincipalSessions(ownerPrincipalId: string) {
           } as NativeSessionRequest),
       }),
     reconcile: (row) => get(row.principalId).delivery.reconcile!(row),
-    onUncertain: (row, reason) => get(row.principalId).delivery.onUncertain?.(row, reason),
-    onDead: (row, reason) => get(row.principalId).delivery.onDead?.(row, reason),
+    // Core parks a row whose principal is no longer served; its report must not need a session.
+    onUncertain: (row, reason) =>
+      (entries.get(row.principalId)?.delivery ?? unserved).onUncertain?.(row, reason),
+    onDead: (row, reason) =>
+      (entries.get(row.principalId)?.delivery ?? unserved).onDead?.(row, reason),
   };
   return {
     native,
@@ -91,6 +97,10 @@ export function createPrincipalSessions(ownerPrincipalId: string) {
     add: (id: string, entry: SessionEntry) => {
       if (entries.has(id)) throw new Error(`Principal session already served: ${id}`);
       entries.set(id, entry);
+    },
+    remove: (id: string) => {
+      if (id === ownerPrincipalId) throw new Error('The owner session is never removed');
+      entries.delete(id);
     },
     replaySourceEndMs: (id: string) => get(id).delivery.getReplaySourceEndMs(),
   };

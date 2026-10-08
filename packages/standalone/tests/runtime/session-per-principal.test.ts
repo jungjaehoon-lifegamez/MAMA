@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, realpathSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -427,6 +427,30 @@ it('requires no root with no active members and serves a newly enrolled member o
     expect(runtime.runtime.servesPrincipal(id)).toBe(true);
     expect(runtime.serveMember(id)).toBe(intake);
     expect(f.drivers.get(id)?.cwd).toBe(memberPaths(f.root, id).workspaceDir);
+  } finally {
+    await runtime.stop();
+    f.pool.dispose();
+  }
+});
+
+it('lets serveMember try again after the member credential could not be written', async () => {
+  const f = await fixture();
+  f.options.nativeSession = { stop: async () => {} };
+  const runtime = await createOwnerRuntime(f.options);
+  try {
+    const id = createPrincipalRepository(runtime.database.adapter).registerMember({
+      connector: 'telegram',
+      namespace: 'private',
+      externalId: 'fixture-retry',
+      now: 5,
+    });
+    const { credentialPath } = memberPaths(f.root, id);
+    mkdirSync(credentialPath, { recursive: true });
+    expect(() => runtime.serveMember(id)).toThrow();
+    expect(runtime.runtime.servesPrincipal(id)).toBe(false);
+    rmSync(credentialPath, { recursive: true });
+    runtime.serveMember(id);
+    expect(runtime.runtime.servesPrincipal(id)).toBe(true);
   } finally {
     await runtime.stop();
     f.pool.dispose();

@@ -68,3 +68,18 @@ it('serializes the whole delivery across principals and routes the claimed princ
   await sessions.native.stop();
   expect(events.slice(-2)).toEqual(['stop:owner', 'stop:fixture-member']);
 });
+
+it('reports a parked row of a principal it no longer serves', async () => {
+  const reported: string[] = [];
+  const sessions = createPrincipalSessions('owner', {
+    onUncertain: (row, reason) => {
+      reported.push(`uncertain ${row.principalId} ${reason}`);
+    },
+    onDead: (row, reason) => {
+      reported.push(`dead ${row.principalId} ${reason}`);
+    },
+  });
+  await sessions.delivery.onUncertain!({ principalId: 'fixture-gone' } as never, 'interrupted');
+  await sessions.delivery.onDead!({ principalId: 'fixture-gone' } as never, 'not served');
+  expect(reported).toEqual(['uncertain fixture-gone interrupted', 'dead fixture-gone not served']);
+});

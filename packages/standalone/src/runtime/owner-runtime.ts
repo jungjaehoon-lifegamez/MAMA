@@ -261,7 +261,10 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
   let nativeSession: OwnerRuntimeOptions['nativeSession'] = options.nativeSession;
   let delivery: ReplayClockDelivery | undefined;
   let ownerMailbox: Mailbox | undefined;
-  const sessions = createPrincipalSessions(options.ownerPrincipalId);
+  const sessions = createPrincipalSessions(options.ownerPrincipalId, {
+    onUncertain: options.onStimulusUncertain,
+    onDead: options.onStimulusDead,
+  });
   const members = new Map<string, ReturnType<typeof createMemberSession>>();
   const memberIntakes = new Map<string, StimulusIntake>();
   const reportStore = createPersistentReportStore({
@@ -628,10 +631,18 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         const existing = memberIntakes.get(principalId);
         if (existing) return existing;
         const member = prepareMember(principalId);
-        intakeRuntime.servePrincipal({
-          access: member.initialAccess,
-          credentialPath: member.paths.credentialPath,
-        });
+        try {
+          intakeRuntime.servePrincipal({
+            access: member.initialAccess,
+            credentialPath: member.paths.credentialPath,
+          });
+        } catch (error) {
+          // Unregister, so a later serveMember can try again in this process.
+          sessions.remove(principalId);
+          members.delete(principalId);
+          void member.native.stop();
+          throw error;
+        }
         const memberIntake = createStimulusIntake(intakeRuntime, principalId, member.chat);
         memberIntakes.set(principalId, memberIntake);
         return memberIntake;
