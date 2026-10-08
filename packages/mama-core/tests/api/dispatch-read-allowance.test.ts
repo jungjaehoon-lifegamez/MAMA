@@ -162,6 +162,25 @@ describe('dispatch composes a read window from the principal grant', () => {
     expect(read()?.readAllowance).toEqual({ connectors: [], tenantId: null });
   });
 
+  it('keeps granted channels as the only window when no tenant is stated', async () => {
+    const { dispatch, read } = catalogSeeingItsContext();
+    await dispatch(
+      { action: 'test.context', input: {} },
+      {
+        access: {
+          ...baseAccess,
+          connectors: ['chat', 'trello'],
+          channels: { chat: ['telegram:1001'], trello: ['board-1'] },
+        },
+      }
+    );
+    expect(read()?.readAllowance).toEqual({
+      connectors: [],
+      tenantId: null,
+      channels: { chat: ['telegram:1001'], trello: ['board-1'] },
+    });
+  });
+
   it('keeps only an explicit connector-wide read when no tenant is stated', async () => {
     const { dispatch, read } = catalogSeeingItsContext();
     await dispatch(

@@ -189,6 +189,11 @@ export function boundScopeIdsFor(
   if (command.scopes === undefined && scopes.length === 0) {
     throw new JudgmentError('INVALID_SCOPE', 'At least one judgment scope is required');
   }
+  // A caller given a default scope writes inside its scopes; an unbound record would be readable
+  // by everyone, outside that boundary.
+  if (scopes.length === 0 && access.defaultScopes !== undefined) {
+    throw new JudgmentError('INVALID_SCOPE', 'This caller binds every record to a scope');
+  }
   const admitted = new Set(access.scopes.map(scopeKey));
   const seen = new Set<string>();
   return scopes.map((scope) => {

@@ -324,7 +324,10 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       ? []
       : ownerMessageActionRegistrations(options.ownerMessages)),
     ...helpActionRegistrations({
-      topics: () => options.helpTopics ?? {},
+      // The procedures are the owner's (reports, publishing, corrections); a member's would point it
+      // at actions it is not granted.
+      topics: (access) =>
+        access.principalId === options.ownerPrincipalId ? (options.helpTopics ?? {}) : {},
       contracts: () =>
         catalog.list().filter((contract) => contract.name !== CODE_ACT_CONTRACT.name),
     }),

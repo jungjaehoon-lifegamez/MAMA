@@ -94,6 +94,7 @@ describe('P1 principal access through the product dispatcher', () => {
       attachmentPorts: { telegram: () => null },
       judge: { ask: async () => ({}) },
       ownerMessages: { exchanges: () => [] },
+      helpTopics: { 'fixture-procedure': 'Owner procedure text.' },
     });
   });
 
@@ -179,6 +180,26 @@ describe('P1 principal access through the product dispatcher', () => {
     ).toEqual([{ kind: 'user', id: member }]);
   });
 
+  it('refuses a member memory.save that names no scope, which would be readable by everyone', async () => {
+    expect(
+      await surface.dispatch(
+        {
+          action: 'memory.save',
+          operationId: 'member-unbound-save-test',
+          input: {
+            topic: 'fixture-memory',
+            kind: 'fact',
+            summary: 'Unbound fixture memory',
+            details: 'Fixture details',
+            source: { package: 'fixture-consumer', source_type: 'fixture' },
+            scopes: [],
+          },
+        },
+        { access: resolve() }
+      )
+    ).toMatchObject({ status: 'failed', error: { code: 'INVALID_SCOPE' } });
+  });
+
   it.each([
     [
       'work.revise',
@@ -240,6 +261,24 @@ describe('P1 principal access through the product dispatcher', () => {
     expect(data(await surface.dispatch({ action: 'help', input: {} }, { access: resolve() }))).toBe(
       text
     );
+  });
+
+  it('keeps the owner procedures out of member help', async () => {
+    const ownerTopic = await surface.dispatch(
+      { action: 'help', input: { topic: 'fixture-procedure' } },
+      { access: surface.ownerAccess }
+    );
+    expect(data(ownerTopic)).toContain('Owner procedure text.');
+    const memberList = data(
+      await surface.dispatch({ action: 'help', input: {} }, { access: resolve() })
+    ) as string;
+    expect(memberList).not.toContain('fixture-procedure');
+    expect(
+      await surface.dispatch(
+        { action: 'help', input: { topic: 'fixture-procedure' } },
+        { access: resolve() }
+      )
+    ).toMatchObject({ status: 'failed' });
   });
 
   it('refuses help for an ungranted action even by its Codex spelling', async () => {

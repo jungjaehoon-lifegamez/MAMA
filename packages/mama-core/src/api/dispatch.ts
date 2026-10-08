@@ -279,7 +279,13 @@ function allowanceFromAccess(access: ActionContext['access']): MemoryReadAllowan
   // reader already admits that connector across its retained channels. Keep
   // only that exact intersection, never an unrelated narrow connector.
   if (connectors.length > 0 && (access.tenantId ?? null) === null && wideConnectors.length === 0) {
-    return { connectors: [], tenantId: null };
+    // Granted channels are an exact window of their own (a member's DM, a granted source channel):
+    // keep them, so cited observations from those channels stay readable, and nothing wider.
+    return {
+      connectors: [],
+      tenantId: null,
+      ...(access.channels ? { channels: access.channels } : {}),
+    };
   }
   return {
     connectors: (access.tenantId ?? null) === null ? wideConnectors : connectors,
