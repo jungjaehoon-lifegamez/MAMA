@@ -115,6 +115,7 @@ export interface ViewerServerOptions {
   getConnectorStatus?: () => ViewerConnectorStatus[] | Promise<ViewerConnectorStatus[]>;
   getRuntimeStatus?: () => ViewerRuntimeStatus | Promise<ViewerRuntimeStatus>;
   getMemoryStats?: () => ViewerMemoryStats | Promise<ViewerMemoryStats>;
+  getOwnerRuleIds?: (ids: readonly string[]) => ReadonlySet<string>;
   logPath?: string;
   securityEvents?: SecurityEventOptions;
   timeZone: TimeZoneSetting;
@@ -863,11 +864,14 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
   // What was saved when, read whole for the chosen days: the view groups by day, kind and item,
   // so it needs every record in the window rather than one page of them.
   const memoryTimeline = async (params: URLSearchParams): Promise<unknown> => {
+    if (!options.getOwnerRuleIds)
+      throw new ViewerHttpError(503, 'NOT_AVAILABLE', 'Owner rule authorship reader is not wired');
     const timeZone = options.timeZone.get();
     const window = timelineDays(params, timeZone);
     const since = epochAtLocalDateTime(`${window.from}T00:00:00`, timeZone);
     const until = epochAtLocalDateTime(`${shiftLocalDate(window.to, 1)}T00:00:00`, timeZone);
     const records: SavedTimelinePage['records'] = [];
+    const ownerRules = new Set<string>();
     let cursor: string | null = null;
     do {
       const page = savedTimelinePage(
@@ -879,6 +883,8 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
         })
       );
       records.push(...page.records);
+      for (const id of options.getOwnerRuleIds(page.records.map((record) => record.id)))
+        ownerRules.add(id);
       cursor = page.nextCursor;
     } while (cursor !== null);
     const query = params.get('q')?.trim() ?? '';
@@ -889,7 +895,8 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
       {
         query: query === '' ? null : query,
         groups: groups === null ? null : new Set(groups.split(',').filter((group) => group !== '')),
-      }
+      },
+      ownerRules
     );
   };
 

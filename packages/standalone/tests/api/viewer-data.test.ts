@@ -61,7 +61,7 @@ describe('viewer data shaping', () => {
       state: 'erased' as const,
     };
     const window = { from: '2026-10-01', to: '2026-10-08', timeZone: 'UTC' };
-    const result = shapeSavedTimeline([erased], window, { query: null, groups: null });
+    const result = shapeSavedTimeline([erased], window, { query: null, groups: null }, new Set());
     expect(result.total).toBe(1);
     expect(result.counts.erased).toBe(1);
     expect(result.days).toEqual([
@@ -88,11 +88,44 @@ describe('viewer data shaping', () => {
       },
     ]);
     expect(
-      shapeSavedTimeline([erased], window, { query: 'private content', groups: null }).total
+      shapeSavedTimeline([erased], window, { query: 'private content', groups: null }, new Set())
+        .total
     ).toBe(0);
     expect(
-      shapeSavedTimeline([erased], window, { query: null, groups: new Set(['fact']) })
+      shapeSavedTimeline([erased], window, { query: null, groups: new Set(['fact']) }, new Set())
     ).toMatchObject({ total: 0, counts: { erased: 1 }, days: [] });
+  });
+
+  it('groups only authenticated owner rules as owner rules despite identical chat refs', () => {
+    const rows = ['fixture-owner-rule', 'fixture-member-rule', 'fixture-historical-rule'].map(
+      (id) => ({
+        id,
+        kind: 'lesson',
+        status: 'active',
+        topic: id,
+        summary: 'Fixture rule.',
+        createdAt: Date.parse('2026-10-08T00:00:00Z'),
+        sourceMessageRef: 'telegram:fixture-dm:fixture-message',
+        commitmentId: null,
+        revision: null,
+        operation: null,
+        itemTitle: null,
+      })
+    );
+    const result = shapeSavedTimeline(
+      rows,
+      { from: '2026-10-08', to: '2026-10-08', timeZone: 'UTC' },
+      { query: null, groups: null },
+      new Set(['fixture-owner-rule'])
+    );
+    expect(result.counts).toMatchObject({ owner_rule: 1, learned: 2 });
+    expect(result.days[0]?.groups).toMatchObject([
+      { group: 'owner_rule', records: [{ id: 'memory:fixture-owner-rule' }] },
+      {
+        group: 'learned',
+        records: [{ id: 'memory:fixture-member-rule' }, { id: 'memory:fixture-historical-rule' }],
+      },
+    ]);
   });
 
   it('draws the links the agent stated and no host edge between revisions', async () => {

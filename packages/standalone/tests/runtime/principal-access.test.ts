@@ -14,6 +14,7 @@ import { resolvePrincipalAccess } from '../../src/runtime/principal-access.js';
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
 import { ownerMessageItem } from '../../src/storage/chat-sources.js';
+import { ownerRuleIds } from '../../src/runtime/owner-authority.js';
 
 const ROLE = [
   'graph.query',
@@ -118,6 +119,27 @@ describe('P1 principal access through the product dispatcher', () => {
       scope,
       now: 4,
     });
+  const ruleTurn = (principalId: string): ActionContext => ({
+    access: resolve(principalId),
+    session: { sourceMessageRef: 'telegram:fixture-dm:fixture-message' },
+  });
+  const saveRule = (principalId: string, operationId: string, replaces?: string) =>
+    surface.dispatch(
+      {
+        action: 'memory.save',
+        operationId,
+        input: {
+          topic: 'fixture-rule',
+          kind: 'lesson',
+          summary: 'Keep fixture replies brief.',
+          details: 'A fixture standing instruction.',
+          appliesWhen: 'When answering fixture messages.',
+          source: { package: 'fixture', source_type: 'fixture' },
+          ...(replaces ? { replaces: [{ id: replaces, reason: 'A fixture correction.' }] } : {}),
+        },
+      },
+      ruleTurn(principalId)
+    );
   // Also exercise existing handlers before the resolver exists, to expose their current leaks.
   const memberAccess = (): ActionContext['access'] => ({
     principalId: member,
@@ -151,6 +173,64 @@ describe('P1 principal access through the product dispatcher', () => {
     expect(owner).toEqual(surface.ownerAccess);
     expect(owner.defaultScopes).toEqual(ownerMemoryScopes(OWNER));
   });
+
+  it('classifies rules saved through dispatch by their authenticated writer, not their shared ref shape', async () => {
+    const ownerRule = data(await saveRule(OWNER, 'fixture-owner-rule')) as { id: string };
+    const memberRule = data(await saveRule(member, 'fixture-member-rule')) as { id: string };
+    expect(
+      db.adapter
+        .prepare(
+          `SELECT j.record_id AS id, b.principal_id AS principal
+        FROM judgment_commands j JOIN command_bindings b USING (command_id)
+        ORDER BY b.command_id`
+        )
+        .all()
+    ).toEqual([
+      { id: memberRule.id, principal: member },
+      { id: ownerRule.id, principal: OWNER },
+    ]);
+    expect([...ownerRuleIds(db.adapter, [ownerRule.id, memberRule.id], OWNER)]).toEqual([
+      ownerRule.id,
+    ]);
+  });
+
+  it.each(['memory.save', 'memory.retire'] as const)(
+    'allows a member %s of its own rule while protecting owner rules',
+    async (action) => {
+      const ownerRule = data(await saveRule(OWNER, 'fixture-owner-rule')) as { id: string };
+      const memberRule = data(await saveRule(member, 'fixture-member-rule')) as { id: string };
+      const change = (id: string, principalId: string, operationId: string) =>
+        action === 'memory.save'
+          ? saveRule(principalId, operationId, id)
+          : surface.dispatch(
+              {
+                action,
+                operationId,
+                input: { memory_id: id, status: 'stale', reason: 'Fixture.' },
+              },
+              ruleTurn(principalId)
+            );
+      expect(await change(memberRule.id, member, 'fixture-member-change')).toMatchObject({
+        status: 'completed',
+      });
+      expect(
+        db.adapter.prepare('SELECT status FROM decisions WHERE id = ?').get(memberRule.id)
+      ).toEqual({ status: action === 'memory.save' ? 'superseded' : 'stale' });
+      expect(await change(ownerRule.id, member, 'fixture-member-owner-change')).toMatchObject({
+        status: 'failed',
+        error: { code: 'denied' },
+      });
+      expect(
+        db.adapter.prepare('SELECT status FROM decisions WHERE id = ?').get(ownerRule.id)
+      ).toEqual({ status: 'active' });
+      expect(await change(ownerRule.id, OWNER, 'fixture-owner-change')).toMatchObject({
+        status: 'completed',
+      });
+      expect(
+        db.adapter.prepare('SELECT status FROM decisions WHERE id = ?').get(ownerRule.id)
+      ).toEqual({ status: action === 'memory.save' ? 'superseded' : 'stale' });
+    }
+  );
 
   it('binds an unscoped member memory.save only to its user scope', async () => {
     const saved = data(

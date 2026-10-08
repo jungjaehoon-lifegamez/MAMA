@@ -426,10 +426,10 @@ const TIMELINE_GROUPS = ['owner_rule', 'learned', 'decision', 'fact'];
  * A work revision belongs to its item; a rule is the owner's when the owner's own conversation
  * wrote it (owner-authority.ts) and learned otherwise; any other record goes by its kind.
  */
-function savedTimelineGroup(record: SavedTimelineRecord): string {
+function savedTimelineGroup(record: SavedTimelineRecord, ownerRules: ReadonlySet<string>): string {
   if (record.commitmentId !== null) return 'work';
   if ((RULE_KINDS as readonly string[]).includes(record.kind ?? '')) {
-    return isOwnerChatRef(record.sourceMessageRef) ? 'owner_rule' : 'learned';
+    return ownerRules.has(record.id) ? 'owner_rule' : 'learned';
   }
   return record.kind ?? 'none';
 }
@@ -452,7 +452,8 @@ function turnKind(ref: string | null): string | null {
 export function shapeSavedTimeline(
   records: readonly (SavedTimelineRecord | ErasedRecord)[],
   window: { from: string; to: string; timeZone: string },
-  filter: { query: string | null; groups: ReadonlySet<string> | null }
+  filter: { query: string | null; groups: ReadonlySet<string> | null },
+  ownerRules: ReadonlySet<string>
 ): ViewerSavedTimeline {
   const clock = new Intl.DateTimeFormat('en-GB', {
     timeZone: window.timeZone,
@@ -496,7 +497,7 @@ export function shapeSavedTimeline(
     ) {
       continue;
     }
-    const group = savedTimelineGroup(record);
+    const group = savedTimelineGroup(record, ownerRules);
     counts[group] = (counts[group] ?? 0) + 1;
     if (filter.groups !== null && !filter.groups.has(group)) continue;
     total += 1;

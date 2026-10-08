@@ -5,10 +5,9 @@
  * and only an owner-chat turn replaces or retires it. Rules learned in other turns are memory too,
  * and any turn may add or change them.
  *
- * Decided from the message refs the messenger gateways write for owner messages (telegram.ts,
- * discord.ts, slack.ts), not from the mailbox, which drops handled rows after seven days while a
- * rule lasts. A subagent's calls carry `subagent:<thread>`: the agent that heard the owner records
- * the correction.
+ * Authorship comes from the durable judgment command binding, and the message ref identifies
+ * the chat turn. The mailbox drops handled rows after seven days while a rule lasts. A
+ * subagent's calls carry `subagent:<thread>`: the agent that heard the owner records the correction.
  */
 import type { ActionContext, ActionRegistration, DatabaseInstance } from '@jungjaehoon/mama-core';
 
@@ -21,16 +20,35 @@ export function isOwnerChatRef(ref: unknown): boolean {
   return typeof ref === 'string' && OWNER_CHAT_REF.test(ref);
 }
 
-/** The ids among these that are owner rules. */
-export function ownerRuleIds(adapter: DatabaseInstance, ids: readonly string[]): Set<string> {
+/**
+ * Owner-authored chat rules among these ids. Migration 075 left earlier records without command
+ * bindings; without authenticated authorship they remain learned rules, even with a chat ref.
+ */
+export function ownerRuleIds(
+  adapter: DatabaseInstance,
+  ids: readonly string[],
+  ownerPrincipalId: string
+): Set<string> {
   if (ids.length === 0) {
     return new Set();
   }
   const rows = adapter
     .prepare(
-      `SELECT id, kind, provenance_json FROM decisions WHERE id IN (${ids.map(() => '?').join(',')})`
+      `SELECT d.id, d.kind, d.provenance_json FROM decisions d
+       WHERE d.id IN (${ids.map(() => '?').join(',')})
+         AND EXISTS (
+           SELECT 1 FROM judgment_commands j
+           JOIN command_bindings b ON b.command_id = j.command_id
+           WHERE j.record_id = d.id AND b.principal_id = ?
+             AND b.action = 'judgment.append' AND b.receipt_kind = 'judgment'
+             AND b.receipt_key = d.id
+         )`
     )
-    .all(...ids) as Array<{ id: string; kind: string; provenance_json: string | null }>;
+    .all(...ids, ownerPrincipalId) as Array<{
+    id: string;
+    kind: string;
+    provenance_json: string | null;
+  }>;
   return new Set(
     rows
       .filter(
@@ -110,7 +128,7 @@ export function guardOwnerRules(
         error.name = 'denied';
         throw error;
       }
-      const owned = ownerRuleIds(adapter, ids);
+      const owned = ownerRuleIds(adapter, ids, ownerPrincipalId);
       if (owned.size > 0 && !ownerSpeaking(context, ownerPrincipalId)) {
         const error = new Error(
           `${[...owned].join(', ')} ${owned.size === 1 ? 'is an owner rule' : 'are owner rules'}: ` +

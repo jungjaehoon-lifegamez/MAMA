@@ -55,6 +55,7 @@ import {
 } from '../../api/viewer-server.js';
 import { resolvePackageVersion } from '../../package-version.js';
 import { readViewerMemoryStats } from '../../api/viewer-data.js';
+import { ownerRuleIds } from '../../runtime/owner-authority.js';
 import type { OwnerFileDeliveryResult } from '../../api/file-delivery.js';
 import { createReportScheduler, type ReportScheduler } from '../../runtime/report-scheduler.js';
 import { findDailyPages } from '../../wiki/wiki-read.js';
@@ -581,6 +582,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         sendToOwner: sendSecurityAlert,
       },
       getMemoryStats: () => readViewerMemoryStats(owner!.database.adapter),
+      getOwnerRuleIds: (ids) => ownerRuleIds(owner!.database.adapter, ids, OWNER_PRINCIPAL_ID),
       getRuntimeStatus: () => ({
         running: true,
         version: resolvePackageVersion(),

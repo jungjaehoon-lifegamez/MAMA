@@ -17,7 +17,13 @@ const OWNER = 'owner-test';
 /** Rules as the daemon stores them: the host writes the turn's message ref into provenance. */
 function database(): DatabaseInstance {
   const db = new Database(':memory:');
-  db.exec('CREATE TABLE decisions (id TEXT PRIMARY KEY, kind TEXT, provenance_json TEXT)');
+  db.exec(`
+    CREATE TABLE decisions (id TEXT PRIMARY KEY, kind TEXT, provenance_json TEXT);
+    CREATE TABLE command_bindings (
+      command_id TEXT PRIMARY KEY, principal_id TEXT, action TEXT, receipt_kind TEXT, receipt_key TEXT
+    );
+    CREATE TABLE judgment_commands (command_id TEXT PRIMARY KEY, record_id TEXT);
+  `);
   const insert = db.prepare('INSERT INTO decisions (id, kind, provenance_json) VALUES (?, ?, ?)');
   const rows: Array<[string, string, string | null]> = [
     ['owner-telegram', 'lesson', JSON.stringify({ source_message_ref: 'telegram:-100123:7280' })],
@@ -27,8 +33,21 @@ function database(): DatabaseInstance {
     ['by-subagent', 'lesson', JSON.stringify({ source_message_ref: 'subagent:thread-1' })],
     ['by-hand', 'lesson', null],
     ['owner-fact', 'fact', JSON.stringify({ source_message_ref: 'telegram:-100123:1' })],
+    ['member-rule', 'workflow', JSON.stringify({ source_message_ref: 'telegram:fixture-dm:1' })],
+    ['historical-rule', 'lesson', JSON.stringify({ source_message_ref: 'telegram:fixture-dm:1' })],
   ];
   for (const row of rows) insert.run(...row);
+  for (const [id] of rows.filter(([id]) => id !== 'historical-rule')) {
+    const command = `fixture-command:${id}`;
+    db.prepare('INSERT INTO command_bindings VALUES (?, ?, ?, ?, ?)').run(
+      command,
+      id === 'member-rule' ? 'fixture-member' : OWNER,
+      'judgment.append',
+      'judgment',
+      id
+    );
+    db.prepare('INSERT INTO judgment_commands VALUES (?, ?)').run(command, id);
+  }
   return db as unknown as DatabaseInstance;
 }
 
@@ -59,18 +78,46 @@ describe('owner rules keep the owner as their only author (owner, 2026-10-01)', 
       expect(isOwnerChatRef(ref)).toBe(false);
     }
     expect(isOwnerChatRef(undefined)).toBe(false);
-    const ids = ownerRuleIds(database(), [
-      'owner-telegram',
-      'owner-slack',
-      'owner-discord',
-      'learned',
-      'by-subagent',
-      'by-hand',
-      'owner-fact',
-      'missing',
-    ]);
+    const ids = ownerRuleIds(
+      database(),
+      [
+        'owner-telegram',
+        'owner-slack',
+        'owner-discord',
+        'learned',
+        'by-subagent',
+        'by-hand',
+        'owner-fact',
+        'missing',
+      ],
+      OWNER
+    );
     // A fact is not a rule, and nothing is inferred for a rule saved without a turn.
     expect([...ids].sort()).toEqual(['owner-discord', 'owner-slack', 'owner-telegram']);
+  });
+
+  it('requires the configured owner writer through the judgment receipt', () => {
+    const db = database();
+    expect([...ownerRuleIds(db, ['owner-telegram', 'member-rule'], OWNER)]).toEqual([
+      'owner-telegram',
+    ]);
+    expect(ownerRuleIds(db, ['owner-telegram'], 'fixture-other-owner').size).toBe(0);
+  });
+
+  it('counts historical chat rules without authorship and leaves them learned', () => {
+    const db = database();
+    expect(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM decisions d
+      WHERE d.id = 'historical-rule' AND NOT EXISTS (
+        SELECT 1 FROM judgment_commands j JOIN command_bindings b USING (command_id)
+        WHERE j.record_id = d.id
+      )`
+        )
+        .get()
+    ).toEqual({ count: 1 });
+    expect(ownerRuleIds(db, ['historical-rule', 'member-rule'], OWNER).size).toBe(0);
   });
 
   it('refuses a source-change turn or a subagent that replaces or retires an owner rule', async () => {

@@ -636,6 +636,55 @@ describe('archive-compatible viewer routes', () => {
             day.groups.map((group) => group.group)
           )
         ).toEqual([['work'], ['work']]);
+      },
+      { getOwnerRuleIds: () => new Set(['rule']) }
+    );
+  });
+
+  it('keeps member and unauthored chat rules out of the owner-rule filter', async () => {
+    const records = ['fixture-owner-rule', 'fixture-member-rule', 'fixture-historical-rule'].map(
+      (id) => ({
+        id,
+        kind: 'lesson',
+        status: 'active',
+        topic: id,
+        summary: 'Fixture rule.',
+        createdAt: Date.parse('2026-10-08T00:00:00Z'),
+        sourceMessageRef: 'telegram:fixture-dm:fixture-message',
+        commitmentId: null,
+        revision: null,
+        operation: null,
+        itemTitle: null,
+      })
+    );
+    await withServer(
+      async () => completed({ records, nextCursor: null }),
+      async (server) => {
+        const response = await makeRequest(
+          server,
+          '/api/memory/timeline?from=2026-10-08&to=2026-10-08&groups=owner_rule'
+        );
+        expect(response.status).toBe(200);
+        expect(JSON.parse(response.body)).toMatchObject({
+          total: 1,
+          counts: { owner_rule: 1, learned: 2 },
+          days: [{ groups: [{ records: [{ id: 'memory:fixture-owner-rule' }] }] }],
+        });
+      },
+      { getOwnerRuleIds: () => new Set(['fixture-owner-rule']) }
+    );
+  });
+
+  it('reports an unwired authorship reader instead of inferring owner rules from chat refs', async () => {
+    await withServer(
+      async () => completed({ records: [], nextCursor: null }),
+      async (server) => {
+        const response = await makeRequest(
+          server,
+          '/api/memory/timeline?from=2026-10-08&to=2026-10-08'
+        );
+        expect(response.status).toBe(503);
+        expect(JSON.parse(response.body)).toMatchObject({ code: 'NOT_AVAILABLE' });
       }
     );
   });
@@ -761,7 +810,8 @@ describe('archive-compatible viewer routes', () => {
           '/api/memory/timeline?from=2026-09-04&to=2026-10-04'
         );
         expect(month.status).toBe(200);
-      }
+      },
+      { getOwnerRuleIds: () => new Set() }
     );
   });
 

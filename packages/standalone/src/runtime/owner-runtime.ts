@@ -477,7 +477,12 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           });
           // Ten in search order: the session filter drops lessons already shown and keeps three.
           const hitIds = hits.map((hit) => hit.id);
-          return guidanceInSearchOrder(hitIds, active, 10, ownerRuleIds(database.adapter, hitIds));
+          return guidanceInSearchOrder(
+            hitIds,
+            active,
+            10,
+            ownerRuleIds(database.adapter, hitIds, options.ownerPrincipalId)
+          );
         }),
       recordOrders,
       ...(options.onOwnerResult === undefined ? {} : { onOwnerResult: options.onOwnerResult }),
