@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.69.0] - 2026-10-08
+
+### Added
+
+- `resolvePrincipalAccess`: the owner's access unchanged, and for an active member its own user
+  scope, its memory grants as read scopes, chat plus granted sources, its own Telegram DM and the
+  member role; a memory grant on an owner scope fails loud. Nothing admits member messages yet
+  (#448).
+
+### Changed
+
+- For non-owners, `help` lists only the caller's actions and no owner procedures (#448).
+- Model runs record the turn's principal (#449).
+- `source.read` of an erased observation fails with `observation_erased`; the viewer shows erased
+  stubs; session and report memory leave erased records out (#449).
+
 ## [0.68.1] - 2026-10-07
 
 ### Fixed

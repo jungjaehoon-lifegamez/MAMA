@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.0.0] - 2026-10-08
+
+### Added
+
+- `exportPrincipalRecords(adapter, principalId)` and `erasePrincipalRecords(adapter, { principalId,
+commandId })`, refusing the owner, unknown principals and non-members (#449). Records bound only
+  to the member's scope are deleted, or tombstoned (id and scope kept, content, vectors and index
+  entries removed) when a kept record cites them; command receipts keep their id; runs and traces
+  keep ids, timing and usage with content wiped; inputs still pending or claimed are kept and
+  counted in flight. One transaction with a content-free receipt; the same command id replays it.
+- Migration 103: erased markers, `principal_erasure_receipts`, nullable receipt targets, bodyless
+  observation tombstones, `mailbox_seen.principal_id`. It keeps each store's extra columns,
+  constraints, indexes and triggers, is re-runnable, and fails loud on a partial shape.
+- `coreActionRegistrations` takes `checkpointScopes`; checkpoint save and list take scopes (#448).
+
+### Changed (breaking)
+
+- Memory, work, graph and provenance reads can return `ErasedRecord` (`{ id, scopes, state:
+'erased' }`); search, recall and their limits exclude erased records (#449).
+
+### Changed
+
+- A caller with `defaultScopes` must bind every record to a scope (#448).
+- A grant without a tenant or connector-wide read keeps its granted channels as its read window
+  (#448).
+- An erased raw row meets every visibility ceiling of a live one (#449).
+
 ## [7.1.0] - 2026-10-07
 
 ### Added

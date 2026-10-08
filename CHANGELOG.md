@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.69.0] / mama-core [8.0.0] - 2026-10-08
+
+Groundwork for team members, with nothing admitted yet: a member principal resolves to its own
+access and a fixed member role, and a member's personal records can be exported and erased. The
+owner's reads are unchanged. mama-core 8.0.0 is a major release because reads can now return an
+erased record. The package changelogs list every change.
+
+### Added
+
+- A member principal resolves to its own scope, its read grants, its own Telegram DM and a fixed
+  member role (reads, personal memory and checkpoints, `help`); a grant on an owner scope is
+  refused.
+- mama-core: `exportPrincipalRecords` and `erasePrincipalRecords` (migration 103). A member's
+  personal records are deleted, or kept as content-free tombstones where shared work cites them;
+  shared records stay.
+
+### Changed
+
+- mama-core 8.0.0: memory, work, graph and provenance reads can return an erased record
+  (`ErasedRecord`); search and recall never return one.
+- For non-owners: `help` lists only the caller's actions and no owner procedures, checkpoints are
+  bound to the caller's scope, and every record must be bound to a scope.
+- Every model run records its principal.
+
 ## mama-os [0.68.1] - 2026-10-07
 
 ### Fixed
