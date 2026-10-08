@@ -108,7 +108,7 @@ describe('Phase 2b Task 1 / AC #1-3: principal scope grants over migration 065',
     grant(memberPrincipalId, { kind: 'memory', scopeKind: 'channel', scopeId: 'channel-fixture' });
     grant(memberPrincipalId, { kind: 'memory', scopeKind: 'global', scopeId: 'global-fixture' });
     grant(memberPrincipalId, { kind: 'source', connector: 'fixture', channelId: 'source-fixture' });
-    expect(repository.listActivePartitions()).toEqual([
+    expect(repository.listGrantedPartitions()).toEqual([
       { kind: 'project', id: 'partition-a' },
       { kind: 'project', id: 'partition-b' },
     ]);
@@ -119,9 +119,13 @@ describe('Phase 2b Task 1 / AC #1-3: principal scope grants over migration 065',
       scope: { kind: 'memory', scopeKind: 'project', scopeId: 'partition-a' },
     });
     repository.suspend(other, 6);
-    expect(repository.listActivePartitions()).toEqual([{ kind: 'project', id: 'partition-b' }]);
+    // A revoked grant or an inactive member does not take a partition away from the owner's work.
+    expect(repository.listGrantedPartitions()).toEqual([
+      { kind: 'project', id: 'partition-a' },
+      { kind: 'project', id: 'partition-b' },
+    ]);
     repository.offboard(memberPrincipalId, 7);
-    expect(repository.listActivePartitions()).toEqual([]);
+    expect(repository.listGrantedPartitions()).toHaveLength(2);
   });
 
   it('grants one canonical source idempotently through an active owner', () => {

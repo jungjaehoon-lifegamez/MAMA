@@ -380,7 +380,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       return [
         ...defaultScopes,
         ...(options.scopes ?? []),
-        ...(principals ??= createPrincipalRepository(options.adapter)).listActivePartitions(),
+        ...(principals ??= createPrincipalRepository(options.adapter)).listGrantedPartitions(),
       ].filter(
         (scope, index, all) =>
           all.findIndex(

@@ -75,8 +75,11 @@ export interface PrincipalRepository {
   grantScope(input: PrincipalScopeGrantMutationInput): 'created' | 'exists';
   revokeScope(input: PrincipalScopeGrantMutationInput): 'revoked' | 'absent';
   listActiveGrants(principalId: string): PrincipalScopeGrantRecord[];
-  /** Distinct project partitions granted to active members, across all principals. */
-  listActivePartitions(): Array<{ kind: 'project'; id: string }>;
+  /**
+   * Every project partition a member memory grant has ever named, revoked or not. The owner keeps
+   * write authority over work it bound to a partition after the last grant on it ends.
+   */
+  listGrantedPartitions(): Array<{ kind: 'project'; id: string }>;
 }
 
 export type PrincipalRegistrationErrorCode = 'identity_bound_to_owner' | 'member_not_active';
@@ -335,14 +338,11 @@ export function createPrincipalRepository(
      ORDER BY grants.created_at ASC, grants.grant_kind ASC,
        grants.scope_kind ASC, grants.scope_id ASC`
   );
-  const listActivePartitionsStatement = adapter.prepare(
-    `SELECT DISTINCT grants.scope_id AS id
-     FROM principal_scope_grants AS grants
-     JOIN principals AS target ON target.principal_id = grants.principal_id
-     WHERE grants.grant_kind = 'memory' AND grants.scope_kind = 'project'
-       AND grants.revoked_at IS NULL
-       AND target.kind = 'member' AND target.status = 'active'
-     ORDER BY grants.scope_id ASC`
+  const listGrantedPartitionsStatement = adapter.prepare(
+    `SELECT DISTINCT scope_id AS id
+     FROM principal_scope_grants
+     WHERE grant_kind = 'memory' AND scope_kind = 'project'
+     ORDER BY scope_id ASC`
   );
 
   function assertGrantMutationPrincipals(
@@ -587,8 +587,8 @@ export function createPrincipalRepository(
     grantScope,
     revokeScope,
     listActiveGrants,
-    listActivePartitions: () =>
-      (listActivePartitionsStatement.all() as Array<{ id: string }>).map(({ id }) => ({
+    listGrantedPartitions: () =>
+      (listGrantedPartitionsStatement.all() as Array<{ id: string }>).map(({ id }) => ({
         kind: 'project',
         id,
       })),

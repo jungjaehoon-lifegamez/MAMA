@@ -155,7 +155,33 @@ describe('P2a owner partitions through the catalog and dispatcher', () => {
       now: 5,
       scope: { kind: 'memory', scopeKind: 'project', scopeId: PARTITION.id },
     });
-    expect(surface.ownerAccess.scopes).not.toContainEqual(PARTITION);
+    // The owner keeps writing to a partition its work is bound to after the last grant ends.
+    expect(surface.ownerAccess.scopes).toContainEqual(PARTITION);
+  });
+
+  it('lets the owner revise shared work without scopes after the last grant on its partition ends', async () => {
+    const item = await create('Fixture shared then unshared');
+    grant();
+    await call('work.revise', {
+      commitmentId: item.commitmentId,
+      summary: 'Fixture shared',
+      set: { status: 'in_progress' },
+      scopes: [...ownerMemoryScopes(OWNER, ['fixture']), PARTITION],
+    });
+    repository.revokeScope({
+      targetPrincipalId: member,
+      ownerPrincipalId: OWNER,
+      now: 6,
+      scope: { kind: 'memory', scopeKind: 'project', scopeId: PARTITION.id },
+    });
+    const revised = await call('work.revise', {
+      commitmentId: item.commitmentId,
+      summary: 'Fixture revised after revoke',
+      set: { status: 'done' },
+    });
+    expect(bindings(revised.recordRef.id)).toContainEqual(PARTITION);
+    expect(access(member).readScopes).toEqual([]);
+    expect((await call('work.list', { view: 'items' }, access(member))).tasks).toEqual([]);
   });
 
   it('accepts a partition already in owner write scopes but refuses an owner default grant', () => {
