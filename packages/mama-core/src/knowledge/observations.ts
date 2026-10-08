@@ -1,3 +1,4 @@
+import { isErasedRecord, observationScopes, type ErasedRecord } from '../identity/erased-record.js';
 /**
  * Knowledge observations: immutable observation versions and the visibility
  * rule that decides which of them a caller may read. A cited observation must
@@ -106,6 +107,7 @@ export interface ObservationBodyReader {
 }
 
 export type ObservationReadResult =
+  | ErasedRecord
   | { status: 'available'; observation: ObservationVersionRecord; body: string }
   | {
       status: 'version_unavailable';
@@ -333,6 +335,7 @@ export function appendObservationVersion(
       memoryScopeId
     );
   const record = getObservationVersion(adapter, id);
+  if (record && isErasedRecord(record)) throw new Error('Observation has been erased');
   if (!record) {
     throw new Error(`Failed to persist observation ${id}`);
   }
@@ -370,10 +373,12 @@ export function getObservationVersionSource(
 export function getObservationVersion(
   adapter: ObservationAdapter,
   observationId: string
-): ObservationVersionRecord | null {
+): ObservationVersionRecord | ErasedRecord | null {
   const row = adapter
     .prepare('SELECT * FROM observation_versions WHERE observation_id = ? LIMIT 1')
     .get(observationId) as Record<string, unknown> | undefined;
+  if (typeof row?.erased_at === 'number')
+    return { id: observationId, scopes: observationScopes(row), state: 'erased' };
   return row ? mapRow(row) : null;
 }
 
@@ -394,6 +399,7 @@ export function searchOwnerObservationVersions(
   const query = input.query.trim();
   const limit = Math.min(100, Math.max(1, Math.floor(input.limit ?? 25)));
   const clauses = [
+    'erased_at IS NULL',
     "(source LIKE 'owner-message:%' OR source LIKE 'owner-result:%')",
     "json_extract(scope_json, '$.visibility') = 'owner'",
     "json_extract(scope_json, '$.principalId') = ?",
@@ -512,6 +518,7 @@ export function readObservationVersion(
   if (!observation) {
     return { status: 'not_found' };
   }
+  if (isErasedRecord(observation)) return observation;
   const maxSourceMs = options?.maxSourceMs ?? null;
   if (maxSourceMs !== null) {
     if (!Number.isSafeInteger(maxSourceMs) || maxSourceMs < 0) {
@@ -550,6 +557,7 @@ export interface ObservationVisibilityAuthority {
 }
 
 export interface ObservationVisibilityRow {
+  erased_at?: unknown;
   source: unknown;
   scope_json: unknown;
   source_at?: unknown;
@@ -595,7 +603,7 @@ export function isObservationVersionVisible(
 ): boolean {
   const row = adapter
     .prepare(
-      `SELECT scope_json, source, source_at
+      `SELECT scope_json, source, source_at, erased_at
        FROM observation_versions WHERE observation_id = ?`
     )
     .get(observationId) as ObservationVisibilityRow | undefined;
@@ -613,6 +621,22 @@ export function isObservationVisibilityRowVisible(
   const agentId = authority.agentId?.trim();
   if (!principalId || !agentId) {
     return false;
+  }
+  if (typeof row.erased_at === 'number') {
+    const scopes = parseScopeJson(row.scope_json).scopes;
+    return (
+      Array.isArray(scopes) &&
+      scopes.some((scope) => {
+        if (!scope || typeof scope !== 'object') return false;
+        const bound = scope as { kind?: unknown; id?: unknown; externalId?: unknown };
+        return (
+          authority.scopes?.some(
+            (admitted) =>
+              admitted.kind === bound.kind && admitted.id === (bound.id ?? bound.externalId)
+          ) === true
+        );
+      })
+    );
   }
   const maxSourceMs = authority.maxSourceMs ?? null;
   if (maxSourceMs !== null) {

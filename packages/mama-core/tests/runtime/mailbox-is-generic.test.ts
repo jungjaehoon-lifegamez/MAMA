@@ -174,8 +174,8 @@ describe('migration 086 carries the dedupe horizon and nothing else', () => {
         .prepare(`INSERT OR IGNORE INTO owner_event_inbox_events (event_id, seen_at) VALUES (?, ?)`)
         .run(id, 5_000);
     }
-    adapter.exec(`DELETE FROM schema_version WHERE source = 'core' AND version >= 86`);
-    adapter.runMigrations(MIGRATIONS_DIR);
+    // Replay the carry SQL itself: resetting later version stamps does not restore their schemas.
+    adapter.exec(fs.readFileSync(join(MIGRATIONS_DIR, '086-the-mailbox-is-generic.sql'), 'utf8'));
 
     const carried = (
       adapter.prepare(`SELECT ref_id FROM mailbox_seen ORDER BY ref_id`).all() as Array<{

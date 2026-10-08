@@ -1,9 +1,11 @@
+import { ensureMemoryScope } from '@jungjaehoon/mama-core/db-manager';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { NativeSessionHandle } from '@jungjaehoon/mama-core/runtime/runtime';
-import { createOwnerRuntime } from '../../src/runtime/owner-runtime.js';
+import { openCoreDatabase } from '../../src/runtime/core-db.js';
+import { readOwnerMemoryRecords, createOwnerRuntime } from '../../src/runtime/owner-runtime.js';
 import { createOwnerPolicyProvider } from '../../src/runtime/owner-policy.js';
 import { createClient } from '@jungjaehoon/mama-core/client/client';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
@@ -15,6 +17,38 @@ afterEach(() => {
 });
 
 describe('owner runtime assembly', () => {
+  it('omits erased records from the session and report memory reader', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'owner-erased-memory-'));
+    homes.push(home);
+    const handle = await openCoreDatabase({ path: join(home, 'state.db') });
+    try {
+      const db = handle.adapter;
+      const scopeId = ensureMemoryScope(db, 'user', 'test-principal');
+      for (const id of ['kept-record', 'erased-record']) {
+        db.prepare(
+          "INSERT INTO decisions (id, topic, decision, summary, kind, status, created_at, erased_at) VALUES (?, 'fixture', 'fixture content', 'fixture summary', 'preference', 'active', 1, ?)"
+        ).run(id, id === 'erased-record' ? 2 : null);
+        db.prepare('INSERT INTO memory_scope_bindings (memory_id, scope_id) VALUES (?, ?)').run(
+          id,
+          scopeId
+        );
+      }
+      const scopes = [{ kind: 'user', id: 'test-principal' }];
+      expect(
+        (
+          await readOwnerMemoryRecords(db, scopes, { status: 'active', excludeAmendments: true })
+        ).map((r) => r.id)
+      ).toEqual(['kept-record']);
+      expect(
+        (await readOwnerMemoryRecords(db, scopes, { status: 'active', kind: ['preference'] })).map(
+          (r) => r.id
+        )
+      ).toEqual(['kept-record']);
+    } finally {
+      handle.close();
+    }
+  });
+
   it('routes authenticated Claude socket caller facts to the active native session', async () => {
     const home = mkdtempSync(join(tmpdir(), 'caller-socket-'));
     homes.push(home);

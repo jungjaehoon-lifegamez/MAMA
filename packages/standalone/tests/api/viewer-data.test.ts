@@ -14,6 +14,7 @@ import {
   mapArchiveGraphNode,
   readViewerMemoryStats,
   shapeGraphPage,
+  shapeSavedTimeline,
   shapeArchiveGraph,
   shapeMemorySearch,
   shapeOperatorTasks,
@@ -30,6 +31,70 @@ const page = (items: CommitmentPage['items']): CommitmentPage => ({
 });
 
 describe('viewer data shaping', () => {
+  it.each(['memory', 'observation', 'raw'] as const)(
+    'maps an erased %s to an id-only erased stub',
+    (kind) => {
+      const node: WorkGraphPage['nodes'][number] = {
+        ref: { kind, id: 'erased-record' },
+        label: 'private label',
+        data: {
+          kind,
+          id: 'erased-record',
+          scopes: [{ kind: 'user', id: 'test-principal' }],
+          state: 'erased',
+        },
+      };
+      expect(mapArchiveGraphNode(node, 'UTC')).toEqual({
+        id: `${kind}:erased-record`,
+        kind,
+        state: 'erased',
+        label: 'Erased',
+        decision_preview: 'Erased',
+      });
+    }
+  );
+
+  it('lists and counts erased timeline records without inventing content or a date', () => {
+    const erased = {
+      id: 'erased-record',
+      scopes: [{ kind: 'user', id: 'test-principal' }],
+      state: 'erased' as const,
+    };
+    const window = { from: '2026-10-01', to: '2026-10-08', timeZone: 'UTC' };
+    const result = shapeSavedTimeline([erased], window, { query: null, groups: null });
+    expect(result.total).toBe(1);
+    expect(result.counts.erased).toBe(1);
+    expect(result.days).toEqual([
+      {
+        day: null,
+        total: 1,
+        groups: [
+          {
+            group: 'erased',
+            count: 1,
+            records: [
+              {
+                id: 'memory:erased-record',
+                kind: null,
+                status: 'erased',
+                topic: 'erased-record',
+                summary: 'Erased',
+                time: '',
+                via: null,
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    expect(
+      shapeSavedTimeline([erased], window, { query: 'private content', groups: null }).total
+    ).toBe(0);
+    expect(
+      shapeSavedTimeline([erased], window, { query: null, groups: new Set(['fact']) })
+    ).toMatchObject({ total: 0, counts: { erased: 1 }, days: [] });
+  });
+
   it('draws the links the agent stated and no host edge between revisions', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mama-viewer-graph-data-'));
     const handle = await openCoreDatabase({ path: join(root, 'memory.db') });

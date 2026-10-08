@@ -14,16 +14,16 @@ revisions stay by decision.
 
 ## Core (one release)
 
-| #   | Store                                                                                                    | Selector                                                           | Rule                                                                                       |
-| --- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| 1   | `decisions`, `memory_scope_bindings`, `memory_events`, `embeddings`, FTS, trigram, vector cache          | bound only to `user:<member>`                                      | export; delete if nothing outside the member's records cites it, else tombstone            |
-| 2   | `judgment_commands`, `command_bindings`                                                                  | receipts of the records in 1                                       | export; keep the command id with its payload wiped, so a replay cannot recreate the record |
-| 3   | `twin_edges`                                                                                             | edges whose endpoints or evidence are records in 1                 | export; delete edges between erased records; an edge from a kept record keeps its endpoint |
-| 4   | `checkpoints`                                                                                            | `user:<member>` binding                                            | export; delete                                                                             |
-| 5   | `observation_versions`                                                                                   | scope `user:<member>` (the member's chat)                          | export; delete uncited versions, tombstone cited ones (bodyless)                           |
-| 6   | `mailbox_inputs`, `mailbox_input_refs`, `mailbox_seen`, `native_input_deliveries`, `native_turn_results` | `principal_id` = member                                            | export; delete                                                                             |
-| 7   | `model_runs`, `tool_traces`                                                                              | the member's runs (principal in the run input) and their traces    | export; keep the run and trace ids with content wiped (cost and counts stay)               |
-| 8   | erasure receipt (migration 103)                                                                          | one row per erasure: principal, time, counts per store, no content | written last, read back by the export of the next call                                     |
+| #   | Store                                                                                                    | Selector                                                                             | Rule                                                                                       |
+| --- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| 1   | `decisions`, `memory_scope_bindings`, `memory_events`, `embeddings`, FTS, trigram, vector cache          | bound only to `user:<member>`                                                        | export; delete if nothing outside the member's records cites it, else tombstone            |
+| 2   | `judgment_commands`, `command_bindings`                                                                  | receipts of the records in 1                                                         | export; keep the command id with its payload wiped, so a replay cannot recreate the record |
+| 3   | `twin_edges`                                                                                             | edges whose endpoints or evidence are records in 1                                   | export; delete edges between erased records; an edge from a kept record keeps its endpoint |
+| 4   | `checkpoints`                                                                                            | `user:<member>` binding                                                              | export; delete                                                                             |
+| 5   | `observation_versions`                                                                                   | scope `user:<member>` (the member's chat)                                            | export; delete uncited versions, tombstone cited ones (bodyless)                           |
+| 6   | `mailbox_inputs`, `mailbox_input_refs`, `mailbox_seen`, `native_input_deliveries`, `native_turn_results` | `principal_id` = member                                                              | export; delete settled inputs; keep unacked inputs and their receipt group as `in_flight`  |
+| 7   | `model_runs`, `tool_traces`                                                                              | native invocation → mailbox principal, explicit principal, descendants, actor traces | export; keep the run and trace ids with content wiped (cost and counts stay)               |
+| 8   | erasure receipt (migration 103)                                                                          | one row per erasure: principal, time, counts per store, no content                   | written last; counts include `in_flight`; next export reads the receipt                    |
 
 Reads after erasure: a deleted record is absent; a tombstone reads as `{id, scopes, state:
 "erased"}` in memory reads, work reads, graph and provenance, and recall/search never returns it.
@@ -31,6 +31,12 @@ Reads after erasure: a deleted record is absent; a tombstone reads as `{id, scop
 API (core, no product names): `exportPrincipalRecords(adapter, principalId)` and
 `erasePrincipalRecords(adapter, { principalId, commandId })`, both refusing the owner principal
 and any principal that is not a registered member.
+
+Execution erasure snapshots run ownership before deleting mailbox rows. An unacked input keeps
+its delivery, refs, seen refs, result, run descendants and traces; a shared native receipt also
+keeps its acknowledged root until the turn settles. A later erase needs a new command id.
+A kept correction's edge target stays, with reason and attributes wiped; its personal endpoints
+become tombstones so the surviving edge does not dangle.
 
 ## Product (P9, after P3 places the member's files)
 

@@ -74,6 +74,10 @@ export interface DatabaseInstance extends DatabaseAdapter {
     excludeStatuses?: readonly string[],
     kind?: string | [string, ...string[]]
   ) => Promise<VectorSearchResult[] | null> | VectorSearchResult[] | null;
+  readCachedEmbeddings?: (
+    rowids: readonly number[]
+  ) => Array<{ rowid: number; embedding: number[] }>;
+  removeEmbedding?: (rowid: number) => void;
   reloadVectorCache?: () => void;
   refreshDecisionStatusCache?: (rowid: number) => void;
   getDbPath?: () => string;
@@ -88,6 +92,7 @@ export interface VectorSearchResult {
 }
 
 export interface DecisionRecord {
+  erased_at?: number | null;
   id: string;
   topic: string;
   decision: string;
@@ -116,6 +121,7 @@ export interface OutcomeData {
 }
 
 export interface SemanticEdgeItem {
+  erasedCitation?: import('./identity/erased-record.js').ErasedRecord;
   /** The link's id when it is a `twin_edges` row; null for a legacy `decision_edges` row. */
   edge_id?: string | null;
   from_id: string;

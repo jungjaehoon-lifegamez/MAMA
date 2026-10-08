@@ -35,7 +35,7 @@ function openLedger(records: Record<string, string>): Database.Database {
     CREATE TABLE schema_version(version INTEGER PRIMARY KEY, description TEXT);
     CREATE TABLE decisions (
       id TEXT PRIMARY KEY, topic TEXT, decision TEXT, reasoning TEXT,
-      kind TEXT, status TEXT, payload_json TEXT
+      kind TEXT, status TEXT, payload_json TEXT, erased_at INTEGER
     );
   `);
   db.exec(migration('092-restore-decision-fts.sql'));

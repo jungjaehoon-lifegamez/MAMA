@@ -1,3 +1,9 @@
+import {
+  isErasedRecord,
+  recordScopes,
+  observationScopes,
+  type ErasedRecord,
+} from '../identity/erased-record.js';
 /**
  * The live wiring for provenance resolution: real memory records, real events, real scope.
  *
@@ -39,9 +45,11 @@ import {
  */
 export const OBSERVATION_COLUMNS = `observation_id AS event_index_id, source AS source_connector,
             source_id, channel, body AS content, observed_at, source_at,
-            memory_scope_kind, memory_scope_id, project_id, tenant_id`;
+            memory_scope_kind, memory_scope_id, project_id, tenant_id, erased_at, scope_json`;
 
 export interface EventRow {
+  erased_at?: unknown;
+  scope_json?: unknown;
   event_index_id: unknown;
   source_connector: unknown;
   source_id: unknown;
@@ -324,6 +332,7 @@ export function toIndexedEvent(row: EventRow): IndexedEvent {
   // empty-string row to "unscoped" would hand it the legacy allowance the reader denies.
   const unscoped = scopeKind === null && scopeId === null;
   return {
+    ...(typeof row.erased_at === 'number' ? { bodyStatus: 'erased' as const } : {}),
     connector: String(row.source_connector ?? ''),
     eventIndexId: String(row.event_index_id ?? ''),
     sourceId: String(row.source_id ?? ''),
@@ -400,12 +409,13 @@ async function loadRecord(
   adapter: DatabaseAdapter,
   memoryId: string,
   scopes: MemoryScopeRef[]
-): Promise<ProvenanceSubjectRecord | null> {
+): Promise<ProvenanceSubjectRecord | ErasedRecord | null> {
   const found = await lookupWithLegacyFallback(adapter, memoryId, scopes);
   if (!found) {
     return null;
   }
   const record = found.record;
+  if (isErasedRecord(record)) return record;
   const retirement = await loadRetirement(adapter, record.memory_id);
   const provenance = record.provenance as Record<string, unknown> | undefined;
   const sourceRefs = record.source_refs.map(parseSourceRef);
@@ -504,8 +514,9 @@ export async function resolveMemoryProvenanceLive(
   adapter: DatabaseAdapter,
   memoryId: string,
   options: LiveProvenanceOptions
-): Promise<ProvenanceResolution> {
+): Promise<ProvenanceResolution | ErasedRecord> {
   const record = await loadRecord(adapter, memoryId, options.scopes);
+  if (record && isErasedRecord(record)) return record;
   const visibleMemoryRefs = await resolveVisibleMemoryRefs(adapter, record, options.scopes);
   const statement = adapter.prepare(
     `SELECT ${OBSERVATION_COLUMNS}
@@ -523,8 +534,22 @@ export async function resolveMemoryProvenanceLive(
 
   const indexedEvent = (row: EventRow): IndexedEvent => {
     const event = toIndexedEvent(row);
+    if (event.bodyStatus === 'erased') {
+      event.memoryScope =
+        observationScopes({
+          scope_json: row.scope_json,
+          memory_scope_kind: row.memory_scope_kind,
+          memory_scope_id: row.memory_scope_id,
+        }).find((scope) =>
+          options.scopes.some((allowed) => allowed.kind === scope.kind && allowed.id === scope.id)
+        ) ?? null;
+    }
     // Raw observations keep their bodies outside core; a missing excerpt is not evidence.
-    if (row.content === null && isEventVisibleNow(event, options)) {
+    if (
+      typeof row.erased_at !== 'number' &&
+      row.content === null &&
+      isEventVisibleNow(event, options)
+    ) {
       if (!options.readObservationBody)
         throw new Error('External observation body reader is required for provenance');
       const body = options.readObservationBody(event.eventIndexId);
@@ -544,13 +569,22 @@ export async function resolveMemoryProvenanceLive(
       const event = indexedEvent(row);
       // The id is a hash of connector plus source id, so a connector mismatch means the
       // ref was rewritten rather than that the event moved. Treat it as gone, not as data.
-      return event.connector === connector ? event : null;
+      return event.bodyStatus === 'erased' || event.connector === connector ? event : null;
     },
     lookupObservation: (observationId) => {
       const row = statement.get(observationId) as EventRow | undefined;
       return row ? indexedEvent(row) : null;
     },
     ...(options.redact === undefined ? {} : { redact: options.redact }),
+    erasedSupport: (support) => {
+      if (support.kind !== 'memory') return null;
+      const row = adapter.prepare('SELECT erased_at FROM decisions WHERE id=?').get(support.id) as
+        | { erased_at: number | null }
+        | undefined;
+      return typeof row?.erased_at === 'number'
+        ? { id: support.id, scopes: recordScopes(adapter, support.id), state: 'erased' }
+        : null;
+    },
     isSupportVisible: (support) => {
       if (support.kind === 'memory') {
         return visibleMemoryRefs.has(support.id);
@@ -572,17 +606,21 @@ export async function resolveMemoryProvenanceLive(
       return true;
     },
     isVisible: (event) =>
-      isEventVisibleNow(event, {
-        scopes: options.scopes,
-        connectors: options.connectors,
-        ...(options.wideConnectors ? { wideConnectors: options.wideConnectors } : {}),
-        ...(options.channels ? { channels: options.channels } : {}),
-        ...(options.projectIds === undefined ? {} : { projectIds: options.projectIds }),
-        tenantId: options.tenantId ?? null,
-        minObservedMs: options.minObservedMs ?? null,
-        maxObservedMs: options.maxObservedMs ?? null,
-        maxSourceMs: options.maxSourceMs ?? null,
-      }),
+      event.bodyStatus === 'erased' && event.memoryScope !== null
+        ? options.scopes.some(
+            (s) => s.kind === event.memoryScope?.kind && s.id === event.memoryScope?.id
+          )
+        : isEventVisibleNow(event, {
+            scopes: options.scopes,
+            connectors: options.connectors,
+            ...(options.wideConnectors ? { wideConnectors: options.wideConnectors } : {}),
+            ...(options.channels ? { channels: options.channels } : {}),
+            ...(options.projectIds === undefined ? {} : { projectIds: options.projectIds }),
+            tenantId: options.tenantId ?? null,
+            minObservedMs: options.minObservedMs ?? null,
+            maxObservedMs: options.maxObservedMs ?? null,
+            maxSourceMs: options.maxSourceMs ?? null,
+          }),
     ...(options.excerptChars === undefined ? {} : { excerptChars: options.excerptChars }),
   });
 }

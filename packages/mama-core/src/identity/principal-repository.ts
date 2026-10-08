@@ -70,6 +70,7 @@ export interface PrincipalRepository {
     externalId: string;
     now: number;
   }): 'created' | 'exists' | 'conflict';
+  findById(principalId: string): PrincipalRow | null;
   listMembers(): Array<{ principalId: string; displayName?: string; status: string }>;
   grantScope(input: PrincipalScopeGrantMutationInput): 'created' | 'exists';
   revokeScope(input: PrincipalScopeGrantMutationInput): 'revoked' | 'absent';
@@ -567,6 +568,10 @@ export function createPrincipalRepository(
       transitionMember(principalId, 'offboarded', now);
     },
     ensureOwner,
+    findById: (principalId) => {
+      const row = selectPrincipalStatement.get(principalId) as PrincipalDatabaseRow | undefined;
+      return row ? { principalId: row.principal_id, kind: row.kind, status: row.status } : null;
+    },
     listMembers,
     grantScope,
     revokeScope,

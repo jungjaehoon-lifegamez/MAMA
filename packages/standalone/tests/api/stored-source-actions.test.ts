@@ -1,7 +1,73 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createCatalog, createDispatcher } from '@jungjaehoon/mama-core';
+import { openCoreDatabase } from '../../src/runtime/core-db.js';
+import { sourceActionRegistrations } from '../../src/api/source-actions.js';
+import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
+import { describe, expect, it, vi } from 'vitest';
 import { createStoredSourceReader } from '../../src/api/stored-source-reader.js';
 
 describe('stored source reader', () => {
+  it('fails source.read of erased observations through dispatch without returning content', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'stored-erased-observation-'));
+    const handle = await openCoreDatabase({ path: join(root, 'state.db') });
+    try {
+      handle.adapter
+        .prepare(
+          'INSERT INTO observation_versions (observation_id, observed_at, metadata_json, scope_json, erased_at) VALUES (\'erased-observation\', 1, \'{}\', \'{"scopes":[{"kind":"user","id":"test-principal"}]}\', 2)'
+        )
+        .run();
+      const readVersion = vi.fn(() => {
+        throw new Error('Erased content must never be read');
+      });
+      const reader = createStoredSourceReader({
+        adapter: handle.adapter,
+        ownerPrincipalId: () => 'test-principal',
+        rawStore: () => ({ readVersion }),
+      });
+      const dispatch = createDispatcher(
+        createCatalog(
+          sourceActionRegistrations({ stored: reader, timeZone: createTimeZoneSetting('UTC') })
+        )
+      );
+      const access = {
+        principalId: 'test-principal',
+        agentId: 'test-agent',
+        actions: ['source.read'],
+        connectors: ['test-source'],
+        scopes: [{ kind: 'user', id: 'test-principal' }],
+      };
+      for (const input of [
+        { source: 'test-source', observationRef: 'erased-observation' },
+        { observationRef: 'erased-observation' },
+      ]) {
+        const result = await dispatch({ action: 'source.read', input }, { access });
+        expect(result).toMatchObject({
+          status: 'failed',
+          error: { code: 'internal_error', message: 'observation_erased' },
+        });
+        expect(result).not.toHaveProperty('data');
+      }
+      const batch = await dispatch(
+        { action: 'source.read', input: { observationRefs: ['erased-observation'] } },
+        { access }
+      );
+      expect(batch).toMatchObject({
+        status: 'completed',
+        data: {
+          results: [
+            { observationRef: 'erased-observation', status: 'failed', error: 'observation_erased' },
+          ],
+        },
+      });
+      expect(readVersion).not.toHaveBeenCalled();
+    } finally {
+      handle.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('uses the owner connector grant to read a bounded stored page', () => {
     const reader = createStoredSourceReader({
       adapter: {

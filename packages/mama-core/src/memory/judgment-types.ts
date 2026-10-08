@@ -1,3 +1,4 @@
+import type { ErasedRecord } from '../identity/erased-record.js';
 import type { MemoryEventRecord, MemoryScopeRef } from './types.js';
 import type { TwinRef } from '../knowledge/twin-edge-types.js';
 
@@ -267,6 +268,7 @@ export interface WorkGraphQuery {
 }
 
 export type WorkGraphNodeData =
+  | (ErasedRecord & { kind: 'memory' | 'observation' | 'raw' })
   | {
       kind: 'memory';
       recordKind: 'legacy' | 'judgment' | 'commitment';

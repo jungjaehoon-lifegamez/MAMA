@@ -1,3 +1,4 @@
+import { isErasedRecord, type ErasedRecord } from './identity/erased-record.js';
 /**
  * MAMA (Memory-Augmented MCP Architecture) - Simple Public API
  *
@@ -664,18 +665,21 @@ interface RecallEdgeRef {
 
 interface RecallGraphResult {
   topic: string;
-  supersedes_chain: Array<{
-    id: string;
-    decision: string;
-    reasoning?: string | null;
-    confidence?: number;
-    outcome?: string | null;
-    failure_reason?: string | null;
-    created_at: number;
-    updated_at?: number;
-    superseded_by?: string | null;
-    supersedes?: string | null;
-  }>;
+  supersedes_chain: Array<
+    | ErasedRecord
+    | {
+        id: string;
+        decision: string;
+        reasoning?: string | null;
+        confidence?: number;
+        outcome?: string | null;
+        failure_reason?: string | null;
+        created_at: number;
+        updated_at?: number;
+        superseded_by?: string | null;
+        supersedes?: string | null;
+      }
+  >;
   semantic_edges: {
     refines: RecallEdgeRef[];
     refined_by: RecallEdgeRef[];
@@ -728,7 +732,7 @@ async function recallInAdapter(
     }
 
     // Query semantic edges for all decisions
-    const decisionIds = decisions.map((d: DecisionRecord) => d.id);
+    const decisionIds = decisions.map((d) => d.id);
     const rawEdges = await querySemanticEdges(adapter, decisionIds);
     const semanticEdges = {
       refines: rawEdges.refines || [],
@@ -758,25 +762,32 @@ async function recallInAdapter(
           decision: e.decision || '',
         })),
       };
-      return formatRecall(decisions, formatterEdges);
+      return formatRecall(
+        decisions.filter((record): record is DecisionRecord => !isErasedRecord(record)),
+        formatterEdges
+      );
     }
 
     // JSON format (default - LLM-first)
     // Separate supersedes chain from semantic edges
     return {
       topic,
-      supersedes_chain: decisions.map((d: DecisionRecord) => ({
-        id: d.id,
-        decision: d.decision,
-        reasoning: d.reasoning,
-        confidence: d.confidence,
-        outcome: d.outcome,
-        failure_reason: d.failure_reason,
-        created_at: d.created_at,
-        updated_at: d.updated_at,
-        superseded_by: d.superseded_by,
-        supersedes: d.supersedes,
-      })),
+      supersedes_chain: decisions.map((d) =>
+        isErasedRecord(d)
+          ? d
+          : {
+              id: d.id,
+              decision: d.decision,
+              reasoning: d.reasoning,
+              confidence: d.confidence,
+              outcome: d.outcome,
+              failure_reason: d.failure_reason,
+              created_at: d.created_at,
+              updated_at: d.updated_at,
+              superseded_by: d.superseded_by,
+              supersedes: d.supersedes,
+            }
+      ),
       semantic_edges: {
         refines: semanticEdges.refines.map((e) => ({
           to_topic: e.topic,
@@ -812,7 +823,7 @@ async function recallInAdapter(
       meta: {
         count: decisions.length,
         latest_id: decisions[0]?.id,
-        has_supersedes_chain: decisions.some((d) => d.supersedes),
+        has_supersedes_chain: decisions.some((d) => !isErasedRecord(d) && d.supersedes),
         has_semantic_edges:
           semanticEdges.refines.length > 0 ||
           semanticEdges.refined_by.length > 0 ||
@@ -875,14 +886,14 @@ async function link(input: DecisionLinkInput): Promise<LinkReceipt> {
 }
 
 /** One decision with every edge in and out, each with its reason and who wrote it. */
-async function getDecision(id: string): Promise<DecisionWithEdges | null> {
+async function getDecision(id: string): Promise<DecisionWithEdges | ErasedRecord | null> {
   await initDB();
   return readDecisionWithEdges(getAdapter(), id);
 }
 
 async function listDecisions(
   options: ListDecisionsOptions = {}
-): Promise<DecisionRecord[] | string> {
+): Promise<Array<DecisionRecord | ErasedRecord> | string> {
   await initDB();
   return listDecisionsInAdapter(getAdapter(), options);
 }

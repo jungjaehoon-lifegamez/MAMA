@@ -1,3 +1,4 @@
+import { isErasedRecord } from '@jungjaehoon/mama-core';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   closeSync,
@@ -473,7 +474,11 @@ function observationEvidence(
 ): Array<{ ref: { kind: string; id: string }; source: string }> {
   const observations = new Map<string, string>();
   for (const node of page.nodes) {
-    if (node.ref.kind === 'observation' && node.data.kind === 'observation') {
+    if (
+      node.ref.kind === 'observation' &&
+      !isErasedRecord(node.data) &&
+      node.data.kind === 'observation'
+    ) {
       observations.set(node.ref.id, node.data.connector);
     }
   }
@@ -836,7 +841,10 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
         nodes[graphNodeKey(node)] = {
           kind: mapped.kind,
           label: mapped.decision_preview,
-          commitmentId: node.data.kind === 'memory' ? (node.data.work?.commitmentId ?? null) : null,
+          commitmentId:
+            !isErasedRecord(node.data) && node.data.kind === 'memory'
+              ? (node.data.work?.commitmentId ?? null)
+              : null,
         };
       }
       // Keyed like the nodes (browse returns both ends of every edge), not by resolved refs.
@@ -899,6 +907,7 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
     if (!node) throw new ViewerHttpError(404, 'NOT_FOUND', 'Decision not found');
     const timeZone = options.timeZone.get();
     const mapped = mapArchiveGraphNode(node, timeZone);
+    if (isErasedRecord(node.data)) return { node: mapped };
     // The graph carries references only; the detail reads what they point at through the
     // same owner actions the agent uses, so a fact's history is readable, not just its ids.
     if (node.data.kind === 'observation') {
@@ -944,7 +953,7 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
       history: 'all',
     })) as WorkGraphPage;
     const node = page.nodes.find((candidate) => graphNodeKey(candidate) === id);
-    if (!node || node.data.kind !== 'memory') {
+    if (!node || isErasedRecord(node.data) || node.data.kind !== 'memory') {
       return { id, similar: [], count: 0, ...notAvailable() };
     }
     const query = `${node.data.topic} ${node.data.summary.slice(0, 400)}`.trim();

@@ -54,7 +54,7 @@ export async function vectorSearch(
   for (const row of results) {
     const decision = stmt.get(row.rowid) as DecisionRecord | undefined;
 
-    if (!decision) {
+    if (!decision || typeof decision.erased_at === 'number') {
       continue;
     }
 
@@ -217,7 +217,7 @@ function decisionFilters(
     ? "AND json_extract(d.payload_json, '$.amended') IS NULL"
     : '';
   return {
-    sql: `${kindClause} ${statusClause} ${amendmentClause}`,
+    sql: `AND d.erased_at IS NULL ${kindClause} ${statusClause} ${amendmentClause}`,
     params: [...kinds, ...statuses],
   };
 }

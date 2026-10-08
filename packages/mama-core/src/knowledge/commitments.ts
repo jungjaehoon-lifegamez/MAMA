@@ -1,3 +1,4 @@
+import { erasedReference, type ErasedRecord } from '../identity/erased-record.js';
 /**
  * Reading owner work back out of the commitment log.
  *
@@ -58,6 +59,7 @@ export interface CommitmentChainEntry {
 }
 
 export interface CommitmentView {
+  erasedCitations?: ErasedRecord[];
   commitmentId: string;
   rowId: number;
   revision: number;
@@ -348,7 +350,24 @@ export function readWork(
     // The revision a writer names next is the last one written, applying or not.
     const head = revisions[revisions.length - 1];
     const lastApplying = applying[applying.length - 1] ?? head;
+    const erasedCitations = new Map<string, ErasedRecord>();
+    for (const revision of revisions) {
+      const references: WorkReference[] = [revision.recordRef];
+      const links = adapter
+        .prepare(
+          `SELECT object_kind AS kind, object_id AS id FROM twin_edges
+        WHERE subject_kind='memory' AND subject_id=? ORDER BY edge_id`
+        )
+        .all(revision.recordRef.id) as WorkReference[];
+      references.push(...links);
+      for (const ref of references) {
+        if (!referenceExists(adapter, ref, admitted)) continue;
+        const erased = erasedReference(adapter, ref);
+        if (erased) erasedCitations.set(erased.id, erased);
+      }
+    }
     items.push({
+      ...(erasedCitations.size > 0 ? { erasedCitations: [...erasedCitations.values()] } : {}),
       commitmentId: row.commitment_id,
       rowId: row.row_id,
       revision: head.revision,

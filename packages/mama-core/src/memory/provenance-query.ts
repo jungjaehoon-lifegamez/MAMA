@@ -1,3 +1,4 @@
+import { recordScopes, type ErasedRecord } from '../identity/erased-record.js';
 import type { DatabaseAdapter } from '../db-manager.js';
 import type { MemoryProvenanceRecord, MemoryScopeRef } from './types.js';
 import { listMemoryEventsForMemory } from './event-store.js';
@@ -10,6 +11,7 @@ export interface MemoryProvenanceQueryOptions {
 
 type ProvenanceRow = {
   id: string;
+  erased_at: number | null;
   agent_id: string | null;
   model_run_id: string | null;
   envelope_hash: string | null;
@@ -23,11 +25,11 @@ export async function getMemoryProvenance(
   adapter: DatabaseAdapter,
   memoryId: string,
   options: MemoryProvenanceQueryOptions = {}
-): Promise<MemoryProvenanceRecord | null> {
+): Promise<MemoryProvenanceRecord | ErasedRecord | null> {
   const row = adapter
     .prepare(
       `
-        SELECT id, agent_id, model_run_id, envelope_hash, gateway_call_id,
+        SELECT id, erased_at, agent_id, model_run_id, envelope_hash, gateway_call_id,
                source_refs_json, provenance_json, created_at
         FROM decisions
         WHERE id = ?
@@ -38,6 +40,8 @@ export async function getMemoryProvenance(
   if (!row || !(await isVisibleMemory(adapter, row.id, options))) {
     return null;
   }
+  if (typeof row.erased_at === 'number')
+    return { id: row.id, scopes: recordScopes(adapter, row.id), state: 'erased' };
   return toProvenanceRecord(adapter, row);
 }
 

@@ -1,3 +1,4 @@
+import type { ErasedRecord } from '../identity/erased-record.js';
 /**
  * Resolve a claim's support back to the events it came from.
  *
@@ -30,6 +31,7 @@ export type ResolutionFailure =
   | 'event_deleted'
   /** The event is indexed, but its exact stored body version is unavailable. */
   | 'body_unavailable'
+  | 'erased'
   /** The event exists but is not visible under the scope active now. */
   | 'outside_scope'
   /** The ref shape is not one this resolver knows how to dereference. */
@@ -81,6 +83,8 @@ export interface UnresolvedSupport {
 export interface RecordedSupport {
   kind: 'memory' | 'envelope' | 'message';
   id: string;
+  state?: 'erased';
+  scopes?: ErasedRecord['scopes'];
 }
 
 /** A source ref or canonical graph link that can name an observed event. */
@@ -142,7 +146,7 @@ export interface IndexedEvent {
   /** Source/event occurrence time, separate from host capture time. */
   sourceAt?: string | null;
   content: string;
-  bodyStatus?: 'body_unavailable';
+  bodyStatus?: 'body_unavailable' | 'erased';
   /**
    * The scope recorded on the event, or null when it was indexed before scoped
    * indexing existed. Carried on the event so visibility is a pure function of it -
@@ -177,6 +181,7 @@ export interface ProvenanceResolverDeps {
    * withheld rather than assumed visible. A check that fails open is not a check.
    */
   isSupportVisible?(support: RecordedSupport): boolean;
+  erasedSupport?(support: RecordedSupport): ErasedRecord | null;
   /**
    * Redaction applied to an excerpt before it leaves. Recall runs its text through a
    * pattern list (URLs, emails, tokens, key shapes, raw refs); an excerpt path that
@@ -277,7 +282,8 @@ export function resolveMemoryProvenance(
           reason: 'outside_scope',
         });
       } else {
-        supports.push({ kind: ref.kind, id: ref.id });
+        const erased = deps.erasedSupport?.(ref);
+        supports.push(erased ? { kind: ref.kind, ...erased } : { kind: ref.kind, id: ref.id });
       }
       continue;
     }
@@ -294,6 +300,10 @@ export function resolveMemoryProvenance(
     if (!deps.isVisible(event)) {
       // Named, but nothing about it disclosed - not the channel, not a word of content.
       unresolved.push({ kind: 'event', eventIndexId, reason: 'outside_scope' });
+      continue;
+    }
+    if (event.bodyStatus === 'erased') {
+      unresolved.push({ kind: 'event', eventIndexId, reason: 'erased' });
       continue;
     }
     if (event.bodyStatus === 'body_unavailable') {

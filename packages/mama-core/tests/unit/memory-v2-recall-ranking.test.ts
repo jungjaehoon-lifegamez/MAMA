@@ -95,7 +95,8 @@ describe('memory v2 recall ranking', () => {
 
     const bundle = await recallMemory(
       getAdapter(),
-      'How long did I wait for the decision on my asylum application?'
+      'How long did I wait for the decision on my asylum application?',
+      { includeRelated: false }
     );
 
     // Hybrid RRF: both vector and lexical results should be present

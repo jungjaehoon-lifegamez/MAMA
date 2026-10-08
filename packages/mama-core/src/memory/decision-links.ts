@@ -1,3 +1,4 @@
+import { erasedReference, recordScopes, type ErasedRecord } from '../identity/erased-record.js';
 import crypto from 'node:crypto';
 
 import type { DatabaseAdapter } from '../db-manager.js';
@@ -84,6 +85,7 @@ export function appendDecisionLink(
 }
 
 export interface DecisionEdgeView {
+  erasedCitation?: ErasedRecord;
   relation: string;
   direction: 'out' | 'in';
   otherId: string;
@@ -193,10 +195,10 @@ function replacedValuesFor(
 export function readDecisionWithEdges(
   adapter: Pick<DatabaseAdapter, 'prepare'>,
   id: string
-): DecisionWithEdges | null {
+): DecisionWithEdges | ErasedRecord | null {
   const row = adapter
     .prepare(
-      `SELECT id, topic, decision, reasoning, outcome, status, created_at, supersedes, superseded_by
+      `SELECT id, topic, decision, reasoning, outcome, status, created_at, supersedes, superseded_by, erased_at
          FROM decisions WHERE id = ?`
     )
     .get(id) as
@@ -210,13 +212,18 @@ export function readDecisionWithEdges(
         created_at: number;
         supersedes: string | null;
         superseded_by: string | null;
+        erased_at: number | null;
       }
     | undefined;
   if (!row) return null;
+  if (typeof row.erased_at === 'number')
+    return { id, scopes: recordScopes(adapter, id), state: 'erased' };
   const other = adapter.prepare('SELECT topic, decision FROM decisions WHERE id = ?');
   const describe = (otherId: string) => {
     const found = other.get(otherId) as { topic: string; decision: string } | undefined;
+    const erased = erasedReference(adapter, { kind: 'memory', id: otherId });
     return {
+      ...(erased ? { erasedCitation: erased } : {}),
       otherTopic: found?.topic ?? null,
       otherSummary: found ? found.decision.split('\n')[0]!.slice(0, 200) : null,
     };

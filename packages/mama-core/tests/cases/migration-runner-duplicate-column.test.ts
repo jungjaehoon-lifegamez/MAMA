@@ -8,6 +8,18 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { NodeSQLiteAdapter } from '../../src/db-adapter/node-sqlite-adapter.js';
 
 const MIGRATIONS_DIR = join(__dirname, '..', '..', 'db', 'migrations');
+
+/**
+ * The canonical migrations before 103. These legacy stores test the structural repairs that run
+ * before it; their minimal `decisions` cannot take 103, which fails loud on such a store.
+ */
+function migrationsBefore103(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'mama-migrations-before-103-'));
+  for (const file of readdirSync(MIGRATIONS_DIR))
+    if (!file.startsWith('103-'))
+      writeFileSync(join(dir, file), readFileSync(join(MIGRATIONS_DIR, file)));
+  return dir;
+}
 let tempDir: string | null = null;
 
 /**
@@ -1137,6 +1149,30 @@ describe('Story M2.4: Legacy high schema-version structural recovery', () => {
 
   describe('Acceptance Criteria', () => {
     describe('AC #1: skipped feature migrations', () => {
+      it('fails loud when a legacy store cannot take migration 103', () => {
+        const dbPath = join(mkdtempSync(join(tmpdir(), 'mama-legacy-103-')), 'legacy.db');
+        const setupDb = new Database(dbPath);
+        setupDb.exec(`
+          CREATE TABLE schema_version (version INTEGER PRIMARY KEY, description TEXT);
+          INSERT INTO schema_version (version, description) VALUES (58, 'Legacy branch');
+          CREATE TABLE decisions (id TEXT PRIMARY KEY, topic TEXT NOT NULL);
+          CREATE TABLE memory_events (
+            id INTEGER PRIMARY KEY,
+            memory_id TEXT NOT NULL,
+            topic TEXT,
+            created_at INTEGER NOT NULL
+          );
+          CREATE TABLE embeddings (rowid INTEGER PRIMARY KEY, embedding BLOB NOT NULL);
+        `);
+        setupDb.close();
+        const adapter = new NodeSQLiteAdapter({ dbPath });
+        adapter.connect();
+        expect(() => adapter.runMigrations(MIGRATIONS_DIR)).toThrow(
+          'Migration 103-principal-erasure.sql cannot apply'
+        );
+        adapter.disconnect();
+      });
+
       it('repairs provenance structures when legacy schema_version is already newer', () => {
         tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-high-version-'));
         const dbPath = join(tempDir, 'legacy-high-version.db');
@@ -1169,7 +1205,7 @@ describe('Story M2.4: Legacy high schema-version structural recovery', () => {
 
         const adapter = new NodeSQLiteAdapter({ dbPath });
         adapter.connect();
-        adapter.runMigrations(MIGRATIONS_DIR);
+        adapter.runMigrations(migrationsBefore103());
         adapter.disconnect();
 
         const db = new Database(dbPath);
@@ -1304,7 +1340,7 @@ describe('Story M2.4: Legacy high schema-version structural recovery', () => {
 
         const adapter = new NodeSQLiteAdapter({ dbPath });
         adapter.connect();
-        adapter.runMigrations(MIGRATIONS_DIR);
+        adapter.runMigrations(migrationsBefore103());
         adapter.disconnect();
 
         const db = new Database(dbPath);

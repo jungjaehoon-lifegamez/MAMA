@@ -3,7 +3,7 @@ import type {
   CommitmentRevision,
   CommitmentView,
 } from '@jungjaehoon/mama-core/knowledge';
-import type { WorkGraphPage } from '@jungjaehoon/mama-core';
+import { isErasedRecord, type ErasedRecord, type WorkGraphPage } from '@jungjaehoon/mama-core';
 import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
 import { isOwnerChatRef, RULE_KINDS } from '../runtime/owner-authority.js';
 import { localDateKey } from '../runtime/timezone.js';
@@ -270,7 +270,9 @@ function recordText(
   field: 'summary' | 'reasoning'
 ): string | null {
   const data = read?.record?.data;
-  if (!data || data.kind !== 'memory') return null;
+  if (!data) return null;
+  if (isErasedRecord(data)) return field === 'summary' ? 'Erased' : null;
+  if (data.kind !== 'memory') return null;
   if (field === 'summary') return data.summary;
   return textField(data.payload.reasoning);
 }
@@ -363,7 +365,7 @@ interface SavedTimelineRecord {
 }
 
 export interface SavedTimelinePage {
-  records: SavedTimelineRecord[];
+  records: Array<SavedTimelineRecord | ErasedRecord>;
   nextCursor: string | null;
 }
 
@@ -414,7 +416,7 @@ export interface ViewerSavedTimeline {
   total: number;
   /** Per group, after the text filter and before the group filter, so every chip keeps its count. */
   counts: Record<string, number>;
-  days: Array<{ day: string; total: number; groups: ViewerTimelineGroup[] }>;
+  days: Array<{ day: string | null; total: number; groups: ViewerTimelineGroup[] }>;
 }
 
 /** The groups the memory view names first; any other kind follows under its own name, then work. */
@@ -448,7 +450,7 @@ function turnKind(ref: string | null): string | null {
  * work revisions under the item they revised. Records arrive newest written first.
  */
 export function shapeSavedTimeline(
-  records: readonly SavedTimelineRecord[],
+  records: readonly (SavedTimelineRecord | ErasedRecord)[],
   window: { from: string; to: string; timeZone: string },
   filter: { query: string | null; groups: ReadonlySet<string> | null }
 ): ViewerSavedTimeline {
@@ -464,7 +466,28 @@ export function shapeSavedTimeline(
   );
   const days = new Map<string, Map<string, SavedTimelineRecord[]>>();
   let total = 0;
+  const erasedRecords: ViewerTimelineRecord[] = [];
   for (const record of records) {
+    if (isErasedRecord(record)) {
+      if (
+        needle !== null &&
+        ![record.id, 'erased'].some((label) => label.toLowerCase().includes(needle))
+      )
+        continue;
+      counts.erased = (counts.erased ?? 0) + 1;
+      if (filter.groups !== null && !filter.groups.has('erased')) continue;
+      total += 1;
+      erasedRecords.push({
+        id: `memory:${record.id}`,
+        kind: null,
+        status: 'erased',
+        topic: record.id,
+        summary: 'Erased',
+        time: '',
+        via: null,
+      });
+      continue;
+    }
     if (
       needle !== null &&
       ![record.topic, record.summary, record.itemTitle ?? ''].some((text) =>
@@ -486,49 +509,62 @@ export function shapeSavedTimeline(
     ...window,
     total,
     counts,
-    days: [...days].map(([day, byGroup]) => ({
-      day,
-      total: [...byGroup.values()].reduce((sum, rows) => sum + rows.length, 0),
-      groups: [...byGroup]
-        .sort(([left], [right]) => groupRank(left) - groupRank(right) || left.localeCompare(right))
-        .map(([group, rows]): ViewerTimelineGroup => {
-          if (group !== 'work') {
-            return {
-              group,
-              count: rows.length,
-              records: rows.map((record) => ({
-                id: `memory:${record.id}`,
-                kind: record.kind,
-                status: record.status,
+    days: [
+      ...[...days].map(([day, byGroup]) => ({
+        day,
+        total: [...byGroup.values()].reduce((sum, rows) => sum + rows.length, 0),
+        groups: [...byGroup]
+          .sort(
+            ([left], [right]) => groupRank(left) - groupRank(right) || left.localeCompare(right)
+          )
+          .map(([group, rows]): ViewerTimelineGroup => {
+            if (group !== 'work') {
+              return {
+                group,
+                count: rows.length,
+                records: rows.map((record) => ({
+                  id: `memory:${record.id}`,
+                  kind: record.kind,
+                  status: record.status,
+                  topic: record.topic,
+                  summary: record.summary,
+                  time: clock.format(record.createdAt),
+                  via: turnKind(record.sourceMessageRef),
+                })),
+              };
+            }
+            const items = new Map<string, ViewerTimelineItem>();
+            for (const record of rows) {
+              const commitmentId = record.commitmentId as string;
+              const item = items.get(commitmentId) ?? {
+                commitmentId,
+                title: record.itemTitle,
                 topic: record.topic,
+                revisions: [],
+              };
+              items.set(commitmentId, item);
+              item.revisions.push({
+                id: `memory:${record.id}`,
+                revision: record.revision,
+                operation: record.operation,
+                status: record.status,
                 summary: record.summary,
                 time: clock.format(record.createdAt),
-                via: turnKind(record.sourceMessageRef),
-              })),
-            };
-          }
-          const items = new Map<string, ViewerTimelineItem>();
-          for (const record of rows) {
-            const commitmentId = record.commitmentId as string;
-            const item = items.get(commitmentId) ?? {
-              commitmentId,
-              title: record.itemTitle,
-              topic: record.topic,
-              revisions: [],
-            };
-            items.set(commitmentId, item);
-            item.revisions.push({
-              id: `memory:${record.id}`,
-              revision: record.revision,
-              operation: record.operation,
-              status: record.status,
-              summary: record.summary,
-              time: clock.format(record.createdAt),
-            });
-          }
-          return { group: 'work', count: rows.length, items: [...items.values()] };
-        }),
-    })),
+              });
+            }
+            return { group: 'work', count: rows.length, items: [...items.values()] };
+          }),
+      })),
+      ...(erasedRecords.length === 0
+        ? []
+        : [
+            {
+              day: null,
+              total: erasedRecords.length,
+              groups: [{ group: 'erased', count: erasedRecords.length, records: erasedRecords }],
+            },
+          ]),
+    ],
   };
 }
 
@@ -829,6 +865,14 @@ export function mapArchiveGraphNode(
   timeZone: string
 ): ArchiveGraphNode & { kind: string; label: string; decision_preview: string } {
   const data = node.data;
+  if (isErasedRecord(data))
+    return {
+      id: graphRef(node.ref),
+      kind: data.kind,
+      state: 'erased',
+      label: 'Erased',
+      decision_preview: 'Erased',
+    };
   const memory = data.kind === 'memory' ? data : null;
   // An observation's label is its source id; show when and where instead (the text is read
   // on demand by the detail view through source.read).

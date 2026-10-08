@@ -1,3 +1,4 @@
+import { recordScopes, type ErasedRecord } from '../identity/erased-record.js';
 /**
  * The decision graph, as a caller may see it.
  *
@@ -43,7 +44,7 @@ export async function readGraphNodes(
   adapter: DatabaseAdapter,
   scopes: readonly GraphScope[],
   options: { limit?: number | null; ids?: readonly string[] } = {}
-): Promise<GraphReadNode[]> {
+): Promise<Array<GraphReadNode | ErasedRecord>> {
   if (scopes.length === 0) {
     return [];
   }
@@ -54,7 +55,7 @@ export async function readGraphNodes(
   const limit = options.limit ?? null;
   const rows = (await adapter
     .prepare(
-      `SELECT DISTINCT d.id, d.topic, d.decision, d.reasoning, d.outcome, d.confidence, d.created_at
+      `SELECT DISTINCT d.id, d.topic, d.decision, d.reasoning, d.outcome, d.confidence, d.created_at, d.erased_at
        FROM decisions d
        JOIN memory_scope_bindings msb ON msb.memory_id = d.id
        WHERE msb.scope_id IN (${scopePlaceholders})
@@ -62,8 +63,14 @@ export async function readGraphNodes(
        ORDER BY d.created_at DESC
        ${limit === null ? '' : 'LIMIT ?'}`
     )
-    .all(...scopeIds, ...ids, ...(limit === null ? [] : [limit]))) as GraphReadNode[];
-  return rows;
+    .all(...scopeIds, ...ids, ...(limit === null ? [] : [limit]))) as Array<
+    GraphReadNode & { erased_at: number | null }
+  >;
+  return rows.map(({ erased_at, ...row }) =>
+    typeof erased_at === 'number'
+      ? { id: row.id, scopes: recordScopes(adapter, row.id), state: 'erased' as const }
+      : row
+  );
 }
 
 export async function readGraphEdges(

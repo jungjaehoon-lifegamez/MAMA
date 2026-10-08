@@ -1,3 +1,4 @@
+import { isErasedRecord, recordScopes, type ErasedRecord } from '../identity/erased-record.js';
 import crypto from 'node:crypto';
 import { canonicalizeJSON } from '../canonicalize.js';
 import { ensureMemoryScope } from '../db-manager.js';
@@ -205,7 +206,7 @@ export async function readMemoryRecordsInScopes(
   adapter: DatabaseInstance,
   scopes: readonly MemoryScopeRef[],
   options: ReadMemoryRecordsOptions = {}
-): Promise<MemoryRecord[]> {
+): Promise<Array<MemoryRecord | ErasedRecord>> {
   const scopeClause = scopeBoundRowsClause(scopes);
   const conditions = [scopeClause.sql];
   const params: Array<string | number> = [...scopeClause.params];
@@ -232,7 +233,7 @@ export async function readMemoryRecordsInScopes(
     .prepare(
       `SELECT d.id, d.topic, d.decision, d.reasoning, d.confidence, d.created_at, d.updated_at,
               d.trust_context, d.kind, d.status, d.summary, d.event_date, d.event_datetime,
-              d.outcome, d.payload_json
+              d.outcome, d.payload_json, d.erased_at
        FROM decisions d
        WHERE ${conditions.join(' AND ')}
        ORDER BY d.created_at ASC, d.id ASC`
@@ -244,7 +245,13 @@ export async function readMemoryRecordsInScopes(
   );
   const fallbackSource: SaveMemoryInput['source'] = { package: 'mama-core', source_type: 'db' };
   return rows.map((row) =>
-    toMemoryRecord(row, scopesById.get(String(row.id)) ?? [], fallbackSource)
+    typeof row.erased_at === 'number'
+      ? {
+          id: String(row.id),
+          scopes: scopesById.get(String(row.id)) ?? [],
+          state: 'erased' as const,
+        }
+      : toMemoryRecord(row, scopesById.get(String(row.id)) ?? [], fallbackSource)
   );
 }
 
@@ -253,7 +260,7 @@ export async function readMemoryRecordById(
   adapter: DatabaseInstance,
   memoryId: string,
   scopes: readonly MemoryScopeRef[]
-): Promise<MemoryRecord | null> {
+): Promise<MemoryRecord | ErasedRecord | null> {
   const id = memoryId.trim();
   const scopeClause = scopeBoundRowsClause(scopes);
   if (!id || scopes.length === 0) return null;
@@ -261,7 +268,7 @@ export async function readMemoryRecordById(
     .prepare(
       `SELECT d.id, d.topic, d.decision, d.reasoning, d.confidence, d.created_at, d.updated_at,
               d.trust_context, d.kind, d.status, d.summary, d.event_date, d.event_datetime,
-              d.outcome, d.payload_json
+              d.outcome, d.payload_json, d.erased_at
        FROM decisions d
        WHERE d.id = ? AND ${scopeClause.sql}
        LIMIT 1`
@@ -269,6 +276,7 @@ export async function readMemoryRecordById(
     .get(id, ...scopeClause.params) as Record<string, unknown> | undefined;
   if (!row) return null;
   const recordScopes = batchLoadScopes(adapter, [id]).get(id) ?? [];
+  if (typeof row.erased_at === 'number') return { id, scopes: recordScopes, state: 'erased' };
   return toMemoryRecord(row, recordScopes, { package: 'mama-core', source_type: 'db' });
 }
 
@@ -338,6 +346,7 @@ async function loadScopedMemories(
           SELECT id, topic, decision, reasoning, confidence, created_at, updated_at, trust_context,
                  kind, status, summary, event_date, event_datetime, outcome, payload_json
           FROM decisions
+          WHERE erased_at IS NULL
           ORDER BY COALESCE(event_datetime, created_at) DESC, created_at DESC
         `
       )
@@ -355,7 +364,7 @@ async function loadScopedMemories(
                  d.outcome, d.payload_json
           FROM decisions d
           JOIN memory_scope_bindings msb ON msb.memory_id = d.id
-          WHERE msb.scope_id IN (${placeholders})
+          WHERE d.erased_at IS NULL AND msb.scope_id IN (${placeholders})
           ORDER BY COALESCE(d.event_datetime, d.created_at) DESC, d.created_at DESC
         `
       )
@@ -1003,7 +1012,7 @@ export async function retireMemoryRecord(
     throw new JudgmentError('INVALID_INPUT', 'memory.retire status must be stale or superseded');
   }
   const record = await readMemoryRecordById(adapter, id, access.scopes);
-  if (!record) {
+  if (!record || isErasedRecord(record)) {
     throw new JudgmentError(
       'REFERENCE_NOT_FOUND',
       'Memory record is unavailable in the admitted scopes'
@@ -1340,12 +1349,13 @@ export async function recallMemory(
         const row = adapter
           .prepare(
             `SELECT id, topic, decision, reasoning, confidence, created_at, updated_at,
-                  trust_context, kind, status, summary, event_date, event_datetime, outcome
+                  trust_context, kind, status, summary, event_date, event_datetime, outcome, erased_at
            FROM decisions WHERE id = ?`
           )
           .get(ftsRow.id) as Record<string, unknown> | undefined;
         if (!row) continue;
 
+        if (typeof row.erased_at === 'number') continue;
         const effectiveStatus = (row.status as string) || '';
         if (!options.includeHistory && effectiveStatus && EXCLUDED_STATUSES.has(effectiveStatus)) {
           continue;
@@ -1708,11 +1718,15 @@ export async function recallMemory(
     // Re-filter expanded results: apply status and scope checks
     if (!options.includeHistory) {
       expandedOnly = expandedOnly.filter((e) => {
-        const row = adapter.prepare(`SELECT kind, status FROM decisions WHERE id = ?`).get(e.id) as
-          | { kind?: string; status?: string }
-          | undefined;
+        const row = adapter
+          .prepare(`SELECT kind, status, erased_at FROM decisions WHERE id = ?`)
+          .get(e.id) as { kind?: string; status?: string; erased_at?: number | null } | undefined;
         const status = row?.status || '';
-        return matchesKind(row?.kind) && (!status || !EXCLUDED_STATUSES.has(status));
+        return (
+          typeof row?.erased_at !== 'number' &&
+          matchesKind(row?.kind) &&
+          (!status || !EXCLUDED_STATUSES.has(status))
+        );
       });
       // A link an agent stated can point at a retirement or an outcome change; it stays out too.
       if (expandedOnly.length > 0) {
@@ -1842,10 +1856,14 @@ export async function recallMemory(
       ];
       const placeholders = checkIds.map(() => '?').join(', ');
       const statusRows = adapter
-        .prepare(`SELECT id, status FROM decisions WHERE id IN (${placeholders})`)
-        .all(...checkIds) as Array<{ id: string; status: string | null }>;
+        .prepare(`SELECT id, status, erased_at FROM decisions WHERE id IN (${placeholders})`)
+        .all(...checkIds) as Array<{ id: string; status: string | null; erased_at: number | null }>;
       const excludedIds = new Set(
-        statusRows.filter((r) => r.status && EXCLUDED_STATUSES.has(r.status)).map((r) => r.id)
+        statusRows
+          .filter(
+            (r) => typeof r.erased_at === 'number' || (r.status && EXCLUDED_STATUSES.has(r.status))
+          )
+          .map((r) => r.id)
       );
       bundle.graph_context.edges = allEdges.filter(
         (e) => !excludedIds.has(e.from_id) && !excludedIds.has(e.to_id)
@@ -2116,6 +2134,7 @@ export async function expandWithGraphInAdapter(
     // 1. The records this one replaced, down its supersedes chain
     const chain = await queryDecisionGraph(adapter, candidate.topic, candidate.id);
     for (const decision of chain) {
+      if (isErasedRecord(decision)) continue;
       if (!graphEnhanced.has(decision.id)) {
         graphEnhanced.set(decision.id, {
           ...decision,
@@ -2223,7 +2242,11 @@ export async function expandWithGraphInAdapter(
   }
 
   // 3. Convert Map to Array
-  const allResults = Array.from(graphEnhanced.values());
+  const erasureState = adapter.prepare('SELECT erased_at FROM decisions WHERE id=?');
+  const allResults = Array.from(graphEnhanced.values()).filter((record) => {
+    const row = erasureState.get(record.id) as { erased_at: number | null } | undefined;
+    return typeof row?.erased_at !== 'number';
+  });
 
   // 4. Sort: Interleave expanded results after their related primary
   // This ensures edge-connected decisions appear near their source
@@ -2424,10 +2447,16 @@ function withLinkPointers<T extends { id: string; related_to?: string | null }>(
     (
       adapter
         .prepare(
-          `SELECT id, topic, decision, status FROM decisions
+          `SELECT id, topic, decision, status, erased_at FROM decisions
             WHERE id IN (${otherIds.map(() => '?').join(', ')})`
         )
-        .all(...otherIds) as Array<{ id: string; topic: string; decision: string; status: string }>
+        .all(...otherIds) as Array<{
+        id: string;
+        topic: string;
+        decision: string;
+        status: string;
+        erased_at: number | null;
+      }>
     ).map((record) => [record.id, record])
   );
   const corrections = correctionsOf(
@@ -2452,7 +2481,7 @@ function withLinkPointers<T extends { id: string; related_to?: string | null }>(
     edge: (typeof edges)[number]
   ) => {
     const record = records.get(otherId);
-    if (!record || !inScope(otherId)) return;
+    if (!record || typeof record.erased_at === 'number' || !inScope(otherId)) return;
     const correctedBy = edge.edge_id ? corrections.get(edge.edge_id) : undefined;
     const readable = correctedBy
       ? readableCorrections(correctedBy, (correction) => inScope(correction.from))
@@ -3021,7 +3050,7 @@ export async function suggestInAdapter(
       const kindClause = kind === undefined ? '' : 'AND kind = ?';
 
       const stmt = adapter.prepare(`
-        SELECT * FROM decisions
+        SELECT * FROM (SELECT * FROM decisions WHERE erased_at IS NULL)
         WHERE ${likeConditions}
         AND superseded_by IS NULL
         ${kindClause}
@@ -3230,7 +3259,7 @@ function topicPrefixLikePattern(prefix: string): string {
 export async function listDecisionsInAdapter(
   adapter: DatabaseAdapter,
   options: ListDecisionsOptions = {}
-): Promise<DecisionRecord[] | string> {
+): Promise<Array<DecisionRecord | ErasedRecord> | string> {
   const { limit = 10, format = 'json' } = options;
 
   try {
@@ -3278,7 +3307,11 @@ export async function listDecisionsInAdapter(
       return formatList(decisions as any[]);
     }
 
-    return decisions as DecisionRecord[];
+    return (decisions as DecisionRecord[]).map((record) =>
+      typeof record.erased_at === 'number'
+        ? { id: record.id, scopes: recordScopes(adapter, record.id), state: 'erased' as const }
+        : record
+    );
   } catch (error: unknown) {
     throw new Error(
       `mama.listDecisions() failed: ${error instanceof Error ? error.message : String(error)}`

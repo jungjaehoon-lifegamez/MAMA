@@ -1,4 +1,4 @@
-import type { ActionContext } from '@jungjaehoon/mama-core';
+import { isErasedRecord, type ActionContext, type MemoryScopeRef } from '@jungjaehoon/mama-core';
 import type { MemoryReadAllowance } from '@jungjaehoon/mama-core/api/catalog';
 import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
 import { getObservationVersion, readObservationVersion } from '@jungjaehoon/mama-core/knowledge';
@@ -58,6 +58,21 @@ function missing(): Error {
   const error = new Error('No stored observation exists for this source and reference');
   error.name = 'stored_source_not_found';
   return error;
+}
+
+function erasedObservation(
+  access: Access,
+  scopes: readonly MemoryScopeRef[],
+  ownerPrincipalId: string
+): Error {
+  if (
+    access.principalId !== ownerPrincipalId &&
+    !scopes.some((scope) =>
+      access.scopes.some((allowed) => allowed.kind === scope.kind && allowed.id === scope.id)
+    )
+  )
+    throw denied();
+  return new Error('observation_erased');
 }
 
 function allowedChannels(
@@ -229,6 +244,9 @@ export function createStoredSourceReader(options: StoredSourceReaderOptions): St
       const rawStore = options.rawStore?.();
 
       const readOne = (ref: string): Record<string, unknown> => {
+        const stored = getObservationVersion(adapter, ref);
+        if (stored && isErasedRecord(stored))
+          throw erasedObservation(access, stored.scopes, options.ownerPrincipalId());
         const channel = storedObservationChannel(adapter, ref, source, allowance?.maxSourceMs);
         if (channel === undefined) {
           if (access.principalId === options.ownerPrincipalId()) throw missing();
@@ -265,6 +283,8 @@ export function createStoredSourceReader(options: StoredSourceReaderOptions): St
             : undefined,
           allowance?.maxSourceMs === undefined ? undefined : { maxSourceMs: allowance.maxSourceMs }
         );
+        if (isErasedRecord(result))
+          throw erasedObservation(access, result.scopes, options.ownerPrincipalId());
         if (result.status !== 'available') {
           throw new Error(result.status === 'not_found' ? 'observation_not_found' : result.reason);
         }
@@ -330,6 +350,8 @@ export function createStoredSourceReader(options: StoredSourceReaderOptions): St
         if (access.principalId === options.ownerPrincipalId()) throw missing();
         throw denied();
       }
+      if (isErasedRecord(stored))
+        throw erasedObservation(access, stored.scopes, options.ownerPrincipalId());
       return this.read(stored.source, { observationRef, ...window }, access, allowance);
     },
   };

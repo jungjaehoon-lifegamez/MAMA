@@ -395,6 +395,23 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
     return this.db;
   }
 
+  readCachedEmbeddings(rowids: readonly number[]): Array<{ rowid: number; embedding: number[] }> {
+    return rowids
+      .flatMap((rowid) => {
+        const embedding = this.vectorCache.get(rowid);
+        return embedding ? [{ rowid, embedding: Array.from(embedding) }] : [];
+      })
+      .sort((a, b) => a.rowid - b.rowid);
+  }
+
+  removeEmbedding(rowid: number): void {
+    this.prepare('DELETE FROM embeddings WHERE rowid = ?').run(rowid);
+    this.vectorCache.delete(rowid);
+    this.topicCache.delete(rowid);
+    this.kindCache.delete(rowid);
+    this.statusCache.delete(rowid);
+  }
+
   reloadVectorCache(): void {
     this.loadVectorCache();
   }
@@ -844,6 +861,18 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
         continue;
       }
 
+      if (isCore && version === 103) {
+        // Legacy high-version stores can still need the post-loop structural repairs.
+        if (!this.principalErasurePrerequisitesPresent()) {
+          warn(
+            `[node-sqlite-adapter] Migration ${file} deferred: canonical record stores are incomplete`
+          );
+          continue;
+        }
+        this.applyPrincipalErasureMigration103(migrationsDir, file);
+        continue;
+      }
+
       if (isCore && version === 98) {
         const decisionColumns = this.tableColumns('decisions');
         if (
@@ -1020,6 +1049,17 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
 
     if (isCore) {
       this.repairSkippedFeatureMigrations(migrationsDir);
+      const erasureFile = '103-principal-erasure.sql';
+      if (fs.existsSync(path.join(migrationsDir, erasureFile)) && !this.schemaVersionExists(103)) {
+        // The record readers expect the erasure columns; a store that cannot take 103 after the
+        // structural repairs stops here instead of failing later, far from the cause.
+        if (!this.principalErasurePrerequisitesPresent()) {
+          throw new Error(
+            `Migration ${erasureFile} cannot apply: canonical record stores are incomplete after repairs`
+          );
+        }
+        this.applyPrincipalErasureMigration103(migrationsDir, erasureFile);
+      }
     }
 
     const embeddingsTables = this.prepare(
@@ -1753,6 +1793,121 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
     }
   }
 
+  private principalErasurePrerequisitesPresent(): boolean {
+    const columns = this.tableColumns('decisions');
+    return (
+      WORKFLOW_KIND_MIGRATION_COLUMNS.every((column) => columns.has(column)) &&
+      [
+        'command_bindings',
+        'judgment_commands',
+        'source_commands',
+        'observation_versions',
+        'model_runs',
+        'tool_traces',
+        'mailbox_seen',
+        'principals',
+      ].every((table) => this.tableExists(table))
+    );
+  }
+
+  /** Preserve consumer extensions while changing only the three erasure constraints. */
+  private applyPrincipalErasureMigration103(migrationsDir: string, file: string): void {
+    let sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+    // Migrations here tolerate a re-run on a store that already holds part of their schema (a
+    // rewound schema_version, or a later rebuild that dropped a column): add only the missing
+    // columns, and rebuild only the tables without the erasure state.
+    sql = sql.replace(
+      /^ALTER TABLE (\w+) ADD COLUMN (\w+)[^;]*;\n/gm,
+      (statement, table: string, column: string) =>
+        this.tableColumns(table).has(column) ? '' : statement
+    );
+    const savedObjects: string[] = [];
+    const indexes: Record<string, string[]> = {
+      judgment_commands: ['idx_judgment_commands_record'],
+      source_commands: ['idx_source_commands_observation'],
+      observation_versions: [
+        'observation_source_versions',
+        'idx_observation_visibility',
+        'idx_observation_artifact',
+      ],
+    };
+    for (const table of Object.keys(indexes)) {
+      if (this.tableColumns(table).has('erased_at')) {
+        sql = sql.replace(
+          new RegExp(
+            String.raw`CREATE TABLE ${table}_103 \([\s\S]*?ALTER TABLE ${table}_103 RENAME TO ${table};\n`
+          ),
+          ''
+        );
+        continue;
+      }
+      const createPattern = new RegExp(String.raw`CREATE TABLE ${table}_103 \([\s\S]*?\n\);`);
+      const create = sql.match(createPattern)?.[0];
+      if (!create) throw new Error(`Migration 103 has no rebuild definition for ${table}`);
+      const canonical = splitCreateTableClauses(create);
+      const original = splitCreateTableClauses(this.tableSql(table));
+      const oldColumns = original.filter((clause) => !clauseIsTableConstraint(clause));
+      const oldByName = new Map(oldColumns.map((clause) => [clauseColumnName(clause), clause]));
+      const newNames = new Set(
+        canonical.filter((clause) => !clauseIsTableConstraint(clause)).map(clauseColumnName)
+      );
+      const replacedColumns =
+        table === 'observation_versions'
+          ? new Set(['source', 'source_id', 'content_hash'])
+          : new Set([table === 'judgment_commands' ? 'record_id' : 'observation_id']);
+      const clauses = canonical.map((clause) => {
+        if (clauseIsTableConstraint(clause)) return clause;
+        const name = clauseColumnName(clause);
+        const previous = oldByName.get(name);
+        if (previous && replacedColumns.has(name)) return previous.replace(/\bNOT\s+NULL\b/i, '');
+        return previous ?? clause;
+      });
+      clauses.push(...oldColumns.filter((clause) => !newNames.has(clauseColumnName(clause))));
+      const oldBodyCheck = normalizeSqlText(
+        'CHECK ((body IS NOT NULL AND body_location_json IS NULL) OR (body IS NULL AND body_location_json IS NOT NULL))'
+      );
+      clauses.push(
+        ...original.filter(
+          (clause) => clauseIsTableConstraint(clause) && normalizeSqlText(clause) !== oldBodyCheck
+        )
+      );
+      const orderedClauses = [
+        ...clauses.filter((clause) => !clauseIsTableConstraint(clause)),
+        ...clauses.filter(clauseIsTableConstraint),
+      ];
+      sql = sql.replace(
+        create,
+        `CREATE TABLE ${table}_103 (\n  ${orderedClauses.join(',\n  ')}\n);`
+      );
+      const columnList = oldColumns
+        .map((clause) => quoteSqlIdentifier(clauseColumnName(clause)))
+        .join(', ');
+      const insertPattern = new RegExp(String.raw`INSERT INTO ${table}_103[\s\S]*?FROM ${table};`);
+      sql = sql.replace(
+        insertPattern,
+        `INSERT INTO ${table}_103 (${columnList}, erased_at) SELECT ${columnList}, NULL FROM ${table};`
+      );
+      const objects = this.storedObjectsForTable(table, new Set(indexes[table]));
+      savedObjects.push(...objects.indexes, ...objects.triggers);
+    }
+    const previousForeignKeys = this.readForeignKeysEnabled();
+    this.exec('PRAGMA foreign_keys = OFF');
+    if (this.readForeignKeysEnabled())
+      throw new Error(
+        'Migration 103 requires foreign keys disabled outside its rebuild transaction'
+      );
+    try {
+      this.transaction(() => {
+        this.exec(sql);
+        for (const object of savedObjects) this.exec(object);
+        if (this.prepare('PRAGMA foreign_key_check').all().length > 0)
+          throw new Error('Migration 103 left foreign key violations');
+      });
+    } finally {
+      this.exec(`PRAGMA foreign_keys = ${previousForeignKeys ? 'ON' : 'OFF'}`);
+    }
+  }
+
   private applyRepairMigration(migrationsDir: string, fileName: string, label: string): void {
     const migrationPath = path.join(migrationsDir, fileName);
     if (!fs.existsSync(migrationPath)) {
@@ -2055,6 +2210,9 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
   }
 
   private needsObservationVersionsRepair072(): boolean {
+    // 103 replaces the body XOR with an explicit bodyless erasure state; judge the table's shape,
+    // not the version row, so a 103-shaped table is never "repaired" back to 072.
+    if (this.tableColumns('observation_versions').has('erased_at')) return false;
     return !this.observationVersionsShape072() || !this.schemaVersionExists(72);
   }
 

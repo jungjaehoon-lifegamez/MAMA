@@ -1,3 +1,4 @@
+import { recordScopes, type ErasedRecord } from '../identity/erased-record.js';
 /**
  * Listings and rollups over the memory a caller may see.
  *
@@ -49,7 +50,7 @@ export async function readDecisionListing(
   adapter: DatabaseAdapter,
   scopes: readonly ReadScope[],
   options: { status?: string; order?: 'recent' | 'stale'; limit?: number } = {}
-): Promise<DecisionListingRow[]> {
+): Promise<Array<DecisionListingRow | ErasedRecord>> {
   if (scopes.length === 0) {
     return [];
   }
@@ -58,10 +59,10 @@ export async function readDecisionListing(
   const status = typeof options.status === 'string' ? options.status.trim() : '';
   const direction = options.order === 'stale' ? 'ASC' : 'DESC';
   const limit = Math.min(Math.max(Math.floor(options.limit ?? 50), 1), 200);
-  return (await adapter
+  const rows = (await adapter
     .prepare(
       `SELECT DISTINCT d.id, d.topic, d.decision, d.reasoning, d.status, d.confidence,
-              d.created_at, d.updated_at
+              d.created_at, d.updated_at, d.erased_at
        FROM decisions d
        JOIN memory_scope_bindings msb ON msb.memory_id = d.id
        WHERE msb.scope_id IN (${placeholders})
@@ -69,7 +70,14 @@ export async function readDecisionListing(
        ORDER BY d.updated_at ${direction}
        LIMIT ?`
     )
-    .all(...scopeIds, ...(status ? [status] : []), limit)) as DecisionListingRow[];
+    .all(...scopeIds, ...(status ? [status] : []), limit)) as Array<
+    DecisionListingRow & { erased_at: number | null }
+  >;
+  return rows.map(({ erased_at, ...row }) =>
+    typeof erased_at === 'number'
+      ? { id: row.id, scopes: recordScopes(adapter, row.id), state: 'erased' as const }
+      : row
+  );
 }
 
 export interface SavedTimelineRow {
@@ -92,7 +100,7 @@ export interface SavedTimelineRow {
 }
 
 export interface SavedTimelinePage {
-  records: SavedTimelineRow[];
+  records: Array<SavedTimelineRow | ErasedRecord>;
   nextCursor: string | null;
 }
 
@@ -115,7 +123,7 @@ export async function readSavedTimeline(
   const after = options.cursor === undefined ? null : parseTimelineCursor(options.cursor);
   const rows = (await adapter
     .prepare(
-      `SELECT d.id, d.kind, d.record_kind, d.status, d.topic,
+      `SELECT d.id, d.kind, d.record_kind, d.status, d.topic, d.erased_at,
               COALESCE(d.summary, d.decision) AS summary, d.created_at, d.event_datetime,
               CASE WHEN json_valid(d.provenance_json)
                    THEN json_extract(d.provenance_json, '$.source_message_ref') END
@@ -147,6 +155,7 @@ export async function readSavedTimeline(
       limit + 1
     )) as Array<{
     id: string;
+    erased_at: number | null;
     kind: string | null;
     record_kind: string | null;
     status: string | null;
@@ -160,25 +169,29 @@ export async function readSavedTimeline(
     operation: SavedTimelineRow['operation'];
     item_title: string | null;
   }>;
-  const records = rows.slice(0, limit).map((row) => ({
-    id: row.id,
-    kind: row.kind,
-    recordKind: row.record_kind,
-    status: row.status,
-    topic: row.topic,
-    summary: row.summary,
-    createdAt: row.created_at,
-    eventDatetime: row.event_datetime,
-    sourceMessageRef: row.source_message_ref,
-    commitmentId: row.commitment_id,
-    revision: row.revision,
-    operation: row.operation,
-    itemTitle: row.item_title,
-  }));
-  const last = records.at(-1);
+  const records = rows.slice(0, limit).map((row) =>
+    typeof row.erased_at === 'number'
+      ? { id: row.id, scopes: recordScopes(adapter, row.id), state: 'erased' as const }
+      : {
+          id: row.id,
+          kind: row.kind,
+          recordKind: row.record_kind,
+          status: row.status,
+          topic: row.topic,
+          summary: row.summary,
+          createdAt: row.created_at,
+          eventDatetime: row.event_datetime,
+          sourceMessageRef: row.source_message_ref,
+          commitmentId: row.commitment_id,
+          revision: row.revision,
+          operation: row.operation,
+          itemTitle: row.item_title,
+        }
+  );
+  const last = rows.slice(0, limit).at(-1);
   return {
     records,
-    nextCursor: rows.length > limit && last !== undefined ? `${last.createdAt}|${last.id}` : null,
+    nextCursor: rows.length > limit && last !== undefined ? `${last.created_at}|${last.id}` : null,
   };
 }
 

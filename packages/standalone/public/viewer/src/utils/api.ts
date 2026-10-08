@@ -92,7 +92,7 @@ export interface MemoryTimelineResponse {
   timeZone: string;
   total: number;
   counts: Record<string, number>;
-  days: Array<{ day: string; total: number; groups: TimelineGroup[] }>;
+  days: Array<{ day: string | null; total: number; groups: TimelineGroup[] }>;
 }
 
 export interface CheckpointSummary {

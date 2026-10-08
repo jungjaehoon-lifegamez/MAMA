@@ -1,3 +1,9 @@
+import {
+  erasedReference,
+  isErasedRecord,
+  recordScopes,
+  type ErasedRecord,
+} from '../identity/erased-record.js';
 /**
  * Knowledge graph queries: how a topic got to where it is, and what else it
  * argues with. Two surfaces live here: the decision-chain graph (supersedes /
@@ -118,7 +124,7 @@ export async function queryDecisionGraph(
   adapter: DatabaseAdapter,
   topic: string,
   anchorId?: string
-): Promise<DecisionRecord[]> {
+): Promise<Array<DecisionRecord | ErasedRecord>> {
   try {
     if (!anchorId) {
       const decisions = adapter
@@ -137,7 +143,11 @@ export async function queryDecisionGraph(
       for (const decision of decisions) {
         decision.refined_from = parseRefinedFrom(decision);
       }
-      return decisions;
+      return decisions.map((record) =>
+        typeof record.erased_at === 'number'
+          ? { id: record.id, scopes: recordScopes(adapter, record.id), state: 'erased' as const }
+          : record
+      );
     }
     const stmt = adapter.prepare(`
       WITH RECURSIVE decision_chain AS (
@@ -163,7 +173,11 @@ export async function queryDecisionGraph(
       decision.refined_from = parseRefinedFrom(decision);
     }
 
-    return decisions;
+    return decisions.map((record) =>
+      typeof record.erased_at === 'number'
+        ? { id: record.id, scopes: recordScopes(adapter, record.id), state: 'erased' as const }
+        : record
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Decision graph query failed: ${message}`);
@@ -207,7 +221,7 @@ export async function querySemanticEdges(
 
     // Query outgoing edges (from_id = decision)
     const outgoingStmt = adapter.prepare(`
-      SELECT e.*, d.topic, d.decision, d.confidence, d.created_at
+      SELECT e.*, d.topic, d.decision, d.confidence, d.created_at, d.erased_at
       FROM ${STATED_DECISION_EDGES} e
       JOIN decisions d ON e.to_id = d.id
       WHERE e.from_id IN (${placeholders})
@@ -215,11 +229,26 @@ export async function querySemanticEdges(
         AND (e.approved_by_user = 1 OR e.approved_by_user IS NULL)
       ORDER BY e.created_at DESC
     `);
-    const outgoingEdges = outgoingStmt.all(...decisionIds, ...edgeTypes) as SemanticEdgeItem[];
+    const outgoingEdges = (
+      outgoingStmt.all(...decisionIds, ...edgeTypes) as Array<
+        SemanticEdgeItem & { erased_at: number | null }
+      >
+    ).map(({ erased_at, ...edge }) =>
+      typeof erased_at === 'number'
+        ? {
+            ...edge,
+            erasedCitation: {
+              id: edge.to_id,
+              scopes: recordScopes(adapter, edge.to_id),
+              state: 'erased' as const,
+            },
+          }
+        : edge
+    );
 
     // Query incoming edges (to_id = decision)
     const incomingStmt = adapter.prepare(`
-      SELECT e.*, d.topic, d.decision, d.confidence, d.created_at
+      SELECT e.*, d.topic, d.decision, d.confidence, d.created_at, d.erased_at
       FROM ${STATED_DECISION_EDGES} e
       JOIN decisions d ON e.from_id = d.id
       WHERE e.to_id IN (${placeholders})
@@ -227,7 +256,22 @@ export async function querySemanticEdges(
         AND (e.approved_by_user = 1 OR e.approved_by_user IS NULL)
       ORDER BY e.created_at DESC
     `);
-    const incomingEdges = incomingStmt.all(...decisionIds, ...edgeTypes) as SemanticEdgeItem[];
+    const incomingEdges = (
+      incomingStmt.all(...decisionIds, ...edgeTypes) as Array<
+        SemanticEdgeItem & { erased_at: number | null }
+      >
+    ).map(({ erased_at, ...edge }) =>
+      typeof erased_at === 'number'
+        ? {
+            ...edge,
+            erasedCitation: {
+              id: edge.from_id,
+              scopes: recordScopes(adapter, edge.from_id),
+              state: 'erased' as const,
+            },
+          }
+        : edge
+    );
 
     // Categorize edges (original + v1.3 extended)
     const refines = outgoingEdges.filter((e) => e.relationship === 'refines');
@@ -385,13 +429,15 @@ export interface AgentGraphTimelineMemoryEvent {
   kind: 'memory';
   at_ms: number;
   ref: Extract<TwinRef, { kind: 'memory' }>;
-  memory: {
-    id: string;
-    topic: string | null;
-    decision: string | null;
-    created_at: number;
-    event_datetime: number | null;
-  };
+  memory:
+    | ErasedRecord
+    | {
+        id: string;
+        topic: string | null;
+        decision: string | null;
+        created_at: number;
+        event_datetime: number | null;
+      };
 }
 
 export interface AgentGraphTimelineCaseEvent {
@@ -412,17 +458,19 @@ export interface AgentGraphTimelineRawEvent {
   kind: 'raw';
   at_ms: number;
   ref: Extract<TwinRef, { kind: 'raw' }>;
-  raw: {
-    event_index_id: string;
-    source_connector: string;
-    source_type: string;
-    source_id: string;
-    source_locator: string | null;
-    title: string | null;
-    event_datetime: number | null;
-    source_timestamp_ms: number;
-    observation_ref: string | null;
-  };
+  raw:
+    | ErasedRecord
+    | {
+        event_index_id: string;
+        source_connector: string;
+        source_type: string;
+        source_id: string;
+        source_locator: string | null;
+        title: string | null;
+        event_datetime: number | null;
+        source_timestamp_ms: number;
+        observation_ref: string | null;
+      };
 }
 
 export interface AgentGraphTimelineEdgeEvent {
@@ -782,7 +830,7 @@ function loadTimelineRecordEvent(
     const row = adapter
       .prepare(
         `
-          SELECT id, topic, decision, created_at, event_datetime
+          SELECT id, topic, decision, created_at, event_datetime, erased_at
           FROM decisions
           WHERE id = ?
           LIMIT 1
@@ -795,6 +843,7 @@ function loadTimelineRecordEvent(
           decision: string | null;
           created_at: number;
           event_datetime: number | null;
+          erased_at: number | null;
         }
       | undefined;
     if (!row) {
@@ -806,17 +855,27 @@ function loadTimelineRecordEvent(
       kind: 'memory',
       at_ms: eventDatetime ?? createdAt,
       ref,
-      memory: {
-        id: row.id,
-        topic: row.topic,
-        decision: row.decision,
-        created_at: createdAt,
-        event_datetime: eventDatetime,
-      },
+      memory:
+        typeof row.erased_at === 'number'
+          ? { id: row.id, scopes: recordScopes(adapter, row.id), state: 'erased' }
+          : {
+              id: row.id,
+              topic: row.topic,
+              decision: row.decision,
+              created_at: createdAt,
+              event_datetime: eventDatetime,
+            },
     };
   }
 
   if (ref.kind === 'raw') {
+    const erased = erasedReference(adapter, ref);
+    if (erased) {
+      const timing = adapter
+        .prepare('SELECT observed_at FROM observation_versions WHERE observation_id=?')
+        .get(ref.id) as { observed_at: number };
+      return { kind: 'raw', ref, at_ms: timing.observed_at, raw: erased };
+    }
     const row = adapter
       .prepare(
         // A raw ref resolves against observations: one evidence space, and the
@@ -1350,7 +1409,7 @@ function resolveSearchSeeds(
       const statement = adapter.prepare(
         `SELECT d.id AS id
            FROM decisions_fts JOIN decisions d ON decisions_fts.rowid = d.rowid
-          WHERE decisions_fts MATCH ?
+          WHERE decisions_fts MATCH ? AND d.erased_at IS NULL
           ORDER BY rank
           LIMIT ? OFFSET ?`
       );
@@ -1377,7 +1436,7 @@ function resolveSearchSeeds(
       .prepare(
         `SELECT observation_id
            FROM observation_versions
-          WHERE source_id LIKE ? ESCAPE '\\' OR author LIKE ? ESCAPE '\\' OR metadata_json LIKE ? ESCAPE '\\'
+          WHERE erased_at IS NULL AND (source_id LIKE ? ESCAPE '\\' OR author LIKE ? ESCAPE '\\' OR metadata_json LIKE ? ESCAPE '\\')
           LIMIT ?`
       )
       .all(like, like, like, SEARCH_SEED_LIMIT) as Array<{ observation_id: string }>;
@@ -1515,7 +1574,7 @@ function hydrateMemoryNode(
     .prepare(
       `SELECT id, topic, decision, reasoning, outcome, failure_reason, limitation, confidence,
               event_date, event_datetime, created_at, updated_at, status, superseded_by,
-              refined_from, record_kind, kind
+              refined_from, record_kind, kind, erased_at
          FROM decisions
         WHERE id = ?
         LIMIT 1`
@@ -1523,6 +1582,7 @@ function hydrateMemoryNode(
     .get(ref.id) as
     | {
         id: string;
+        erased_at: number | null;
         topic: string | null;
         decision: string | null;
         reasoning: string | null;
@@ -1544,6 +1604,11 @@ function hydrateMemoryNode(
   if (!row) {
     return null;
   }
+  if (typeof row.erased_at === 'number')
+    return {
+      label: ref.id,
+      data: { kind: 'memory', id: ref.id, scopes: recordScopes(adapter, ref.id), state: 'erased' },
+    };
   const recordedAt = numberMs(row.created_at, 'decisions.created_at', ref.id);
   const appliesFrom = nullableNumberMs(row.event_datetime, 'decisions.event_datetime', ref.id);
   let appliesUntil: number | null = null;
@@ -1581,7 +1646,10 @@ function hydrateMemoryNode(
         latestJudgmentRef: { kind: 'memory', id: workLink.head_record_id } as WorkReference,
       }
     : null;
-  const stateAtSnapshot: Extract<WorkGraphNodeData, { kind: 'memory' }>['stateAtSnapshot'] =
+  const stateAtSnapshot: Extract<
+    WorkGraphNodeData,
+    { stateAtSnapshot: string }
+  >['stateAtSnapshot'] =
     workLink?.withdrawn === 1
       ? 'withdrawn'
       : row.status === 'superseded' || row.superseded_by
@@ -1687,6 +1755,7 @@ function hydrateObservationNode(
   if (!record) {
     return null;
   }
+  if (isErasedRecord(record)) return { label: ref.id, data: { kind: 'observation', ...record } };
   return {
     label: `${record.source}:${record.sourceId}`,
     data: {
@@ -1720,6 +1789,8 @@ function hydrateRecordNode(
     };
   }
   if (ref.kind === 'raw') {
+    const erased = erasedReference(adapter, ref);
+    if (erased) return { label: ref.id, data: { kind: 'raw', ...erased } };
     const row = adapter
       .prepare(
         `SELECT observation_id AS event_index_id, source AS source_connector, source_type,
@@ -1820,12 +1891,12 @@ function eventRecordedAt(event: AgentGraphTimelineEvent): number {
     return event.edge.created_at;
   }
   if (event.kind === 'memory') {
-    return event.memory.created_at;
+    return isErasedRecord(event.memory) ? event.at_ms : event.memory.created_at;
   }
   if (event.kind === 'case') {
     return parseTimestampMs(event.case.created_at, 'case_truth.created_at', event.ref.id);
   }
-  return event.raw.source_timestamp_ms;
+  return isErasedRecord(event.raw) ? event.at_ms : event.raw.source_timestamp_ms;
 }
 
 function validateRelations(relations: readonly string[] | undefined): TwinEdgeType[] | undefined {
@@ -2261,6 +2332,7 @@ export function queryGraph(
       }
       if (
         hydrated.data.kind === 'memory' &&
+        'stateAtSnapshot' in hydrated.data &&
         (hydrated.data.stateAtSnapshot === 'replaced' ||
           hydrated.data.stateAtSnapshot === 'withdrawn')
       ) {

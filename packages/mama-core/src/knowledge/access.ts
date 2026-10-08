@@ -1,3 +1,4 @@
+import { observationScopes } from '../identity/erased-record.js';
 import type { DatabaseAdapter } from '../db-manager.js';
 import {
   isObservationVersionVisible,
@@ -286,7 +287,7 @@ function isRawVisible(
   const row = adapter
     .prepare(
       `SELECT source, channel, project_id, tenant_id, memory_scope_kind, memory_scope_id, source_at,
-              observed_at AS observation_observed_at
+              observed_at AS observation_observed_at, erased_at, scope_json
          FROM observation_versions
         WHERE observation_id = ?
         LIMIT 1`
@@ -297,6 +298,13 @@ function isRawVisible(
 
 /** One observation row, judged against the caller's window. */
 function isRawRowVisible(row: Record<string, unknown>, visibility: TwinVisibility): boolean {
+  if (typeof row.erased_at === 'number') {
+    return observationScopes(row).some((scope) =>
+      visibility.scopes?.some(
+        (admitted) => admitted.kind === scope.kind && admitted.id === scope.id
+      )
+    );
+  }
   if (Array.isArray(visibility.connectors) && !visibility.connectors.includes(String(row.source))) {
     return false;
   }
@@ -373,7 +381,7 @@ export function visibleTwinRefKeys(
       .prepare(
         `SELECT observation_id, source, channel, project_id, tenant_id,
                 memory_scope_kind, memory_scope_id, source_at,
-                observed_at AS observation_observed_at
+                observed_at AS observation_observed_at, erased_at, scope_json
            FROM observation_versions
           WHERE observation_id IN (${placeholders(rawIds.length)})`
       )
@@ -389,7 +397,7 @@ export function visibleTwinRefKeys(
   if (observationIds.length > 0) {
     const rows = adapter
       .prepare(
-        `SELECT observation_id, source, scope_json, observed_at, source_at
+        `SELECT observation_id, source, scope_json, observed_at, source_at, erased_at
            FROM observation_versions
           WHERE observation_id IN (${placeholders(observationIds.length)})`
       )
@@ -399,6 +407,7 @@ export function visibleTwinRefKeys(
       scope_json: unknown;
       observed_at: number;
       source_at: number | null;
+      erased_at: number | null;
     }>;
     for (const row of rows) {
       if (

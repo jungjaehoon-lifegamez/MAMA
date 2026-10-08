@@ -96,12 +96,20 @@ function assertReplay(
 ): SourceIngestReceipt | null {
   const binding = adapter
     .prepare(
-      'SELECT principal_id, action, payload_hash, receipt_key FROM command_bindings WHERE command_id = ?'
+      'SELECT principal_id, action, payload_hash, receipt_key, erased_at FROM command_bindings WHERE command_id = ?'
     )
     .get(command.commandId) as
-    | { principal_id: string; action: string; payload_hash: string; receipt_key: string }
+    | {
+        principal_id: string;
+        action: string;
+        payload_hash: string;
+        receipt_key: string;
+        erased_at: number | null;
+      }
     | undefined;
   if (!binding) return null;
+  if (binding.erased_at !== null)
+    throw new JudgmentError('COMMAND_ERASED', 'The command belongs to an erased record');
   if (
     binding.principal_id !== access.principalId ||
     binding.action !== 'source.ingest' ||

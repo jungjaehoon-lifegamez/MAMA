@@ -710,7 +710,8 @@ describe('migration 071 raw SQL companion (applyAll/direct-exec path)', () => {
     adapter.disconnect();
 
     // Same columns, and both carry model_run_id nullable + the strong origin CHECK + FK.
-    expect([...dynCols].sort()).toEqual([...rawCols].sort());
+    // Later migrations add erasure metadata without changing the origin contract.
+    expect([...dynCols].filter((name) => name !== 'erased_at').sort()).toEqual([...rawCols].sort());
     for (const sql of [rawSql, dynSql]) {
       expect(sql).toContain('operation_id');
       expect(sql).toContain('actor_principal_id');

@@ -5,6 +5,7 @@ import {
   failModelRun,
   generateEmbedding,
   readMemoryRecordsInScopes,
+  isErasedRecord,
   startRuntime,
   type Knowledge,
   type KnowledgeOptions,
@@ -135,6 +136,15 @@ export interface OwnerRuntime {
   readonly intake: StimulusIntake;
   readonly acceptSourceDelta: StimulusIntake['acceptSourceDelta'];
   stop(): Promise<void>;
+}
+
+export async function readOwnerMemoryRecords(
+  adapter: Parameters<typeof readMemoryRecordsInScopes>[0],
+  scopes: readonly MemoryScopeRef[],
+  options: Parameters<typeof readMemoryRecordsInScopes>[2] = {}
+) {
+  const records = await readMemoryRecordsInScopes(adapter, scopes, options);
+  return records.filter((record): record is MemoryRecord => !isErasedRecord(record));
 }
 
 function runtimeEmbedder(options: OwnerRuntimeOptions): NonNullable<KnowledgeOptions['embedder']> {
@@ -409,7 +419,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         readSessionStartInput({
           exchanges: chat.recentExchanges(row.stimulusId),
           records: () =>
-            readMemoryRecordsInScopes(database.adapter, [...access.scopes], {
+            readOwnerMemoryRecords(database.adapter, [...access.scopes], {
               status: 'active',
               excludeAmendments: true,
             }),
@@ -458,7 +468,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           }
           const hits = searchHits(search.data);
           if (hits.length === 0) return [];
-          const active = await readMemoryRecordsInScopes(database.adapter, [...access.scopes], {
+          const active = await readOwnerMemoryRecords(database.adapter, [...access.scopes], {
             kind: [...RULE_KINDS],
             status: 'active',
           });

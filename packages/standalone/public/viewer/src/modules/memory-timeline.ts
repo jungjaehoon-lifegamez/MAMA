@@ -196,7 +196,7 @@ export class MemoryTimelineModule {
       .map(
         (day) =>
           `<section class="mt-day"><h3 class="mt-day-head"><span>${escapeHtml(
-            dayLabel(day.day)
+            day.day === null ? 'Erased records' : dayLabel(day.day)
           )}</span><span class="mt-count">${day.total}</span></h3>${day.groups
             .map((group) => this.renderGroup(group))
             .join('')}</section>`
