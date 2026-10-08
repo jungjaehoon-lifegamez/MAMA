@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import type { JudgmentAccess } from '@jungjaehoon/mama-core';
@@ -37,10 +38,10 @@ afterEach(() => {
 });
 
 async function fixture(backend: 'codex' | 'claude' = 'codex', withRoot = true) {
-  const home = mkdtempSync('/private/tmp/fixture-owner-');
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'fixture-owner-')));
   roots.push(home);
   vi.stubEnv('HOME', home);
-  const root = mkdtempSync('/private/tmp/fixture-members-');
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'fixture-members-')));
   roots.push(root);
   const db = await openCoreDatabase({ path: join(home, 'state.db') });
   const repo = createPrincipalRepository(db.adapter);
@@ -347,7 +348,15 @@ it.each(['codex', 'claude'] as const)(
       );
       expect(f.drivers.get('owner')?.processEnv.CLAUDE_CONFIG_DIR).toBeUndefined();
       expect(f.drivers.get(f.member)?.cwd).not.toBe(f.drivers.get('owner')?.cwd);
-      expect(f.drivers.get(f.member)?.deniedReadPaths).toContain(f.home);
+      const memberDenied = f.drivers.get(f.member)?.deniedReadPaths ?? [];
+      const own = memberPaths(f.root, f.member);
+      for (const path of [
+        f.home,
+        own.claudeConfigDir,
+        own.codexHome,
+        join(own.runtimeRoot, 'runtime'),
+      ])
+        expect(memberDenied).toContain(path);
       expect(f.drivers.get(f.member)?.registryRoot).toBe(
         memberPaths(f.root, f.member).registryRoot
       );

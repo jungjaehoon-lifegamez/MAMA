@@ -60,8 +60,10 @@ export function createMemberSession(
       systemPrompt: MEMBER_SYSTEM_PROMPT,
       prepareAccess: access,
     },
+    // Its own runtime dir and Codex home are denied from its runtimeRoot; its Claude login is here.
     deniedReadPaths: [
       homedir(),
+      paths.claudeConfigDir,
       ...credentialReadPaths(options.runtimeRoot, options.codexHome, options.replayKeyFile),
     ],
     sandboxNetworkProxy: options.sandboxNetworkProxy,

@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, realpathSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import {
   ensureMemberPaths,
   memberPaths,
@@ -12,10 +13,10 @@ afterEach(() => {
   roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true }));
 });
 it('separates backend state and host runtime paths, creates private roots and a git boundary', () => {
-  const home = mkdtempSync('/private/tmp/fixture-owner-');
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'fixture-owner-')));
   roots.push(home);
   vi.stubEnv('HOME', home);
-  const root = mkdtempSync('/private/tmp/fixture-members-');
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'fixture-members-')));
   roots.push(root);
   validateMemberRoot(root, home);
   const first = ensureMemberPaths(root, 'fixture-one');
