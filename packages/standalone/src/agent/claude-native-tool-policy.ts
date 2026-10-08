@@ -64,6 +64,17 @@ export function claudeOwnerDisallowedTools(
   ];
 }
 
+/** Member boundary also covers NotebookEdit through Edit; retain owner rules unchanged. */
+export function claudeMemberDisallowedTools(
+  paths: readonly string[],
+  workspaceDir: string
+): string[] {
+  return [
+    ...claudeOwnerDisallowedTools(paths, workspaceDir),
+    ...paths.flatMap((path) => [`Edit(/${path})`, `Edit(/${path}/**)`]),
+  ];
+}
+
 export interface ClaudeToolRole {
   allowedTools?: readonly string[];
   blockedTools?: readonly string[];

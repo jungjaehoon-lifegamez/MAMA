@@ -629,6 +629,9 @@ describe('member native execution', () => {
         expect(session.hostToolDefinitions().map((t) => t.name)).toEqual(['source.read']);
         expect(driver.webSearch).not.toBe(true);
         expect(driver.processEnv.CLAUDE_CONFIG_DIR).toBe(join(root, 'claude-config'));
+        expect(driver.processEnv.TMPDIR).toBe(join(root, 'workspace', '.tmp'));
+        if (backend === 'codex')
+          expect(driver.shellEnvironment?.TMPDIR).toBe(join(root, 'workspace', '.tmp'));
         if (backend === 'claude') {
           expect(opts.tools).toContain('Bash');
           expect(opts.tools).not.toMatch(/WebFetch|WebSearch/);

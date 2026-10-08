@@ -459,6 +459,12 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       credentialPath: paths.credentialPath,
       runtimeRoot: paths.mamaRoot,
       ...(config.member_root === undefined ? {} : { memberRoot: config.member_root }),
+      ownerDeniedReadPaths: [
+        configPath,
+        config.logging.file,
+        paths.mcpConfigPath,
+        ...(config.jev ? [config.jev.keyFile, config.jev.vocabFile] : []),
+      ],
       timeZone,
       replayKeyFile: config.jev?.keyFile,
       ...(config.jev?.enabled ? { jev: config.jev } : {}),

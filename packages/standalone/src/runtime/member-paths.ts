@@ -1,7 +1,8 @@
-import { chmodSync, existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { sessionCredentialPath } from './session-credential.js';
+import { normalizeReadPaths, physicalReadPath } from './backend-security.js';
 
 function inside(parent: string, child: string): boolean {
   const path = relative(parent, child);
@@ -9,10 +10,21 @@ function inside(parent: string, child: string): boolean {
 }
 
 /** Resolve existing ancestors too: a symlink must not move a member root into HOME. */
-function physical(path: string): string {
-  if (existsSync(path)) return realpathSync(path);
-  const parent = dirname(path);
-  return join(physical(parent), relative(parent, path));
+const physical = physicalReadPath;
+
+/** Include inactive registrations and unregistered debris; enumerate again before each turn. */
+export function otherMemberReadPaths(
+  root: string,
+  principalId: string,
+  registered: readonly string[]
+): string[] {
+  const own = memberPaths(root, principalId).runtimeRoot;
+  return normalizeReadPaths(
+    [
+      ...registered.map((id) => memberPaths(root, id).runtimeRoot),
+      ...readdirSync(root).map((entry) => join(root, entry)),
+    ].filter((path) => path !== own)
+  );
 }
 
 export function validateMemberRoot(

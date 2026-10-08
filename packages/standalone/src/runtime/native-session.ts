@@ -1,6 +1,6 @@
 import type { JudgmentAccess } from '@jungjaehoon/mama-core';
 import { memberSystemLayers } from './member-system-prompt.js';
-import { backendEnvironment, credentialReadPaths } from './backend-security.js';
+import { backendEnvironment, credentialReadPaths, normalizeReadPaths } from './backend-security.js';
 import { untrustedToolData } from '../utils/untrusted-content.js';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -38,6 +38,7 @@ import type {
 import {
   claudeOwnerAllowedTools,
   claudeOwnerDisallowedTools,
+  claudeMemberDisallowedTools,
   projectClaudeNativeTools,
   type ClaudeToolRole,
 } from '../agent/claude-native-tool-policy.js';
@@ -201,6 +202,7 @@ function modelToolResult(
 
 function driverOptions(
   options: NativeSessionOptions,
+  deniedReadPaths: string[],
   bridge: NativeDriverOptions['createSubagentBridge']
 ): NativeDriverOptions {
   const path = process.env.PATH;
@@ -211,15 +213,12 @@ function driverOptions(
     backend: options.backend,
     processEnv: {
       ...backendEnvironment(),
+      ...(options.principal === undefined ? {} : { TMPDIR: join(options.workspaceDir, '.tmp') }),
       ...(options.claudeConfigDir === undefined
         ? {}
         : { CLAUDE_CONFIG_DIR: options.claudeConfigDir }),
     },
-    deniedReadPaths: credentialReadPaths(
-      options.runtimeRoot,
-      options.codexHome,
-      options.replayKeyFile
-    ).concat(options.deniedReadPaths ?? []),
+    deniedReadPaths,
     model: options.model,
     workspaceDir: options.workspaceDir,
     cwd: options.workspaceDir,
@@ -233,7 +232,12 @@ function driverOptions(
           webSearch: options.principal === undefined,
           // macOS login shells run path_helper and put the system Python before Homebrew.
           // Keep the daemon's toolchain PATH and the driver's isolated HOME; no user profiles.
-          shellEnvironment: { PATH: path! },
+          shellEnvironment: {
+            PATH: path!,
+            ...(options.principal === undefined
+              ? {}
+              : { TMPDIR: join(options.workspaceDir, '.tmp') }),
+          },
           allowLoginShell: false,
         }
       : { permissionMode: 'dontAsk' as const }),
@@ -296,10 +300,9 @@ function createDriver(
     allowedTools: claudeOwnerAllowedTools(options.workspaceDir).filter(
       (tool) => options.principal === undefined || !['WebFetch', 'WebSearch'].includes(tool)
     ),
-    disallowedTools: claudeOwnerDisallowedTools(
-      nativeOptions.deniedReadPaths,
-      options.workspaceDir
-    ),
+    disallowedTools: (options.principal === undefined
+      ? claudeOwnerDisallowedTools
+      : claudeMemberDisallowedTools)(nativeOptions.deniedReadPaths, options.workspaceDir),
     processEnv: nativeOptions.processEnv,
     env: { CLAUDE_CODE_TMPDIR: join(options.workspaceDir, '.tmp') },
     pluginDir: nativeOptions.pluginDir,
@@ -335,14 +338,17 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
     throw new Error('The owner Codex session requires the workspace-write sandbox');
   }
   mkdirSync(options.workspaceDir, { recursive: true });
+  if (options.principal !== undefined)
+    mkdirSync(join(options.workspaceDir, '.tmp'), { recursive: true, mode: 0o700 });
+  const readPaths = credentialReadPaths(
+    options.runtimeRoot,
+    options.codexHome,
+    options.replayKeyFile
+  ).concat(options.deniedReadPaths ?? []);
+  const deniedReadPaths =
+    options.principal === undefined ? readPaths : normalizeReadPaths(readPaths);
   if (options.backend === 'claude')
-    ensureClaudeCallerHook(
-      options.workspaceDir,
-      credentialReadPaths(options.runtimeRoot, options.codexHome, options.replayKeyFile).concat(
-        options.deniedReadPaths ?? []
-      ),
-      options.sandboxNetworkProxy
-    );
+    ensureClaudeCallerHook(options.workspaceDir, deniedReadPaths, options.sandboxNetworkProxy);
   const sessionKey = options.principal?.sessionKey ?? OWNER_RUNTIME_SESSION_KEY;
   const prepareAccess =
     options.principal?.prepareAccess ?? (() => options.actionSurface.ownerAccess);
@@ -380,7 +386,7 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
       allowedActions: configuredMcpOptions.principal?.prepareAccess().actions,
     });
   }
-  const nativeOptions = driverOptions(configuredMcpOptions, bridge);
+  const nativeOptions = driverOptions(configuredMcpOptions, deniedReadPaths, bridge);
   const agent =
     configuredMcpOptions.agent ??
     configuredMcpOptions.createAgent?.(nativeOptions) ??

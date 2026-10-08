@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { homedir } from 'node:os';
 import {
   readMemoryRecordsInScopes,
   isErasedRecord,
@@ -12,9 +11,9 @@ import type { CoreDatabase } from './core-db.js';
 import type { ActionSurface } from './action-surface.js';
 import type { OwnerRuntimeOptions } from './owner-runtime.js';
 import { runtimeModelRun, guidanceInSearchOrder } from './owner-runtime.js';
-import { createNativeSession } from './native-session.js';
-import { credentialReadPaths } from './backend-security.js';
-import { ensureMemberPaths } from './member-paths.js';
+import { createNativeSession, type NativeSession } from './native-session.js';
+import { normalizeReadPaths } from './backend-security.js';
+import { ensureMemberPaths, otherMemberReadPaths } from './member-paths.js';
 import { MEMBER_SYSTEM_PROMPT } from './member-system-prompt.js';
 import { MEMBER_VOICE } from './turn-orders.js';
 import { resolvePrincipalAccess } from './principal-access.js';
@@ -27,6 +26,8 @@ export function createMemberSession(
   root: string,
   ports: {
     options: OwnerRuntimeOptions;
+    ownerDeniedPaths: readonly string[];
+    registeredMemberIds: () => string[];
     database: CoreDatabase;
     rawStore: RawStore;
     surface: ActionSurface;
@@ -47,35 +48,64 @@ export function createMemberSession(
   const paths = ensureMemberPaths(root, principalId);
   const personalScopes = [{ kind: 'user' as const, id: principalId }];
   const chat = new ChatSources(rawStore, database.adapter, principalId, agentId);
-  const native = (options.createSession ?? createNativeSession)({
-    backend: options.backend,
-    model: options.model,
-    ...paths,
-    socketPath: options.socketPath,
-    actionSurface: surface,
-    principal: {
-      principalId,
-      agentId,
-      sessionKey,
-      systemPrompt: MEMBER_SYSTEM_PROMPT,
-      prepareAccess: access,
-    },
-    // Its own runtime dir and Codex home are denied from its runtimeRoot; its Claude login is here.
-    deniedReadPaths: [
-      homedir(),
+  const denyPaths = () =>
+    normalizeReadPaths([
+      ...ports.ownerDeniedPaths,
       paths.claudeConfigDir,
-      ...credentialReadPaths(options.runtimeRoot, options.codexHome, options.replayKeyFile),
-    ],
-    sandboxNetworkProxy: options.sandboxNetworkProxy,
-    mcpServerPath: options.mcpServerPath,
-    effort: options.effort,
-    timeout: options.timeout,
-    maxTurnMs: options.maxTurnMs,
-    maxTurns: options.maxTurns,
-    runTokenBudget: options.runTokenBudget,
-    codexSandbox: options.codexSandbox,
-    modelRun: runtimeModelRun({ ...options, agentId }, database.adapter),
-  });
+      ...otherMemberReadPaths(root, principalId, ports.registeredMemberIds()),
+    ]).sort();
+  let deniedReadPaths = denyPaths();
+  const create = () =>
+    (options.createSession ?? createNativeSession)({
+      backend: options.backend,
+      model: options.model,
+      ...paths,
+      socketPath: options.socketPath,
+      actionSurface: surface,
+      principal: {
+        principalId,
+        agentId,
+        sessionKey,
+        systemPrompt: MEMBER_SYSTEM_PROMPT,
+        prepareAccess: access,
+      },
+      // Native session also denies this member's runtime and Codex credentials.
+      deniedReadPaths,
+      sandboxNetworkProxy: options.sandboxNetworkProxy,
+      mcpServerPath: options.mcpServerPath,
+      effort: options.effort,
+      timeout: options.timeout,
+      maxTurnMs: options.maxTurnMs,
+      maxTurns: options.maxTurns,
+      runTokenBudget: options.runTokenBudget,
+      codexSandbox: options.codexSandbox,
+      modelRun: runtimeModelRun({ ...options, agentId }, database.adapter),
+    });
+  let current = create();
+  const native: NativeSession = {
+    backend: current.backend,
+    sessionKey,
+    get supportsNativeSubagents() {
+      return current.supportsNativeSubagents;
+    },
+    hostToolDefinitions: () => current.hostToolDefinitions(),
+    callAction: (call, caller) => current.callAction(call, caller),
+    resetSession: (key) => current.resetSession(key),
+    steer: (content, target, key) => current.steer(content, target, key),
+    stop: () => current.stop(),
+    runTurn: async (content, request) => {
+      const next = denyPaths();
+      if (JSON.stringify(next) !== JSON.stringify(deniedReadPaths)) {
+        // Enrollment runs in the owner's turn on the shared serial chain. Here that turn has
+        // finished and no other principal is executing. Never resume a thread with stale policy.
+        await current.resetSession(sessionKey);
+        await current.stop();
+        deniedReadPaths = next;
+        current = create();
+      }
+      return current.runTurn(content, request);
+    },
+  };
   const delivery = createStimulusDelivery({
     backend: options.backend,
     timeZone: options.timeZone,

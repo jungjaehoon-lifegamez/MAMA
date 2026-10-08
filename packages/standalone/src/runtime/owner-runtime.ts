@@ -1,6 +1,7 @@
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import { createPrincipalSessions } from './principal-sessions.js';
 import { createMemberSession } from './member-session.js';
+import { ownerDataReadPaths } from './backend-security.js';
 import { validateMemberRoot } from './member-paths.js';
 import { resolvePrincipalAccess } from './principal-access.js';
 import {
@@ -79,6 +80,8 @@ export interface OwnerRuntimeOptions {
   rawPath: string;
   embedder?: NonNullable<KnowledgeOptions['embedder']>;
   memberRoot?: string;
+  /** Additional configured owner locations (config, logging, custom MCP), denied only to members. */
+  ownerDeniedReadPaths?: readonly string[];
   createSession?: typeof createNativeSession;
   onMemberResult?: StimulusDeliveryOptions['onOwnerResult'];
   nativeSession?: NativeSessionHandle & Partial<Pick<NativeSession, 'callAction'>>;
@@ -286,6 +289,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       options.memberRoot === undefined
         ? undefined
         : validateMemberRoot(options.memberRoot, undefined, options.runtimeRoot);
+    const ownerDeniedPaths = memberRoot === undefined ? [] : ownerDataReadPaths(options);
     rawStore = new RawStore(options.rawPath);
     const chat = new ChatSources(
       rawStore,
@@ -537,6 +541,11 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         throw new Error(`serveMember requires an active member: ${principalId}`);
       const member = createMemberSession(principalId, memberRoot, {
         options,
+        ownerDeniedPaths,
+        registeredMemberIds: () =>
+          createPrincipalRepository(database.adapter)
+            .listMembers()
+            .map((row) => row.principalId),
         database,
         rawStore: sourceStore,
         surface,
