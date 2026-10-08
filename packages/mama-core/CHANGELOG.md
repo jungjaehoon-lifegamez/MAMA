@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.1.0] - 2026-10-08
+
+### Added
+
+- `PrincipalRepository.listGrantedPartitions()`: every project partition a member memory grant
+  ever named (#451).
+- A commitment's revision records are readable by whoever can read its current head, in graph
+  seeds and nodes and chain summaries (`isCommitmentRevisionReadable`, #451).
+
+### Changed
+
+- A write that states no scopes binds `defaultScopes` when the caller has them, otherwise all of
+  `scopes`: judgments, memory saves, source ingest, `graph.node.put` and identity-correction splits
+  (#451). Callers without `defaultScopes` are unchanged.
+
 ## [8.0.0] - 2026-10-08
 
 ### Added

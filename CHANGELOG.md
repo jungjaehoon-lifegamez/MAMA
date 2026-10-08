@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.70.0] / mama-core [8.1.0] - 2026-10-08
+
+Sharing for team members, with nothing admitted yet: the owner can bind common work to a member
+partition, and a member can share a personal record with a partition it is granted. With no
+partition granted, the owner's reads and writes are unchanged. The package changelogs list every
+change.
+
+### Added
+
+- The owner binds a work item to a member partition by revising it with explicit scopes; later
+  revisions keep the binding, and a granted member reads the item with its whole history.
+- `memory.share` (member role): in its own message turn, a member shares the current revision of a
+  personal record, with every earlier revision and what each replaced, with a granted partition.
+
+### Changed
+
+- Writes that state no scopes bind the caller's default scopes rather than all of its write
+  scopes.
+
 ## mama-os [0.69.0] / mama-core [8.0.0] - 2026-10-08
 
 Groundwork for team members, with nothing admitted yet: a member principal resolves to its own
