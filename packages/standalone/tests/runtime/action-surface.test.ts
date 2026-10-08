@@ -117,7 +117,7 @@ describe('W1 action surface', () => {
         .list()
         .map((contract) => contract.name)
         .sort()
-    ).toEqual(expected);
+    ).toEqual([...expected, 'memory.share'].sort());
     expect(surface.ownerAccess.actions.slice().sort()).toEqual(expected);
     // Codex calls actions from its own exec; code_act is for Claude.
     expect(

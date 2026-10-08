@@ -32,6 +32,7 @@ const ROLE = [
   'schedule.upcoming',
   'judge',
   'memory.save',
+  'memory.share',
   'memory.retire',
   'memory.checkpoint.list',
   'memory.checkpoint.save',

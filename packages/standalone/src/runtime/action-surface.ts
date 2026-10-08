@@ -51,6 +51,7 @@ import type { StoredSourceReader } from '../api/stored-source-reader.js';
 import { wikiActionRegistrations, type WikiPorts } from '../api/wiki-actions.js';
 import type { BoardSlots } from '../operator/board-read-views.js';
 import { LOADABLE_CONNECTORS as OWNER_CONNECTORS } from '../connectors/index.js';
+import { memberShareActionRegistrations } from '../api/member-share-actions.js';
 
 const OWNER_ACTIONS = [
   'code_act',
@@ -96,7 +97,7 @@ const OWNER_ACTIONS = [
   'deliver.drive.file',
 ] as const;
 
-/** The first member role. Sharing joins in P2 and file delivery in P5, once delivery honours
+/** The first member role. File delivery joins in P5, once delivery honours
  * the caller's destination (it still sends to the owner chat). Exact catalog names only. */
 export const MEMBER_ACTIONS = [
   'graph.query',
@@ -115,6 +116,7 @@ export const MEMBER_ACTIONS = [
   'schedule.upcoming',
   'judge',
   'memory.save',
+  'memory.share',
   'memory.retire',
   'memory.checkpoint.list',
   'memory.checkpoint.save',
@@ -186,6 +188,10 @@ export function ownerMemoryScopes(
 }
 
 export function createActionSurface(options: ActionSurfaceOptions): ActionSurface {
+  const defaultScopes = ownerMemoryScopes(
+    options.ownerPrincipalId,
+    options.connectors ?? OWNER_CONNECTORS
+  );
   const core = coreActionRegistrations(options.knowledge, options.adapter, {
     // The owner's checkpoints keep today's unscoped behavior. A member's hand-off is personal,
     // irrespective of its shared read grants.
@@ -264,6 +270,11 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
   };
   const registrations = [
     ...core,
+    ...memberShareActionRegistrations({
+      adapter: options.adapter,
+      ownerPrincipalId: options.ownerPrincipalId,
+      ownerDefaultScopes: defaultScopes,
+    }),
     ...sourceActionRegistrations({
       stored: options.storedSourceReader,
       timeZone: options.timeZone,
@@ -367,10 +378,6 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
   });
   // Built on the first scopes read, so constructing a surface touches no table.
   let principals: ReturnType<typeof createPrincipalRepository> | undefined;
-  const defaultScopes = ownerMemoryScopes(
-    options.ownerPrincipalId,
-    options.connectors ?? OWNER_CONNECTORS
-  );
   const ownerAccess: JudgmentAccess = {
     principalId: options.ownerPrincipalId,
     agentId: options.agentId,
@@ -422,7 +429,10 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     hostToolDefinitions: () =>
       catalog
         .list()
-        .filter((contract) => contract.name !== CODE_ACT_CONTRACT.name)
+        .filter(
+          (contract) =>
+            contract.name !== CODE_ACT_CONTRACT.name && ownerAccess.actions.includes(contract.name)
+        )
         .map((contract) => ({
           name: contract.name,
           description: actionCatalogLine(contract),
