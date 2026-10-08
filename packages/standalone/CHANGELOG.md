@@ -10,7 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - The owner's write scopes include every partition a member grant ever named, re-read on each use;
-  `defaultScopes` stays the owner's own scopes, so unscoped owner writes are unchanged (#451).
+  `defaultScopes` is `ownerMemoryScopes`, so unscoped owner writes are unchanged for the daemon,
+  whose extra `scopes` are that same set. A caller passing other extra `scopes` no longer binds
+  them to unscoped writes (#451).
 - `memory.share` in the member role (#452).
 
 ### Changed

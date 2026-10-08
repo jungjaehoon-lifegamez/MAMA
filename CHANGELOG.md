@@ -6,7 +6,8 @@ All notable changes to this project will be documented in this file.
 
 Sharing for team members, with nothing admitted yet: the owner can bind common work to a member
 partition, and a member can share a personal record with a partition it is granted. With no
-partition granted, the owner's reads and writes are unchanged. The package changelogs list every
+partition granted, the owner's reads and writes are unchanged (the daemon's extra owner scopes are
+its default scopes). The package changelogs list every
 change.
 
 ### Added
@@ -18,8 +19,8 @@ change.
 
 ### Changed
 
-- Writes that state no scopes bind the caller's default scopes rather than all of its write
-  scopes.
+- Writes that state no scopes bind the caller's `defaultScopes` when it has them; otherwise
+  they bind all of its `scopes`, as before.
 
 ## mama-os [0.69.0] / mama-core [8.0.0] - 2026-10-08
 
