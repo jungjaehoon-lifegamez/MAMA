@@ -95,6 +95,32 @@ const OWNER_ACTIONS = [
   'deliver.drive.file',
 ] as const;
 
+/** The first member role. Sharing joins in P2 and file delivery in P5, once delivery honours
+ * the caller's destination (it still sends to the owner chat). Exact catalog names only. */
+export const MEMBER_ACTIONS = [
+  'graph.query',
+  'work.list',
+  'work.show',
+  'memory.search',
+  'memory.read:provenance',
+  'memory.read:record',
+  'memory.read:timeline',
+  'source.search',
+  'source.read',
+  'source.recent',
+  'source.attachment.list',
+  'source.attachment.download',
+  'trello.read',
+  'schedule.upcoming',
+  'judge',
+  'memory.save',
+  'memory.retire',
+  'memory.checkpoint.list',
+  'memory.checkpoint.save',
+  'help',
+  'code_act',
+] as const;
+
 export interface HostToolDefinition {
   name: string;
   description: string;
@@ -160,6 +186,12 @@ export function ownerMemoryScopes(
 
 export function createActionSurface(options: ActionSurfaceOptions): ActionSurface {
   const core = coreActionRegistrations(options.knowledge, options.adapter, {
+    // The owner's checkpoints keep today's unscoped behavior. A member's hand-off is personal,
+    // irrespective of its shared read grants.
+    checkpointScopes: (access) =>
+      access.principalId === options.ownerPrincipalId
+        ? undefined
+        : [{ kind: 'user', id: access.principalId }],
     ...(options.storedSourceReader === undefined || options.storedSourceReader === null
       ? {}
       : {
@@ -294,13 +326,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     ...helpActionRegistrations({
       topics: () => options.helpTopics ?? {},
       contracts: () =>
-        catalog
-          .list()
-          .filter(
-            (contract) =>
-              contract.name !== CODE_ACT_CONTRACT.name &&
-              ownerAccess.actions!.includes(contract.name)
-          ),
+        catalog.list().filter((contract) => contract.name !== CODE_ACT_CONTRACT.name),
     }),
     // Claude calls every action from inside code_act, as Kagemusha's code_act; the inner calls go
     // through the dispatcher below, so each is granted and traced as the caller's.

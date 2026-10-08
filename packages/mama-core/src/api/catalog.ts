@@ -768,6 +768,8 @@ export function coreActionRegistrations(
   knowledge: Knowledge,
   adapter: DatabaseInstance,
   deps?: {
+    /** Undefined retains the consumer's legacy checkpoints; explicit scopes isolate hand-offs. */
+    checkpointScopes?: (access: JudgmentAccess) => readonly MemoryScopeRef[] | undefined;
     /** The consumer reads an externally stored observation's exact body under this caller. */
     readObservationBody?: (
       observationId: string,
@@ -1164,7 +1166,8 @@ export function coreActionRegistrations(
           body.next_steps ?? '',
           // The transcript is the host's to state; a caller that has none saves a
           // checkpoint without one rather than inventing it.
-          [...(context.session?.recentConversation ?? [])]
+          [...(context.session?.recentConversation ?? [])],
+          deps?.checkpointScopes?.(context.access)
         );
         return { id: String(id) };
       },
@@ -1269,10 +1272,14 @@ export function coreActionRegistrations(
         },
         examples: [{ title: 'What was handed off recently', input: { limit: 10 } }],
       },
-      exec: async (input) => {
+      exec: async (input, context) => {
         const raw = Number((input as { limit?: unknown }).limit);
         const limit = Number.isFinite(raw) ? Math.min(Math.max(Math.floor(raw), 1), 50) : 20;
-        const checkpoints = await listCheckpointsInAdapter(adapter, limit);
+        const checkpoints = await listCheckpointsInAdapter(
+          adapter,
+          limit,
+          deps?.checkpointScopes?.(context.access)
+        );
         return { checkpoints, count: checkpoints.length };
       },
     },

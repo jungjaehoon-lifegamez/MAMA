@@ -3473,7 +3473,8 @@ export async function saveCheckpointInAdapter(
   openFiles: string[] = [],
   nextSteps: string = '',
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  recentConversation: any[] = []
+  recentConversation: any[] = [],
+  scopes?: readonly MemoryScopeRef[]
 ): Promise<number | bigint> {
   if (!summary) {
     throw new Error('Summary is required for checkpoint');
@@ -3493,15 +3494,27 @@ export async function saveCheckpointInAdapter(
       VALUES (?, ?, ?, ?, ?, 'active')
     `);
 
-    const result = stmt.run(
-      Date.now(),
-      summary,
-      JSON.stringify(openFiles),
-      nextSteps,
-      JSON.stringify(recentConversation || [])
-    );
-
-    return result.lastInsertRowid;
+    const write = (): number | bigint => {
+      const now = Date.now();
+      const result = stmt.run(
+        now,
+        summary,
+        JSON.stringify(openFiles),
+        nextSteps,
+        JSON.stringify(recentConversation || [])
+      );
+      for (const [index, scope] of (scopes ?? []).entries()) {
+        const scopeId = ensureMemoryScope(adapter, scope.kind, scope.id);
+        adapter
+          .prepare(
+            `INSERT INTO checkpoint_scope_bindings
+          (checkpoint_id, scope_id, is_primary, created_at) VALUES (?, ?, ?, ?)`
+          )
+          .run(result.lastInsertRowid, scopeId, index === 0 ? 1 : 0, now);
+      }
+      return result.lastInsertRowid;
+    };
+    return scopes === undefined ? write() : adapter.transaction(write);
   } catch (error: unknown) {
     throw new Error(
       `Failed to save checkpoint: ${error instanceof Error ? error.message : String(error)}`
@@ -3562,16 +3575,28 @@ export async function loadCheckpointInAdapter(
 
 export async function listCheckpointsInAdapter(
   adapter: DatabaseAdapter,
-  limit: number = 10
+  limit: number = 10,
+  scopes?: readonly MemoryScopeRef[]
 ): Promise<CheckpointRow[]> {
   try {
     const stmt = adapter.prepare(`
       SELECT * FROM checkpoints
+      ${
+        scopes === undefined
+          ? ''
+          : `WHERE EXISTS (
+        SELECT 1 FROM checkpoint_scope_bindings b JOIN memory_scopes s ON s.id = b.scope_id
+        WHERE b.checkpoint_id = checkpoints.id AND (${scopes.length === 0 ? '0' : scopes.map(() => '(s.kind = ? AND s.external_id = ?)').join(' OR ')})
+      )`
+      }
       ORDER BY timestamp DESC
       LIMIT ?
     `);
 
-    const checkpoints = stmt.all(limit) as CheckpointRow[];
+    const checkpoints = stmt.all(
+      ...(scopes ?? []).flatMap((scope) => [scope.kind, scope.id]),
+      limit
+    ) as CheckpointRow[];
 
     return checkpoints.map((c: CheckpointRow) => {
       try {

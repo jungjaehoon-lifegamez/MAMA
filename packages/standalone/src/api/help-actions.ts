@@ -180,9 +180,12 @@ export function helpActionRegistrations(ports: HelpActionPorts): ActionRegistrat
           { title: 'Read a procedure', input: { topic: 'full-report' } },
         ],
       },
-      exec: async (input) => {
+      exec: async (input, context) => {
         const { actions: requested, topic } = input as { actions?: unknown; topic?: unknown };
-        const contracts = ports.contracts();
+        // Only what the caller may call: an action outside its grant is not listed or explained.
+        const contracts = ports
+          .contracts()
+          .filter((contract) => context.access.actions.includes(contract.name));
         const topics = ports.topics?.() ?? {};
         const parts: string[] = [];
         if (topic !== undefined) {

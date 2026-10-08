@@ -60,7 +60,15 @@ const help = helpActionRegistrations({
   contracts: () => contracts,
   topics: () => ({ 'full-report': 'Full report procedure text.', record: 'Recording text.' }),
 })[0]!;
-const run = async (input: unknown) => (await help.exec(input as never, {} as never)) as string;
+const run = async (input: unknown) =>
+  (await help.exec(input as never, {
+    access: {
+      principalId: 'principal-test',
+      agentId: 'agent-test',
+      scopes: [],
+      actions: contracts.map((contract) => contract.name),
+    },
+  })) as string;
 
 describe('action catalog line', () => {
   it('is an index entry: the name and first sentence, the arguments left to help', () => {
