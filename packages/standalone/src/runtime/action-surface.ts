@@ -8,6 +8,7 @@ import {
   coreActionRegistrations,
   createCatalog,
   createDispatcher,
+  createPrincipalRepository,
   type ActionContext,
   type ActionContract,
   type ActionDispatcher,
@@ -364,17 +365,30 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       return trace.trace_id;
     },
   });
+  // Built on the first scopes read, so constructing a surface touches no table.
+  let principals: ReturnType<typeof createPrincipalRepository> | undefined;
+  const defaultScopes = ownerMemoryScopes(
+    options.ownerPrincipalId,
+    options.connectors ?? OWNER_CONNECTORS
+  );
   const ownerAccess: JudgmentAccess = {
     principalId: options.ownerPrincipalId,
     agentId: options.agentId,
-    scopes: [
-      ...ownerMemoryScopes(options.ownerPrincipalId, options.connectors ?? OWNER_CONNECTORS),
-      ...(options.scopes ?? []),
-    ].filter(
-      (scope, index, all) =>
-        all.findIndex((candidate) => candidate.kind === scope.kind && candidate.id === scope.id) ===
-        index
-    ),
+    // Keep the access object shared by runtime, native turns and viewer live after boot.
+    // Every read of scopes resolves grants again; failed DB reads propagate to the caller.
+    get scopes() {
+      return [
+        ...defaultScopes,
+        ...(options.scopes ?? []),
+        ...(principals ??= createPrincipalRepository(options.adapter)).listActivePartitions(),
+      ].filter(
+        (scope, index, all) =>
+          all.findIndex(
+            (candidate) => candidate.kind === scope.kind && candidate.id === scope.id
+          ) === index
+      );
+    },
+    defaultScopes,
     connectors: [...(options.connectors ?? OWNER_CONNECTORS), 'chat'],
     // The owner reads every channel of its own connectors; imported originals carry no
     // memory-scope tag, so without this their observations are invisible in the graph.

@@ -85,6 +85,41 @@ describe('Story M1: memory.save through the unified action path', () => {
     return saved;
   };
 
+  it('binds an omitted memory.save to declared defaults rather than all write scopes', async () => {
+    const access = {
+      ...ACCESS,
+      scopes: [...ACCESS.scopes, { kind: 'project', id: 'partition-fixture' }],
+      defaultScopes: [{ kind: 'user', id: ACCESS.principalId }],
+    };
+    access.scopes.push(...access.defaultScopes);
+    const saved = await dispatch(
+      {
+        action: 'memory.save',
+        operationId: 'fixture-default-save',
+        input: {
+          topic: 'fixture-default',
+          kind: 'fact',
+          summary: 'Fixture personal fact',
+          details: 'Fixture details',
+          source: { package: 'fixture-consumer', source_type: 'fixture' },
+        },
+      },
+      { access }
+    );
+    expect(saved.status).toBe('completed');
+    if (saved.status !== 'completed') throw new Error('Save failed');
+    const id = (saved.data as { id: string }).id;
+    expect(
+      getAdapter()
+        .prepare(
+          `
+      SELECT s.kind, s.external_id AS id FROM memory_scope_bindings b
+      JOIN memory_scopes s ON s.id = b.scope_id WHERE b.memory_id = ?`
+        )
+        .all(id)
+    ).toEqual([{ kind: 'user', id: ACCESS.principalId }]);
+  });
+
   it('accepts a package name the core has never heard of', async () => {
     // The completion criterion for consumer neutrality, in one call. `package` was a
     // union of the four packages that existed when it was written, so a second product

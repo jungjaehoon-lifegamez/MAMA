@@ -906,11 +906,11 @@ export async function saveJudgmentRecord(
   commandId: string,
   session?: ActionSessionFacts
 ): Promise<SaveMemoryResult> {
-  // An omitted scope request writes under the full admitted scopes — the same
-  // default the gateway's trusted path applied via the context packet.
+  // A declared default narrows omitted writes without narrowing explicit write authority.
+  // Without one, retain the full admitted scopes used by existing consumers.
   const clean = sanitizePublicSaveMemoryInput({
     ...input,
-    scopes: input.scopes ?? access.scopes,
+    scopes: input.scopes ?? access.defaultScopes ?? access.scopes,
   });
   const provenance = normalizeMemoryWriteProvenance({
     actor: session?.actor ?? 'main_agent',

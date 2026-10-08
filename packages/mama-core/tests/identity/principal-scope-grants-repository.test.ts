@@ -91,6 +91,39 @@ describe('Phase 2b Task 1 / AC #1-3: principal scope grants over migration 065',
     };
   }
 
+  it('aggregates distinct project partitions from active member memory grants only', () => {
+    const repository = createPrincipalRepository(adapter);
+    const { ownerPrincipalId, memberPrincipalId } = createOwnerAndMember();
+    const other = repository.registerMember({
+      connector: 'fixture',
+      namespace: 'fixture',
+      externalId: 'other-fixture',
+      now: 3,
+    });
+    const grant = (targetPrincipalId: string, scope: PrincipalScopeGrantRef) =>
+      repository.grantScope({ targetPrincipalId, ownerPrincipalId, scope, now: 4 });
+    grant(memberPrincipalId, { kind: 'memory', scopeKind: 'project', scopeId: 'partition-b' });
+    grant(other, { kind: 'memory', scopeKind: 'project', scopeId: 'partition-b' });
+    grant(other, { kind: 'memory', scopeKind: 'project', scopeId: 'partition-a' });
+    grant(memberPrincipalId, { kind: 'memory', scopeKind: 'channel', scopeId: 'channel-fixture' });
+    grant(memberPrincipalId, { kind: 'memory', scopeKind: 'global', scopeId: 'global-fixture' });
+    grant(memberPrincipalId, { kind: 'source', connector: 'fixture', channelId: 'source-fixture' });
+    expect(repository.listActivePartitions()).toEqual([
+      { kind: 'project', id: 'partition-a' },
+      { kind: 'project', id: 'partition-b' },
+    ]);
+    repository.revokeScope({
+      targetPrincipalId: other,
+      ownerPrincipalId,
+      now: 5,
+      scope: { kind: 'memory', scopeKind: 'project', scopeId: 'partition-a' },
+    });
+    repository.suspend(other, 6);
+    expect(repository.listActivePartitions()).toEqual([{ kind: 'project', id: 'partition-b' }]);
+    repository.offboard(memberPrincipalId, 7);
+    expect(repository.listActivePartitions()).toEqual([]);
+  });
+
   it('grants one canonical source idempotently through an active owner', () => {
     const repository = createPrincipalRepository(adapter);
     const { ownerPrincipalId, memberPrincipalId } = createOwnerAndMember();

@@ -4,7 +4,7 @@ import {
   isObservationVersionVisible,
   isObservationVisibilityRowVisible,
 } from '../knowledge/observations.js';
-import { getTwinEdge, listTwinEdgesForRefs, mapTwinEdgeRow } from './judgments.js';
+import { getTwinEdge, listTwinEdgesForRefs, mapTwinEdgeRow, scopeIdFor } from './judgments.js';
 import type {
   ListVisibleTwinEdgesOptions,
   TwinEdgeRecord,
@@ -114,6 +114,34 @@ function tableColumns(adapter: TwinRefVisibilityAdapter, table: string): Set<str
   return columns;
 }
 
+/** History consent follows a commitment's current head, never the records its revisions link to. */
+export function isCommitmentRevisionReadable(
+  adapter: TwinRefVisibilityAdapter,
+  recordId: string,
+  admittedScopeIds: readonly string[]
+): boolean {
+  return (
+    adapter
+      .prepare(
+        `SELECT 1 FROM commitment_assignments assignment
+     JOIN commitments commitment ON commitment.commitment_id = assignment.commitment_id
+     JOIN decisions head ON head.id = commitment.head_record_id
+     WHERE assignment.record_id = ? AND (
+       NOT EXISTS (SELECT 1 FROM memory_scope_bindings binding WHERE binding.memory_id = head.id)
+       ${
+         admittedScopeIds.length === 0
+           ? ''
+           : `OR EXISTS (
+         SELECT 1 FROM memory_scope_bindings binding WHERE binding.memory_id = head.id
+           AND binding.scope_id IN (${admittedScopeIds.map(() => '?').join(', ')})
+       )`
+       }
+     ) LIMIT 1`
+      )
+      .get(recordId, ...admittedScopeIds) !== undefined
+  );
+}
+
 function isMemoryVisible(
   adapter: TwinRefVisibilityAdapter,
   id: string,
@@ -176,6 +204,8 @@ function isMemoryVisible(
   if (bindingRow?.ok) {
     return true;
   }
+
+  if (isCommitmentRevisionReadable(adapter, id, scopes.map(scopeIdFor))) return true;
 
   if (columns.has('memory_scope_kind') && columns.has('memory_scope_id')) {
     const row = adapter
@@ -487,6 +517,7 @@ export function visibleTwinRefKeys(
       const scopeVisible =
         !hasScopes(visibility.scopes) ||
         admittedBindings.has(id) ||
+        isCommitmentRevisionReadable(adapter, id, visibility.scopes.map(scopeIdFor)) ||
         (columns.has('memory_scope_kind') &&
           columns.has('memory_scope_id') &&
           visibility.scopes.some(

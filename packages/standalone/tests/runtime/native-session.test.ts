@@ -19,7 +19,7 @@ function surface() {
     runtimeRoot: '/tmp/mama-test-runtime',
     configPath: '/tmp/mama-test-config.yaml',
     isOwnerMessageTurn: () => true,
-    adapter: {} as DatabaseInstance,
+    adapter: { prepare: () => ({ all: () => [] }) } as unknown as DatabaseInstance,
     knowledge: {} as Knowledge,
     ownerPrincipalId: 'owner',
     agentId: 'agent',

@@ -25,6 +25,7 @@ export function correctIdentity(
     principalId: access.principalId,
     agentId: access.agentId,
     scopes: access.scopes,
+    defaultScopes: access.defaultScopes,
     connectors: access.connectors ?? [],
     channels: access.channels,
   });

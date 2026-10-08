@@ -116,6 +116,73 @@ describe('work scopes and read grants', () => {
     expect(knowledge.readWork({ rowId: outsideRow }, reader)).toEqual(missing);
   });
 
+  it('admits only the revision records of a visible head, including all chain summaries', async () => {
+    const item = await create('private-origin', [hidden]);
+    const secret = await create('private-linked-item', [hidden]);
+    await knowledge.reviseWork(
+      {
+        commandId: 'partition-binding',
+        commitmentId: item.commitmentId,
+        summary: 'shared update',
+        set: { status: 'doing' },
+        scopes: [shared],
+        links: [
+          { relation: 'builds_on', target: item.recordRef },
+          { relation: 'mentions', target: secret.recordRef },
+        ],
+      },
+      owner
+    );
+    const page = knowledge.readWork({ commitmentId: item.commitmentId, history: 'chain' }, reader);
+    expect(page.items[0]?.chain?.map((entry) => entry.summary)).toEqual([
+      'private-origin',
+      'shared update',
+    ]);
+    const graph = knowledge.queryGraph(
+      {
+        view: 'neighbors',
+        seeds: [item.recordRef],
+        history: 'all',
+        maxDepth: 2,
+      },
+      reader
+    );
+    expect(graph.nodes.map((node) => node.ref.id).sort()).toEqual(
+      [item.recordRef.id, page.items[0].latestJudgmentRef.id].sort()
+    );
+    expect(graph.edges.map((edge) => edge.relation)).toEqual(['builds_on']);
+    expect(() =>
+      knowledge.queryGraph(
+        {
+          view: 'detail',
+          seeds: [secret.recordRef],
+          history: 'all',
+        },
+        reader
+      )
+    ).toThrow(/not visible/i);
+    await knowledge.reviseWork(
+      {
+        commandId: 'remove-partition',
+        commitmentId: item.commitmentId,
+        summary: 'private again',
+        set: { status: 'done' },
+        scopes: [hidden],
+      },
+      owner
+    );
+    expect(() =>
+      knowledge.queryGraph(
+        {
+          view: 'detail',
+          seeds: [item.recordRef],
+          history: 'all',
+        },
+        reader
+      )
+    ).toThrow(/not visible/i);
+  });
+
   it('preserves the full board and pagination for a caller with all scopes', async () => {
     await board();
     const titles: unknown[] = [];

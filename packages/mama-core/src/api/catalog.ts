@@ -12,7 +12,7 @@ import type {
   ActionSchemaObject,
   ActionSessionFacts,
 } from '../action-contracts.js';
-import { JudgmentError, type JudgmentAccess } from '../knowledge/judgments.js';
+import { boundScopeIdsFor, JudgmentError, type JudgmentAccess } from '../knowledge/judgments.js';
 import type { TextCompletion } from '../runtime/text-completion.js';
 import type { DatabaseInstance } from '../db-manager.js';
 import {
@@ -912,17 +912,16 @@ export function coreActionRegistrations(
         if (!kind || !name) {
           throw new JudgmentError('INVALID_INPUT', 'graph.node.put requires kind and name');
         }
-        // Scope bindings come from the caller authority alone — the payload
-        // carries no scopes, so a put can never self-grant visibility. Which
-        // makes an authority stating NO scope the one case a put must refuse:
-        // the node would be bound to nothing, and whether that reads as
-        // invisible or as unfiltered is the reader's accident, not a decision
-        // anyone made. graph.identity.correct already refuses it
-        // (registry/corrections.ts, 'At least one signed scope is required');
-        // this said the same thing one layer out, in the host tool case that
-        // called this action, where a caller reaching the action directly
-        // never met it.
-        if (context.access.scopes.length === 0) {
+        // Scope bindings come from the caller authority alone (its default scopes when it states
+        // them) — the payload carries no scopes, so a put can never self-grant visibility. Which
+        // makes an authority stating NO scope the one case a put must refuse: the node would be
+        // bound to nothing, and whether that reads as invisible or as unfiltered is the reader's
+        // accident, not a decision anyone made. graph.identity.correct refuses it too
+        // (registry/corrections.ts, 'At least one signed scope is required').
+        const scopes = context.access.defaultScopes ?? context.access.scopes;
+        // A default outside the caller's write scopes is refused as any write would be.
+        boundScopeIdsFor(context.access, {});
+        if (scopes.length === 0) {
           throw new JudgmentError(
             'INVALID_SCOPE',
             'graph.node.put requires at least one scope on the caller authority'
@@ -933,7 +932,7 @@ export function coreActionRegistrations(
           name,
           aliases: body.aliases ?? [],
           note: body.note ?? null,
-          scopes: context.access.scopes as RegistryScopeRef[],
+          scopes: scopes as RegistryScopeRef[],
           children: body.parent_of,
         });
       },

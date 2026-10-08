@@ -385,7 +385,7 @@ describe('knowledge/commitments: reading owner work back', () => {
     ]);
   });
 
-  it('returns null for a chain summary whose judgment record is outside caller access', async () => {
+  it('returns every chain summary when the caller can read the current commitment head', async () => {
     const commitmentId = await createCommitment('cmd-chain-access-create', {
       title: 'Readable work',
     });
@@ -441,7 +441,7 @@ describe('knowledge/commitments: reading owner work back', () => {
 
     expect(chain.chain?.map((revision) => revision.summary)).toEqual([
       'summary-cmd-chain-access-create',
-      null,
+      'hidden middle revision',
       'readable head revision',
     ]);
   });

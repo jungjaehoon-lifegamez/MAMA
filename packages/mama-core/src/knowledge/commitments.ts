@@ -21,6 +21,7 @@ import { erasedReference, type ErasedRecord } from '../identity/erased-record.js
 import type { DatabaseAdapter } from '../db-manager.js';
 import type { JudgmentAccess, JudgmentKnowledgeOptions } from './judgments.js';
 import { JudgmentError, readableScopeIds, referenceExists, appendJudgment } from './judgments.js';
+import { isCommitmentRevisionReadable } from './access.js';
 import type {
   JudgmentEventMeta,
   JudgmentReceipt,
@@ -199,13 +200,13 @@ function stringField(values: Record<string, unknown>, field: string): string | n
   return typeof value === 'string' ? value : null;
 }
 
-/** A revision's summary, only when its record is visible to the caller. */
+/** A visible commitment admits its revision summaries, including earlier private bindings. */
 function readJudgmentSummary(
   adapter: DatabaseAdapter,
   recordId: string,
   admitted: readonly string[]
 ): string | null {
-  if (!referenceExists(adapter, { kind: 'memory', id: recordId }, admitted)) return null;
+  if (!isCommitmentRevisionReadable(adapter, recordId, admitted)) return null;
   const row = adapter.prepare('SELECT summary FROM decisions WHERE id = ?').get(recordId) as
     | { summary: unknown }
     | undefined;

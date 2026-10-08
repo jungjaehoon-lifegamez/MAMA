@@ -27,6 +27,7 @@ export interface TrustedIdentityCorrectionContext {
   principalId: string;
   agentId: string;
   scopes: readonly MemoryScopeRef[];
+  defaultScopes?: readonly MemoryScopeRef[];
   connectors: readonly string[];
   channels?: Readonly<Record<string, readonly string[]>>;
 }
@@ -84,7 +85,7 @@ function effectiveScopes(
   trusted: TrustedIdentityCorrectionContext
 ): readonly MemoryScopeRef[] {
   requireTrustedContext(trusted);
-  const requested = correction.scopes ?? trusted.scopes;
+  const requested = correction.scopes ?? trusted.defaultScopes ?? trusted.scopes;
   if (requested.length === 0) {
     throw new RegistryError('invalid_scope', 'At least one effective scope is required');
   }

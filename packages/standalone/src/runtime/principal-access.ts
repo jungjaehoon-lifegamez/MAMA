@@ -37,8 +37,10 @@ export function resolvePrincipalAccess(
   if (identities.length !== 1)
     throw new Error(`member ${principalId} requires exactly one Telegram private identity`);
   const dmId = identities[0]!.external_id;
-  // Every owner work item is bound to all of the owner's scopes, so a grant on one opens them all.
-  const ownerDefaults = new Set(ownerAccess.scopes.map((scope) => `${scope.kind}\0${scope.id}`));
+  // Unscoped owner work binds its defaults; partition write authority does not make a default.
+  const ownerDefaults = new Set(
+    (ownerAccess.defaultScopes ?? ownerAccess.scopes).map((scope) => `${scope.kind}\0${scope.id}`)
+  );
   const readScopes: MemoryScopeRef[] = [];
   const connectors = new Set(['chat']);
   // chat-sources stores gateway channelKey under the transport prefix.

@@ -148,7 +148,7 @@ describe('P1 principal access through the product dispatcher', () => {
     const owner = resolve(OWNER);
     expect(owner).toBe(surface.ownerAccess);
     expect(owner).toEqual(surface.ownerAccess);
-    expect(owner).not.toHaveProperty('defaultScopes');
+    expect(owner.defaultScopes).toEqual(ownerMemoryScopes(OWNER));
   });
 
   it('binds an unscoped member memory.save only to its user scope', async () => {
@@ -214,9 +214,11 @@ describe('P1 principal access through the product dispatcher', () => {
   });
 
   it('lists only granted and unbound work, with no owner rows or hidden counts', async () => {
-    const writer = { ...surface.ownerAccess, scopes: [...surface.ownerAccess.scopes, PARTITION] };
+    // Seed a legacy unbound row through core; product writes require a nonempty binding.
+    const writer = { ...surface.ownerAccess };
+    delete writer.defaultScopes;
     for (const [commandId, scopes] of [
-      ['owner-work-test', surface.ownerAccess.scopes],
+      ['owner-work-test', surface.ownerAccess.defaultScopes!],
       ['shared-work-test', [PARTITION]],
       ['unbound-work-test', []],
     ] as const) {

@@ -43,7 +43,7 @@ export interface SourceIngestCommand {
   scope?: Record<string, JsonValue>;
   /**
    * Memory scopes this ingest is bound to. An explicit `[]` stores an unscoped
-   * observation; an omitted field inherits the access scope.
+   * observation; an omitted field uses access.defaultScopes, or access.scopes when absent.
    */
   scopes?: MemoryScopeRef[];
   /** Provenance metadata for the observation's memory_events row. */
@@ -158,10 +158,8 @@ async function ingestSourceOnAdapter(
   // must already be inside the caller's admitted access.
   admittedScopeIds(access);
   const boundScopes = boundScopeIdsFor(access, command);
-  const effectiveScopes = command.scopes ?? [...access.scopes];
-  const effectiveCommand: SourceIngestCommand = command.scopes
-    ? command
-    : { ...command, scopes: [...access.scopes] };
+  const effectiveScopes = command.scopes ?? [...(access.defaultScopes ?? access.scopes)];
+  const effectiveCommand: SourceIngestCommand = { ...command, scopes: effectiveScopes };
   const hash = commandHash(effectiveCommand);
   const replay = assertReplay(adapter, command, access, hash);
   if (replay) {

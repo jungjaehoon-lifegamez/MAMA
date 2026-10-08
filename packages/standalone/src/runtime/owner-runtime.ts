@@ -348,6 +348,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
             return { judge: { ask: (request) => jev.ask({ ...request, observationRefs: [] }) } };
           })()),
     });
+    // The surface keeps this shared object live: access.scopes resolves active partitions on use.
     const access: JudgmentAccess = surface.ownerAccess;
     const standingText = ownerSystemPrompt(
       options.backend,

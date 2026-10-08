@@ -35,7 +35,7 @@ export interface JudgmentAccess {
   /** Host-stated origin of authored links; a mechanical import is code, not an agent turn. */
   edgeSource?: TwinEdgeSource;
   scopes: readonly MemoryScopeRef[];
-  /** Scopes for a new judgment or commitment when the command omits scopes. */
+  /** Scopes bound to a new write when the command omits scopes. */
   defaultScopes?: readonly MemoryScopeRef[];
   /**
    * Scopes admitted for READS only, beside `scopes`.
@@ -138,7 +138,7 @@ function requireText(value: string, field: string): void {
   }
 }
 
-function scopeIdFor(scope: MemoryScopeRef): string {
+export function scopeIdFor(scope: MemoryScopeRef): string {
   return `scope_${scope.kind}_${Buffer.from(scope.id).toString('base64url')}`;
 }
 
@@ -185,7 +185,7 @@ export function boundScopeIdsFor(
   access: JudgmentAccess,
   command: { scopes?: MemoryScopeRef[] }
 ): string[] {
-  const scopes = command.scopes ?? access.scopes;
+  const scopes = command.scopes ?? access.defaultScopes ?? access.scopes;
   if (command.scopes === undefined && scopes.length === 0) {
     throw new JudgmentError('INVALID_SCOPE', 'At least one judgment scope is required');
   }
