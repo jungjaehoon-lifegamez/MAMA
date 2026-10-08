@@ -12,6 +12,7 @@ import { appendOperationToolTrace } from '../../src/runtime/tool-trace-store.js'
 import { appendObservationVersion } from '../../src/knowledge/observations.js';
 import { Mailbox } from '../../src/runtime/mailbox.js';
 import { resolveMemoryProvenanceLive } from '../../src/memory/provenance-live.js';
+import { listDecisionsInAdapter } from '../../src/memory/api.js';
 
 const ACCESS = {
   principalId: 'principal-test',
@@ -318,6 +319,33 @@ describe('Story M1: memory.save through the unified action path', () => {
   });
 
   describe('Story M2: memory.search / memory.checkpoint.load through dispatch', () => {
+    it('fills an empty-query search page after excluding recent tombstones in SQL', async () => {
+      for (let i = 0; i < 3; i++) {
+        await saveVia(`live-${i}`, ACCESS.scopes, `page-live-${i}`);
+      }
+      for (let i = 0; i < 3; i++) {
+        await saveVia(`erased-${i}`, ACCESS.scopes, `page-erased-${i}`);
+      }
+      getAdapter()
+        .prepare(
+          "UPDATE decisions SET erased_at=200, created_at=200, topic='', decision='', summary=NULL WHERE topic LIKE 'topic-page-erased-%'"
+        )
+        .run();
+      getAdapter()
+        .prepare("UPDATE decisions SET created_at=100 WHERE topic LIKE 'topic-page-live-%'")
+        .run();
+      const result = await dispatch(
+        { action: 'memory.search', input: { limit: 3 } },
+        { access: ACCESS }
+      );
+      expect(result).toMatchObject({ status: 'completed', data: { count: 3 } });
+      const data = (result as { data: { results: Array<{ summary: string }> } }).data;
+      expect(data.results.map((r) => r.summary).sort()).toEqual(['live-0', 'live-1', 'live-2']);
+      expect(
+        await listDecisionsInAdapter(getAdapter(), { limit: 3, excludeErased: true })
+      ).toHaveLength(3);
+    });
+
     const OTHER_ACCESS = {
       ...ACCESS,
       scopes: [{ kind: 'project' as const, id: 'scope-other' }] as MemoryScopeRef[],

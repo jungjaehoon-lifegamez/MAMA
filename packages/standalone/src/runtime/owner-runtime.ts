@@ -155,7 +155,7 @@ function runtimeEmbedder(options: OwnerRuntimeOptions): NonNullable<KnowledgeOpt
   );
 }
 
-function runtimeModelRun(
+export function runtimeModelRun(
   options: OwnerRuntimeOptions,
   adapter: Parameters<typeof beginModelRun>[0]
 ): NativeModelRunPort {
@@ -163,6 +163,7 @@ function runtimeModelRun(
     begin: async (request, cliSessionId) => {
       const current = request as
         | (typeof request & {
+            access?: JudgmentAccess;
             sourceMessageRef?: string;
             parentModelRunId?: string | null;
           })
@@ -174,6 +175,7 @@ function runtimeModelRun(
         instance_id: current?.channelId ?? null,
         parent_model_run_id: current?.parentModelRunId ?? null,
         input_refs: {
+          principalId: current?.access?.principalId ?? null,
           sessionKey: current?.sessionKey ?? null,
           cliSessionId,
           nativeInputId: current?.nativeInputId ?? null,

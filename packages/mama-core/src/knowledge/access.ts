@@ -298,13 +298,6 @@ function isRawVisible(
 
 /** One observation row, judged against the caller's window. */
 function isRawRowVisible(row: Record<string, unknown>, visibility: TwinVisibility): boolean {
-  if (typeof row.erased_at === 'number') {
-    return observationScopes(row).some((scope) =>
-      visibility.scopes?.some(
-        (admitted) => admitted.kind === scope.kind && admitted.id === scope.id
-      )
-    );
-  }
   if (Array.isArray(visibility.connectors) && !visibility.connectors.includes(String(row.source))) {
     return false;
   }
@@ -346,6 +339,13 @@ function isRawRowVisible(row: Record<string, unknown>, visibility: TwinVisibilit
     return false;
   }
 
+  if (typeof row.erased_at === 'number') {
+    return observationScopes(row).some((scope) =>
+      visibility.scopes?.some(
+        (admitted) => admitted.kind === scope.kind && admitted.id === scope.id
+      )
+    );
+  }
   if (!hasScopes(visibility.scopes)) {
     return true;
   }

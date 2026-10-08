@@ -1214,6 +1214,7 @@ export function coreActionRegistrations(
         }
         if (typeof query.query !== 'string' || query.query.trim().length === 0) {
           const rows = await listDecisionsInAdapter(adapter, {
+            excludeErased: true,
             limit: query.limit,
             kind: query.kind,
             topicPrefix: query.topicPrefix,

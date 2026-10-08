@@ -144,7 +144,7 @@ function jsonRefs(row: Row, columns: string[], ids: ReadonlySet<string>): Set<st
   return found;
 }
 
-/** Native invocation identity belongs to the mailbox; descendants inherit that turn. */
+/** New runs retain the turn's principal; legacy runs use the mailbox and descendants. */
 function principalRuns(adapter: DatabaseInstance, principalId: string, inFlight = false): Row[] {
   return adapter
     .prepare(
@@ -153,9 +153,9 @@ function principalRuns(adapter: DatabaseInstance, principalId: string, inFlight 
       SELECT i.*, n.invocation_id, n.receipt_json FROM mailbox_inputs i
       LEFT JOIN native_input_deliveries n ON n.input_id=i.id WHERE i.principal_id=?
     ), protected_inputs AS (
-      SELECT * FROM inputs i WHERE i.status<>'acked' OR EXISTS (
-        SELECT 1 FROM inputs active WHERE active.status<>'acked' AND active.receipt_json=i.receipt_json
-      )
+      SELECT * FROM inputs i WHERE i.status IN ('pending','claimed') OR (i.status='acked' AND EXISTS (
+        SELECT 1 FROM inputs active WHERE active.status IN ('pending','claimed') AND active.receipt_json=i.receipt_json
+      ))
     ), roots AS (
       SELECT mr.model_run_id FROM model_runs mr WHERE
         ${inFlight ? '' : 'mr.erased_principal_id=? OR'}
@@ -412,7 +412,9 @@ export function erasePrincipalRecords(
     }
     const { stores } = snapshot(adapter, input.principalId);
     // Capture execution ownership before deleting the mailbox or its delivery journal.
-    const activeInputs = stores.mailbox_inputs.filter((row) => row.status !== 'acked');
+    const activeInputs = stores.mailbox_inputs.filter(
+      (row) => row.status === 'pending' || row.status === 'claimed'
+    );
     const activeIds = new Set(activeInputs.map((row) => row.id));
     const activeStimuli = new Set(activeInputs.map((row) => row.stimulus_id));
     const activeReceipts = new Set(
@@ -422,8 +424,12 @@ export function erasePrincipalRecords(
     );
     // A steered turn shares its final receipt. Keep its root delivery too so the
     // preserved run remains attributable on the next erase after settlement.
+    const ackedIds = new Set(
+      stores.mailbox_inputs.filter((row) => row.status === 'acked').map((row) => row.id)
+    );
     for (const delivery of stores.native_input_deliveries)
-      if (activeReceipts.has(delivery.receipt_json)) activeIds.add(delivery.input_id);
+      if (ackedIds.has(delivery.input_id) && activeReceipts.has(delivery.receipt_json))
+        activeIds.add(delivery.input_id);
     const activeRuns = new Set(
       principalRuns(adapter, input.principalId, true).map((row) => row.model_run_id)
     );
@@ -590,7 +596,8 @@ export function erasePrincipalRecords(
         clearExtensionContent(adapter, 'decisions', 'id', row.id);
         adapter
           .prepare(
-            `UPDATE decisions SET erased_at=?, topic='', decision='', reasoning=NULL,
+            `UPDATE decisions SET erased_at=?, created_at=?, updated_at=?, kind=NULL, status=NULL,
+          record_kind='legacy', topic='', decision='', reasoning=NULL,
           outcome=NULL, failure_reason=NULL, limitation=NULL, user_involvement=NULL, session_id=NULL,
           supersedes=NULL, superseded_by=NULL, refined_from=NULL, confidence=NULL, needs_validation=0,
           validation_attempts=0, last_validated_at=NULL, usage_count=0, trust_context=NULL,
@@ -600,7 +607,7 @@ export function erasePrincipalRecords(
           provenance_json=NULL, item_id=NULL, payload_json='{}', applies_from=NULL, applies_until=NULL,
           duration_days=NULL WHERE id=?`
           )
-          .run(now, row.id);
+          .run(now, now, now, row.id);
         counts.decisions.tombstoned++;
       } else {
         del('memory_scope_bindings', 'memory_id=?', row.id);

@@ -3239,6 +3239,8 @@ Example: { "ranking": [2, 0, 4, 1, 3] } means 3rd is most relevant, then 1st, th
  */
 export interface ListDecisionsOptions {
   limit?: number;
+  /** Search pages exclude tombstones before applying their bound; direct listings may show them. */
+  excludeErased?: boolean;
   format?: 'json' | 'markdown';
   kind?: MemoryKind;
   scopes?: Array<{ kind: string; id: string }>;
@@ -3271,6 +3273,7 @@ export async function listDecisionsInAdapter(
     const prefixClause = topicPrefix ? "AND d.topic LIKE ? ESCAPE '\\'" : '';
     const prefixParams = topicPrefix ? [topicPrefixLikePattern(topicPrefix)] : [];
     const kindParams = options.kind === undefined ? [] : [options.kind];
+    const erasedClause = options.excludeErased ? 'AND d.erased_at IS NULL' : '';
 
     if (options.scopes && options.scopes.length > 0) {
       // Scope-filtered query: JOIN memory_scope_bindings + memory_scopes
@@ -3282,6 +3285,7 @@ export async function listDecisionsInAdapter(
         SELECT DISTINCT d.* FROM decisions d
         JOIN memory_scope_bindings msb ON msb.memory_id = d.id
         WHERE msb.scope_id IN (${placeholders})
+          ${erasedClause}
           ${currency}
           ${kindClause}
           ${prefixClause}
@@ -3293,6 +3297,7 @@ export async function listDecisionsInAdapter(
       const stmt = adapter.prepare(`
         SELECT d.* FROM decisions d
         WHERE 1 = 1
+          ${erasedClause}
           ${currency}
           ${kindClause}
           ${prefixClause}

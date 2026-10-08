@@ -22,7 +22,13 @@ import {
   getGraphTimeline,
   queryGraph,
 } from '../../src/knowledge/graph-query.js';
-import { readMemoryRecordById, recallMemory } from '../../src/memory/api.js';
+import {
+  readMemoryRecordById,
+  readMemoryRecordsInScopes,
+  recallMemory,
+} from '../../src/memory/api.js';
+import { assertTwinRefsVisible, visibleTwinRefKeys } from '../../src/knowledge/access.js';
+import type { TwinVisibility } from '../../src/knowledge/twin-edge-types.js';
 import { getMemoryProvenance } from '../../src/memory/provenance-query.js';
 import { resolveMemoryProvenanceLive } from '../../src/memory/provenance-live.js';
 import { readObservationVersion } from '../../src/knowledge/observations.js';
@@ -339,6 +345,72 @@ describe('principal record export and erasure', () => {
   afterEach(() => {
     db?.disconnect();
     if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('neutralizes cited record metadata before status, kind and date filtered reads', async () => {
+    db.prepare(
+      "UPDATE decisions SET kind='lesson', status='stale', created_at=10, updated_at=20 WHERE id=?"
+    ).run(ids.cited);
+    const receipt = erase();
+    expect(row(ids.cited)).toMatchObject({
+      kind: null,
+      status: null,
+      record_kind: 'legacy',
+      created_at: receipt.erasedAt,
+      updated_at: receipt.erasedAt,
+    });
+    expect(await readMemoryRecordsInScopes(db, access(member).scopes, { kind: 'lesson' })).toEqual(
+      []
+    );
+    expect(await readDecisionListing(db, access(member).scopes, { status: 'stale' })).toEqual([]);
+    expect((await readSavedTimeline(db, access(member).scopes, { until: 21 })).records).toEqual([]);
+    const erased = { id: ids.cited, scopes: access(member).scopes, state: 'erased' };
+    expect(
+      (await readSavedTimeline(db, access(member).scopes, { since: receipt.erasedAt })).records
+    ).toContainEqual(erased);
+    expect(await readMemoryRecordById(db, ids.cited, access(member).scopes)).toEqual(erased);
+    expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+  });
+
+  it.each([
+    ['as-of window', { asOfMs: 0 }],
+    ['observed start window', { startMs: Number.MAX_SAFE_INTEGER }],
+    ['source ceiling', { maxSourceMs: 0 }],
+    ['removed channel grant', { channels: { 'test-source': [] } }],
+    ['removed connector grant', { connectors: [] }],
+    ['removed project grant', { projectRefs: [{ id: 'other-project' }] }],
+    ['other tenant', { tenantId: 'other-tenant' }],
+  ] as Array<[string, Partial<TwinVisibility>]>)(
+    'hides an erased raw ref outside its %s',
+    (_name, constraint) => {
+      erase();
+      const ref = { kind: 'raw' as const, id: ids['obs-cited'] };
+      const visibility = { ...access(member), ...constraint };
+      expect(visibleTwinRefKeys(db, [ref], visibility).size).toBe(0);
+      expect(() => assertTwinRefsVisible(db, [ref], visibility)).toThrow('not visible');
+    }
+  );
+
+  it('erases dead inputs and their settled execution records while retaining pending and claimed inputs', () => {
+    const input = rows('mailbox_inputs').find((r) => r.principal_id === member)!;
+    db.prepare("UPDATE mailbox_inputs SET status='dead' WHERE id=?").run(input.id);
+    for (const status of ['pending', 'claimed']) {
+      db.prepare(
+        "INSERT INTO mailbox_inputs (stimulus_id, principal_id, kind, status, channel_key, preview_json, occurred_at, created_at) VALUES (?, ?, 'owner_message', ?, 'test-channel', '[]', 1, 1)"
+      ).run(`active-${status}`, member, status);
+    }
+    const receipt = erase();
+    expect(receipt.counts.mailbox_inputs).toMatchObject({ deleted: 1, in_flight: 2 });
+    expect(rows('mailbox_inputs').find((r) => r.id === input.id)).toBeUndefined();
+    expect(rows('native_input_deliveries').find((r) => r.input_id === input.id)).toBeUndefined();
+    expect(
+      rows('native_turn_results').find((r) => r.primary_stimulus_id === input.stimulus_id)
+    ).toBeUndefined();
+    expect(rows('model_runs').find((r) => r.model_run_id === `run-${member}`)).toMatchObject({
+      completion_summary: null,
+      erased_at: receipt.erasedAt,
+    });
+    expect(receipt.counts.model_runs.in_flight).toBe(0);
   });
 
   it('exports exactly exclusively personal rows in every store, stable ordering and counts', () => {
@@ -895,7 +967,7 @@ describe('principal record export and erasure', () => {
       const graph = queryGraph(
         db,
         { view: 'detail', seeds: [{ kind, id: ids['obs-cited'] }] },
-        { ...access(member), connectors: ['test-source'] }
+        kind === 'raw' ? access(member) : { ...access(member), connectors: ['test-source'] }
       );
       expect(graph.nodes[0]?.data).toEqual({
         kind,

@@ -263,6 +263,13 @@ export class Mailbox {
         ON mailbox_schedules(fired_at, due_at);
     `);
 
+    // Consumers create these stores without running the core migration chain.
+    const seenColumns = this.db.prepare('PRAGMA table_info(mailbox_seen)').all() as Array<{
+      name: string;
+    }>;
+    if (!seenColumns.some((column) => column.name === 'principal_id')) {
+      this.db.exec('ALTER TABLE mailbox_seen ADD COLUMN principal_id TEXT');
+    }
     this.nativeInputs = new NativeInputJournal(db, clock);
     // Prepared once: enqueue runs per producer tick and re-preparing per call
     // was measurable on backfill drains.

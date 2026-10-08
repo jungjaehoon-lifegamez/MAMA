@@ -1815,7 +1815,7 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
     let sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
     // Migrations here tolerate a re-run on a store that already holds part of their schema (a
     // rewound schema_version, or a later rebuild that dropped a column): add only the missing
-    // columns, and rebuild only the tables without the erasure state.
+    // columns, and skip a rebuild only after checking its complete erasure shape.
     sql = sql.replace(
       /^ALTER TABLE (\w+) ADD COLUMN (\w+)[^;]*;\n/gm,
       (statement, table: string, column: string) =>
@@ -1832,7 +1832,31 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
       ],
     };
     for (const table of Object.keys(indexes)) {
+      const createPattern = new RegExp(String.raw`CREATE TABLE ${table}_103 \([\s\S]*?\n\);`);
+      const create = sql.match(createPattern)?.[0];
+      if (!create) throw new Error(`Migration 103 has no rebuild definition for ${table}`);
+      const canonical = splitCreateTableClauses(create);
+      const oldBodyCheck = normalizeSqlText(
+        'CHECK ((body IS NOT NULL AND body_location_json IS NULL) OR (body IS NULL AND body_location_json IS NOT NULL))'
+      );
       if (this.tableColumns(table).has('erased_at')) {
+        const columns = this.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+          name: string;
+          notnull: number;
+        }>;
+        const byName = new Map(columns.map((column) => [column.name, column]));
+        const originalSql = normalizeSqlText(this.tableSql(table));
+        const complete = canonical.every((clause) => {
+          if (clauseIsTableConstraint(clause))
+            return originalSql.includes(normalizeSqlText(clause));
+          const column = byName.get(clauseColumnName(clause));
+          if (!column || Boolean(column.notnull) !== /\bNOT\s+NULL\b/i.test(clause)) return false;
+          const checkAt = clause.search(/\bCHECK\b/i);
+          return checkAt < 0 || originalSql.includes(normalizeSqlText(clause.slice(checkAt)));
+        });
+        if (!complete || (table === 'observation_versions' && originalSql.includes(oldBodyCheck))) {
+          throw new Error(`Migration 103 incomplete erasure shape in ${table}`);
+        }
         sql = sql.replace(
           new RegExp(
             String.raw`CREATE TABLE ${table}_103 \([\s\S]*?ALTER TABLE ${table}_103 RENAME TO ${table};\n`
@@ -1841,10 +1865,6 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
         );
         continue;
       }
-      const createPattern = new RegExp(String.raw`CREATE TABLE ${table}_103 \([\s\S]*?\n\);`);
-      const create = sql.match(createPattern)?.[0];
-      if (!create) throw new Error(`Migration 103 has no rebuild definition for ${table}`);
-      const canonical = splitCreateTableClauses(create);
       const original = splitCreateTableClauses(this.tableSql(table));
       const oldColumns = original.filter((clause) => !clauseIsTableConstraint(clause));
       const oldByName = new Map(oldColumns.map((clause) => [clauseColumnName(clause), clause]));
@@ -1863,9 +1883,6 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
         return previous ?? clause;
       });
       clauses.push(...oldColumns.filter((clause) => !newNames.has(clauseColumnName(clause))));
-      const oldBodyCheck = normalizeSqlText(
-        'CHECK ((body IS NOT NULL AND body_location_json IS NULL) OR (body IS NULL AND body_location_json IS NOT NULL))'
-      );
       clauses.push(
         ...original.filter(
           (clause) => clauseIsTableConstraint(clause) && normalizeSqlText(clause) !== oldBodyCheck

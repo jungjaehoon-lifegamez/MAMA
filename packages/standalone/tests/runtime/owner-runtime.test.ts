@@ -5,7 +5,21 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { NativeSessionHandle } from '@jungjaehoon/mama-core/runtime/runtime';
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
-import { readOwnerMemoryRecords, createOwnerRuntime } from '../../src/runtime/owner-runtime.js';
+import {
+  readOwnerMemoryRecords,
+  createOwnerRuntime,
+  runtimeModelRun,
+  type OwnerRuntimeOptions,
+} from '../../src/runtime/owner-runtime.js';
+import {
+  createPrincipalRepository,
+  exportPrincipalRecords,
+  erasePrincipalRecords,
+} from '@jungjaehoon/mama-core';
+import { createNativeSessionRunner } from '@jungjaehoon/mama-core/runtime/native-turn';
+import { SessionPool } from '@jungjaehoon/mama-core/runtime/session-pool';
+import { Mailbox } from '@jungjaehoon/mama-core/runtime/mailbox';
+import type { IModelRunner } from '@jungjaehoon/mama-core/runtime/drivers/types';
 import { createOwnerPolicyProvider } from '../../src/runtime/owner-policy.js';
 import { createClient } from '@jungjaehoon/mama-core/client/client';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
@@ -17,6 +31,129 @@ afterEach(() => {
 });
 
 describe('owner runtime assembly', () => {
+  it('exports and wipes member parent and child runs after their mailbox inputs are pruned', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'member-pruned-runs-'));
+    homes.push(home);
+    const handle = await openCoreDatabase({ path: join(home, 'state.db') });
+    const pool = new SessionPool();
+    try {
+      const db = handle.adapter;
+      const member = createPrincipalRepository(db).registerMember({
+        connector: 'fixture',
+        namespace: 'fixture',
+        externalId: 'fixture-member',
+        now: 1,
+      });
+      const mailbox = new Mailbox(db);
+      mailbox.enqueue({
+        id: 'fixture-stimulus',
+        kind: 'owner_message',
+        principalId: member,
+        channelKey: 'fixture-channel',
+        occurredAt: 1,
+        refs: [{ refId: 'fixture-ref', observationRef: null }],
+      });
+      const input = mailbox.claimNext()!;
+      const agent = {
+        backendType: 'claude',
+        reportsModelRuns: true,
+        prompt: async (_text, callbacks) => {
+          callbacks?.onInputDispatch?.({
+            backend: 'claude',
+            sessionId: 'fixture-session',
+            inputId: 'fixture-input',
+          });
+          await runner.withToolCaller(
+            {
+              session_id: 'fixture-session',
+              tool_use_id: 'fixture-call',
+              agent_id: 'fixture-child',
+            },
+            async () => ({ content: [{ type: 'text', text: 'fixture tool output' }] })
+          );
+          return {
+            response: 'fixture completion',
+            session_id: 'fixture-session',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
+        },
+      } as IModelRunner;
+      const runner = createNativeSessionRunner({
+        agent,
+        backend: 'claude',
+        model: 'fixture',
+        maxTurns: 10,
+        isGatewayMode: false,
+        runTokenBudget: 0,
+        sessionPool: pool,
+        turnPolicy: () => ({ channelKey: 'fixture-channel', systemLayers: [] }),
+        executionContext: (request) => ({ ...request }),
+        hostToolDefinitions: () => [],
+        callTool: async () => ({}),
+        modelRun: runtimeModelRun(
+          { model: 'fixture', backend: 'claude', agentId: 'fixture-agent' } as OwnerRuntimeOptions,
+          db
+        ),
+      });
+      await runner.runTurn([{ type: 'text', text: 'fixture turn' }], {
+        sessionKey: 'fixture-channel',
+        nativeInputId: 'fixture-input',
+        sourceMessageRef: 'fixture-stimulus',
+        prepareAccess: async () => ({
+          principalId: member,
+          agentId: 'fixture-agent',
+          scopes: [{ kind: 'user', id: member }],
+        }),
+      });
+      for (const run of db.prepare('SELECT model_run_id FROM model_runs').all() as Array<{
+        model_run_id: string;
+      }>) {
+        db.prepare(
+          "INSERT INTO tool_traces (trace_id, model_run_id, tool_name, input_summary, execution_status, duration_ms, created_at) VALUES (?, ?, 'fixture-tool', 'private input', 'success', 1, 1)"
+        ).run(`trace-${run.model_run_id}`, run.model_run_id);
+      }
+      mailbox.ack(input.id);
+      db.prepare('UPDATE mailbox_inputs SET acked_at=1 WHERE id=?').run(input.id);
+      mailbox.replayStale(1, Date.now());
+      expect(db.prepare('SELECT id FROM mailbox_inputs').all()).toEqual([]);
+      const exported = exportPrincipalRecords(db, member);
+      expect(exported.stores.model_runs).toHaveLength(2);
+      for (const run of exported.stores.model_runs) {
+        expect(JSON.parse(String(run.input_refs_json))).toMatchObject({ principalId: member });
+      }
+      const parent = exported.stores.model_runs.find((r) => r.parent_model_run_id === null)!;
+      expect(JSON.parse(String(parent.input_refs_json))).toMatchObject({
+        nativeInputId: 'fixture-input',
+        sourceMessageRef: 'fixture-stimulus',
+      });
+      const child = exported.stores.model_runs.find((r) => r.parent_model_run_id !== null)!;
+      expect(JSON.parse(String(child.input_refs_json))).toMatchObject({
+        nativeInputId: null,
+        sourceMessageRef: 'subagent:fixture-child',
+      });
+      expect(exportPrincipalRecords(db, member).stores.tool_traces).toHaveLength(2);
+      const receipt = erasePrincipalRecords(db, {
+        principalId: member,
+        commandId: 'fixture-erase',
+      });
+      expect(receipt.counts.model_runs).toMatchObject({ wiped: 2, in_flight: 0 });
+      expect(receipt.counts.tool_traces.wiped).toBe(2);
+      expect(
+        db.prepare('SELECT input_refs_json, completion_summary FROM model_runs').all()
+      ).toEqual([
+        { input_refs_json: null, completion_summary: null },
+        { input_refs_json: null, completion_summary: null },
+      ]);
+      expect(db.prepare('SELECT input_summary, tool_name FROM tool_traces').all()).toEqual([
+        { input_summary: null, tool_name: 'erased' },
+        { input_summary: null, tool_name: 'erased' },
+      ]);
+    } finally {
+      pool.dispose();
+      handle.close();
+    }
+  });
+
   it('omits erased records from the session and report memory reader', async () => {
     const home = mkdtempSync(join(tmpdir(), 'owner-erased-memory-'));
     homes.push(home);
