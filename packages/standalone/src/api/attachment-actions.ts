@@ -26,6 +26,7 @@ export interface AttachmentActionPorts {
   connectors?: () => ConnectorRegistry | null;
   workspaceDir?: string;
   downloadsDir?: string;
+  principalPaths?: (principalId: string) => { workspaceDir: string; downloadsDir: string };
   telegram?: () => OwnerFileSender | null;
   discord?: () => OwnerFileSender | null;
   slack?: () => OwnerFileSender | null;
@@ -289,9 +290,11 @@ export function createAttachmentActionRegistrations(
             `File ${fileId} does not belong to observation ${observation.observationRef} room ${roomId}`
           );
         }
-        if (!ports.downloadsDir?.trim())
+        const downloadsDir =
+          ports.principalPaths?.(context.access.principalId).downloadsDir ?? ports.downloadsDir;
+        if (!downloadsDir?.trim())
           throw new Error('Attachment downloads directory is not configured');
-        const targetDir = join(ports.downloadsDir, observation.source, safeFileName(roomId));
+        const targetDir = join(downloadsDir, observation.source, safeFileName(roomId));
         mkdirSync(targetDir, { recursive: true, mode: 0o700 });
         const targetPath = join(
           targetDir,
@@ -338,7 +341,11 @@ export function createAttachmentActionRegistrations(
           const sender = ports[messenger]?.();
           if (!sender) throw new Error(`${messenger} file delivery port is not configured`);
           const validated = validateWorkspaceFile(
-            workspaceFilesRoot(ports),
+            workspaceFilesRoot(
+              ports.principalPaths
+                ? { workspaceDir: ports.principalPaths(context.access.principalId).workspaceDir }
+                : ports
+            ),
             path,
             OWNER_FILE_MAX_UPLOAD_BYTES
           );

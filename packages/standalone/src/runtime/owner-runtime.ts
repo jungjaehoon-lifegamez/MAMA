@@ -1,3 +1,8 @@
+import { createPrincipalRepository } from '@jungjaehoon/mama-core';
+import { createPrincipalSessions } from './principal-sessions.js';
+import { createMemberSession } from './member-session.js';
+import { validateMemberRoot } from './member-paths.js';
+import { resolvePrincipalAccess } from './principal-access.js';
 import {
   beginModelRun,
   commitModelRun,
@@ -73,6 +78,9 @@ export interface OwnerRuntimeOptions {
   connectors?: readonly string[];
   rawPath: string;
   embedder?: NonNullable<KnowledgeOptions['embedder']>;
+  memberRoot?: string;
+  createSession?: typeof createNativeSession;
+  onMemberResult?: StimulusDeliveryOptions['onOwnerResult'];
   nativeSession?: NativeSessionHandle & Partial<Pick<NativeSession, 'callAction'>>;
   modelRun?: NativeModelRunPort;
   effort?: RuntimeEffort;
@@ -135,6 +143,7 @@ export interface OwnerRuntime {
   readonly wikiRoot: string | null;
   readonly intake: StimulusIntake;
   readonly acceptSourceDelta: StimulusIntake['acceptSourceDelta'];
+  serveMember(principalId: string): StimulusIntake;
   stop(): Promise<void>;
 }
 
@@ -252,6 +261,9 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
   let nativeSession: OwnerRuntimeOptions['nativeSession'] = options.nativeSession;
   let delivery: ReplayClockDelivery | undefined;
   let ownerMailbox: Mailbox | undefined;
+  const sessions = createPrincipalSessions(options.ownerPrincipalId);
+  const members = new Map<string, ReturnType<typeof createMemberSession>>();
+  const memberIntakes = new Map<string, StimulusIntake>();
   const reportStore = createPersistentReportStore({
     filePath: options.reportPath ?? join(options.runtimeRoot, 'report-slots.json'),
   });
@@ -262,6 +274,15 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       adapter: database.adapter,
       embedder: runtimeEmbedder(options),
     });
+    const activeMembers = createPrincipalRepository(database.adapter)
+      .listMembers()
+      .filter((member) => member.status === 'active');
+    if (activeMembers.length && options.memberRoot === undefined)
+      throw new Error('Active members require member_root');
+    const memberRoot =
+      options.memberRoot === undefined
+        ? undefined
+        : validateMemberRoot(options.memberRoot, undefined, options.runtimeRoot);
     rawStore = new RawStore(options.rawPath);
     const chat = new ChatSources(
       rawStore,
@@ -329,6 +350,15 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         ...(options.attachmentPorts ?? {}),
         stored: storedSourceReader,
         workspaceDir: options.workspaceDir,
+        principalPaths: (principalId) => {
+          if (principalId === options.ownerPrincipalId)
+            return {
+              workspaceDir: options.workspaceDir,
+              downloadsDir: options.attachmentPorts?.downloadsDir ?? '',
+            };
+          sessions.get(principalId);
+          return members.get(principalId)!.paths;
+        },
       },
       ...(options.driveDelivery === undefined
         ? {}
@@ -361,7 +391,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
     const ownerPolicyProvider =
       options.ownerPolicyProvider ?? createOwnerPolicyProvider(options.runtimeRoot);
     if (nativeSession === undefined) {
-      nativeSession = createNativeSession({
+      nativeSession = (options.createSession ?? createNativeSession)({
         backend: options.backend,
         model: options.model,
         workspaceDir: options.workspaceDir,
@@ -398,6 +428,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       ...(options.onRecordOrderEvent === undefined ? {} : { onEvent: options.onRecordOrderEvent }),
     });
     delivery = createStimulusDelivery({
+      turnChain: sessions.turnChain,
       backend: options.backend,
       timeZone: options.timeZone,
       wikiEnabled: options.wiki?.enabled ?? false,
@@ -495,18 +526,52 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         : { onDelivered: options.onStimulusDelivered }),
       ...(options.onStimulusFailed === undefined ? {} : { onFailed: options.onStimulusFailed }),
     });
+    sessions.add(options.ownerPrincipalId, { native: nativeSession, delivery });
+    const prepareMember = (principalId: string) => {
+      if (memberRoot === undefined) throw new Error('Active members require member_root');
+      const principal = createPrincipalRepository(database.adapter).findById(principalId);
+      if (principal?.kind !== 'member' || principal.status !== 'active')
+        throw new Error(`serveMember requires an active member: ${principalId}`);
+      const member = createMemberSession(principalId, memberRoot, {
+        options,
+        database,
+        rawStore: sourceStore,
+        surface,
+        turnChain: sessions.turnChain,
+        readResult: (row) =>
+          row.nativeDelivery?.receipt
+            ? intakeRuntime.mailbox!.nativeInputs.resultForReceipt(
+                row.nativeDelivery.receipt,
+                row.principalId
+              )
+            : null,
+      });
+      members.set(principalId, member);
+      sessions.add(principalId, member);
+      return member;
+    };
+    for (const member of activeMembers) prepareMember(member.principalId);
+    const executionAccess = (principalId: string) =>
+      principalId === options.ownerPrincipalId
+        ? access
+        : resolvePrincipalAccess(principalId, {
+            adapter: database.adapter,
+            ownerAccess: access,
+            agentId: `member-agent:${principalId}`,
+          });
     const socketDispatch: ActionDispatcher = Object.assign(
       async (...[call, context]: Parameters<ActionDispatcher>) => {
+        context = { ...context, access: executionAccess(context.access.principalId) };
         const caller = context.session?.nativeCaller;
         if (caller !== undefined) {
-          if (
-            options.backend !== 'claude' ||
-            context.access.principalId !== options.ownerPrincipalId ||
-            !nativeSession?.callAction
-          ) {
-            throw new Error('Native caller attribution requires the Claude owner session');
-          }
-          return nativeSession.callAction(call, caller);
+          const principalSession = sessions.get(context.access.principalId).native;
+          if (options.backend !== 'claude' || !principalSession.callAction)
+            throw new Error(
+              context.access.principalId === options.ownerPrincipalId
+                ? 'Native caller attribution requires the Claude owner session'
+                : 'Native caller attribution requires a served Claude session'
+            );
+          return principalSession.callAction(call, caller);
         }
         return surface.dispatch(call, context);
       },
@@ -516,9 +581,16 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       paths: { socketPath: options.socketPath },
       catalog: surface.catalog,
       dispatch: socketDispatch,
-      principals: [{ access, credentialPath: options.credentialPath }],
-      sessionFacts: (_access, request) => {
-        const ceiling = delivery?.getReplaySourceEndMs();
+      principals: [
+        { access, credentialPath: options.credentialPath },
+        ...[...members.values()].map((member) => ({
+          access: member.initialAccess,
+          credentialPath: member.paths.credentialPath,
+        })),
+      ],
+      sessionFacts: (callerAccess, request) => {
+        executionAccess(callerAccess.principalId);
+        const ceiling = sessions.replaySourceEndMs(callerAccess.principalId);
         return {
           ...(ceiling === undefined ? {} : { replaySourceEndMs: ceiling }),
           ...(request.session?.nativeCaller === undefined
@@ -527,9 +599,9 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         };
       },
       mailbox: { adapter: database.adapter },
-      nativeSession,
+      nativeSession: sessions.native,
       delivery: {
-        ...delivery,
+        ...sessions.delivery,
         ...(options.deliveryReady === undefined ? {} : { ready: options.deliveryReady }),
       },
       reclaimStaleSocket: true,
@@ -537,6 +609,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
     ownerMailbox = intakeRuntime.mailbox;
     recordOrders.recover();
     const intake = createStimulusIntake(intakeRuntime, options.ownerPrincipalId, chat);
+    for (const [id, member] of members)
+      memberIntakes.set(id, createStimulusIntake(intakeRuntime, id, member.chat));
     let stopped = false;
     return {
       runtime: intakeRuntime,
@@ -548,6 +622,20 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       wikiRoot,
       intake,
       acceptSourceDelta: intake.acceptSourceDelta,
+      serveMember: (principalId) => {
+        if (stopped) throw new Error('Cannot serve a member after runtime stop');
+        executionAccess(principalId);
+        const existing = memberIntakes.get(principalId);
+        if (existing) return existing;
+        const member = prepareMember(principalId);
+        intakeRuntime.servePrincipal({
+          access: member.initialAccess,
+          credentialPath: member.paths.credentialPath,
+        });
+        const memberIntake = createStimulusIntake(intakeRuntime, principalId, member.chat);
+        memberIntakes.set(principalId, memberIntake);
+        return memberIntake;
+      },
       stop: async () => {
         if (stopped) return;
         stopped = true;
@@ -558,6 +646,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       },
     };
   } catch (error) {
+    await sessions.native.stop();
     rawStore?.close();
     await database.close();
     throw error;

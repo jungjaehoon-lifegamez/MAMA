@@ -1,3 +1,4 @@
+import { createSerialTurnChain } from './principal-sessions.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import { createHash } from 'node:crypto';
 
@@ -28,6 +29,7 @@ import {
   sessionStartBlock,
   type Lesson,
   type SessionStartInput,
+  type TurnVoice,
 } from './turn-orders.js';
 import { localDateKey, localStamp, type TimeZoneSetting } from './timezone.js';
 import { messageWithCauses } from '../utils/error-message.js';
@@ -88,6 +90,8 @@ export interface RecordOrderPort {
 
 export interface StimulusDeliveryOptions {
   backend: OwnerRuntimeBackend;
+  turnChain?: ReturnType<typeof createSerialTurnChain>;
+  member?: { sessionKey: string; voice: TurnVoice };
   wikiEnabled?: boolean;
   formattingRoutes?: { reports: string; notifications: string };
   timeZone: TimeZoneSetting;
@@ -511,10 +515,12 @@ function planTurn(row: MailboxRow, options: StimulusDeliveryOptions): TurnPlan {
             payload: row.payload,
           },
           lessons,
-          { timeZone: zone }
+          { timeZone: zone },
+          options.member?.voice
         ),
     };
   }
+  if (options.member) throw new Error(`Member turn does not support stimulus kind ${row.kind}`);
   if (row.kind === 'source_delta') {
     if (replaySourceCeiling(row) !== undefined)
       return { kind: 'turn', lessonQuery: null, render: () => replayWindowText(row, options) };
@@ -566,7 +572,7 @@ function planTurn(row: MailboxRow, options: StimulusDeliveryOptions): TurnPlan {
 
 /** Serialize native turns; replay windows use their own session. */
 export function createStimulusDelivery(options: StimulusDeliveryOptions): ReplayClockDelivery {
-  let serialTail = Promise.resolve();
+  const turnChain = options.turnChain ?? createSerialTurnChain();
   let activeReplaySourceEndMs: number | undefined;
   // Lessons shown in this session, cleared on a new session or a new local day: compactions are
   // not observable, so a day bounds how long a lesson stays out of view.
@@ -605,63 +611,61 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
     await options.onDelivered?.(row, modelRunId ?? null);
   };
 
-  const deliver: StimulusDelivery['deliver'] = async (row, context) => {
-    let release!: () => void;
-    const previous = serialTail;
-    serialTail = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await previous;
-    let modelRunId: string | null = null;
-    try {
-      const replaySourceEndMs = replaySourceCeiling(row);
-      activeReplaySourceEndMs = replaySourceEndMs;
-      const plan = planTurn(row, options);
-      if (plan.kind === 'skip') {
-        // Kagemusha's backfill guard: only history lines, so no live turn and no record order.
-        await options.onSkipped?.(row, plan.reason);
-        await options.onDelivered?.(row, null);
-        return;
+  const deliver: StimulusDelivery['deliver'] = (row, context) =>
+    turnChain(async () => {
+      let modelRunId: string | null = null;
+      try {
+        const replaySourceEndMs = replaySourceCeiling(row);
+        activeReplaySourceEndMs = replaySourceEndMs;
+        const plan = planTurn(row, options);
+        if (plan.kind === 'skip') {
+          // Kagemusha's backfill guard: only history lines, so no live turn and no record order.
+          await options.onSkipped?.(row, plan.reason);
+          await options.onDelivered?.(row, null);
+          return;
+        }
+        const text = (blocks: readonly string[]): ContentBlock[] => [
+          { type: 'text', text: blocks.filter((block) => block !== '').join('\n\n') },
+        ];
+        const result = await context.run(text([plan.render([], new Date())]), {
+          onModelRunStarted: (id: string) => {
+            modelRunId = id;
+          },
+          prepareSessionContent: async ({ isNewSession }) => {
+            const lessons = await pickLessons(plan.lessonQuery, isNewSession);
+            const start = isNewSession
+              ? sessionStartBlock(
+                  (await options.sessionStart?.(row)) ?? { exchanges: [], decisions: [] },
+                  new Date(),
+                  { timeZone: options.timeZone.get() },
+                  options.member?.voice
+                )
+              : '';
+            return text([start, plan.render(lessons, new Date())]);
+          },
+          sessionKey:
+            options.member?.sessionKey ??
+            (replaySourceEndMs === undefined
+              ? OWNER_RUNTIME_SESSION_KEY
+              : OWNER_REPLAY_SESSION_KEY),
+          source: row.kind,
+          channelId: row.channelKey,
+          sourceMessageRef: row.stimulusId,
+          ...(row.kind === 'owner_message'
+            ? { sourceRefs: row.refs.map((ref) => ref.observationRef!) }
+            : {}),
+          ...(replaySourceEndMs === undefined ? {} : { replaySourceEndMs }),
+        });
+        // A commit failure withholds result provenance, but the opened run still identifies this turn.
+        modelRunId = result.modelRunId ?? modelRunId;
+        await deliverResult(row, result, modelRunId);
+      } catch (error) {
+        await options.onFailed?.(row, stimulusFailureReason(error), modelRunId);
+        throw error;
+      } finally {
+        activeReplaySourceEndMs = undefined;
       }
-      const text = (blocks: readonly string[]): ContentBlock[] => [
-        { type: 'text', text: blocks.filter((block) => block !== '').join('\n\n') },
-      ];
-      const result = await context.run(text([plan.render([], new Date())]), {
-        onModelRunStarted: (id: string) => {
-          modelRunId = id;
-        },
-        prepareSessionContent: async ({ isNewSession }) => {
-          const lessons = await pickLessons(plan.lessonQuery, isNewSession);
-          const start = isNewSession
-            ? sessionStartBlock(
-                (await options.sessionStart?.(row)) ?? { exchanges: [], decisions: [] },
-                new Date(),
-                { timeZone: options.timeZone.get() }
-              )
-            : '';
-          return text([start, plan.render(lessons, new Date())]);
-        },
-        sessionKey:
-          replaySourceEndMs === undefined ? OWNER_RUNTIME_SESSION_KEY : OWNER_REPLAY_SESSION_KEY,
-        source: row.kind,
-        channelId: row.channelKey,
-        sourceMessageRef: row.stimulusId,
-        ...(row.kind === 'owner_message'
-          ? { sourceRefs: row.refs.map((ref) => ref.observationRef!) }
-          : {}),
-        ...(replaySourceEndMs === undefined ? {} : { replaySourceEndMs }),
-      });
-      // A commit failure withholds result provenance, but the opened run still identifies this turn.
-      modelRunId = result.modelRunId ?? modelRunId;
-      await deliverResult(row, result, modelRunId);
-    } catch (error) {
-      await options.onFailed?.(row, stimulusFailureReason(error), modelRunId);
-      throw error;
-    } finally {
-      activeReplaySourceEndMs = undefined;
-      release();
-    }
-  };
+    });
 
   const lost = async (row: MailboxRow, reason: string): Promise<void> => {
     if (isRecordOrderRow(row)) await options.recordOrders?.onLost(row, reason);

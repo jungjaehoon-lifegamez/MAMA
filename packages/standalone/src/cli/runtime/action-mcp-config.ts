@@ -5,6 +5,10 @@ export interface EnsureMamaMcpConfigOptions {
   mcpConfigPath: string;
   serverPath?: string;
   mamaHome: string;
+  socketPath?: string;
+  credentialPath?: string;
+  journalPath?: string;
+  allowedActions?: readonly string[];
 }
 
 export interface EnsureMamaMcpConfigResult {
@@ -19,7 +23,11 @@ export function resolveActionServerPath(): string {
   return join(__dirname, '..', '..', 'runtime', 'action-mcp-server.js');
 }
 
-function validEntry(value: unknown, serverPath: string, mamaHome: string): boolean {
+function validEntry(
+  value: unknown,
+  serverPath: string,
+  expectedEnv: Record<string, string>
+): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const entry = value as { command?: unknown; args?: unknown; env?: unknown };
   const env = entry.env as Record<string, unknown> | undefined;
@@ -28,7 +36,7 @@ function validEntry(value: unknown, serverPath: string, mamaHome: string): boole
     Array.isArray(entry.args) &&
     entry.args.length === 1 &&
     entry.args[0] === serverPath &&
-    env?.MAMA_HOME === mamaHome
+    Object.entries(expectedEnv).every(([key, value]) => env?.[key] === value)
   );
 }
 
@@ -37,6 +45,17 @@ export function ensureMamaMcpConfig(
   options: EnsureMamaMcpConfigOptions
 ): EnsureMamaMcpConfigResult {
   const serverPath = options.serverPath ?? resolveActionServerPath();
+  const env = {
+    MAMA_HOME: options.mamaHome,
+    ...(options.socketPath === undefined ? {} : { MAMA_SOCKET_PATH: options.socketPath }),
+    ...(options.credentialPath === undefined
+      ? {}
+      : { MAMA_SESSION_CREDENTIAL_PATH: options.credentialPath }),
+    ...(options.journalPath === undefined ? {} : { MAMA_CLIENT_JOURNAL_PATH: options.journalPath }),
+    ...(options.allowedActions === undefined
+      ? {}
+      : { MAMA_ALLOWED_ACTIONS: JSON.stringify(options.allowedActions) }),
+  };
   let parsed: Record<string, unknown> = {};
   if (existsSync(options.mcpConfigPath)) {
     const value: unknown = JSON.parse(readFileSync(options.mcpConfigPath, 'utf8'));
@@ -49,11 +68,7 @@ export function ensureMamaMcpConfig(
     servers &&
     typeof servers === 'object' &&
     !Array.isArray(servers) &&
-    validEntry(
-      (servers as Record<string, unknown>)[MAMA_MCP_SERVER_NAME],
-      serverPath,
-      options.mamaHome
-    ) &&
+    validEntry((servers as Record<string, unknown>)[MAMA_MCP_SERVER_NAME], serverPath, env) &&
     !Object.hasOwn(servers, 'code-act')
   ) {
     return { changed: false, serverPath };
@@ -66,7 +81,7 @@ export function ensureMamaMcpConfig(
   nextServers[MAMA_MCP_SERVER_NAME] = {
     command: process.execPath,
     args: [serverPath],
-    env: { MAMA_HOME: options.mamaHome },
+    env,
   };
   parsed.mcpServers = nextServers;
   mkdirSync(dirname(options.mcpConfigPath), { recursive: true });

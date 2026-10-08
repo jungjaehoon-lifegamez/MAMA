@@ -15,7 +15,7 @@ import readline from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import type { ActionContract, ActionResult } from '@jungjaehoon/mama-core';
 import { createClient, type Client } from '@jungjaehoon/mama-core/client/client';
-import { readSessionCredential } from './session-credential.js';
+import { readCredentialFile, readSessionCredential } from './session-credential.js';
 import { CLAUDE_CALLER_FIELD } from './claude-caller-hook.js';
 import type { NativeToolCaller } from '@jungjaehoon/mama-core/action-contracts';
 import { actionCatalogLine } from '../api/help-actions.js';
@@ -57,9 +57,13 @@ function mamaHome(): string {
 
 function runtimeClient(home: string): Client {
   return createClient({
-    socketPath: join(home, 'runtime.sock'),
-    journalPath: join(home, 'runtime', 'client-journal.jsonl'),
-    credential: readSessionCredential(home),
+    socketPath: process.env.MAMA_SOCKET_PATH ?? join(home, 'runtime.sock'),
+    journalPath:
+      process.env.MAMA_CLIENT_JOURNAL_PATH ?? join(home, 'runtime', 'client-journal.jsonl'),
+    credential:
+      process.env.MAMA_SESSION_CREDENTIAL_PATH === undefined
+        ? readSessionCredential(home)
+        : readCredentialFile(process.env.MAMA_SESSION_CREDENTIAL_PATH),
   });
 }
 
@@ -162,7 +166,7 @@ async function callTool(client: Client, params: Record<string, unknown>): Promis
  */
 export async function handleRequest(
   request: JsonRpcRequest,
-  deps: { client: Client }
+  deps: { client: Client; allowedActions?: readonly string[] }
 ): Promise<JsonRpcResponse | null> {
   const id = request.id ?? 0;
   const reply = (result: unknown): JsonRpcResponse => ({ jsonrpc: '2.0', id, result });
@@ -179,7 +183,16 @@ export async function handleRequest(
     case 'ping':
       return reply({});
     case 'tools/list':
-      return reply({ tools: [codeActTool(await deps.client.describe())] });
+      return reply({
+        tools: [
+          codeActTool(
+            (await deps.client.describe()).filter(
+              (contract) =>
+                deps.allowedActions === undefined || deps.allowedActions.includes(contract.name)
+            )
+          ),
+        ],
+      });
     case 'tools/call':
       return reply(await callTool(deps.client, request.params ?? {}));
     case 'resources/list':
@@ -216,7 +229,13 @@ export function runStdioMcpServer(
       write({ jsonrpc: '2.0', id: 0, error: { code: -32700, message: 'Parse error' } });
       return;
     }
-    void handleRequest(request, { client: runtimeClient(home) })
+    void handleRequest(request, {
+      client: runtimeClient(home),
+      allowedActions:
+        process.env.MAMA_ALLOWED_ACTIONS === undefined
+          ? undefined
+          : JSON.parse(process.env.MAMA_ALLOWED_ACTIONS),
+    })
       .then((response) => {
         if (response !== null) write(response);
       })

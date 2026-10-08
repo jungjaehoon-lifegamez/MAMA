@@ -163,12 +163,12 @@ export interface ActionSurface {
   catalog: ReturnType<typeof createCatalog>;
   dispatch: ActionDispatcher;
   ownerAccess: JudgmentAccess;
-  hostToolDefinitions(): HostToolDefinition[];
+  hostToolDefinitions(access?: JudgmentAccess): HostToolDefinition[];
   hostToolCall(
     name: string,
     input: unknown,
     operationId: string,
-    context?: Omit<ActionContext, 'access' | 'operationId'>
+    context?: Omit<ActionContext, 'access' | 'operationId'> & { access?: JudgmentAccess }
   ): Promise<Awaited<ReturnType<ActionDispatcher>>>;
 }
 
@@ -426,12 +426,12 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     // its arguments; types, allowed values and examples come from `help`. The dispatcher still
     // validates each call against the action's own schema.
     // Codex calls actions from its own exec, so it is not offered code_act.
-    hostToolDefinitions: () =>
+    hostToolDefinitions: (access = ownerAccess) =>
       catalog
         .list()
         .filter(
           (contract) =>
-            contract.name !== CODE_ACT_CONTRACT.name && ownerAccess.actions.includes(contract.name)
+            contract.name !== CODE_ACT_CONTRACT.name && access.actions.includes(contract.name)
         )
         .map((contract) => ({
           name: contract.name,
@@ -441,7 +441,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     hostToolCall: (name, input, operationId, context = {}) =>
       dispatch(
         { action: name, input, operationId },
-        { ...context, access: ownerAccess, operationId }
+        { ...context, access: context.access ?? ownerAccess, operationId }
       ),
   };
 }

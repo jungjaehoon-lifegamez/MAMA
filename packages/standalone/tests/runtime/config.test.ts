@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -65,6 +65,21 @@ function validConfig(): W1Config {
 }
 
 describe('W1 runtime configuration', () => {
+  it('accepts member_root outside HOME and rejects relative or overlapping roots', () => {
+    const root = join(realpathSync(tmpdir()), 'fixture-members-root');
+    expect(parseConfig({ ...validConfig(), member_root: root }).member_root).toBe(root);
+    expect(parseConfig(validConfig()).member_root).toBeUndefined();
+    for (const invalid of [
+      'relative',
+      '~/.members',
+      testHome,
+      join(testHome, 'members'),
+      tmpdir(),
+    ]) {
+      expect(() => parseConfig({ ...validConfig(), member_root: invalid })).toThrow(/member_root/);
+    }
+  });
+
   it('reads agent.max_turn_ms, defaulting to an hour, and refuses zero', () => {
     const base = validConfig();
     const { max_turn_ms: _unset, ...agent } = base.agent;

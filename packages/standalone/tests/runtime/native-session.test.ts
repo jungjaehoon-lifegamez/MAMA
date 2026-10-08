@@ -521,3 +521,123 @@ describe('one owner native session', () => {
     sessionPool.dispose();
   });
 });
+
+describe('member native execution', () => {
+  it.each(['codex', 'claude'] as const)(
+    'uses member authority and prompt for %s, including a child',
+    async (backend) => {
+      const root = mkdtempSync(join(tmpdir(), 'member-native-'));
+      const pool = new SessionPool();
+      const actionSurface = surface();
+      const memberAccess = {
+        principalId: 'fixture-member',
+        agentId: 'member-agent:fixture-member',
+        scopes: [{ kind: 'user' as const, id: 'fixture-member' }],
+        actions: ['source.read'],
+      };
+      let current = memberAccess;
+      let driver!: NativeDriverOptions;
+      const calls: unknown[] = [];
+      const model = runner(backend);
+      vi.spyOn(actionSurface, 'hostToolCall').mockImplementation(async (_n, _i, _o, ctx) => {
+        calls.push(ctx?.access);
+        return { status: 'completed', data: {} };
+      });
+      (model.prompt as ReturnType<typeof vi.fn>).mockImplementation(
+        async (_content, callbacks, opts) => {
+          callbacks?.onInputDispatch?.({
+            backend,
+            sessionId: 'fixture-session',
+            inputId: 'fixture-input',
+          });
+          if (backend === 'codex') {
+            await opts.hostToolBridge.execute({
+              callId: 'fixture-call',
+              name: 'source.read',
+              input: {},
+            });
+          } else {
+            await session.callAction(
+              { action: 'source.read', input: {}, operationId: 'fixture-call' },
+              { session_id: 'fixture-session', tool_use_id: 'fixture-call' }
+            );
+          }
+          current = {
+            ...memberAccess,
+            readScopes: [{ kind: 'project', id: 'fixture-new-grant' }],
+          } as typeof memberAccess;
+          const child = await driver.createSubagentBridge({
+            sessionKey: 'member:fixture-member:runtime',
+            agentThreadId: 'fixture-child',
+          });
+          expect(child).not.toBeNull();
+          await child!.bridge.execute({
+            callId: 'fixture-child-call',
+            name: 'source.read',
+            input: {},
+          });
+          expect(calls.at(-1)).toBe(current);
+          await child!.release({ status: 'completed', summary: 'fixture child completed' });
+          return {
+            response: 'answer',
+            session_id: 'fixture-session',
+            usage: { input_tokens: 1, output_tokens: 1 },
+          };
+        }
+      );
+      const dispatch = vi
+        .spyOn(actionSurface, 'dispatch')
+        .mockResolvedValue({ status: 'completed', data: {} });
+      const prepareAccess = vi.fn(() => current);
+      const session = createNativeSession({
+        backend,
+        model: 'fixture',
+        workspaceDir: join(root, 'workspace'),
+        runtimeRoot: root,
+        actionSurface,
+        sessionPool: pool,
+        timeout: 1_000,
+        maxTurns: 10,
+        principal: {
+          principalId: memberAccess.principalId,
+          agentId: memberAccess.agentId,
+          sessionKey: 'member:fixture-member:runtime',
+          systemPrompt: 'MEMBER_PROMPT_SENTINEL',
+          prepareAccess,
+        },
+        claudeConfigDir: join(root, 'claude-config'),
+        codexHome: join(root, '.codex'),
+        pluginDir: join(root, '.empty-plugins'),
+        createAgent: (opts) => {
+          driver = opts;
+          return model;
+        },
+        modelRun: {
+          begin: async () => 'fixture-run',
+          commit: async () => {},
+          fail: async () => {},
+        },
+      });
+      try {
+        await session.runTurn([{ type: 'text', text: 'member request' }]);
+        expect(prepareAccess.mock.calls.length).toBeGreaterThanOrEqual(2);
+        if (backend === 'codex') expect(calls[0]).toBe(memberAccess);
+        else expect(dispatch.mock.calls[0][1].access).toBe(memberAccess);
+        const opts = (model.prompt as ReturnType<typeof vi.fn>).mock.calls[0][2];
+        expect(opts.systemPrompt).toContain('MEMBER_PROMPT_SENTINEL');
+        expect(session.sessionKey).toBe('member:fixture-member:runtime');
+        expect(session.hostToolDefinitions().map((t) => t.name)).toEqual(['source.read']);
+        expect(driver.webSearch).not.toBe(true);
+        expect(driver.processEnv.CLAUDE_CONFIG_DIR).toBe(join(root, 'claude-config'));
+        if (backend === 'claude') {
+          expect(opts.tools).toContain('Bash');
+          expect(opts.tools).not.toMatch(/WebFetch|WebSearch/);
+        }
+      } finally {
+        await session.stop();
+        pool.dispose();
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  );
+});

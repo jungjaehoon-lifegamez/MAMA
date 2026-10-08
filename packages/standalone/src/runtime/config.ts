@@ -1,3 +1,4 @@
+import { validateMemberRoot } from './member-paths.js';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -84,6 +85,7 @@ export interface W1ReportsConfig {
 export interface W1Config {
   version: 1;
   timezone: string;
+  member_root?: string;
   agent: W1AgentConfig;
   database: { path: string };
   logging: { level: 'debug' | 'info' | 'warn' | 'error'; file: string };
@@ -120,6 +122,7 @@ export class ConfigError extends Error {
 const CONFIG_KEYS = [
   'version',
   'timezone',
+  'member_root',
   'agent',
   'database',
   'logging',
@@ -521,6 +524,9 @@ function parseConfigValue(
     config: {
       version: 1,
       timezone,
+      ...(raw.member_root === undefined
+        ? {}
+        : { member_root: validateMemberRoot(text(raw.member_root, 'member_root'), home) }),
       agent: parseAgent(raw.agent, home, state),
       database: { path: configPath(text(database.path, 'database.path'), home) },
       logging: {

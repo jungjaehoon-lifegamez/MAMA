@@ -104,7 +104,7 @@ cd packages/mama-core && npx vitest run -t "pattern"
 
 ## MAMA OS agent isolation — do not change
 
-Daemon agents run only inside `~/.mama`. Leaking global settings costs thousands of duplicated
+Daemon owner agents run only inside `~/.mama`. Leaking global settings costs thousands of duplicated
 tokens every turn. Defined in `packages/mama-core/src/runtime/drivers/persistent-cli-process.ts`
 and `claude-cli-wrapper.ts`; native tool projection in
 `packages/standalone/src/agent/claude-native-tool-policy.ts` (carried back at W1).
@@ -137,6 +137,13 @@ observation, not widening.
 Owner decision 2026-10-05: each WebFetch call raises the same kind of security alert, naming its
 URL and grouped per host within a minute, because text placed in a URL reaches any host. WebFetch
 stays allowed; WebSearch stays recorded in `tool_traces` only. This is observation, not narrowing.
+
+Owner decision 2026-10-08 (4): member agents run in their own workspace under the configured
+member root outside the owner's home, with the same isolation settings as the owner: git boundary,
+empty plugins, project/local settings, persistent sessions, first-turn system prompt, required
+sandbox and deny-all proxy, workspace-only writes, credential denies, environment scrubbing and
+background tasks off. Members have no web tools (owner decision 7). Member backend credentials and
+runtime state stay under that member root.
 
 ## Owner credential boundary — 2026-09-27
 

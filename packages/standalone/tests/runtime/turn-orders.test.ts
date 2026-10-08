@@ -8,6 +8,7 @@ import {
   deltaRecordOrder,
   lessonsBlock,
   liveDeltaLines,
+  MEMBER_VOICE,
   ownerMessageOrder,
   parseRecordOrder,
   recordOrderId,
@@ -165,6 +166,29 @@ describe('turn orders', () => {
     expect(order).toContain('- [owner rule] report style: point form');
     expect(order).toContain('full report please');
     expect(order).toContain('attachment: name="a.pdf" path="/downloads/a.pdf" size=3 bytes');
+  });
+
+  it('speaks to a member in its own voice, with no owner label (P3)', () => {
+    const order = ownerMessageOrder(
+      { messenger: 'telegram', occurredAt: now.getTime(), payload: { text: 'draft the memo' } },
+      [{ topic: 'tone', summary: 'keep it short', ownerRule: true }],
+      { timeZone: 'UTC' },
+      MEMBER_VOICE
+    );
+    expect(order.split('\n')[0]).toBe('[member_message] telegram · 2026-09-29 Tue 01:40 (UTC)');
+    expect(order).toContain('- [their rule] tone: keep it short');
+    const start = sessionStartBlock(
+      {
+        exchanges: [{ at: now.getTime() - 60_000, owner: 'earlier ask', answer: 'earlier reply' }],
+        decisions: [],
+      },
+      now,
+      { timeZone: 'UTC' },
+      MEMBER_VOICE
+    );
+    expect(start).toContain('Earlier messages from this person and your replies');
+    expect(start).toContain('] person: earlier ask → you: earlier reply');
+    expect(`${order}\n${start}`).not.toMatch(/owner/i);
   });
 
   it("drops delta lines older than Kagemusha's six-hour backfill guard", () => {

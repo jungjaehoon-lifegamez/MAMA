@@ -458,6 +458,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       socketPath: paths.socketPath,
       credentialPath: paths.credentialPath,
       runtimeRoot: paths.mamaRoot,
+      ...(config.member_root === undefined ? {} : { memberRoot: config.member_root }),
       timeZone,
       replayKeyFile: config.jev?.keyFile,
       ...(config.jev?.enabled ? { jev: config.jev } : {}),

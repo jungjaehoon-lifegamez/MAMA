@@ -312,3 +312,24 @@ describe('mama action MCP server — location', () => {
     expect(resolveActionServerPath()).toMatch(/[/\\]runtime[/\\]action-mcp-server\.js$/);
   });
 });
+
+it('offers only member actions from the shared socket catalog', async () => {
+  const contracts = [
+    CODE_ACT_CONTRACT,
+    { name: 'memory.search', summary: 'Personal search', inputSchema: { type: 'object' } },
+    {
+      name: 'manage.policy.read',
+      summary: 'OWNER_POLICY_ACTION_SENTINEL',
+      inputSchema: { type: 'object' },
+    },
+  ];
+  const result = await handleRequest(
+    { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+    {
+      client: { describe: async () => contracts } as never,
+      allowedActions: ['code_act', 'memory.search'],
+    }
+  );
+  expect(JSON.stringify(result)).toContain('Personal search');
+  expect(JSON.stringify(result)).not.toContain('OWNER_POLICY_ACTION_SENTINEL');
+});

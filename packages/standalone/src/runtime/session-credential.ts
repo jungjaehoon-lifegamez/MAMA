@@ -8,7 +8,10 @@ export function sessionCredentialPath(mamaHome: string): string {
 
 /** Read at request time: credentials rotate when the runtime starts again. */
 export function readSessionCredential(mamaHome: string): string | undefined {
-  const path = sessionCredentialPath(mamaHome);
+  return readCredentialFile(sessionCredentialPath(mamaHome));
+}
+
+export function readCredentialFile(path: string): string | undefined {
   if (!existsSync(path)) return undefined;
   const credential = readFileSync(path, 'utf8').trim();
   return credential === '' ? undefined : credential;
