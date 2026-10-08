@@ -18,7 +18,7 @@ it('separates backend state and host runtime paths, creates private roots and a 
   vi.stubEnv('HOME', home);
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'fixture-members-')));
   roots.push(root);
-  validateMemberRoot(root, home);
+  validateMemberRoot(root, [home, join(home, '.mama')]);
   const first = ensureMemberPaths(root, 'fixture-one');
   const second = ensureMemberPaths(root, 'fixture-two');
   for (const key of Object.keys(first) as Array<keyof typeof first>) {

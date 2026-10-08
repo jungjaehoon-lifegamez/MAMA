@@ -526,7 +526,12 @@ function parseConfigValue(
       timezone,
       ...(raw.member_root === undefined
         ? {}
-        : { member_root: validateMemberRoot(text(raw.member_root, 'member_root'), home) }),
+        : {
+            member_root: validateMemberRoot(text(raw.member_root, 'member_root'), [
+              home,
+              join(home, '.mama'),
+            ]),
+          }),
       agent: parseAgent(raw.agent, home, state),
       database: { path: configPath(text(database.path, 'database.path'), home) },
       logging: {

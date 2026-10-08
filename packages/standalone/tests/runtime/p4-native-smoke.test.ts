@@ -115,13 +115,16 @@ it('requires the same explicit root and typed Telegram identity on every command
   const state = {
     ownerHome: '/fixture/home',
     databasePath: '/fixture/db',
+    liveDatabasePath: '/fixture/state/owner.db',
     ownerSentinel: '/fixture/home/sentinel',
     otherWorkspaceSentinel: '/fixture/other/workspace/sentinel',
     otherDownloadsSentinel: '/fixture/other/downloads/sentinel',
   };
   for (const backend of ['claude', 'codex'])
     for (const entry of smokeProbes(state, '/fixture/workspace', backend)) {
-      if (entry.id.endsWith('-db') && entry.kind === 'shell')
-        expect(entry.command).toMatch(/read\(16\)|head -c 16/);
+      if (entry.id.endsWith('-db') && entry.id !== 'fixture-db') {
+        expect(entry.target).toBe('/fixture/state/owner.db');
+        if (entry.kind === 'shell') expect(entry.command).toMatch(/read\(16\)|head -c 16/);
+      }
     }
 });

@@ -285,11 +285,12 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       .filter((member) => member.status === 'active');
     if (activeMembers.length && options.memberRoot === undefined)
       throw new Error('Active members require member_root');
+    const ownerDeniedPaths = options.memberRoot === undefined ? [] : ownerDataReadPaths(options);
+    // A denied owner path that contains member_root would deny the members' own workspaces.
     const memberRoot =
       options.memberRoot === undefined
         ? undefined
-        : validateMemberRoot(options.memberRoot, undefined, options.runtimeRoot);
-    const ownerDeniedPaths = memberRoot === undefined ? [] : ownerDataReadPaths(options);
+        : validateMemberRoot(options.memberRoot, ownerDeniedPaths);
     rawStore = new RawStore(options.rawPath);
     const chat = new ChatSources(
       rawStore,

@@ -82,6 +82,8 @@ function loadState(args) {
   ) {
     throw new Error('Smoke identity or owner home does not match prepare');
   }
+  // The daemon's configured database; config.js loads no driver, so the CLI tap still installs first.
+  state.liveDatabasePath = requireProduct('./dist/runtime/config.js').loadConfig().database.path;
   return state;
 }
 
@@ -98,7 +100,7 @@ async function prepare(args) {
     const databasePath = path.join(fixtureRoot, 'owner-db', 'memory.db');
     process.env.MAMA_DB_PATH = databasePath;
     const api = product();
-    const memberRoot = api.validateMemberRoot(args.memberRoot, os.homedir(), runtimeRoot);
+    const memberRoot = api.validateMemberRoot(args.memberRoot, [os.homedir(), runtimeRoot]);
     fs.mkdirSync(memberRoot, { recursive: true, mode: 0o700 });
     const manifest = path.join(memberRoot, manifestName);
     if (fs.existsSync(manifest)) {
@@ -163,7 +165,7 @@ export function smokeProbes(state, workspace, backend) {
   if (!path.isAbsolute(workspace)) {
     throw new Error('Member workspace must be absolute');
   }
-  const liveDb = path.join(state.ownerHome, '.mama', 'mama-memory.db');
+  const liveDb = state.liveDatabasePath;
   const readBytes = (file) =>
     `${python} -c ${quote(`print(open(${JSON.stringify(file)},'rb').read(16))`)}`;
   const shell = (id, command, target) => ({
@@ -603,6 +605,8 @@ function verify(args) {
     }
     fs.rmSync(path.join(state.memberRoot, state.otherId), { recursive: true, force: true });
     fs.rmSync(path.join(state.memberRoot, manifestName), { force: true });
+    // The fixture DB holds the member's real external id; it was needed only for the turns.
+    fs.rmSync(path.dirname(state.databasePath), { recursive: true, force: true });
     // Keep the member's claude-config and .codex (the owner's login for it) and the evidence.
   }
   if (failed) {

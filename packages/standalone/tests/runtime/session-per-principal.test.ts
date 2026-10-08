@@ -633,6 +633,14 @@ it('fails an unauthenticated member turn loudly without constructing an owner-pa
   }
 });
 
+it('refuses to boot when a denied owner path contains member_root', async () => {
+  const f = await fixture();
+  // The report slot directory is denied to members; here it would cover their own workspaces.
+  f.options.reportPath = join(f.root, 'report-slots.json');
+  await expect(createOwnerRuntime(f.options)).rejects.toThrow(/owner data paths/);
+  f.pool.dispose();
+});
+
 it('requires no root with no active members and serves a newly enrolled member only on serveMember', async () => {
   const f = await fixture('codex', false);
   const db = await openCoreDatabase({ path: f.options.databasePath });

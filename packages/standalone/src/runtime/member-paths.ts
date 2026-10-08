@@ -1,5 +1,4 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { sessionCredentialPath } from './session-credential.js';
 import { normalizeReadPaths, physicalReadPath } from './backend-security.js';
@@ -27,16 +26,13 @@ export function otherMemberReadPaths(
   );
 }
 
-export function validateMemberRoot(
-  root: string,
-  ownerHome = homedir(),
-  mamaHome = join(ownerHome, '.mama')
-): string {
+/** ownerPaths: HOME, the MAMA home and, at boot, every owner data path members are denied. */
+export function validateMemberRoot(root: string, ownerPaths: string[]): string {
   if (!isAbsolute(root)) throw new Error('member_root must be absolute');
   const resolved = physical(resolve(root));
-  for (const forbidden of [physical(resolve(ownerHome)), physical(resolve(mamaHome))]) {
+  for (const forbidden of ownerPaths.map((path) => physical(resolve(path)))) {
     if (inside(forbidden, resolved) || inside(resolved, forbidden))
-      throw new Error('member_root must be outside HOME and the MAMA home without overlap');
+      throw new Error('member_root must not overlap HOME, the MAMA home or owner data paths');
   }
   return resolved;
 }

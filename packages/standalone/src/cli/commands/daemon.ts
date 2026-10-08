@@ -463,6 +463,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         configPath,
         config.logging.file,
         paths.mcpConfigPath,
+        // Outside HOME when the config root is; the directory covers the WAL files.
+        dirname(paths.kagemushaDbPath),
         ...(config.jev ? [config.jev.keyFile, config.jev.vocabFile] : []),
       ],
       timeZone,
