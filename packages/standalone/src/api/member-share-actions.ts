@@ -126,8 +126,18 @@ export function memberShareActionRegistrations(ports: MemberSharePorts): ActionR
           record.scopes[0]!.id !== principal.principalId
         )
           throw denied('The record must be bound only to the member personal user scope');
-
-        const commandId = `memory.share:${context.operationId}`;
+        // The caller's operation id itself, so operation.get recovers a lost response.
+        const commandId = context.operationId;
+        // Only the current revision is shared; an earlier or stale one would reach readers as live.
+        // A recorded operation goes on to core's replay, which answers it whatever came after.
+        const recorded =
+          ports.adapter
+            .prepare('SELECT 1 FROM command_bindings WHERE command_id = ?')
+            .get(commandId) !== undefined;
+        if (!recorded && record.status !== 'active')
+          throw invalidInput(
+            'Share the current revision of the record, not a replaced or stale one'
+          );
         // Enumerate ids only, including every replaces branch and legacy supersedes. Read all
         // content through the existing scope-checked record read, never through this metadata query.
         const earlier = ports.adapter
@@ -144,6 +154,25 @@ export function memberShareActionRegistrations(ports: MemberSharePorts): ActionR
         ) SELECT id FROM revisions WHERE id <> ?`
           )
           .all(record.id, record.id) as Array<{ id: string }>;
+        // Which revision each one replaced, and why, so branches and reasons survive in the share.
+        const replaced = (id: string) => {
+          const rows = ports.adapter
+            .prepare(
+              `
+        SELECT d.supersedes AS id, NULL AS reason FROM decisions d
+        WHERE d.id = ? AND d.supersedes IS NOT NULL
+        UNION
+        SELECT e.object_id AS id, e.reason_text AS reason FROM twin_edges e
+        WHERE e.subject_kind = 'memory' AND e.subject_id = ? AND e.object_kind = 'memory'
+          AND e.edge_type = 'supersedes'
+        ORDER BY id`
+            )
+            .all(id, id) as Array<{ id: string; reason: string | null }>;
+          // A replacement can be recorded both as the column and as an edge; keep one per id.
+          const byId = new Map<string, string | null>();
+          for (const row of rows) byId.set(row.id, byId.get(row.id) ?? row.reason);
+          return [...byId].map(([predecessor, reason]) => ({ id: predecessor, reason }));
+        };
         const revisions = [];
         for (const { id } of earlier) {
           const revision = await readMemoryRecordById(ports.adapter, id, readable);
@@ -151,11 +180,12 @@ export function memberShareActionRegistrations(ports: MemberSharePorts): ActionR
             throw denied(
               'The whole revision history must be readable by the member before sharing'
             );
-          revisions.push(revisionText(revision));
+          revisions.push({ ...revisionText(revision), replaces: replaced(revision.id) });
         }
-        revisions.sort(
-          (a, b) => Number(a.createdAt) - Number(b.createdAt) || a.id.localeCompare(b.id)
-        );
+        // Legacy records carry ISO text timestamps; numbers and text both order by time.
+        const time = (value: number | string) =>
+          typeof value === 'number' ? value : Date.parse(value);
+        revisions.sort((a, b) => time(a.createdAt) - time(b.createdAt) || a.id.localeCompare(b.id));
         const scopes: MemoryScopeRef[] = [
           { kind: 'user', id: principal.principalId },
           { kind: 'project', id: partitionId },
@@ -178,7 +208,7 @@ export function memberShareActionRegistrations(ports: MemberSharePorts): ActionR
               memoryId: record.id,
               partitionId,
               reason,
-              current: revisionText(record),
+              current: { ...revisionText(record), replaces: replaced(record.id) },
               revisions,
             }),
             scopes,

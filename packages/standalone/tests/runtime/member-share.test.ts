@@ -173,10 +173,25 @@ describe('P2b member share through the product catalog and real dispatcher', () 
     rmSync(root, { recursive: true, force: true });
   });
 
+  // Relationships are asserted on their own; the content comparisons leave them out.
+  const withoutReplaces = <T extends { replaces?: unknown }>({ replaces: _replaces, ...rest }: T) =>
+    rest;
   const snapshot = async (id: string, principalId: string) => {
     const record = await read(id, principalId);
     expect(record).not.toBeNull();
-    return JSON.parse(record!.details) as Snapshot;
+    const parsed = JSON.parse(record!.details) as Snapshot & {
+      current: Revision & { replaces?: Array<{ id: string; reason: string | null }> };
+      revisions: Array<Revision & { replaces?: Array<{ id: string; reason: string | null }> }>;
+    };
+    return {
+      ...parsed,
+      current: withoutReplaces(parsed.current),
+      revisions: parsed.revisions.map(withoutReplaces),
+      relations: {
+        current: parsed.current.replaces,
+        revisions: parsed.revisions.map((revision) => revision.replaces),
+      },
+    };
   };
   const expected = (): Snapshot => ({
     memoryId: original,
@@ -210,8 +225,8 @@ describe('P2b member share through the product catalog and real dispatcher', () 
     const caller = turn();
     const ordinary = structuredClone(caller.access);
     const saved = data<{ id: string }>(await share({}, caller));
-    expect(await snapshot(saved.id, OWNER)).toEqual(expected());
-    expect(await snapshot(saved.id, b)).toEqual(expected());
+    expect(await snapshot(saved.id, OWNER)).toMatchObject(expected());
+    expect(await snapshot(saved.id, b)).toMatchObject(expected());
     expect(await read(saved.id, c)).toBeNull();
     expect(await read(original, OWNER)).toBeNull();
     expect(await read(original, b)).toBeNull();
@@ -246,14 +261,14 @@ describe('P2b member share through the product catalog and real dispatcher', () 
     const repeated = data<{ id: string }>(await share({}, turn(), 'fixture-share-operation'));
     expect(repeated.id).toBe(first.id);
     expect(changes()).toBe(before);
-    expect(await snapshot(first.id, b)).toEqual(expected());
+    expect(await snapshot(first.id, b)).toMatchObject(expected());
   });
 
   it('keeps the share and its history after B1 erasure and tombstones the cited original', async () => {
     const saved = data<{ id: string }>(await share());
     erasePrincipalRecords(db.adapter, { principalId: a, commandId: 'fixture-erasure' });
-    expect(await snapshot(saved.id, b)).toEqual(expected());
-    expect(await snapshot(saved.id, OWNER)).toEqual(expected());
+    expect(await snapshot(saved.id, b)).toMatchObject(expected());
+    expect(await snapshot(saved.id, OWNER)).toMatchObject(expected());
     expect(stored(original)).toMatchObject({
       decision: '',
       reasoning: null,
@@ -296,6 +311,42 @@ describe('P2b member share through the product catalog and real dispatcher', () 
       expected().current,
       { id: branch, createdAt: 4000, summary: 'Branch review', details: 'Branch review text.' },
     ]);
+    expect([...(shared.relations.current ?? [])].sort((x, y) => x.id.localeCompare(y.id))).toEqual(
+      [
+        { id: original, reason: 'Include the current review.' },
+        { id: branch, reason: 'Include the branch review.' },
+      ].sort((x, y) => x.id.localeCompare(y.id))
+    );
+  });
+
+  it('refuses a replaced revision so readers never receive an obsolete record as live', async () => {
+    await refused(() => share({ memory_id: earlier[0] }), 'invalid_input');
+  });
+
+  it('records the share under the caller operation id so operation.get can recover it', async () => {
+    const saved = data<{ id: string }>(await share({}, turn(), 'fixture-share-recovery'));
+    expect(
+      db.adapter
+        .prepare(
+          `SELECT j.record_id FROM command_bindings b
+           JOIN judgment_commands j ON j.command_id = b.command_id WHERE b.command_id = ?`
+        )
+        .get('fixture-share-recovery')
+    ).toEqual({ record_id: saved.id });
+  });
+
+  it('orders legacy text timestamps by time', async () => {
+    // Time order is set opposite to id order, so an id fallback cannot pass by chance.
+    const [byIdFirst, byIdSecond] = [earlier[0]!, earlier[1]!].sort();
+    const setTime = (id: string, ms: number) =>
+      db.adapter
+        .prepare('UPDATE decisions SET created_at = ? WHERE id = ?')
+        .run(new Date(ms).toISOString(), id);
+    setTime(byIdSecond!, 500);
+    setTime(byIdFirst!, 1500);
+    const saved = data<{ id: string }>(await share());
+    const shared = await snapshot(saved.id, b);
+    expect(shared.revisions.map((revision) => revision.id)).toEqual([byIdSecond, byIdFirst]);
   });
 
   it('refuses an unreadable earlier revision instead of sharing an incomplete history', async () => {
