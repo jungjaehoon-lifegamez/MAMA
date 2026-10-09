@@ -256,6 +256,10 @@ function pathsFor(configPath: string, config: W1Config): DaemonPaths {
   if (pathsOverlap(workspaceDir, downloadsDir)) {
     throw new Error(`agent.codex_cwd must not contain or sit inside ${downloadsDir}`);
   }
+  // The owner's native reads deny the raw stores (P6); a workspace there would be unreadable.
+  if (pathsOverlap(workspaceDir, connectorsRoot)) {
+    throw new Error(`agent.codex_cwd must not contain or sit inside ${connectorsRoot}`);
+  }
   return {
     mamaRoot,
     runtimeRoot,
