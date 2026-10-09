@@ -1,6 +1,7 @@
 import type { JudgmentAccess } from '@jungjaehoon/mama-core';
 import { memberSystemLayers } from './member-system-prompt.js';
 import { backendEnvironment, credentialReadPaths, normalizeReadPaths } from './backend-security.js';
+import { memberClaudeTmpDir } from './member-paths.js';
 import { untrustedToolData } from '../utils/untrusted-content.js';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -249,6 +250,13 @@ function driverOptions(
   };
 }
 
+/** The Claude CLI's temp root: the workspace's for the owner, a short private one for a member. */
+function claudeTmpDir(options: NativeSessionOptions): string {
+  return options.principal === undefined
+    ? join(options.workspaceDir, '.tmp')
+    : memberClaudeTmpDir(options.principal.principalId);
+}
+
 function createDriver(
   options: NativeSessionOptions,
   nativeOptions: NativeDriverOptions,
@@ -300,7 +308,7 @@ function createDriver(
       ? claudeOwnerDisallowedTools
       : claudeMemberDisallowedTools)(nativeOptions.deniedReadPaths, options.workspaceDir),
     processEnv: nativeOptions.processEnv,
-    env: { CLAUDE_CODE_TMPDIR: join(options.workspaceDir, '.tmp') },
+    env: { CLAUDE_CODE_TMPDIR: claudeTmpDir(options) },
     pluginDir: nativeOptions.pluginDir,
     requestTimeout: nativeOptions.requestTimeout,
     ...(nativeOptions.requestMaxMs === undefined
@@ -344,7 +352,12 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
   const deniedReadPaths =
     options.principal === undefined ? readPaths : normalizeReadPaths(readPaths);
   if (options.backend === 'claude')
-    ensureClaudeCallerHook(options.workspaceDir, deniedReadPaths, options.sandboxNetworkProxy);
+    ensureClaudeCallerHook(
+      options.workspaceDir,
+      deniedReadPaths,
+      options.sandboxNetworkProxy,
+      claudeTmpDir(options)
+    );
   const sessionKey = options.principal?.sessionKey ?? OWNER_RUNTIME_SESSION_KEY;
   const prepareAccess =
     options.principal?.prepareAccess ?? (() => options.actionSurface.ownerAccess);

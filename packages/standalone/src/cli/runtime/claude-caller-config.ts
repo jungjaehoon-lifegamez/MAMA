@@ -15,7 +15,8 @@ export interface SandboxNetworkProxy {
 export function ensureClaudeCallerHook(
   workspaceDir: string,
   deniedReadPaths: readonly string[] = [],
-  networkProxy?: SandboxNetworkProxy
+  networkProxy?: SandboxNetworkProxy,
+  tmpDir = join(resolve(workspaceDir), '.tmp')
 ): void {
   workspaceDir = resolve(workspaceDir);
   const directory = join(workspaceDir, '.claude');
@@ -40,7 +41,7 @@ export function ensureClaudeCallerHook(
       ...(networkProxy === undefined ? {} : { network: { ...networkProxy } }),
     },
     env: {
-      CLAUDE_CODE_TMPDIR: join(workspaceDir, '.tmp'),
+      CLAUDE_CODE_TMPDIR: tmpDir,
       // Children complete inside the owner turn, while their host calls have an active run.
       CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
     },

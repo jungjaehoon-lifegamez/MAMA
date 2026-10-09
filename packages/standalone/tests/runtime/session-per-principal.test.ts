@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync, realpathSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tmpdir, userInfo } from 'node:os';
 import { createRequire } from 'node:module';
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import type { JudgmentAccess } from '@jungjaehoon/mama-core';
@@ -17,8 +17,8 @@ import {
 } from '../../src/runtime/native-session.js';
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
-import { memberPaths } from '../../src/runtime/member-paths.js';
-import { credentialReadPaths } from '../../src/runtime/backend-security.js';
+import { memberClaudeTmpDir, memberPaths } from '../../src/runtime/member-paths.js';
+import { credentialReadPaths, physicalReadPath } from '../../src/runtime/backend-security.js';
 
 // Only the unavailable socket transport is replaced. Core intake, credentials, mailbox,
 // native runner, records, model_runs and traces stay real.
@@ -260,6 +260,9 @@ it.each(['codex', 'claude'] as const)(
         join(external, 'vocab'),
         memberPaths(f.root, f.inactive).runtimeRoot,
         orphan,
+        // The Claude sandbox temp dir every session of this OS user falls back to.
+        physicalReadPath(join('/tmp', `claude-${userInfo().uid}`)),
+        physicalReadPath(memberClaudeTmpDir(f.inactive)),
       ];
       const check = () => {
         const driver = f.drivers.get(f.member)!;
@@ -273,6 +276,11 @@ it.each(['codex', 'claude'] as const)(
             readFileSync(join(paths.workspaceDir, '.claude', 'settings.json'), 'utf8')
           );
           expect(settings.sandbox.filesystem.denyRead).toEqual(driver.deniedReadPaths);
+          // Short enough that the sandbox shell gets it rather than the shared fallback.
+          const tmp = memberClaudeTmpDir(f.member);
+          expect(settings.env.CLAUDE_CODE_TMPDIR).toBe(tmp);
+          expect(Buffer.byteLength(join(tmp, `claude-${userInfo().uid}`))).toBeLessThanOrEqual(44);
+          expect(driver.deniedReadPaths).not.toContain(physicalReadPath(tmp));
         }
       };
       check();

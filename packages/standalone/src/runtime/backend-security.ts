@@ -1,5 +1,5 @@
 import { realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { OwnerRuntimeOptions } from './owner-runtime.js';
 
@@ -56,6 +56,8 @@ export function ownerDataReadPaths(options: OwnerRuntimeOptions): string[] {
     options.socketPath,
     options.credentialPath,
     join(root, 'logs'),
+    // The Claude sandbox temp dir every session of this OS user falls back to, the owner's included.
+    join('/tmp', `claude-${userInfo().uid}`),
     ...(options.ownerDeniedReadPaths ?? []),
   ]);
 }

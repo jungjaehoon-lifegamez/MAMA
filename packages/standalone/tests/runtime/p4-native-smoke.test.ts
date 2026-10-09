@@ -119,6 +119,7 @@ it('requires the same explicit root and typed Telegram identity on every command
     ownerSentinel: '/fixture/home/sentinel',
     otherWorkspaceSentinel: '/fixture/other/workspace/sentinel',
     otherDownloadsSentinel: '/fixture/other/downloads/sentinel',
+    sharedTmpSentinel: '/fixture/tmp/sentinel',
   };
   for (const backend of ['claude', 'codex'])
     for (const entry of smokeProbes(state, '/fixture/workspace', backend)) {

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { sessionCredentialPath } from './session-credential.js';
@@ -11,18 +12,35 @@ function inside(parent: string, child: string): boolean {
 /** Resolve existing ancestors too: a symlink must not move a member root into HOME. */
 const physical = physicalReadPath;
 
+const MEMBER_CLAUDE_TMP_PARENT = join('/tmp', 'mama-m');
+
+/**
+ * Claude's sandbox shell uses CLAUDE_CODE_TMPDIR/claude-<uid> only when that path fits 44 bytes
+ * (AF_UNIX socket paths); a longer one falls back to the /tmp/claude-<uid> every Claude session of
+ * this OS user shares. A member workspace path is far longer, so each member gets a short one.
+ */
+export function memberClaudeTmpDir(principalId: string): string {
+  const id = createHash('sha256').update(principalId).digest('hex').slice(0, 12);
+  return join(MEMBER_CLAUDE_TMP_PARENT, id);
+}
+
 /** Include inactive registrations and unregistered debris; enumerate again before each turn. */
 export function otherMemberReadPaths(
   root: string,
   principalId: string,
   registered: readonly string[]
 ): string[] {
-  const own = memberPaths(root, principalId).runtimeRoot;
+  const own = [memberPaths(root, principalId).runtimeRoot, memberClaudeTmpDir(principalId)];
+  // The CLI creates the temp parent at a member's first Claude turn.
+  const tmpEntries = existsSync(MEMBER_CLAUDE_TMP_PARENT)
+    ? readdirSync(MEMBER_CLAUDE_TMP_PARENT).map((entry) => join(MEMBER_CLAUDE_TMP_PARENT, entry))
+    : [];
   return normalizeReadPaths(
     [
-      ...registered.map((id) => memberPaths(root, id).runtimeRoot),
+      ...registered.flatMap((id) => [memberPaths(root, id).runtimeRoot, memberClaudeTmpDir(id)]),
       ...readdirSync(root).map((entry) => join(root, entry)),
-    ].filter((path) => path !== own)
+      ...tmpEntries,
+    ].filter((path) => !own.includes(path))
   );
 }
 
