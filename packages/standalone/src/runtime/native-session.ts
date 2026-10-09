@@ -103,7 +103,6 @@ export interface NativeSessionOptions {
     systemPrompt: string;
     prepareAccess: () => JudgmentAccess;
   };
-  claudeConfigDir?: string;
   socketPath?: string;
   credentialPath?: string;
   journalPath?: string;
@@ -214,9 +213,6 @@ function driverOptions(
     processEnv: {
       ...backendEnvironment(),
       ...(options.principal === undefined ? {} : { TMPDIR: join(options.workspaceDir, '.tmp') }),
-      ...(options.claudeConfigDir === undefined
-        ? {}
-        : { CLAUDE_CONFIG_DIR: options.claudeConfigDir }),
     },
     deniedReadPaths,
     model: options.model,

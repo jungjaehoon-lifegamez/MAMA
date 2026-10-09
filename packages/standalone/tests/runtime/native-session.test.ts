@@ -605,7 +605,6 @@ describe('member native execution', () => {
           systemPrompt: 'MEMBER_PROMPT_SENTINEL',
           prepareAccess,
         },
-        claudeConfigDir: join(root, 'claude-config'),
         codexHome: join(root, '.codex'),
         pluginDir: join(root, '.empty-plugins'),
         createAgent: (opts) => {
@@ -628,7 +627,6 @@ describe('member native execution', () => {
         expect(session.sessionKey).toBe('member:fixture-member:runtime');
         expect(session.hostToolDefinitions().map((t) => t.name)).toEqual(['source.read']);
         expect(driver.webSearch).not.toBe(true);
-        expect(driver.processEnv.CLAUDE_CONFIG_DIR).toBe(join(root, 'claude-config'));
         expect(driver.processEnv.TMPDIR).toBe(join(root, 'workspace', '.tmp'));
         if (backend === 'codex')
           expect(driver.shellEnvironment?.TMPDIR).toBe(join(root, 'workspace', '.tmp'));

@@ -51,7 +51,6 @@ export function createMemberSession(
   const denyPaths = () =>
     normalizeReadPaths([
       ...ports.ownerDeniedPaths,
-      paths.claudeConfigDir,
       ...otherMemberReadPaths(root, principalId, ports.registeredMemberIds()),
     ]).sort();
   let deniedReadPaths = denyPaths();

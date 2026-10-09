@@ -607,7 +607,7 @@ function verify(args) {
     fs.rmSync(path.join(state.memberRoot, manifestName), { force: true });
     // The fixture DB holds the member's real external id; it was needed only for the turns.
     fs.rmSync(path.dirname(state.databasePath), { recursive: true, force: true });
-    // Keep the member's claude-config and .codex (the owner's login for it) and the evidence.
+    // Keep the member's .codex and the evidence.
   }
   if (failed) {
     process.exitCode = 1;

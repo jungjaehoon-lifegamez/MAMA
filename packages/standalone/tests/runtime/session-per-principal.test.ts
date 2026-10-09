@@ -357,7 +357,7 @@ it('writes member denies and workspace TMPDIR into the existing Codex named prof
     const config = readFileSync(join(paths.codexHome, 'config.toml'), 'utf8');
     expect(config).toContain('default_permissions = "host-workspace"');
     expect(config).toContain('[permissions.host-workspace.filesystem]');
-    for (const path of [f.home, memberPaths(f.root, f.inactive).runtimeRoot, paths.claudeConfigDir])
+    for (const path of [f.home, memberPaths(f.root, f.inactive).runtimeRoot])
       expect(config).toContain(`${JSON.stringify(path)} = "deny"`);
     expect(config).toContain(`"TMPDIR" = ${JSON.stringify(join(paths.workspaceDir, '.tmp'))}`);
     expect(config).toContain('web_search = false');
@@ -572,19 +572,14 @@ it.each(['codex', 'claude'] as const)(
           .prepare('SELECT COUNT(*) AS n FROM tool_traces WHERE model_run_id IS NOT NULL')
           .get()
       ).toMatchObject({ n: 5 });
+      // Owner decision 2026-10-09: members use the owner's Claude login.
       expect(f.drivers.get(f.member)?.processEnv.CLAUDE_CONFIG_DIR).toBe(
-        memberPaths(f.root, f.member).claudeConfigDir
+        f.drivers.get('owner')?.processEnv.CLAUDE_CONFIG_DIR
       );
-      expect(f.drivers.get('owner')?.processEnv.CLAUDE_CONFIG_DIR).toBeUndefined();
       expect(f.drivers.get(f.member)?.cwd).not.toBe(f.drivers.get('owner')?.cwd);
       const memberDenied = f.drivers.get(f.member)?.deniedReadPaths ?? [];
       const own = memberPaths(f.root, f.member);
-      for (const path of [
-        f.home,
-        own.claudeConfigDir,
-        own.codexHome,
-        join(own.runtimeRoot, 'runtime'),
-      ])
+      for (const path of [f.home, own.codexHome, join(own.runtimeRoot, 'runtime')])
         expect(memberDenied).toContain(path);
       expect(f.drivers.get(f.member)?.registryRoot).toBe(
         memberPaths(f.root, f.member).registryRoot
