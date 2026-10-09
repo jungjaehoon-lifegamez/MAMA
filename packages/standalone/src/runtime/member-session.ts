@@ -21,6 +21,7 @@ import { resolvePrincipalAccess } from './principal-access.js';
 import { readSessionStartInput } from './session-start-context.js';
 import { createStimulusDelivery, type StimulusDeliveryOptions } from './stimulus-delivery.js';
 import { ownerRuleIds, RULE_KINDS } from './owner-authority.js';
+import { startMemberEgressProxy, type EgressProxy } from './egress-proxy.js';
 
 export function createMemberSession(
   principalId: string,
@@ -56,6 +57,7 @@ export function createMemberSession(
       ...otherMemberReadPaths(root, principalId, ports.registeredMemberIds()),
     ]).sort();
   let deniedReadPaths = denyPaths();
+  let proxy: EgressProxy | undefined;
   const create = () =>
     (options.createSession ?? createNativeSession)({
       backend: options.backend,
@@ -72,7 +74,7 @@ export function createMemberSession(
       },
       // Native session also denies this member's runtime and Codex credentials.
       deniedReadPaths,
-      sandboxNetworkProxy: options.sandboxNetworkProxy,
+      sandboxNetworkProxy: proxy,
       mcpServerPath: options.mcpServerPath,
       effort: options.effort,
       timeout: options.timeout,
@@ -98,8 +100,27 @@ export function createMemberSession(
     callAction: (call, caller) => current.callAction(call, caller),
     resetSession: (key) => current.resetSession(key),
     steer: (content, target, key) => current.steer(content, target, key),
-    stop: () => current.stop(),
+    stop: async () => {
+      try {
+        await current.stop();
+      } finally {
+        await proxy?.close();
+      }
+    },
     runTurn: async (content, request) => {
+      // Bind only when the configured Claude sandbox starts executing this member. No member
+      // receives the owner's endpoint; Codex's OS-level network deny has no proxy observation.
+      if (
+        options.backend === 'claude' &&
+        options.sandboxNetworkProxy !== undefined &&
+        proxy === undefined
+      ) {
+        proxy = await startMemberEgressProxy(principalId, (event) =>
+          options.outboundAttempts?.(event)
+        );
+        await current.stop();
+        current = create();
+      }
       const next = denyPaths();
       if (JSON.stringify(next) !== JSON.stringify(deniedReadPaths)) {
         // Enrollment runs in the owner's turn on the shared serial chain. Here that turn has

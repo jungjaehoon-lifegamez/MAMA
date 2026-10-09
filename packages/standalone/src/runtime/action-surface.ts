@@ -162,7 +162,10 @@ export interface ActionSurfaceOptions {
 }
 
 export interface ActionSurface {
-  createNativeEffectObserver(modelRunId: string): ReturnType<typeof createNativeToolTraceObserver>;
+  createNativeEffectObserver(
+    modelRunId: string,
+    access?: JudgmentAccess
+  ): ReturnType<typeof createNativeToolTraceObserver>;
   catalog: ReturnType<typeof createCatalog>;
   dispatch: ActionDispatcher;
   ownerAccess: JudgmentAccess;
@@ -439,11 +442,14 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
   };
 
   return {
-    createNativeEffectObserver: (modelRunId) => {
+    createNativeEffectObserver: (modelRunId, access = ownerAccess) => {
       const traces = createNativeToolTraceObserver(options.adapter, modelRunId);
       return options.outboundAttempts === undefined
         ? traces
-        : withOutboundAttempts(traces, modelRunId, options.outboundAttempts);
+        : withOutboundAttempts(traces, modelRunId, options.outboundAttempts, {
+            principalId: access.principalId,
+            ownerPrincipalId: options.ownerPrincipalId,
+          });
     },
     catalog,
     dispatch,

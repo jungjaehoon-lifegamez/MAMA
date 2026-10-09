@@ -7,6 +7,8 @@
  * clients in command position, not URL literals: a
  * script that reads a sheet full of links is not an attempt. They are a heuristic: a client they do
  * not name, or a script file written first and run after, is missed.
+ * Member shell starts stay in tool_traces only: they are not proof of a refused connection.
+ * Members have no web tools. Their bound sandbox proxy alone reports refusals to the owner.
  */
 import type { NativeEffectObserver } from '@jungjaehoon/mama-core/runtime/native-effect-observer';
 import { traceSummary } from '@jungjaehoon/mama-core/runtime/trace-summary';
@@ -109,12 +111,14 @@ export function outboundAttempt(
 export function withOutboundAttempts(
   inner: NativeEffectObserver,
   modelRunId: string,
-  sink: (event: OutboundAttemptEvent) => void
+  sink: (event: OutboundAttemptEvent) => void,
+  principal?: { principalId: string; ownerPrincipalId: string }
 ): NativeEffectObserver {
   const seen = new Set<string>();
   return {
     started(name, input) {
       inner.started(name, input);
+      if (principal !== undefined && principal.principalId !== principal.ownerPrincipalId) return;
       const event = outboundAttempt(name, input, modelRunId);
       if (event === null) return;
       if (event.callId !== null) {

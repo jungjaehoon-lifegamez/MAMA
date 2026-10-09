@@ -138,6 +138,13 @@ export interface OutboundAttemptEvent {
   callId: string | null;
 }
 
+/** A member proxy refusal; these are the only fields allowed in shared storage and delivery. */
+export interface MemberConnectionEvent {
+  principalId: string;
+  host: string;
+  time: string;
+}
+
 // The command or request comes from the agent: a line break in it must not start a line of the
 // alert that looks like the host's own.
 const oneLine = (value: string | null): string =>
@@ -194,7 +201,36 @@ export function createOutboundEventRecorder(options: SecurityEventOptions) {
   const gate = createAlertGate<string>(OUTBOUND_ALERT_WINDOW_MS);
   return {
     path,
-    record(observed: OutboundAttemptEvent): void {
+    record(observed: OutboundAttemptEvent | MemberConnectionEvent): void {
+      if ('principalId' in observed) {
+        // Pick fields before append or delivery, even if a caller supplied additional detail.
+        const event: MemberConnectionEvent = {
+          principalId: observed.principalId,
+          host: observed.host,
+          time: observed.time,
+        };
+        if (!appendSecurityEvent(path, event)) console.error('[agent] security_event_write_failed');
+        // Grouped per member and destination, as the owner's proxy connections are.
+        if (!gate(`member_connect ${event.principalId} ${event.host}`, !options.replay).alert)
+          return;
+        const timeZone = options.timeZone.get();
+        const localTime = new Date(event.time).toLocaleString('ko-KR', { timeZone });
+        const text = [
+          'Member connection refused by the sandbox proxy',
+          `Member: ${event.principalId}`,
+          `Host: ${oneLine(event.host)}`,
+          `Time: ${localTime} (${timeZone})`,
+        ].join('\n');
+        void (async () => {
+          try {
+            if (!options.sendToOwner) throw new Error('Owner alert delivery is unavailable');
+            await options.sendToOwner(text, `agent-outbound:${randomUUID()}`);
+          } catch {
+            console.error('[agent] security_alert_failed');
+          }
+        })();
+        return;
+      }
       // A command that sends data always alerts. Proxy connections and web fetches are grouped per
       // destination, so one destination cannot hide another; other commands are grouped in a burst.
       const { alert, suppressed } =

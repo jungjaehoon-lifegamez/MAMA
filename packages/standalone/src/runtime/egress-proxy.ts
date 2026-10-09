@@ -6,6 +6,7 @@
  * directly is refused by the operating system sandbox instead and is not seen here.
  */
 import { createServer, type Server, type Socket } from 'node:net';
+import type { MemberConnectionEvent } from '../api/security-events.js';
 
 export interface EgressAttempt {
   protocol: 'http' | 'socks';
@@ -19,6 +20,16 @@ export interface EgressProxy {
   httpProxyPort: number;
   socksProxyPort: number;
   close(): Promise<void>;
+}
+
+/** Each endpoint's callback is bound to its member, independently of executing turns. */
+export function startMemberEgressProxy(
+  principalId: string,
+  report: (event: MemberConnectionEvent) => void
+): Promise<EgressProxy> {
+  return startEgressProxy((attempt) =>
+    report({ principalId, host: attempt.target, time: new Date().toISOString() })
+  );
 }
 
 const REQUEST_LIMIT = 64 * 1024;

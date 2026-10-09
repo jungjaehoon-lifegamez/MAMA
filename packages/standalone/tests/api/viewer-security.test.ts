@@ -7,6 +7,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createViewerServer, type ViewerServerOptions } from '../../src/api/viewer-server.js';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
+import { createOutboundEventRecorder } from '../../src/api/security-events.js';
 
 const transport = vi.hoisted(() => ({
   handler: undefined as undefined | ((req: IncomingMessage, res: ServerResponse) => void),
@@ -684,6 +685,51 @@ describe('security events and owner alerts', () => {
 });
 
 describe('security events API', () => {
+  it('stores and serves only principal, host and time for a member refusal, even with extra input fields', async () => {
+    const path = join(process.env.HOME!, 'member-security.jsonl');
+    const sent: string[] = [];
+    const recorder = createOutboundEventRecorder({
+      path,
+      timeZone: createTimeZoneSetting('UTC'),
+      sendToOwner: async (text) => {
+        sent.push(text);
+      },
+    });
+    const event = {
+      principalId: 'fixture-member',
+      host: 'upload.example:443',
+      time: '2026-10-09T00:00:00.000Z',
+    };
+    recorder.record({
+      ...event,
+      class: 'outbound_connect',
+      tool: 'sandbox proxy',
+      summary: 'MEMBER_CONTENT_SENTINEL',
+      sendsData: null,
+      modelRunId: 'MEMBER_CONTENT_SENTINEL',
+      callId: 'MEMBER_CONTENT_SENTINEL',
+      command: 'MEMBER_CONTENT_SENTINEL',
+      url: 'https://upload.example/MEMBER_CONTENT_SENTINEL?q=MEMBER_CONTENT_SENTINEL',
+      body: 'MEMBER_CONTENT_SENTINEL',
+    });
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]!.split('\n')).toEqual([
+      'Member connection refused by the sandbox proxy',
+      'Member: fixture-member',
+      'Host: upload.example:443',
+      `Time: ${new Date(event.time).toLocaleString('ko-KR', { timeZone: 'UTC' })} (UTC)`,
+    ]);
+    // A repeat to the same host within the window is stored but grouped into that alert.
+    recorder.record(event);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sent).toHaveLength(1);
+    expect(fs.readFileSync(path, 'utf8')).toBe(`${JSON.stringify(event)}\n`.repeat(2));
+    await serve({ securityEvents: { path } });
+    const response = await request('/api/security/events');
+    expect(response.status).toBe(200);
+    expect(JSON.parse(response.body).events).toEqual([event, event]);
+    expect(response.body).not.toContain('MEMBER_CONTENT_SENTINEL');
+  });
   it('drops a partial oversized first line and limits reads to 256 KiB', async () => {
     await serve();
     await request('/api/runtime/status', tunnel);

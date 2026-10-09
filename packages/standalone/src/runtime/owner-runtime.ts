@@ -38,7 +38,7 @@ import type {
 } from './config.js';
 import { openCoreDatabase, type CoreDatabase } from './core-db.js';
 import { createActionSurface, type ActionSurface } from './action-surface.js';
-import type { OutboundAttemptEvent } from '../api/security-events.js';
+import type { OutboundAttemptEvent, MemberConnectionEvent } from '../api/security-events.js';
 import type { SandboxNetworkProxy } from '../cli/runtime/claude-caller-config.js';
 import { ownerRuleIds, RULE_KINDS } from './owner-authority.js';
 import { createNativeSession, type NativeSession } from './native-session.js';
@@ -64,7 +64,7 @@ import {
 
 export interface OwnerRuntimeOptions {
   /** Native shell commands that open a network connection, reported as they start (W35). */
-  outboundAttempts?: (event: OutboundAttemptEvent) => void;
+  outboundAttempts?: (event: OutboundAttemptEvent | MemberConnectionEvent) => void;
   backend: RuntimeBackend;
   model: string;
   databasePath: string;

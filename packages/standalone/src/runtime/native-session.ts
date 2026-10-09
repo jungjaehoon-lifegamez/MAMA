@@ -494,7 +494,13 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
     },
     createNativeEffectObserver: (context) => {
       const { modelRunId } = toolContext(context);
-      return modelRunId ? options.actionSurface.createNativeEffectObserver(modelRunId) : undefined;
+      if (!modelRunId) return undefined;
+      return options.principal === undefined
+        ? options.actionSurface.createNativeEffectObserver(modelRunId)
+        : options.actionSurface.createNativeEffectObserver(
+            modelRunId,
+            memberAccess(context?.access)
+          );
     },
     hostToolDefinitions: (request) =>
       options.principal === undefined

