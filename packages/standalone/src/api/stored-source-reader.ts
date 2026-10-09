@@ -16,12 +16,10 @@ const MAX_BATCH_SOURCE_REFS = 500;
 
 export interface StoredSourceReaderOptions {
   adapter: DatabaseAdapter;
-  ownerPrincipalId: () => string;
   rawStore?: () => Pick<RawStore, 'readVersion'> | null;
 }
 
 export interface StoredSourceReader {
-  isOwner(principalId: string): boolean;
   has(source: string): boolean;
   overview(
     source: string,
@@ -60,28 +58,23 @@ function missing(): Error {
   return error;
 }
 
-function erasedObservation(
-  access: Access,
-  scopes: readonly MemoryScopeRef[],
-  ownerPrincipalId: string
-): Error {
+function erasedObservation(access: Access, scopes: readonly MemoryScopeRef[]): Error {
+  // Erasure removes the source identity. A caller-supplied source cannot establish a wide grant;
+  // only the surviving bindings can admit this tombstone.
   if (
-    access.principalId !== ownerPrincipalId &&
     !scopes.some((scope) =>
-      access.scopes.some((allowed) => allowed.kind === scope.kind && allowed.id === scope.id)
+      [...access.scopes, ...(access.readScopes ?? [])].some(
+        (allowed) => allowed.kind === scope.kind && allowed.id === scope.id
+      )
     )
   )
     throw denied();
   return new Error('observation_erased');
 }
 
-function allowedChannels(
-  source: string,
-  access: Access,
-  ownerPrincipalId: string
-): string[] | null {
+function allowedChannels(source: string, access: Access): string[] | null {
   if (!access.connectors?.includes(source)) throw denied();
-  if (access.principalId === ownerPrincipalId) return null;
+  if (access.connectorWideRead?.includes(source)) return null;
   const channels = access.channels?.[source];
   if (!channels || channels.length === 0) throw denied();
   return [...new Set(channels.map((value) => value.trim()).filter(Boolean))];
@@ -148,10 +141,9 @@ function readError(error: unknown): { code: string; message: string } {
 export function createStoredSourceReader(options: StoredSourceReaderOptions): StoredSourceReader {
   const { adapter } = options;
   return {
-    isOwner: (principalId) => principalId === options.ownerPrincipalId(),
     has: (source) => hasStoredConnector(adapter, source),
     overview(source, access, allowance) {
-      const channels = allowedChannels(source, access, options.ownerPrincipalId());
+      const channels = allowedChannels(source, access);
       const row = storedConnectorOverview(adapter, source, channels, allowance?.maxSourceMs);
       return {
         source,
@@ -168,7 +160,7 @@ export function createStoredSourceReader(options: StoredSourceReaderOptions): St
       };
     },
     search(source, input, access, allowance) {
-      const granted = allowedChannels(source, access, options.ownerPrincipalId());
+      const granted = allowedChannels(source, access);
       const query = input.query === undefined ? '' : input.query;
       if (typeof query !== 'string') throw new Error('query must be text');
       const channels = pageChannels(input, granted);
@@ -239,17 +231,16 @@ export function createStoredSourceReader(options: StoredSourceReaderOptions): St
       };
     },
     read(source, input, access, allowance) {
-      const granted = allowedChannels(source, access, options.ownerPrincipalId());
+      const granted = allowedChannels(source, access);
       const { refs, batched } = readRefs(input);
       const rawStore = options.rawStore?.();
 
       const readOne = (ref: string): Record<string, unknown> => {
         const stored = getObservationVersion(adapter, ref);
-        if (stored && isErasedRecord(stored))
-          throw erasedObservation(access, stored.scopes, options.ownerPrincipalId());
+        if (stored && isErasedRecord(stored)) throw erasedObservation(access, stored.scopes);
         const channel = storedObservationChannel(adapter, ref, source, allowance?.maxSourceMs);
         if (channel === undefined) {
-          if (access.principalId === options.ownerPrincipalId()) throw missing();
+          if (access.connectorWideRead?.includes(source)) throw missing();
           throw denied();
         }
         if (granted && (!channel || !granted.includes(channel))) throw denied();
@@ -283,8 +274,7 @@ export function createStoredSourceReader(options: StoredSourceReaderOptions): St
             : undefined,
           allowance?.maxSourceMs === undefined ? undefined : { maxSourceMs: allowance.maxSourceMs }
         );
-        if (isErasedRecord(result))
-          throw erasedObservation(access, result.scopes, options.ownerPrincipalId());
+        if (isErasedRecord(result)) throw erasedObservation(access, result.scopes);
         if (result.status !== 'available') {
           throw new Error(result.status === 'not_found' ? 'observation_not_found' : result.reason);
         }
@@ -347,11 +337,10 @@ export function createStoredSourceReader(options: StoredSourceReaderOptions): St
       }
       const stored = getObservationVersion(adapter, observationRef);
       if (stored === null) {
-        if (access.principalId === options.ownerPrincipalId()) throw missing();
+        if (access.connectorWideRead?.length) throw missing();
         throw denied();
       }
-      if (isErasedRecord(stored))
-        throw erasedObservation(access, stored.scopes, options.ownerPrincipalId());
+      if (isErasedRecord(stored)) throw erasedObservation(access, stored.scopes);
       return this.read(stored.source, { observationRef, ...window }, access, allowance);
     },
   };

@@ -504,6 +504,11 @@ it.each(['codex', 'claude'] as const)(
           ).status
         ).toBe('completed');
       }
+      runtime.database.adapter
+        .prepare(
+          "UPDATE checkpoints SET timestamp = CASE WHEN summary = 'MEMBER_CHECKPOINT_SENTINEL' THEN 3 ELSE 2 END"
+        )
+        .run();
       for (const [intake, principal, label] of [
         [runtime.intake, 'owner', 'OWNER_EXCHANGE_SENTINEL'],
         [memberIntake, f.member, 'MEMBER_EXCHANGE_SENTINEL'],
@@ -566,12 +571,7 @@ it.each(['codex', 'claude'] as const)(
       expect(memberTurns.map((turn) => turn.prompt).join()).toContain('MEMBER_CHECKPOINT_SENTINEL');
       expect(memberTurns.map((turn) => turn.prompt).join()).toContain('MEMBER_EXCHANGE_SENTINEL');
       expect(ownerTurns.map((turn) => turn.prompt).join()).toContain('OWNER_EXCHANGE_SENTINEL');
-      // P6 scopes the owner's checkpoint reads (core lists them unscoped for the owner today); no
-      // member turn can write one before admission (P10), which comes after P6.
-      for (const turn of ownerTurns)
-        expect(
-          (turn.prompt + turn.standing).replaceAll('MEMBER_CHECKPOINT_SENTINEL', '')
-        ).not.toContain('MEMBER_');
+      for (const turn of ownerTurns) expect(turn.prompt + turn.standing).not.toContain('MEMBER_');
       const runs = runtime.database.adapter
         .prepare('SELECT agent_id, input_refs_json FROM model_runs')
         .all() as Array<{ agent_id: string; input_refs_json: string }>;

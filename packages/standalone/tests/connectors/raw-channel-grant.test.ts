@@ -2,12 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { createStoredSourceReader } from '../../src/api/stored-source-reader.js';
 
 describe('stored source channel grants', () => {
-  it('requires a connector grant and a channel grant for non-owner reads', () => {
+  it('requires channel grants when connector-wide read is absent', () => {
     const reader = createStoredSourceReader({
       adapter: {
         prepare: () => ({ get: () => undefined, all: () => [] }),
       } as never,
-      ownerPrincipalId: () => 'owner-test',
     });
     expect(() =>
       reader.search(

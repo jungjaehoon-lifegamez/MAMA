@@ -316,13 +316,13 @@ describe('iCal connector', () => {
         agentId: 'agent-test',
         actions: ['schedule.upcoming'],
         connectors: ['ical'],
+        connectorWideRead: ['ical'],
         scopes: [],
       };
       const dispatch = createDispatcher(
         createCatalog(
           reportSourceActionRegistrations({
             adapter: database.adapter,
-            ownerPrincipalId: 'owner-test',
             timeZone,
           })
         )
@@ -484,13 +484,13 @@ describe('iCal connector', () => {
       agentId: 'agent-test',
       actions: ['schedule.upcoming'],
       connectors: ['ical'],
+      connectorWideRead: ['ical'],
       scopes: [],
     };
     const dispatch = createDispatcher(
       createCatalog(
         reportSourceActionRegistrations({
           adapter: database.adapter,
-          ownerPrincipalId: 'owner-test',
           timeZone: createTimeZoneSetting('Asia/Seoul'),
         })
       )

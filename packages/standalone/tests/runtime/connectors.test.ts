@@ -420,7 +420,14 @@ describe('connector runtime', () => {
 
     try {
       await runtime.stop();
-      const families = storedSourceFamilies(database.adapter, names);
+      const families = storedSourceFamilies(database.adapter, names, {
+        principalId: 'fixture-owner',
+        agentId: 'fixture-agent',
+        actions: [],
+        connectors: names,
+        connectorWideRead: names,
+        scopes: [],
+      });
       const prompt = ownerSystemPrompt('codex', null, families, true, 'UTC');
       for (const name of names) {
         expect(prompt).toContain(`${name} (1; fixture-family 1)`);
@@ -447,7 +454,6 @@ describe('connector runtime', () => {
     const mailbox = new Mailbox(database.adapter);
     const stored = createStoredSourceReader({
       adapter: database.adapter,
-      ownerPrincipalId: () => 'owner',
       rawStore: () => rawStore,
     });
     const catalog = createCatalog(
@@ -459,6 +465,7 @@ describe('connector runtime', () => {
       agentId: 'agent',
       actions: ['source.read'],
       connectors: ['slack'],
+      connectorWideRead: ['slack'],
       scopes: [],
     };
     const runtime = {

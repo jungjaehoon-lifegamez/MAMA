@@ -18,6 +18,11 @@ function fixture() {
     .filter((name) => /^\d{3}-.+\.sql$/.test(name))
     .sort())
     db.exec(readFileSync(join(migrations, file), 'utf8'));
+  const productMigrations = join(__dirname, '../../db/migrations');
+  for (const file of readdirSync(productMigrations)
+    .filter((name) => /^\d{3}-.+\.sql$/.test(name))
+    .sort())
+    db.exec(readFileSync(join(productMigrations, file), 'utf8'));
   const surface = createActionSurface({
     timeZone: createTimeZoneSetting('UTC'),
     runtimeRoot: '/tmp/mama-test-runtime',

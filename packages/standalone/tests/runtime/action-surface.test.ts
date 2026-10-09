@@ -131,7 +131,7 @@ describe('W1 action surface', () => {
     );
   });
 
-  it('lets the owner read every channel of its connectors in the graph', () => {
+  it('keeps non-chat connector-wide reads while retaining chat in the connector grant', () => {
     const connectors = ['chatwork', 'slack', 'trello', 'kagemusha'];
     const surface = createActionSurface({
       timeZone: createTimeZoneSetting('UTC'),
@@ -144,7 +144,8 @@ describe('W1 action surface', () => {
       agentId: 'agent-test',
       connectors,
     });
-    expect(surface.ownerAccess.connectorWideRead).toEqual([...connectors, 'chat']);
+    expect(surface.ownerAccess.connectorWideRead).toEqual(connectors);
+    expect(surface.ownerAccess.connectors).toEqual([...connectors, 'chat']);
   });
 
   it('rejects a work status outside the shared vocabulary before it reaches knowledge', async () => {

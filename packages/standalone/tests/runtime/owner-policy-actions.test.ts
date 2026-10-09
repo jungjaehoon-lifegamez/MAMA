@@ -52,7 +52,6 @@ beforeEach(async () => {
     isOwnerMessageTurn: () => true,
     storedSourceReader: createStoredSourceReader({
       adapter: database.adapter,
-      ownerPrincipalId: () => 'owner-test',
       rawStore: () => raw,
     }),
   });

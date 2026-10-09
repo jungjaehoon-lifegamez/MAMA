@@ -7,6 +7,8 @@ import { upsertConnectorEventIndex } from '../../src/connectors/framework/event-
 import { createOwnerRuntime } from '../../src/runtime/owner-runtime.js';
 import { createNativeSession } from '../../src/runtime/native-session.js';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
+import { ChatSources } from '../../src/storage/chat-sources.js';
+import { RawStore } from '../../src/storage/source-archive.js';
 
 // Stop at the native-driver boundary: exercise the real database, grant and prompt assembly
 // without starting a model process or the runtime's IPC server.
@@ -18,7 +20,11 @@ afterEach(() => {
   for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
 });
 
-async function assembledPrompt(backend: 'codex' | 'claude', connectors: string[]): Promise<string> {
+async function assembledPrompt(
+  backend: 'codex' | 'claude',
+  connectors: string[],
+  withChats = false
+): Promise<string> {
   const home = mkdtempSync(join(tmpdir(), 'owner-readable-sources-'));
   homes.push(home);
   const databasePath = join(home, 'state.db');
@@ -45,6 +51,25 @@ async function assembledPrompt(backend: 'codex' | 'claude', connectors: string[]
         content: 'Synthetic source content',
         source_timestamp_ms: 1_000 + index,
       });
+    }
+    if (withChats) {
+      const raw = new RawStore(join(home, 'raw'));
+      try {
+        for (const [principal, room] of [
+          ['fixture-owner', 'fixture-dm'],
+          ['fixture-owner', 'fixture-group'],
+          ['fixture-member', 'fixture-hidden-dm'],
+        ]) {
+          new ChatSources(raw, db.adapter, principal!, 'fixture-agent').saveOwnerMessage({
+            id: `telegram:${room}:fixture`,
+            channelKey: room!,
+            occurredAt: 1_000,
+            text: 'Fixture chat',
+          });
+        }
+      } finally {
+        raw.close();
+      }
     }
   } finally {
     await db.close();
@@ -78,6 +103,15 @@ async function assembledPrompt(backend: 'codex' | 'claude', connectors: string[]
 }
 
 describe('readable sources at owner session startup', () => {
+  it.each(['codex', 'claude'] as const)(
+    'counts only the owner chat rooms in the %s session-start inventory',
+    async (backend) => {
+      const prompt = await assembledPrompt(backend, [], true);
+      expect(prompt.split('\n').filter((line) => line.includes('Readable sources:'))).toEqual([
+        '- Readable sources: chat (2); chats of a family are channels "<source>:<family>:<room>".',
+      ]);
+    }
+  );
   it.each(['codex', 'claude'] as const)(
     'includes stored calendar events in the %s owner prompt',
     async (backend) => {

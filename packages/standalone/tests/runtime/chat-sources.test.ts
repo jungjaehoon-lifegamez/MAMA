@@ -63,7 +63,6 @@ beforeEach(async () => {
     isOwnerMessageTurn: () => true,
     storedSourceReader: createStoredSourceReader({
       adapter: database.adapter,
-      ownerPrincipalId: () => 'owner-test',
       rawStore: () => raw,
     }),
     ownerMessages: { exchanges: (since, before) => chat.exchanges(since, before) },

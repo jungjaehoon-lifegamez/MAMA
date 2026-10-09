@@ -3614,7 +3614,8 @@ export async function loadCheckpointInAdapter(
 export async function listCheckpointsInAdapter(
   adapter: DatabaseAdapter,
   limit: number = 10,
-  scopes?: readonly MemoryScopeRef[]
+  scopes?: readonly MemoryScopeRef[],
+  options: { includeUnbound?: boolean } = {}
 ): Promise<CheckpointRow[]> {
   try {
     const stmt = adapter.prepare(`
@@ -3622,10 +3623,10 @@ export async function listCheckpointsInAdapter(
       ${
         scopes === undefined
           ? ''
-          : `WHERE EXISTS (
+          : `WHERE (${options.includeUnbound === true ? 'NOT EXISTS (SELECT 1 FROM checkpoint_scope_bindings legacy WHERE legacy.checkpoint_id = checkpoints.id) OR ' : ''}EXISTS (
         SELECT 1 FROM checkpoint_scope_bindings b JOIN memory_scopes s ON s.id = b.scope_id
         WHERE b.checkpoint_id = checkpoints.id AND (${scopes.length === 0 ? '0' : scopes.map(() => '(s.kind = ? AND s.external_id = ?)').join(' OR ')})
-      )`
+      ))`
       }
       ORDER BY timestamp DESC
       LIMIT ?

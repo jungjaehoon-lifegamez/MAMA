@@ -473,7 +473,6 @@ describe('P1 principal access through the product dispatcher', () => {
         )
         .all(saved.id)
     ).toEqual([{ kind: 'user', id: member }]);
-    // The owner's list remains exactly the existing unscoped list, as required by P1.
     expect(
       data(
         await surface.dispatch(
@@ -483,6 +482,6 @@ describe('P1 principal access through the product dispatcher', () => {
           }
         )
       )
-    ).toMatchObject({ count: 3 });
+    ).toMatchObject({ count: 1, checkpoints: [{ summary: 'Owner checkpoint fixture' }] });
   });
 });

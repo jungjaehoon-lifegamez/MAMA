@@ -1,7 +1,36 @@
 /** Read projections owned alongside connector_event_index, independent of polling. */
 import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
+import type { JudgmentAccess } from '@jungjaehoon/mama-core';
 
 type Reader = Pick<DatabaseAdapter, 'prepare'>;
+
+/** Connector-wide reads or explicitly granted channels, applied before paging or aggregation. */
+export function storedSourceAccessFilter(
+  access: JudgmentAccess,
+  connectors: readonly string[]
+): { sql: string; params: string[] } {
+  const clauses: string[] = [];
+  const params: string[] = [];
+  const channels = access.channels;
+  for (const connector of connectors) {
+    if (!access.connectors?.includes(connector)) continue;
+    if (access.connectorWideRead?.includes(connector)) {
+      clauses.push('source_connector = ?');
+      params.push(connector);
+      continue;
+    }
+    const granted = [
+      ...new Set((channels?.[connector] ?? []).filter((channel) => channel.trim() !== '')),
+    ];
+    if (granted.length === 0) continue;
+    clauses.push(`(source_connector = ? AND channel IN (${granted.map(() => '?').join(',')}))`);
+    params.push(connector, ...granted);
+  }
+  return {
+    sql: clauses.length ? clauses.map((clause) => `(${clause})`).join(' OR ') : '0',
+    params,
+  };
+}
 
 export function listStoredConnectorNames(adapter: Reader): string[] {
   const rows = adapter
@@ -16,11 +45,13 @@ export interface StoredSourceFamily {
   count: number;
 }
 
-/** Owner inventory: aggregate only granted connectors, never return room names. */
+/** Aggregate only readable stored rows, never return room names. */
 export function storedSourceFamilies(
   adapter: Reader,
-  connectors: readonly string[]
+  connectors: readonly string[],
+  access: JudgmentAccess
 ): StoredSourceFamily[] {
+  const visibility = storedSourceAccessFilter(access, connectors);
   return adapter
     .prepare(
       `WITH families AS (
@@ -29,7 +60,7 @@ export function storedSourceFamilies(
                      THEN substr(channel, length(source_connector) + 2)
                      ELSE NULL END AS family_path
          FROM connector_event_index
-         WHERE source_connector IN (${connectors.map(() => '?').join(', ')})
+         WHERE (${visibility.sql})
        )
        SELECT source,
               CASE WHEN instr(family_path, ':') > 0
@@ -40,7 +71,7 @@ export function storedSourceFamilies(
        GROUP BY source, family
        ORDER BY source, family`
     )
-    .all(...connectors) as StoredSourceFamily[];
+    .all(...visibility.params) as StoredSourceFamily[];
 }
 
 export function hasStoredConnector(adapter: Reader, source: string): boolean {

@@ -50,7 +50,6 @@ describe('connector poll outcome visibility', () => {
       createCatalog(
         reportSourceActionRegistrations({
           adapter: database.adapter,
-          ownerPrincipalId: 'owner-test',
           timeZone: createTimeZoneSetting('Asia/Seoul'),
         })
       )
@@ -60,6 +59,7 @@ describe('connector poll outcome visibility', () => {
       agentId: 'agent-test',
       actions: ['source.recent'],
       connectors: ['connector-test'],
+      connectorWideRead: ['connector-test'],
       scopes: [],
     };
     const read = () => dispatch({ action: 'source.recent', input: {} }, { access });

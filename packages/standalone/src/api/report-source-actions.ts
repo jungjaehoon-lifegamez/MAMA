@@ -4,61 +4,34 @@ import type { ActionContext } from '@jungjaehoon/mama-core';
 import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
 import type { TimeZoneSetting } from '../runtime/timezone.js';
 import { durationEndEpoch, epochForCalendarValue } from '../runtime/timezone.js';
+import { storedSourceAccessFilter } from '../connectors/framework/stored-index-read.js';
 
 type Access = ActionContext['access'];
 type Row = Record<string, unknown>;
 type ReportReadPorts = {
   adapter: Pick<DatabaseAdapter, 'prepare'>;
-  ownerPrincipalId: string;
   timeZone: TimeZoneSetting;
 };
 
 function grantChannels(
   access: Access,
   connector: string,
-  ownerPrincipalId: string
+  channels = access.channels
 ): string[] | null {
   if (!access.connectors?.includes(connector)) return [];
-  if (access.principalId === ownerPrincipalId) return null;
-  return [
-    ...new Set((access.channels?.[connector] ?? []).filter((channel) => channel.trim() !== '')),
-  ];
+  if (access.connectorWideRead?.includes(connector)) return null;
+  return [...new Set((channels?.[connector] ?? []).filter((channel) => channel.trim() !== ''))];
 }
 
-function allowedRows(rows: Row[], access: Access, ownerPrincipalId: string): Row[] {
+function allowedRows(rows: Row[], access: Access): Row[] {
+  const grantedChannels = access.channels;
   return rows.filter((row) => {
     const connector = String(row.source_connector);
-    const channels = grantChannels(access, connector, ownerPrincipalId);
+    const channels = grantChannels(access, connector, grantedChannels);
     return channels !== null && channels.length === 0
       ? false
       : channels === null || channels.includes(String(row.channel ?? ''));
   });
-}
-
-function visibleConnectorFilter(
-  connectors: readonly string[],
-  access: Access,
-  ownerPrincipalId: string
-): { sql: string; params: string[] } {
-  const clauses: string[] = [];
-  const params: string[] = [];
-  for (const connector of connectors) {
-    const wide = access.principalId === ownerPrincipalId;
-    if (wide) {
-      clauses.push('source_connector = ?');
-      params.push(connector);
-      continue;
-    }
-    const granted = access.channels?.[connector] ?? [];
-    const readGranted = granted;
-    if (readGranted.length === 0) continue;
-    clauses.push(`(source_connector = ? AND channel IN (${readGranted.map(() => '?').join(',')}))`);
-    params.push(connector, ...readGranted);
-  }
-  return {
-    sql: clauses.length ? clauses.map((clause) => `(${clause})`).join(' OR ') : '0',
-    params,
-  };
 }
 
 function sinceTime(value: unknown, now: number): number {
@@ -153,7 +126,7 @@ function recentAction(ports: ReportReadPorts): ActionRegistration {
       const connectors = context.access.connectors ?? [];
       if (connectors.length === 0)
         throw new Error('source.recent requires at least one granted connector');
-      const visibility = visibleConnectorFilter(connectors, context.access, ports.ownerPrincipalId);
+      const visibility = storedSourceAccessFilter(context.access, connectors);
       const sourceCeiling = context.readAllowance?.maxSourceMs;
       const rows = ports.adapter
         .prepare(
@@ -175,7 +148,7 @@ function recentAction(ports: ReportReadPorts): ActionRegistration {
         throw invalidInput(
           `source.recent found more than ${RECENT_SCAN_LIMIT} changes; narrow since or cap`
         );
-      const visible = allowedRows(rows, context.access, ports.ownerPrincipalId);
+      const visible = allowedRows(rows, context.access);
       const groups = new Map<
         string,
         {
@@ -249,11 +222,7 @@ function recentAction(ports: ReportReadPorts): ActionRegistration {
         .all(...connectors) as Row[];
       const failedConnectors = failures
         .filter((row) => {
-          const grant = grantChannels(
-            context.access,
-            String(row.connector_name),
-            ports.ownerPrincipalId
-          );
+          const grant = grantChannels(context.access, String(row.connector_name));
           return grant === null || grant.length > 0;
         })
         .map((row) => {
@@ -266,7 +235,7 @@ function recentAction(ports: ReportReadPorts): ActionRegistration {
             .all(connector) as Row[];
           const failedChannels = [
             ...new Map(
-              allowedRows(knownChannels, context.access, ports.ownerPrincipalId)
+              allowedRows(knownChannels, context.access)
                 .filter((event) => event.source_connector === connector)
                 .map((event) => {
                   const key = String(event.channel ?? '');
@@ -363,7 +332,7 @@ function upcomingAction(ports: ReportReadPorts): ActionRegistration {
       );
       if (!connectors.length)
         throw new Error('schedule.upcoming requires a granted calendar or ical connector');
-      const visibility = visibleConnectorFilter(connectors, context.access, ports.ownerPrincipalId);
+      const visibility = storedSourceAccessFilter(context.access, connectors);
       const raw = ports.adapter
         .prepare(
           `SELECT source_connector, source_id, source_entity_id, channel, source_timestamp_ms,
@@ -376,7 +345,7 @@ function upcomingAction(ports: ReportReadPorts): ActionRegistration {
          WHERE revision_order=1 ORDER BY source_timestamp_ms DESC`
         )
         .all(...visibility.params) as Row[];
-      const visible = allowedRows(raw, context.access, ports.ownerPrincipalId);
+      const visible = allowedRows(raw, context.access);
       const now = Date.now();
       const until = now + Number(days) * 86_400_000;
       const events = visible.flatMap((row) => {

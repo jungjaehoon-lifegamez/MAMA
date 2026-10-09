@@ -439,7 +439,14 @@ describe('calendar through the daemon connector runtime', () => {
         expect(runtime.registry.get('calendar')?.name).toBe('calendar');
         expect(accept).not.toHaveBeenCalled();
         expect(rawStore.query('calendar', new Date(0))).toHaveLength(2);
-        const families = storedSourceFamilies(database.adapter, ['calendar']);
+        const families = storedSourceFamilies(database.adapter, ['calendar'], {
+          principalId: 'fixture-owner',
+          agentId: 'fixture-agent',
+          actions: [],
+          connectors: ['calendar'],
+          connectorWideRead: ['calendar'],
+          scopes: [],
+        });
         // A first snapshot is indexed and readable, but not admitted as live source work.
         expect(families).toEqual([{ source: 'calendar', family: null, count: 2 }]);
         for (const backend of ['claude', 'codex'] as const) {
@@ -452,11 +459,11 @@ describe('calendar through the daemon connector runtime', () => {
           agentId: 'fixture-agent',
           actions: ['source.search', 'source.read'],
           connectors: ['calendar'],
+          connectorWideRead: ['calendar'],
           scopes: [],
         };
         const stored = createStoredSourceReader({
           adapter: database.adapter,
-          ownerPrincipalId: () => 'fixture-owner',
           rawStore: () => rawStore,
         });
         const dispatch = createDispatcher(
@@ -512,7 +519,16 @@ describe('calendar through the daemon connector runtime', () => {
         });
         await runtime.pollNow();
         expect(accept).not.toHaveBeenCalled();
-        expect(storedSourceFamilies(database.adapter, ['calendar'])).toEqual(families);
+        expect(
+          storedSourceFamilies(database.adapter, ['calendar'], {
+            principalId: 'fixture-owner',
+            agentId: 'fixture-agent',
+            actions: [],
+            connectors: ['calendar'],
+            connectorWideRead: ['calendar'],
+            scopes: [],
+          })
+        ).toEqual(families);
         // A failed page must not advance the cursor or publish a partial schedule.
         const cursor = runtime.scheduler.getLastPollTime('calendar');
         gws.run.mockReturnValue(

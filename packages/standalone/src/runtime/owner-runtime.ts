@@ -301,7 +301,6 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
     const sourceStore = rawStore;
     const storedSourceReader = createStoredSourceReader({
       adapter: database.adapter,
-      ownerPrincipalId: () => options.ownerPrincipalId,
       rawStore: () => sourceStore,
     });
     const wikiPorts = options.wiki?.enabled
@@ -391,7 +390,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
     const standingText = ownerSystemPrompt(
       options.backend,
       null,
-      storedSourceFamilies(database.adapter, access.connectors!),
+      storedSourceFamilies(database.adapter, access.connectors!, access),
       options.wiki?.enabled ?? false,
       options.timeZone.get(),
       options.jev !== undefined

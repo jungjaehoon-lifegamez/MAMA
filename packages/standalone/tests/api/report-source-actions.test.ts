@@ -99,7 +99,6 @@ function setup(sourceRows = rows) {
     createCatalog(
       reportSourceActionRegistrations({
         adapter: adapter as never,
-        ownerPrincipalId: 'owner',
         timeZone: createTimeZoneSetting('America/Los_Angeles'),
       })
     )
@@ -198,7 +197,12 @@ describe('report source reads', () => {
 
   it('reads a named channel whatever the cap on the channel list', async () => {
     const { dispatch, access } = setup();
-    const owner = { ...access, principalId: 'owner', channels: undefined };
+    const owner = {
+      ...access,
+      principalId: 'owner',
+      channels: undefined,
+      connectorWideRead: access.connectors,
+    };
     const listed = (await dispatch(
       { action: 'source.recent', input: { since: now - 60_000 } },
       { access: owner }
@@ -215,7 +219,12 @@ describe('report source reads', () => {
 
   it('fails loudly as invalid input when recent channels exceed the stated cap', async () => {
     const { dispatch, access } = setup();
-    const owner = { ...access, principalId: 'owner', channels: undefined };
+    const owner = {
+      ...access,
+      principalId: 'owner',
+      channels: undefined,
+      connectorWideRead: access.connectors,
+    };
     const result = await dispatch(
       { action: 'source.recent', input: { since: now - 60_000, cap: 1 } },
       { access: owner }

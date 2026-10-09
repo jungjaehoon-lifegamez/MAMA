@@ -21,7 +21,6 @@ describe('minimal source actions', () => {
         observedAt: 1,
         content: 'source',
       }),
-      isOwner: () => true,
     };
     const dispatch = createDispatcher(
       createCatalog(sourceActionRegistrations({ stored: stored as never, timeZone: setting }))
@@ -70,7 +69,6 @@ describe('minimal source actions', () => {
       search: vi.fn().mockReturnValue({ hits: [], next_cursor: null }),
       read: vi.fn().mockReturnValue({ results: [] }),
       has: vi.fn().mockReturnValue(true),
-      isOwner: vi.fn().mockReturnValue(true),
     };
     const dispatch = createDispatcher(
       createCatalog(sourceActionRegistrations({ stored, timeZone: createTimeZoneSetting('UTC') }))
@@ -130,7 +128,6 @@ describe('minimal source actions', () => {
         .fn()
         .mockReturnValue({ source: 'connector-test', content: 'full original' }),
       has: vi.fn().mockReturnValue(true),
-      isOwner: vi.fn().mockReturnValue(true),
     };
     const dispatch = createDispatcher(
       createCatalog(sourceActionRegistrations({ stored, timeZone: createTimeZoneSetting('UTC') }))
@@ -184,7 +181,6 @@ describe('minimal source actions', () => {
         return { source: ref === 'obs-a' ? 'chatwork' : 'slack', content: `original ${ref}` };
       }),
       has: vi.fn().mockReturnValue(true),
-      isOwner: vi.fn().mockReturnValue(true),
     };
     const dispatch = createDispatcher(
       createCatalog(sourceActionRegistrations({ stored, timeZone: createTimeZoneSetting('UTC') }))
@@ -254,7 +250,6 @@ describe('minimal source actions', () => {
       search: vi.fn().mockReturnValue({ hits: [], next_cursor: null }),
       read: vi.fn().mockReturnValue({ content: 'source-content' }),
       has: vi.fn().mockReturnValue(true),
-      isOwner: vi.fn().mockReturnValue(true),
     };
     const dispatch = createDispatcher(
       createCatalog(sourceActionRegistrations({ stored, timeZone: createTimeZoneSetting('UTC') }))

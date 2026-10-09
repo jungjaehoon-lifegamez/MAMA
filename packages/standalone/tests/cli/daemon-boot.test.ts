@@ -72,7 +72,7 @@ function ownerDouble(order: string[]) {
     intake,
     surface: {
       dispatch: vi.fn(),
-      ownerAccess: {},
+      ownerAccess: { scopes: [{ kind: 'user', id: 'owner' }] },
     },
     acceptSourceDelta: vi.fn<(...args: never[]) => StimulusReceipt>(() => ({
       inputId: 'source-input',
@@ -349,7 +349,12 @@ describe('daemon bootstrap', () => {
           expect(owner.database.adapter.prepare).toHaveBeenCalledWith(
             expect.stringContaining('FROM decisions')
           );
-          expect(memoryRead).toHaveBeenCalledWith(expect.any(Number), expect.any(Number));
+          expect(memoryRead).toHaveBeenCalledWith(
+            expect.any(Number),
+            expect.any(Number),
+            'user',
+            'owner'
+          );
           return viewer as never;
         }),
         startConnectorRuntime: vi.fn(async () => {

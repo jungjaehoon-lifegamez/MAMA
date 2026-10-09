@@ -771,6 +771,11 @@ export function coreActionRegistrations(
   deps?: {
     /** Undefined retains the consumer's legacy checkpoints; explicit scopes isolate hand-offs. */
     checkpointScopes?: (access: JudgmentAccess) => readonly MemoryScopeRef[] | undefined;
+    /** Read authority can differ from save defaults, while preserving unbound legacy rows. */
+    checkpointReadOptions?: (access: JudgmentAccess) => {
+      scopes: readonly MemoryScopeRef[];
+      includeUnbound?: boolean;
+    };
     /** The consumer reads an externally stored observation's exact body under this caller. */
     readObservationBody?: (
       observationId: string,
@@ -1276,10 +1281,12 @@ export function coreActionRegistrations(
       exec: async (input, context) => {
         const raw = Number((input as { limit?: unknown }).limit);
         const limit = Number.isFinite(raw) ? Math.min(Math.max(Math.floor(raw), 1), 50) : 20;
+        const readOptions = deps?.checkpointReadOptions?.(context.access);
         const checkpoints = await listCheckpointsInAdapter(
           adapter,
           limit,
-          deps?.checkpointScopes?.(context.access)
+          readOptions?.scopes ?? deps?.checkpointScopes?.(context.access),
+          readOptions
         );
         return { checkpoints, count: checkpoints.length };
       },

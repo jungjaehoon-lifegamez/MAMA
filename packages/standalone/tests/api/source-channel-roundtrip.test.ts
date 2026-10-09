@@ -41,13 +41,11 @@ describe('source channel values', () => {
         createCatalog([
           ...reportSourceActionRegistrations({
             adapter: db.adapter,
-            ownerPrincipalId: 'owner',
             timeZone,
           }),
           ...sourceActionRegistrations({
             stored: createStoredSourceReader({
               adapter: db.adapter,
-              ownerPrincipalId: () => 'owner',
             }),
             timeZone,
           }),
@@ -58,6 +56,7 @@ describe('source channel values', () => {
         agentId: 'agent',
         actions: ['source.recent', 'source.search'],
         connectors: ['slack'],
+        connectorWideRead: ['slack'],
         scopes: [],
       };
 

@@ -590,7 +590,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         timeZone,
         sendToOwner: sendSecurityAlert,
       },
-      getMemoryStats: () => readViewerMemoryStats(owner!.database.adapter),
+      getMemoryStats: () =>
+        readViewerMemoryStats(owner!.database.adapter, Date.now(), owner!.surface.ownerAccess),
       getOwnerRuleIds: (ids) => ownerRuleIds(owner!.database.adapter, ids, OWNER_PRINCIPAL_ID),
       getRuntimeStatus: () => ({
         running: true,

@@ -393,19 +393,19 @@ describe('viewer data shaping', () => {
     const db = new Database(':memory:');
     try {
       db.exec(
-        'CREATE TABLE decisions (id TEXT, created_at INTEGER, updated_at INTEGER, status TEXT)'
+        'CREATE TABLE decisions (id TEXT, created_at INTEGER, updated_at INTEGER, status TEXT); CREATE TABLE memory_scope_bindings (memory_id TEXT, scope_id TEXT); CREATE TABLE memory_scopes (id TEXT, kind TEXT, external_id TEXT)'
       );
       const now = 1_800_000_000_000;
       const cutoff = now - 7 * 24 * 60 * 60 * 1_000;
-      expect(readViewerMemoryStats(db, now)).toEqual({ total: 0, thisWeek: 0 });
+      expect(readViewerMemoryStats(db, now, { scopes: [] })).toEqual({ total: 0, thisWeek: 0 });
       const insert = db.prepare('INSERT INTO decisions VALUES (?, ?, ?, ?)');
       insert.run('old', cutoff - 1, now, 'active');
       insert.run('boundary', cutoff, cutoff, 'superseded');
       insert.run('recent', now, now, 'active');
       insert.run('future', now + 1, now + 1, 'active');
-      expect(readViewerMemoryStats(db, now)).toEqual({ total: 4, thisWeek: 2 });
+      expect(readViewerMemoryStats(db, now, { scopes: [] })).toEqual({ total: 4, thisWeek: 2 });
       insert.run('new', now - 1, now - 1, 'active');
-      expect(readViewerMemoryStats(db, now)).toEqual({ total: 5, thisWeek: 3 });
+      expect(readViewerMemoryStats(db, now, { scopes: [] })).toEqual({ total: 5, thisWeek: 3 });
     } finally {
       db.close();
     }

@@ -157,8 +157,10 @@ describe('archive-compatible viewer routes', () => {
   it('serves live memory counts from the supplied daemon database and fails explicitly if unwired', async () => {
     const db = new Database(':memory:');
     const now = Date.now();
-    db.exec('CREATE TABLE decisions (created_at INTEGER)');
-    db.prepare('INSERT INTO decisions VALUES (?), (?)').run(now - 8 * 86400000, now);
+    db.exec(
+      'CREATE TABLE decisions (id TEXT, created_at INTEGER); CREATE TABLE memory_scope_bindings (memory_id TEXT, scope_id TEXT); CREATE TABLE memory_scopes (id TEXT, kind TEXT, external_id TEXT)'
+    );
+    db.prepare('INSERT INTO decisions (created_at) VALUES (?), (?)').run(now - 8 * 86400000, now);
     try {
       await withServer(
         async () => {
@@ -168,12 +170,12 @@ describe('archive-compatible viewer routes', () => {
           const response = await makeRequest(server, '/api/dashboard/status');
           expect(response.status).toBe(200);
           expect(JSON.parse(response.body)).toEqual({ memory: { total: 2, thisWeek: 1 } });
-          db.prepare('INSERT INTO decisions VALUES (?)').run(now);
+          db.prepare('INSERT INTO decisions (created_at) VALUES (?)').run(now);
           expect(JSON.parse((await makeRequest(server, '/api/dashboard/status')).body)).toEqual({
             memory: { total: 3, thisWeek: 2 },
           });
         },
-        { getMemoryStats: () => readViewerMemoryStats(db, now) }
+        { getMemoryStats: () => readViewerMemoryStats(db, now, ownerAccess) }
       );
       await withServer(
         async () => completed({}),

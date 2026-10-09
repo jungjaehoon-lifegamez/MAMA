@@ -3,7 +3,12 @@ import type {
   CommitmentRevision,
   CommitmentView,
 } from '@jungjaehoon/mama-core/knowledge';
-import { isErasedRecord, type ErasedRecord, type WorkGraphPage } from '@jungjaehoon/mama-core';
+import {
+  isErasedRecord,
+  type ErasedRecord,
+  type WorkGraphPage,
+  type JudgmentAccess,
+} from '@jungjaehoon/mama-core';
 import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
 import { isOwnerChatRef, RULE_KINDS } from '../runtime/owner-authority.js';
 import { localDateKey } from '../runtime/timezone.js';
@@ -15,15 +20,26 @@ export interface ViewerMemoryStats {
 
 export function readViewerMemoryStats(
   adapter: Pick<DatabaseAdapter, 'prepare'>,
-  now = Date.now()
+  now: number,
+  access: Pick<JudgmentAccess, 'scopes' | 'readScopes'>
 ): ViewerMemoryStats {
+  const scopes = [...access.scopes, ...(access.readScopes ?? [])];
   return adapter
     .prepare(
       `SELECT COUNT(*) AS total,
               COUNT(CASE WHEN created_at >= ? AND created_at <= ? THEN 1 END) AS thisWeek
-         FROM decisions`
+         FROM decisions d
+        WHERE NOT EXISTS (SELECT 1 FROM memory_scope_bindings legacy WHERE legacy.memory_id = d.id)
+           OR EXISTS (
+             SELECT 1 FROM memory_scope_bindings b JOIN memory_scopes s ON s.id = b.scope_id
+             WHERE b.memory_id = d.id AND (${scopes.length === 0 ? '0' : scopes.map(() => '(s.kind = ? AND s.external_id = ?)').join(' OR ')})
+           )`
     )
-    .get(now - 7 * 24 * 60 * 60 * 1_000, now) as ViewerMemoryStats;
+    .get(
+      now - 7 * 24 * 60 * 60 * 1_000,
+      now,
+      ...scopes.flatMap((scope) => [scope.kind, scope.id])
+    ) as ViewerMemoryStats;
 }
 
 export interface ViewerTaskSummary {

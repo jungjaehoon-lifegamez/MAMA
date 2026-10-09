@@ -81,4 +81,28 @@ describe('scoped checkpoint persistence', () => {
     expect(await listCheckpointsInAdapter(db.adapter, 10, [])).toEqual([]);
     expect(await listCheckpointsInAdapter(db.adapter, 10)).toHaveLength(3);
   });
+
+  it('optionally includes unbound checkpoints alongside admitted scopes before LIMIT', async () => {
+    const owner = [{ kind: 'user', id: 'principal-owner-test' }];
+    for (const [timestamp, summary, scopes] of [
+      [1, 'Legacy fixture', undefined],
+      [2, 'Owner fixture', owner],
+      [3, 'Member fixture', PERSONAL],
+    ] as const) {
+      const id = await saveCheckpointInAdapter(db.adapter, summary, [], '', [], scopes);
+      db.adapter.prepare('UPDATE checkpoints SET timestamp = ? WHERE id = ?').run(timestamp, id);
+    }
+    expect(
+      await listCheckpointsInAdapter(db.adapter, 2, owner, { includeUnbound: true })
+    ).toMatchObject([{ summary: 'Owner fixture' }, { summary: 'Legacy fixture' }]);
+    expect(
+      await listCheckpointsInAdapter(db.adapter, 1, owner, { includeUnbound: true })
+    ).toMatchObject([{ summary: 'Owner fixture' }]);
+    expect(
+      await listCheckpointsInAdapter(db.adapter, 10, [], { includeUnbound: true })
+    ).toMatchObject([{ summary: 'Legacy fixture' }]);
+    expect(await listCheckpointsInAdapter(db.adapter, 10, PERSONAL)).toMatchObject([
+      { summary: 'Member fixture' },
+    ]);
+  });
 });

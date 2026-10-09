@@ -196,12 +196,16 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     options.connectors ?? OWNER_CONNECTORS
   );
   const core = coreActionRegistrations(options.knowledge, options.adapter, {
-    // The owner's checkpoints keep today's unscoped behavior. A member's hand-off is personal,
+    // The owner's checkpoint saves stay unscoped. A member's hand-off is personal,
     // irrespective of its shared read grants.
     checkpointScopes: (access) =>
       access.principalId === options.ownerPrincipalId
         ? undefined
         : [{ kind: 'user', id: access.principalId }],
+    checkpointReadOptions: (access) =>
+      access.principalId === options.ownerPrincipalId
+        ? { scopes: [...access.scopes, ...(access.readScopes ?? [])], includeUnbound: true }
+        : { scopes: [{ kind: 'user', id: access.principalId }] },
     ...(options.storedSourceReader === undefined || options.storedSourceReader === null
       ? {}
       : {
@@ -289,7 +293,6 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     }),
     ...reportSourceActionRegistrations({
       adapter: options.adapter,
-      ownerPrincipalId: options.ownerPrincipalId,
       timeZone: options.timeZone,
     }),
     ...ownerTimeZoneActionRegistrations({
@@ -408,9 +411,21 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     },
     defaultScopes,
     connectors: [...(options.connectors ?? OWNER_CONNECTORS), 'chat'],
-    // The owner reads every channel of its own connectors; imported originals carry no
+    get channels() {
+      const rows = options.adapter
+        .prepare(
+          `SELECT DISTINCT channel FROM connector_event_index
+         WHERE source_connector = 'chat' AND memory_scope_kind = 'user' AND memory_scope_id = ?
+           AND channel IS NOT NULL`
+        )
+        .all(options.ownerPrincipalId) as Array<{ channel: string }>;
+      return { chat: rows.map((row) => row.channel) };
+    },
+    // The owner reads every channel of non-chat connectors; imported originals carry no
     // memory-scope tag, so without this their observations are invisible in the graph.
-    connectorWideRead: [...(options.connectors ?? OWNER_CONNECTORS), 'chat'],
+    connectorWideRead: (options.connectors ?? OWNER_CONNECTORS).filter(
+      (source) => source !== 'chat'
+    ),
     // The grant follows the same wiring as the registrations above.
     actions: OWNER_ACTIONS.filter((name) => {
       const messenger = /^deliver\.(telegram|discord|slack)\.file$/.exec(name)?.[1] as

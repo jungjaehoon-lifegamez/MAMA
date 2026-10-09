@@ -23,7 +23,6 @@ describe('stored source reader', () => {
       });
       const reader = createStoredSourceReader({
         adapter: handle.adapter,
-        ownerPrincipalId: () => 'test-principal',
         rawStore: () => ({ readVersion }),
       });
       const dispatch = createDispatcher(
@@ -36,6 +35,7 @@ describe('stored source reader', () => {
         agentId: 'test-agent',
         actions: ['source.read'],
         connectors: ['test-source'],
+        connectorWideRead: ['test-source'],
         scopes: [{ kind: 'user', id: 'test-principal' }],
       };
       for (const input of [
@@ -76,7 +76,6 @@ describe('stored source reader', () => {
           all: () => [],
         }),
       } as never,
-      ownerPrincipalId: () => 'owner-test',
     });
     const result = reader.search(
       'connector-test',
@@ -86,6 +85,7 @@ describe('stored source reader', () => {
         agentId: 'agent-test',
         actions: ['source.search'],
         connectors: ['connector-test'],
+        connectorWideRead: ['connector-test'],
         scopes: [],
       }
     );
@@ -183,7 +183,6 @@ describe('stored source reader', () => {
           all: () => [],
         }),
       } as never,
-      ownerPrincipalId: () => 'owner-test',
     });
 
     const result = reader.read(
@@ -197,6 +196,7 @@ describe('stored source reader', () => {
         agentId: 'agent-test',
         actions: ['source.read'],
         connectors: ['connector-test'],
+        connectorWideRead: ['connector-test'],
         scopes: [],
       },
       { maxSourceMs: 1_500 }
