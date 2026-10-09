@@ -51,6 +51,10 @@ export function ownerDataReadPaths(options: OwnerRuntimeOptions): string[] {
     join(root, 'codex-runtime', 'home'),
     join(root, 'codex-runtime', 'threads'),
     ...(process.env.CLAUDE_CONFIG_DIR ? [process.env.CLAUDE_CONFIG_DIR] : []),
+    // Members read this store through their CLI; their tools must not.
+    ...(process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR
+      ? [process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR]
+      : []),
     ...(options.jev ? [options.jev.keyFile, options.jev.vocabFile] : []),
     options.mcpConfigPath ?? join(root, 'mama-mcp-config.json'),
     options.socketPath,

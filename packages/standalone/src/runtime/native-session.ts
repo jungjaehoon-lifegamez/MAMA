@@ -4,7 +4,6 @@ import { backendEnvironment, credentialReadPaths, normalizeReadPaths } from './b
 import { memberClaudeTmpDir } from './member-paths.js';
 import { untrustedToolData } from '../utils/untrusted-content.js';
 import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type {
   ActionCall,
@@ -76,7 +75,6 @@ export interface NativeDriverOptions {
   codexHome?: string;
   isolatedHome?: string;
   registryRoot?: string;
-  /** The owner's Codex CLI credential, copied into each managed Codex home. */
   authSourcePath?: string;
   pluginDir?: string;
   mcpConfigPath?: string;
@@ -122,6 +120,8 @@ export interface NativeSessionOptions {
   maxTurns: number;
   runTokenBudget?: number;
   codexHome?: string;
+  /** A member's Codex home copies the owner's managed credential; the owner signs in to its own. */
+  codexAuthSourcePath?: string;
   isolatedHome?: string;
   registryRoot?: string;
   replayKeyFile?: string;
@@ -250,9 +250,9 @@ function driverOptions(
               : { TMPDIR: join(options.workspaceDir, '.tmp') }),
           },
           allowLoginShell: false,
-          // Core copies, never finds (2026-09-22); the 09-25 rebuild had dropped this statement.
-          // Owner and members use the owner's login; a re-copy follows each refresh of it.
-          authSourcePath: join(homedir(), '.codex', 'auth.json'),
+          ...(options.codexAuthSourcePath === undefined
+            ? {}
+            : { authSourcePath: options.codexAuthSourcePath }),
         }
       : { permissionMode: 'dontAsk' as const }),
     requestTimeout: options.timeout,

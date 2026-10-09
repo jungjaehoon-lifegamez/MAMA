@@ -146,8 +146,9 @@ background tasks off. Members have no web tools (owner decision 7). Member runti
 each member's own Claude config directory and Codex home, stays under that member root; members never
 use the owner's `~/.claude`. Owner decision 2026-10-09: members sign in with the owner's logins, not
 their own. The member's Claude CLI reads the owner's credential store
-(`CLAUDE_SECURESTORAGE_CONFIG_DIR`); the member's Codex home receives a copy of the owner's Codex CLI
-credential, copied again after each refresh, as the owner's managed Codex home does.
+(`CLAUDE_SECURESTORAGE_CONFIG_DIR`), and the member's Codex home receives a copy of the credential in
+the owner's managed Codex home, copied again after each refresh. The owner still signs in to its
+managed Codex home directly; nothing is copied into it.
 
 ## Owner credential boundary — 2026-09-27
 

@@ -230,6 +230,8 @@ it.each(['codex', 'claude'] as const)(
       driveDelivery: undefined,
       ownerDeniedReadPaths: [join(external, 'logs'), join(external, 'vocab')],
     });
+    // The owner's Claude credential store, kept outside HOME.
+    vi.stubEnv('CLAUDE_SECURESTORAGE_CONFIG_DIR', join(external, 'claude-store'));
     // Move the fixture DB outside HOME, preserving the registered identities.
     const { renameSync } = await import('node:fs');
     renameSync(f.options.databasePath, join(external, 'owner.db'));
@@ -258,6 +260,7 @@ it.each(['codex', 'claude'] as const)(
         join(external, 'replay-key'),
         join(external, 'logs'),
         join(external, 'vocab'),
+        join(external, 'claude-store'),
         memberPaths(f.root, f.inactive).runtimeRoot,
         orphan,
         // The Claude sandbox temp dir every session of this OS user falls back to.
@@ -331,9 +334,12 @@ it.each(['codex', 'claude'] as const)(
 
 it('writes member denies and workspace TMPDIR into the existing Codex named profile before CLI launch', async () => {
   const f = await fixture('codex');
-  // HOME is the fixture owner home: the owner's Codex CLI credential is copied, not logged in again.
+  // The owner signed in to its managed Codex home; a usual Codex home on the machine is not it.
+  f.options.codexHome = join(f.home, 'managed-codex');
+  mkdirSync(f.options.codexHome, { recursive: true });
+  writeFileSync(join(f.options.codexHome, 'auth.json'), '{"fixture":"owner-managed"}');
   mkdirSync(join(f.home, '.codex'), { recursive: true });
-  writeFileSync(join(f.home, '.codex', 'auth.json'), '{"fixture":"owner-credential"}');
+  writeFileSync(join(f.home, '.codex', 'auth.json'), '{"fixture":"usual-codex-home"}');
   const create = f.options.createSession!;
   f.options.createSession = (options) =>
     options.principal === undefined
@@ -373,8 +379,10 @@ it('writes member denies and workspace TMPDIR into the existing Codex named prof
     expect(config).toContain(`"TMPDIR" = ${JSON.stringify(join(paths.workspaceDir, '.tmp'))}`);
     expect(config).toContain('web_search = false');
     expect(readFileSync(join(paths.codexHome, 'auth.json'), 'utf8')).toBe(
-      '{"fixture":"owner-credential"}'
+      '{"fixture":"owner-managed"}'
     );
+    // The owner's own managed home is never overwritten from elsewhere.
+    expect(f.drivers.get('owner')?.authSourcePath).toBeUndefined();
   } finally {
     await runtime.stop();
     f.pool.dispose();

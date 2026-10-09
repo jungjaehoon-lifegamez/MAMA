@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 import {
   readMemoryRecordsInScopes,
   isErasedRecord,
@@ -79,6 +80,11 @@ export function createMemberSession(
       maxTurns: options.maxTurns,
       runTokenBudget: options.runTokenBudget,
       codexSandbox: options.codexSandbox,
+      // Members sign in with the owner's login (2026-10-09): copy the owner's managed credential.
+      codexAuthSourcePath: join(
+        options.codexHome ?? join(options.runtimeRoot, '.codex'),
+        'auth.json'
+      ),
       modelRun: runtimeModelRun({ ...options, agentId }, database.adapter),
     });
   let current = create();
