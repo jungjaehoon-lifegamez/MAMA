@@ -591,8 +591,11 @@ async function fetchSecurityEvents() {
       const row = document.createElement('tr');
       if (event.class !== 'owner_access') row.className = 'security-warning';
       const time = new Date(event.time).toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' });
-      // Agent outbound attempts (W35) carry the traced command instead of an HTTP request.
-      const values = event.tool
+      // Agent outbound attempts (W35) carry the traced command instead of an HTTP request; a member
+      // refusal (P6c) carries only its principal, host and time.
+      const values = event.principalId
+        ? [time, 'member_connect', event.host, 'refused', 'member ' + event.principalId]
+        : event.tool
         ? [time, event.class, event.tool + ' ' + (event.summary || ''), (event.sendsData === true ? 'sends data' : event.sendsData === null ? 'connection' : 'attempt'), 'agent']
         : [time, event.class, event.method + ' ' + event.path, event.status, event.country || 'unknown'];
       for (const value of values) {
