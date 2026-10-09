@@ -589,6 +589,10 @@ describe('member native execution', () => {
         .spyOn(actionSurface, 'dispatch')
         .mockResolvedValue({ status: 'completed', data: {} });
       const prepareAccess = vi.fn(() => current);
+      // The owner's CLI keys its credential store by its config dir when no store dir is set.
+      vi.stubEnv('CLAUDE_CONFIG_DIR', '/fixture/owner-claude-config');
+      vi.stubEnv('CLAUDE_SECURESTORAGE_CONFIG_DIR', ''); // registers the restore
+      delete process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
       const session = createNativeSession({
         backend,
         model: 'fixture',
@@ -629,6 +633,9 @@ describe('member native execution', () => {
         expect(session.hostToolDefinitions().map((t) => t.name)).toEqual(['source.read']);
         expect(driver.webSearch).not.toBe(true);
         expect(driver.processEnv.CLAUDE_CONFIG_DIR).toBe(join(root, 'claude-config'));
+        expect(driver.processEnv.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(
+          '/fixture/owner-claude-config'
+        );
         expect(driver.processEnv.TMPDIR).toBe(join(root, 'workspace', '.tmp'));
         if (backend === 'codex')
           expect(driver.shellEnvironment?.TMPDIR).toBe(join(root, 'workspace', '.tmp'));
