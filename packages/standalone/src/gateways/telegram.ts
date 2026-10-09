@@ -29,6 +29,7 @@ import {
   openWorkspaceFile,
   readWorkspaceFile,
   workspaceFileIdentity,
+  type MemberFileDeliveryContext,
   type TelegramFileDeliveryResult,
 } from '../api/file-delivery.js';
 import { isDefinitiveTelegramRejection } from './telegram-errors.js';
@@ -286,20 +287,36 @@ export class TelegramGateway extends BaseGateway {
   async sendFile(
     path: string,
     caption: string | undefined,
-    operationId: string
+    operationId: string,
+    member?: MemberFileDeliveryContext
   ): Promise<TelegramFileDeliveryResult> {
     if (!this.bot || !this.connected) throw new Error('Telegram gateway not connected');
     if (operationId.trim() === '') throw new Error('Telegram file operation id is required');
-    const ownerChatId = this.config.ownerChatId?.trim();
-    if (!ownerChatId) throw new Error('telegram.owner_chat_id is required for file delivery');
-    this.requireAllowedChat(ownerChatId);
-    if (!this.filesRoot) throw new Error('Telegram workspace files root is not configured');
+    let chatId: string;
+    let filesRoot: string;
+    if (member) {
+      // Only the registry-resolved DM bypasses the owner's file allowlist; input cannot name it.
+      const destinations = member.access.destinations?.filter(
+        (target) => target.kind === 'telegram'
+      );
+      if (destinations?.length !== 1 || !destinations[0]!.id.trim())
+        throw new Error('Member file delivery requires exactly one Telegram destination');
+      chatId = destinations[0]!.id;
+      filesRoot = member.filesRoot;
+    } else {
+      const ownerChatId = this.config.ownerChatId?.trim();
+      if (!ownerChatId) throw new Error('telegram.owner_chat_id is required for file delivery');
+      this.requireAllowedChat(ownerChatId);
+      if (!this.filesRoot) throw new Error('Telegram workspace files root is not configured');
+      chatId = ownerChatId;
+      filesRoot = this.filesRoot;
+    }
 
-    const validated = openWorkspaceFile(this.filesRoot, path, OWNER_FILE_MAX_UPLOAD_BYTES);
+    const validated = openWorkspaceFile(filesRoot, path, OWNER_FILE_MAX_UPLOAD_BYTES);
     try {
       const payloadIdentity = workspaceFileIdentity(validated.fd, caption);
       const claim = this.messageLedger.claim(`file:${operationId}`, {
-        deliveryTarget: `telegram:${ownerChatId}`,
+        deliveryTarget: `telegram:${chatId}`,
         payloadIdentity,
       });
       if (!claim.claimed) {
@@ -318,12 +335,12 @@ export class TelegramGateway extends BaseGateway {
         const sent =
           validated.sentAs === 'photo'
             ? await this.bot.api.sendPhoto(
-                ownerChatId,
+                chatId,
                 upload,
                 caption === undefined ? undefined : { caption }
               )
             : await this.bot.api.sendDocument(
-                ownerChatId,
+                chatId,
                 upload,
                 caption === undefined ? undefined : { caption }
               );

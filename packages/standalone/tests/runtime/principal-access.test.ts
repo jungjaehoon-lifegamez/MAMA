@@ -29,6 +29,7 @@ const ROLE = [
   'source.recent',
   'source.attachment.list',
   'source.attachment.download',
+  'deliver.telegram.file',
   'trello.read',
   'schedule.upcoming',
   'judge',

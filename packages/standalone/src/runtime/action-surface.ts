@@ -100,8 +100,7 @@ const OWNER_ACTIONS = [
   'deliver.drive.file',
 ] as const;
 
-/** The first member role. File delivery joins in P5, once delivery honours
- * the caller's destination (it still sends to the owner chat). Exact catalog names only. */
+/** The member role: Telegram file delivery honours the caller's DM. Exact catalog names only. */
 export const MEMBER_ACTIONS = [
   'graph.query',
   'work.list',
@@ -115,6 +114,7 @@ export const MEMBER_ACTIONS = [
   'source.recent',
   'source.attachment.list',
   'source.attachment.download',
+  'deliver.telegram.file',
   'trello.read',
   'schedule.upcoming',
   'judge',
@@ -303,10 +303,13 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       adapter: options.adapter,
       ownerPrincipalId: options.ownerPrincipalId,
     }),
-    ...createAttachmentActionRegistrations({
-      ...(options.attachmentPorts ?? {}),
-      stored: options.storedSourceReader,
-    }),
+    ...createAttachmentActionRegistrations(
+      {
+        ...(options.attachmentPorts ?? {}),
+        stored: options.storedSourceReader,
+      },
+      options.ownerPrincipalId
+    ),
     // trello.read reaches the live connector through the same registry port as attachments.
     ...trelloActionRegistrations({
       ...(options.attachmentPorts?.connectors === undefined

@@ -62,7 +62,7 @@ function action(
   ports: AttachmentActionPorts,
   name: string
 ): NonNullable<ReturnType<typeof createAttachmentActionRegistrations>[number]>['exec'] {
-  const registration = createAttachmentActionRegistrations(ports).find(
+  const registration = createAttachmentActionRegistrations(ports, access.principalId).find(
     (entry) => entry.contract.name === name
   );
   if (!registration) throw new Error(`missing test action ${name}`);
@@ -597,7 +597,7 @@ describe('attachment actions', () => {
 
   it('offers a file action only for messengers whose sender is wired', () => {
     const names = (ports: AttachmentActionPorts) =>
-      createAttachmentActionRegistrations(ports)
+      createAttachmentActionRegistrations(ports, access.principalId)
         .map((entry) => entry.contract.name)
         .filter((name) => name.startsWith('deliver.'));
     expect(names({})).toEqual([]);

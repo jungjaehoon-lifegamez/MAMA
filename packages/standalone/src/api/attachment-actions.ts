@@ -233,7 +233,8 @@ function workspaceFilesRoot(ports: AttachmentActionPorts): string {
 }
 
 export function createAttachmentActionRegistrations(
-  ports: AttachmentActionPorts = {}
+  ports: AttachmentActionPorts,
+  ownerPrincipalId: string
 ): ActionRegistration[] {
   return [
     {
@@ -325,7 +326,7 @@ export function createAttachmentActionRegistrations(
       .map((messenger) => ({
         contract: {
           name: `deliver.${messenger}.file`,
-          summary: `Send one regular file under the owner workspace files directory through ${messenger}; images and documents use the messenger upload API.`,
+          summary: `Send one regular file under the caller's workspace files directory through ${messenger}; images and documents use the messenger upload API.`,
           inputSchema: ownerFileSchema,
           examples: [
             { title: 'Send a workspace result', input: { path: '/workspace/files/result.xlsx' } },
@@ -340,17 +341,24 @@ export function createAttachmentActionRegistrations(
           }
           const sender = ports[messenger]?.();
           if (!sender) throw new Error(`${messenger} file delivery port is not configured`);
-          const validated = validateWorkspaceFile(
-            workspaceFilesRoot(
-              ports.principalPaths
-                ? { workspaceDir: ports.principalPaths(context.access.principalId).workspaceDir }
-                : ports
-            ),
-            path,
-            OWNER_FILE_MAX_UPLOAD_BYTES
+          const isMember = context.access.principalId !== ownerPrincipalId;
+          // A member without its own paths must never inherit the owner's file authority.
+          if (isMember && !ports.principalPaths)
+            throw new Error('Member file delivery requires principal paths');
+          const filesRoot = workspaceFilesRoot(
+            ports.principalPaths
+              ? { workspaceDir: ports.principalPaths(context.access.principalId).workspaceDir }
+              : ports
           );
+          const validated = validateWorkspaceFile(filesRoot, path, OWNER_FILE_MAX_UPLOAD_BYTES);
           const caption = values.caption === undefined ? undefined : String(values.caption);
-          const result = await sender.sendFile(validated.path, caption, context.operationId);
+          const result =
+            isMember && messenger === 'telegram'
+              ? await sender.sendFile(validated.path, caption, context.operationId, {
+                  access: context.access,
+                  filesRoot,
+                })
+              : await sender.sendFile(validated.path, caption, context.operationId);
           return { path: validated.path, ...result };
         },
       })),

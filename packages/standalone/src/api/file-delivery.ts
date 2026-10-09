@@ -10,6 +10,7 @@ import {
 } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, dirname, extname, join, resolve, sep } from 'node:path';
+import type { JudgmentAccess } from '@jungjaehoon/mama-core';
 
 export const OWNER_FILE_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 export const TELEGRAM_MAX_UPLOAD_BYTES = OWNER_FILE_MAX_UPLOAD_BYTES;
@@ -27,8 +28,15 @@ export interface OwnerFileSender {
   sendFile(
     path: string,
     caption: string | undefined,
-    operationId: string
+    operationId: string,
+    member?: MemberFileDeliveryContext
   ): Promise<TelegramFileDeliveryResult>;
+}
+
+/** Telegram-only host authority, resolved per call; never part of action input. */
+export interface MemberFileDeliveryContext {
+  access: JudgmentAccess;
+  filesRoot: string;
 }
 
 export type TelegramFileDeliveryResult = OwnerFileDeliveryResult;
