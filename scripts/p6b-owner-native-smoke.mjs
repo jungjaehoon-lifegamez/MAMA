@@ -4,6 +4,7 @@
 // do (P4); the Codex home gets no login, so its turn only writes the owner profile and the probes
 // run below the model under that profile.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import childProcess from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -30,10 +31,14 @@ function product() {
 }
 
 function isolate(state) {
-  // Start from a small environment rather than inheriting live homes, credentials or CLI settings.
+  // Start from a small environment rather than inheriting live credentials or CLI settings. The
+  // macOS login keychain is found under the real HOME and USER, so the Claude CLI keeps those;
+  // every MAMA and CLI config path below is the fixture's.
   const env = {
     PATH: process.env.PATH,
-    HOME: state.home,
+    HOME: os.homedir(),
+    USER: os.userInfo().username,
+    LOGNAME: os.userInfo().username,
     TMPDIR: state.tmpDir,
     MAMA_HOME: state.runtimeRoot,
     MAMA_DB_PATH: state.databasePath,
@@ -85,7 +90,6 @@ async function prepare() {
   const root = fs.realpathSync(fs.mkdtempSync('/tmp/p6b-'));
   const state = {
     fixtureRoot: root,
-    home: path.join(root, 'h'),
     runtimeRoot: path.join(root, 'm'),
     tmpDir: path.join(root, 't'),
     workspaceDir: path.join(root, 'w'),
@@ -101,7 +105,6 @@ async function prepare() {
     evidenceDir: path.join(root, 'e'),
   };
   for (const directory of [
-    state.home,
     state.runtimeRoot,
     state.tmpDir,
     state.workspaceDir,
@@ -249,8 +252,11 @@ async function run(state, backend, model) {
       rawPath: state.rawPath,
       memberRoot: state.memberRoot,
       codexHome: state.codexHome,
+      // The MAMA action channel, as the daemon wires it for Claude; the help probe checks it.
+      mcpServerPath: path.join(repo, 'packages/standalone/dist/runtime/action-mcp-server.js'),
       socketPath: path.join(state.runtimeRoot, 'runtime.sock'),
-      credentialPath: path.join(state.runtimeRoot, 'runtime', 'credential'),
+      // The daemon's own default, which the MCP server reads from MAMA_HOME.
+      credentialPath: path.join(state.runtimeRoot, 'runtime', 'session-credential'),
       ownerPrincipalId: 'owner',
       agentId: 'owner-agent',
       scopes: [],
@@ -395,13 +401,12 @@ async function verify(state) {
     const probes = ownerProbes(state, backend).map((probe) => {
       const actual = fs.existsSync(probe.target) ? classifyOwnerProbe(probe, calls) : 'unverified';
       const nativeActual = classifyOwnerProbe(probe, nativeCalls);
-      // Codex runs no model here: its proof is the sandbox under the written profile. For Claude,
-      // never ignore an actual read success, and the control must succeed in the turn itself.
+      // Never ignore an actual read success. Claude's control must succeed in the turn itself;
+      // Codex runs no model here, so its proof is the sandbox under the written profile.
       const nativePassed =
-        backend === 'codex' ||
-        (probe.expected === 'succeeded'
-          ? nativeActual === 'succeeded'
-          : nativeActual !== 'succeeded');
+        probe.expected === 'succeeded'
+          ? backend === 'codex' || nativeActual === 'succeeded'
+          : nativeActual !== 'succeeded';
       return {
         id: probe.id,
         expected: probe.expected,

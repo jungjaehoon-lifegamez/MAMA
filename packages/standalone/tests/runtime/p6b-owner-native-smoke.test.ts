@@ -9,14 +9,16 @@ afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true
 
 // Run the real verifier with synthetic transcripts and a fake sandbox executable; no model,
 // login, product runtime, live config or real Codex executable is invoked.
-it.each(['successful-denied-read', 'missing-native-control'])(
-  'does not certify a generated Codex profile over a contradictory owner transcript: %s',
-  (scenario) => {
+it.each([
+  ['no-model-turn', true],
+  ['successful-denied-read', false],
+] as const)(
+  'certifies the Codex profile from the sandbox, never over a native read success: %s',
+  (scenario, codexPasses) => {
     const root = realpathSync(mkdtempSync('/tmp/p6b-'));
     roots.push(root);
     const state = {
       fixtureRoot: root,
-      home: join(root, 'h'),
       runtimeRoot: join(root, 'm'),
       tmpDir: join(root, 't'),
       workspaceDir: join(root, 'w'),
@@ -32,7 +34,6 @@ it.each(['successful-denied-read', 'missing-native-control'])(
       evidenceDir: join(root, 'e'),
     };
     for (const dir of [
-      state.home,
       state.runtimeRoot,
       state.tmpDir,
       state.workspaceDir,
@@ -67,10 +68,12 @@ exit 1
       { mode: 0o700 }
     );
     for (const backend of ['claude', 'codex']) {
-      json(join(state.evidenceDir, `${backend}.json`), {
-        status: 'completed',
-        modelRunId: 'fixture-run',
-      });
+      json(
+        join(state.evidenceDir, `${backend}.json`),
+        backend === 'codex'
+          ? { status: 'profile-written' }
+          : { status: 'completed', modelRunId: 'fixture-run' }
+      );
       json(join(state.evidenceDir, `${backend}-traces.json`), [
         { tool_name: 'help', execution_status: 'completed' },
       ]);
@@ -107,9 +110,9 @@ exit 1
               ],
             },
           });
-        } else if (!(scenario === 'missing-native-control' && !denied)) {
-          const succeeded =
-            !denied || (scenario === 'successful-denied-read' && probe.id === 'shell-db');
+        } else if (scenario === 'successful-denied-read' && probe.id === 'shell-db') {
+          // The fixture Codex home has no login, so a real run leaves no native transcript; a
+          // contradicting one must still fail the proof.
           events.push({
             method: 'item/completed',
             params: {
@@ -117,12 +120,8 @@ exit 1
                 id: probe.id,
                 type: 'commandExecution',
                 command: probe.command,
-                exitCode: succeeded ? 0 : 1,
-                aggregatedOutput: !denied
-                  ? 'P6B_OWNER_WORKSPACE_CONTROL'
-                  : succeeded
-                    ? 'SQLite format 3'
-                    : 'Permission denied',
+                exitCode: 0,
+                aggregatedOutput: 'SQLite format 3',
               },
             },
           });
@@ -143,9 +142,9 @@ exit 1
       ],
       { encoding: 'utf8', env: { PATH: `${bin}:/usr/bin:/bin` } }
     );
-    expect(result.status, result.stderr).toBe(1);
+    expect(result.status, result.stderr).toBe(codexPasses ? 0 : 1);
     const proof = JSON.parse(readFileSync(join(state.evidenceDir, 'verification.json'), 'utf8'));
     expect(proof.claude.passed).toBe(true);
-    expect(proof.codex.passed).toBe(false);
+    expect(proof.codex.passed).toBe(codexPasses);
   }
 );
