@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.72.0] / mama-core [8.3.0] - 2026-10-10
+
+Member enrollment, with no member admitted yet. In the owner's own DM, the owner asks MAMA to enroll
+a member and picks the person with a Telegram button; the host registers the chosen identity and
+the model never sees it. The package changelogs list every change.
+
+### Added
+
+- `manage.member.enroll` (owner message turn only): a one-time `request_users` button in the
+  owner's DM; the host registers the chosen user, or moves an identity bound to the owner that is
+  no longer in `owner_user_ids`, clears a new member's leftover directory, serves the member and
+  sends the owner a receipt. It refuses the owner's own id, ids in `owner_user_ids` and inactive
+  members, and requires `member_root`. Enrollment grants no shared access.
+
 ## mama-os [0.71.0] / mama-core [8.2.0] - 2026-10-09
 
 The boundary between the owner and team members, with no member admitted yet. A member gets its own

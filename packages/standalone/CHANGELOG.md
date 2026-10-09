@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.72.0] - 2026-10-10
+
+### Added
+
+- `manage.member.enroll` in the owner role: callable only in the owner's own message turn (delta,
+  scheduled, report, replay, member and subagent turns are denied); takes no person, chat or
+  grants; refuses without `member_root`. The Telegram gateway sends the owner's DM a one-time
+  `request_users` keyboard, matches the `users_shared` reply in memory, and the host completes the
+  enrollment on the serial turn chain: it refuses the owner's own id, ids in `owner_user_ids` and
+  inactive members, registers or moves the identity, clears a new member's directory and temp root,
+  validates access and paths before commit, serves the member, and sends the owner a receipt
+  without the Telegram id (#463).
+
 ## [0.71.0] - 2026-10-09
 
 ### Added

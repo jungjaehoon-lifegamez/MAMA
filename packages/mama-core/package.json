@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-core",
-  "version": "8.2.0",
+  "version": "8.3.0",
   "description": "MAMA Core - Shared modules for Memory-Augmented MCP Assistant",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
