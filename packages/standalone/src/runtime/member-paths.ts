@@ -2,7 +2,11 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { sessionCredentialPath } from './session-credential.js';
-import { normalizeReadPaths, physicalReadPath } from './backend-security.js';
+import {
+  MEMBER_CLAUDE_TMP_PARENT,
+  normalizeReadPaths,
+  physicalReadPath,
+} from './backend-security.js';
 
 function inside(parent: string, child: string): boolean {
   const path = relative(parent, child);
@@ -11,8 +15,6 @@ function inside(parent: string, child: string): boolean {
 
 /** Resolve existing ancestors too: a symlink must not move a member root into HOME. */
 const physical = physicalReadPath;
-
-const MEMBER_CLAUDE_TMP_PARENT = join('/tmp', 'mama-m');
 
 /**
  * Claude's sandbox shell uses CLAUDE_CODE_TMPDIR/claude-<uid> only when that path fits 44 bytes

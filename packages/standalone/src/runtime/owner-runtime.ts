@@ -1,7 +1,7 @@
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import { createPrincipalSessions } from './principal-sessions.js';
 import { createMemberSession } from './member-session.js';
-import { ownerDataReadPaths } from './backend-security.js';
+import { ownerDataReadPaths, ownerNativeDataReadPaths } from './backend-security.js';
 import { validateMemberRoot } from './member-paths.js';
 import { resolvePrincipalAccess } from './principal-access.js';
 import {
@@ -403,6 +403,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         model: options.model,
         workspaceDir: options.workspaceDir,
         runtimeRoot: options.runtimeRoot,
+        deniedReadPaths: ownerNativeDataReadPaths(options),
         replayKeyFile: options.replayKeyFile,
         ...(options.sandboxNetworkProxy === undefined
           ? {}

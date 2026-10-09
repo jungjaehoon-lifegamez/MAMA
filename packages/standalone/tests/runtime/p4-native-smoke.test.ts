@@ -8,6 +8,20 @@ import {
 } from '../../../../scripts/p4-native-smoke.mjs';
 
 const probe = { id: 'python-db', kind: 'shell', command: 'head -c 16 /fixture/db # p4:python-db' };
+it('classifies the fixture-only owner command marker using CLI results', () => {
+  const ownerProbe = { ...probe, command: 'head -c 16 /fixture/db # p6b:read-db' };
+  expect(
+    classifyProbe(ownerProbe, [
+      {
+        kind: 'shell',
+        input: ownerProbe.command,
+        error: true,
+        exitCode: 1,
+        output: 'Operation not permitted',
+      },
+    ])
+  ).toBe('refused-by-CLI/sandbox');
+});
 it('does not call a model refusal, missing file, missing import or incomplete CLI event a boundary proof', () => {
   expect(classifyProbe(probe, [])).toBe('unverified');
   for (const output of [

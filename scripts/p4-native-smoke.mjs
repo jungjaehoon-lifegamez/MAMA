@@ -247,7 +247,7 @@ export function smokePrompt(state, workspace, backend) {
 }
 
 /** Observe actual CLI stdout; no driver, session or IPC replacement. Keep tool inputs/results only. */
-function tapCli(file, workspace) {
+export function tapCli(file, workspace) {
   const spawn = childProcess.spawn;
   childProcess.spawn = function (...args) {
     const child = spawn.apply(this, args);
@@ -469,8 +469,8 @@ function isCommand(call, command) {
     return false;
   }
   const input = typeof call.input === 'string' ? call.input : call.input?.command;
-  // Each command ends in its own p4 marker; the CLI may wrap and re-quote what was submitted.
-  const marker = command.match(/# p4:[\w-]+$/)?.[0];
+  // Each command ends in its own marker; the CLI may wrap and re-quote what was submitted.
+  const marker = command.match(/# (?:p4|p6b):[\w-]+$/)?.[0];
   return marker !== undefined && input?.includes(marker) === true;
 }
 

@@ -19,6 +19,25 @@ export function normalizeReadPaths(paths: readonly string[]): string[] {
   return [...new Set(paths.map(physicalReadPath))];
 }
 
+/** Parent of each member's short Claude temp root (member-paths.ts). */
+export const MEMBER_CLAUDE_TMP_PARENT = join('/tmp', 'mama-m');
+
+/** P6: owner native tools cannot bypass action access through shared storage or member files. */
+export function ownerNativeDataReadPaths(options: OwnerRuntimeOptions): string[] {
+  const database = physicalReadPath(options.databasePath);
+  return [
+    options.databasePath,
+    `${options.databasePath}-wal`,
+    `${options.databasePath}-shm`,
+    database,
+    `${database}-wal`,
+    `${database}-shm`,
+    options.rawPath,
+    ...(options.memberRoot === undefined ? [] : [options.memberRoot]),
+    MEMBER_CLAUDE_TMP_PARENT,
+  ];
+}
+
 /** Member-only boundary. The owner's credential list and driver options do not use this list. */
 export function ownerDataReadPaths(options: OwnerRuntimeOptions): string[] {
   const root = options.runtimeRoot;

@@ -4,7 +4,7 @@ import { backendEnvironment, credentialReadPaths, normalizeReadPaths } from './b
 import { memberClaudeTmpDir } from './member-paths.js';
 import { untrustedToolData } from '../utils/untrusted-content.js';
 import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type {
   ActionCall,
   ActionResult,
@@ -368,7 +368,9 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
     options.replayKeyFile
   ).concat(options.deniedReadPaths ?? []);
   const deniedReadPaths =
-    options.principal === undefined ? readPaths : normalizeReadPaths(readPaths);
+    options.principal === undefined
+      ? [...new Set([...readPaths.map((path) => resolve(path)), ...normalizeReadPaths(readPaths)])]
+      : normalizeReadPaths(readPaths);
   if (options.backend === 'claude')
     ensureClaudeCallerHook(
       options.workspaceDir,

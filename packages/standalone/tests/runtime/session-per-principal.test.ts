@@ -240,8 +240,11 @@ it.each(['codex', 'claude'] as const)(
     try {
       const owner = f.drivers.get('owner')!;
       expect(owner.deniedReadPaths).toEqual(
-        credentialReadPaths(f.options.runtimeRoot, f.options.codexHome, f.options.replayKeyFile)
+        expect.arrayContaining(
+          credentialReadPaths(f.options.runtimeRoot, f.options.codexHome, f.options.replayKeyFile)
+        )
       );
+      expect(owner.deniedReadPaths).not.toContain(f.options.workspaceDir);
       expect(owner.processEnv.TMPDIR).toBe(process.env.TMPDIR);
       if (backend === 'codex') expect(owner.shellEnvironment).toEqual({ PATH: process.env.PATH });
       const paths = memberPaths(f.root, f.member);
