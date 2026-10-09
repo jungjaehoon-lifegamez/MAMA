@@ -51,7 +51,10 @@ import type { StoredSourceReader } from '../api/stored-source-reader.js';
 import { wikiActionRegistrations, type WikiPorts } from '../api/wiki-actions.js';
 import type { BoardSlots } from '../operator/board-read-views.js';
 import { LOADABLE_CONNECTORS as OWNER_CONNECTORS } from '../connectors/index.js';
-import { memberShareActionRegistrations } from '../api/member-share-actions.js';
+import {
+  guardMemberSharedRecords,
+  memberShareActionRegistrations,
+} from '../api/member-share-actions.js';
 
 const OWNER_ACTIONS = [
   'code_act',
@@ -241,10 +244,15 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
         'work.show',
       ].includes(contract.name)
     )
-    // Only an owner-chat turn changes an owner rule (owner-authority.ts).
+    // Only an owner-chat turn changes an owner rule (owner-authority.ts); a member's own chat
+    // changes only its own records (member-share-actions.ts).
     .map((registration) =>
       registration.contract.name === 'memory.save' || registration.contract.name === 'memory.retire'
-        ? guardOwnerRules(registration, options.adapter, options.ownerPrincipalId)
+        ? guardMemberSharedRecords(
+            guardOwnerRules(registration, options.adapter, options.ownerPrincipalId),
+            options.adapter,
+            options.ownerPrincipalId
+          )
         : registration
     );
   const reportSseClients = options.reportSseClients ?? new Set<ServerResponse>();

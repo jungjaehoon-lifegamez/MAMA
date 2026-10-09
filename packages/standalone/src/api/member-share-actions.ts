@@ -8,7 +8,7 @@ import {
   type MemoryRecord,
   type MemoryScopeRef,
 } from '@jungjaehoon/mama-core';
-import { ownerSpeaking } from '../runtime/owner-authority.js';
+import { amendedRecordIds, ownerSpeaking } from '../runtime/owner-authority.js';
 import { invalidInput } from '../utils/invalid-input.js';
 
 interface MemberSharePorts {
@@ -21,6 +21,49 @@ function denied(message: string): Error {
   const error = new Error(message);
   error.name = 'denied';
   return error;
+}
+
+/**
+ * A member changes shared records only in a group room, where the team sees it (owner decision
+ * 2026-10-09). Until group-room turns exist (P10), a member turn replaces or retires only records
+ * bound to its own personal scope alone; sharing one stays allowed. A record with no binding is
+ * not the member's either. The owner is unchanged; a missing record is left to core.
+ */
+export function guardMemberSharedRecords(
+  registration: ActionRegistration,
+  adapter: DatabaseInstance,
+  ownerPrincipalId: string
+): ActionRegistration {
+  const action = registration.contract.name;
+  return {
+    ...registration,
+    exec: async (input, context) => {
+      const principalId = context.access.principalId;
+      if (principalId !== ownerPrincipalId) {
+        for (const id of amendedRecordIds(action, input)) {
+          const bindings = adapter
+            .prepare(
+              `SELECT s.kind, s.external_id FROM decisions d
+               LEFT JOIN memory_scope_bindings b ON b.memory_id = d.id
+               LEFT JOIN memory_scopes s ON s.id = b.scope_id
+               WHERE d.id = ?`
+            )
+            .all(id) as Array<{ kind: string | null; external_id: string | null }>;
+          if (
+            bindings.length > 0 &&
+            !bindings.every(
+              (binding) => binding.kind === 'user' && binding.external_id === principalId
+            )
+          )
+            throw denied(
+              `${id} is not only yours: shared records change in the group room, not in this ` +
+                'chat. Save your own note instead, or raise it in the group room.'
+            );
+        }
+      }
+      return await registration.exec(input, context);
+    },
+  };
 }
 
 function revisionText(record: MemoryRecord) {

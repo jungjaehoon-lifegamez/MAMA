@@ -72,7 +72,7 @@ export function ownerSpeaking(context: ActionContext, ownerPrincipalId: string):
 }
 
 /** The records a memory.save replaces, or the one a memory.retire retires. */
-function targets(action: string, input: unknown): string[] {
+export function amendedRecordIds(action: string, input: unknown): string[] {
   const named =
     action === 'memory.retire'
       ? [(input as { memory_id?: unknown }).memory_id]
@@ -99,7 +99,7 @@ export function guardOwnerRules(
         source?: { source_type?: unknown };
         provenance?: { tool_name?: unknown };
       };
-      const ids = targets(action, input);
+      const ids = amendedRecordIds(action, input);
       const revisions =
         ids.length === 0
           ? []

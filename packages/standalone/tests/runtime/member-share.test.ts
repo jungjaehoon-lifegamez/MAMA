@@ -246,6 +246,46 @@ describe('P2b member share through the product catalog and real dispatcher', () 
     ]);
   });
 
+  it('refuses a member revising or retiring its shared copy in its own chat, without writing', async () => {
+    const saved = data<{ id: string }>(await share()).id;
+    const retire = (id: string, principalId = a) =>
+      call(
+        'memory.retire',
+        { memory_id: id, status: 'stale', reason: 'Withdrawn.' },
+        turn(principalId)
+      );
+    await refused(() => retire(saved));
+    await refused(() =>
+      call('memory.save', {
+        topic: 'fixture-review',
+        kind: 'fact',
+        summary: 'Edited shared review',
+        details: 'An edit from the member chat.',
+        source: { package: 'fixture', source_type: 'fixture' },
+        replaces: [{ id: saved, reason: 'An edit from the member chat.' }],
+      })
+    );
+    // Its own record stays its own to change; the owner still changes the shared copy.
+    expect(await retire(original)).toMatchObject({ status: 'completed' });
+    expect(await retire(saved, OWNER)).toMatchObject({ status: 'completed' });
+  });
+
+  it('refuses a member replacing a record with no scope binding', async () => {
+    // Core treats an unbound record as having no partition to violate; it is not the member's.
+    const unbound = await save('Unbound', 'A record without bindings.', OWNER);
+    db.adapter.prepare('DELETE FROM memory_scope_bindings WHERE memory_id = ?').run(unbound);
+    await refused(() =>
+      call('memory.save', {
+        topic: 'fixture-review',
+        kind: 'fact',
+        summary: 'Replacement',
+        details: 'A replacement from the member chat.',
+        source: { package: 'fixture', source_type: 'fixture' },
+        replaces: [{ id: unbound, reason: 'A replacement from the member chat.' }],
+      })
+    );
+  });
+
   it('lists memory.share in member help with whole-history consent and subsequent-share guidance', async () => {
     const help = data<string>(await call('help', {}));
     expect(help).toContain('memory.share');
