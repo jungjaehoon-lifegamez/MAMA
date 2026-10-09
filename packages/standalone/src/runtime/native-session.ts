@@ -4,6 +4,7 @@ import { backendEnvironment, credentialReadPaths, normalizeReadPaths } from './b
 import { memberClaudeTmpDir } from './member-paths.js';
 import { untrustedToolData } from '../utils/untrusted-content.js';
 import { mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type {
   ActionCall,
@@ -75,6 +76,8 @@ export interface NativeDriverOptions {
   codexHome?: string;
   isolatedHome?: string;
   registryRoot?: string;
+  /** The owner's Codex CLI credential, copied into each managed Codex home. */
+  authSourcePath?: string;
   pluginDir?: string;
   mcpConfigPath?: string;
   createSubagentBridge: (info: SubagentBridgeRequest) => Promise<SubagentBridge | null>;
@@ -104,6 +107,7 @@ export interface NativeSessionOptions {
     systemPrompt: string;
     prepareAccess: () => JudgmentAccess;
   };
+  claudeConfigDir?: string;
   socketPath?: string;
   credentialPath?: string;
   journalPath?: string;
@@ -214,6 +218,16 @@ function driverOptions(
     processEnv: {
       ...backendEnvironment(),
       ...(options.principal === undefined ? {} : { TMPDIR: join(options.workspaceDir, '.tmp') }),
+      // A member's own config dir keeps its sessions and CLI state out of the owner's. The
+      // credential store follows the CLI's own key rule: an explicit store dir, else the config
+      // dir, else '' for the default; so the member signs in with the owner's login.
+      ...(options.claudeConfigDir === undefined
+        ? {}
+        : {
+            CLAUDE_CONFIG_DIR: options.claudeConfigDir,
+            CLAUDE_SECURESTORAGE_CONFIG_DIR:
+              process.env.CLAUDE_SECURESTORAGE_CONFIG_DIR ?? process.env.CLAUDE_CONFIG_DIR ?? '',
+          }),
     },
     deniedReadPaths,
     model: options.model,
@@ -236,6 +250,9 @@ function driverOptions(
               : { TMPDIR: join(options.workspaceDir, '.tmp') }),
           },
           allowLoginShell: false,
+          // Core copies, never finds (2026-09-22); the 09-25 rebuild had dropped this statement.
+          // Owner and members use the owner's login; a re-copy follows each refresh of it.
+          authSourcePath: join(homedir(), '.codex', 'auth.json'),
         }
       : { permissionMode: 'dontAsk' as const }),
     requestTimeout: options.timeout,
@@ -281,6 +298,7 @@ function createDriver(
       codexHome: options.codexHome,
       isolatedHome: options.isolatedHome,
       registryRoot: options.registryRoot,
+      authSourcePath: nativeOptions.authSourcePath,
       effort: nativeOptions.effort,
       createSubagentBridge: bridge,
     });

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, realpathSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir, userInfo } from 'node:os';
 import { createRequire } from 'node:module';
@@ -331,6 +331,9 @@ it.each(['codex', 'claude'] as const)(
 
 it('writes member denies and workspace TMPDIR into the existing Codex named profile before CLI launch', async () => {
   const f = await fixture('codex');
+  // HOME is the fixture owner home: the owner's Codex CLI credential is copied, not logged in again.
+  mkdirSync(join(f.home, '.codex'), { recursive: true });
+  writeFileSync(join(f.home, '.codex', 'auth.json'), '{"fixture":"owner-credential"}');
   const create = f.options.createSession!;
   f.options.createSession = (options) =>
     options.principal === undefined
@@ -365,10 +368,13 @@ it('writes member denies and workspace TMPDIR into the existing Codex named prof
     const config = readFileSync(join(paths.codexHome, 'config.toml'), 'utf8');
     expect(config).toContain('default_permissions = "host-workspace"');
     expect(config).toContain('[permissions.host-workspace.filesystem]');
-    for (const path of [f.home, memberPaths(f.root, f.inactive).runtimeRoot])
+    for (const path of [f.home, memberPaths(f.root, f.inactive).runtimeRoot, paths.claudeConfigDir])
       expect(config).toContain(`${JSON.stringify(path)} = "deny"`);
     expect(config).toContain(`"TMPDIR" = ${JSON.stringify(join(paths.workspaceDir, '.tmp'))}`);
     expect(config).toContain('web_search = false');
+    expect(readFileSync(join(paths.codexHome, 'auth.json'), 'utf8')).toBe(
+      '{"fixture":"owner-credential"}'
+    );
   } finally {
     await runtime.stop();
     f.pool.dispose();
@@ -580,14 +586,25 @@ it.each(['codex', 'claude'] as const)(
           .prepare('SELECT COUNT(*) AS n FROM tool_traces WHERE model_run_id IS NOT NULL')
           .get()
       ).toMatchObject({ n: 5 });
-      // Owner decision 2026-10-09: members use the owner's Claude login.
       expect(f.drivers.get(f.member)?.processEnv.CLAUDE_CONFIG_DIR).toBe(
-        f.drivers.get('owner')?.processEnv.CLAUDE_CONFIG_DIR
+        memberPaths(f.root, f.member).claudeConfigDir
+      );
+      expect(f.drivers.get('owner')?.processEnv.CLAUDE_CONFIG_DIR).toBeUndefined();
+      // Own config dir, the owner's credential store: the CLI keys the store by the explicit
+      // store dir, else the config dir, else '' (the default login).
+      const ownerEnv = f.drivers.get('owner')!.processEnv;
+      expect(f.drivers.get(f.member)?.processEnv.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(
+        ownerEnv.CLAUDE_SECURESTORAGE_CONFIG_DIR ?? ownerEnv.CLAUDE_CONFIG_DIR ?? ''
       );
       expect(f.drivers.get(f.member)?.cwd).not.toBe(f.drivers.get('owner')?.cwd);
       const memberDenied = f.drivers.get(f.member)?.deniedReadPaths ?? [];
       const own = memberPaths(f.root, f.member);
-      for (const path of [f.home, own.codexHome, join(own.runtimeRoot, 'runtime')])
+      for (const path of [
+        f.home,
+        own.claudeConfigDir,
+        own.codexHome,
+        join(own.runtimeRoot, 'runtime'),
+      ])
         expect(memberDenied).toContain(path);
       expect(f.drivers.get(f.member)?.registryRoot).toBe(
         memberPaths(f.root, f.member).registryRoot
