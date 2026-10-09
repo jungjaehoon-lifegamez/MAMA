@@ -1,5 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { createHash } from 'node:crypto';
+import { createHash, randomInt } from 'node:crypto';
+import type { ActionResult } from '@jungjaehoon/mama-core';
+import type { MemberSelection } from '../api/member-enrollment.js';
 import { closeSync } from 'node:fs';
 import { basename } from 'node:path';
 
@@ -63,6 +65,7 @@ export interface TelegramGatewayOptions {
   onFatalError?: (error: unknown) => void;
   /** What the owner is told when a turn on their message was cut off. */
   interruptedNotice?: string;
+  onMemberSelection?: (selection: MemberSelection) => Promise<ActionResult>;
 }
 
 function entityOptions<T>(entities: TelegramFormattedText['entities']): T {
@@ -153,6 +156,9 @@ export class TelegramGateway extends BaseGateway {
   private readonly activePresenters = new Map<string, TelegramResponsePresenter>();
   private readonly recentMessageIds = new Map<string, number>();
   private readonly activeChat = new AsyncLocalStorage<{ chatId: string; active: boolean }>();
+  private nextEnrollmentRequestId = randomInt(1, 0x7fffffff);
+  private pendingEnrollment?: { requestId: number; sourceMessageRef: string; ownerUserId: string };
+  private readonly onMemberSelection?: TelegramGatewayOptions['onMemberSelection'];
   private bot: Bot | null = null;
   private lastError: string | null = null;
   private lastMessageAt: number | undefined;
@@ -164,6 +170,7 @@ export class TelegramGateway extends BaseGateway {
   constructor(options: TelegramGatewayOptions) {
     super({ intake: options.intake });
     this.token = options.token;
+    this.onMemberSelection = options.onMemberSelection;
     this.config = {
       enabled: options.config?.enabled ?? true,
       allowedChats: options.config?.allowedChats ?? [],
@@ -238,6 +245,7 @@ export class TelegramGateway extends BaseGateway {
   }
 
   async stop(): Promise<void> {
+    this.pendingEnrollment = undefined;
     if (this.bot) await this.bot.stop().catch(() => {});
     this.bot = null;
     this.connected = false;
@@ -364,6 +372,110 @@ export class TelegramGateway extends BaseGateway {
     }
   }
 
+  /** The source ref was verified as an owner turn by the runtime; only an owner DM can select. */
+  async requestMemberEnrollment(sourceRef: string): Promise<void> {
+    if (!sourceRef.startsWith('telegram:'))
+      throw Object.assign(new Error("Enrollment requires the owner's own Telegram DM"), {
+        name: 'denied',
+      });
+    const ownerUserId = chatIdFromSourceMessageRef(sourceRef);
+    const chatId = Number(ownerUserId);
+    if (!this.bot || !this.onMemberSelection || !this.ownerAllowed(ownerUserId, ownerUserId)) {
+      throw Object.assign(new Error("Enrollment requires the owner's own Telegram DM"), {
+        name: 'denied',
+      });
+    }
+    const requestId = this.nextEnrollmentRequestId;
+    this.nextEnrollmentRequestId = requestId === 0x7fffffff ? 1 : requestId + 1;
+    this.pendingEnrollment = { requestId, sourceMessageRef: sourceRef, ownerUserId };
+    try {
+      await this.bot.api.sendMessage(chatId, 'Choose one member to enroll.', {
+        reply_markup: {
+          one_time_keyboard: true,
+          resize_keyboard: true,
+          keyboard: [
+            [
+              {
+                text: 'Choose member',
+                request_users: { request_id: requestId, user_is_bot: false, max_quantity: 1 },
+              },
+            ],
+          ],
+        },
+      });
+    } catch (error) {
+      if (this.pendingEnrollment?.requestId === requestId) this.pendingEnrollment = undefined;
+      throw error;
+    }
+  }
+
+  private async completeMemberSelection(message: TelegramMessage): Promise<void> {
+    const chatId = String(message.chat.id);
+    const ownerUserId = String(message.from!.id);
+    if (message.chat.type !== 'private' || chatId !== ownerUserId) return;
+    const pending = this.pendingEnrollment;
+    const shared = message.users_shared!;
+    if (
+      !pending ||
+      shared.request_id !== pending.requestId ||
+      ownerUserId !== pending.ownerUserId
+    ) {
+      await this.bot!.api.sendMessage(
+        Number(chatId),
+        'Enrollment refused: principal=none connector=telegram namespace=private. No matching pending request; ask again.',
+        {
+          reply_markup: { remove_keyboard: true },
+        }
+      );
+      return;
+    }
+    // Consume before awaiting the serial host chain, so concurrent duplicate updates cannot enroll.
+    this.pendingEnrollment = undefined;
+    if (
+      shared.users.length !== 1 ||
+      !Number.isSafeInteger(shared.users[0]!.user_id) ||
+      shared.users[0]!.user_id <= 0
+    ) {
+      await this.bot!.api.sendMessage(
+        Number(chatId),
+        'Enrollment refused: principal=none connector=telegram namespace=private. Choose exactly one user; ask again.',
+        {
+          reply_markup: { remove_keyboard: true },
+        }
+      );
+      return;
+    }
+    await this.bot!.api.sendMessage(Number(chatId), 'Enrollment selection received.', {
+      reply_markup: { remove_keyboard: true },
+    });
+    const result = await this.onMemberSelection!({
+      sourceMessageRef: pending.sourceMessageRef,
+      ownerUserId,
+      userId: String(shared.users[0]!.user_id),
+    });
+    const data =
+      result.status === 'completed'
+        ? (result.data as {
+            status: string;
+            principalId: string | null;
+            connector: string;
+            namespace: string;
+            message?: string;
+          })
+        : {
+            status: 'refused',
+            principalId: null,
+            connector: 'telegram',
+            namespace: 'private',
+            message: result.error.message,
+          };
+    await this.bot!.api.sendMessage(
+      Number(chatId),
+      `Enrollment ${data.status}: principal=${data.principalId ?? 'none'} connector=${data.connector} namespace=${data.namespace}${data.message ? `. ${data.message}` : ''}`,
+      { reply_markup: { remove_keyboard: true } }
+    );
+  }
+
   getLastError(): string | null {
     return this.lastError;
   }
@@ -394,6 +506,11 @@ export class TelegramGateway extends BaseGateway {
       console.warn(
         `telegram message dropped reason=non_owner chat_hash=${chatHash} sender_hash=${senderHash}`
       );
+      return;
+    }
+
+    if (message.users_shared) {
+      await this.completeMemberSelection(message);
       return;
     }
 

@@ -1,3 +1,8 @@
+import {
+  createMemberEnrollment,
+  type MemberEnrollmentPorts,
+  type MemberSelection,
+} from '../api/member-enrollment.js';
 import { traceSummary } from '@jungjaehoon/mama-core/runtime/trace-summary';
 import { createNativeToolTraceObserver } from '@jungjaehoon/mama-core/runtime/native-tool-trace-observer';
 import type { OutboundAttemptEvent } from '../api/security-events.js';
@@ -68,6 +73,7 @@ const OWNER_ACTIONS = [
   'drive.download',
   'judge',
   'owner.timezone.set',
+  'manage.member.enroll',
   'owner.messages',
   'memory.checkpoint.list',
   'memory.checkpoint.save',
@@ -159,9 +165,11 @@ export interface ActionSurfaceOptions {
   timeZone: TimeZoneSetting;
   configPath: string;
   isOwnerMessageTurn: (sourceMessageRef: string) => boolean;
+  memberEnrollment?: MemberEnrollmentPorts;
 }
 
 export interface ActionSurface {
+  completeMemberEnrollment(selection: MemberSelection): ReturnType<ActionDispatcher>;
   createNativeEffectObserver(
     modelRunId: string,
     access?: JudgmentAccess
@@ -194,6 +202,13 @@ export function ownerMemoryScopes(
 }
 
 export function createActionSurface(options: ActionSurfaceOptions): ActionSurface {
+  const enrollment = createMemberEnrollment({
+    adapter: options.adapter,
+    ownerPrincipalId: options.ownerPrincipalId,
+    isOwnerMessageTurn: options.isOwnerMessageTurn,
+    ownerAccess: () => ownerAccess,
+    ports: options.memberEnrollment,
+  });
   const defaultScopes = ownerMemoryScopes(
     options.ownerPrincipalId,
     options.connectors ?? OWNER_CONNECTORS
@@ -298,6 +313,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       adapter: options.adapter,
       timeZone: options.timeZone,
     }),
+    enrollment.registration,
     ...ownerTimeZoneActionRegistrations({
       configPath: options.configPath,
       ownerPrincipalId: options.ownerPrincipalId,
@@ -453,6 +469,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     },
     catalog,
     dispatch,
+    completeMemberEnrollment: (selection) => enrollment.complete(selection, dispatch),
     ownerAccess,
     // Progressive, as Kagemusha's code_act catalog: every turn carries one line per action with
     // its arguments; types, allowed values and examples come from `help`. The dispatcher still

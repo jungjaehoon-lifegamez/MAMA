@@ -1,3 +1,5 @@
+import type { MemberEnrollmentPorts, MemberSelection } from '../api/member-enrollment.js';
+import type { ActionResult } from '@jungjaehoon/mama-core';
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import { createPrincipalSessions } from './principal-sessions.js';
 import { createMemberSession } from './member-session.js';
@@ -80,6 +82,7 @@ export interface OwnerRuntimeOptions {
   rawPath: string;
   embedder?: NonNullable<KnowledgeOptions['embedder']>;
   memberRoot?: string;
+  memberEnrollment?: Omit<MemberEnrollmentPorts, 'memberRoot' | 'serveMember'>;
   /** Additional configured owner locations (config, logging, custom MCP), denied only to members. */
   ownerDeniedReadPaths?: readonly string[];
   createSession?: typeof createNativeSession;
@@ -147,6 +150,7 @@ export interface OwnerRuntime {
   readonly intake: StimulusIntake;
   readonly acceptSourceDelta: StimulusIntake['acceptSourceDelta'];
   serveMember(principalId: string): StimulusIntake;
+  completeMemberEnrollment(selection: MemberSelection): Promise<ActionResult>;
   stop(): Promise<void>;
 }
 
@@ -350,6 +354,17 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       isOwnerMessageTurn: (sourceMessageRef) =>
         ownerMailbox?.readInput(sourceMessageRef, options.ownerPrincipalId)?.kind ===
         'owner_message',
+      ...(options.memberEnrollment === undefined
+        ? {}
+        : {
+            memberEnrollment: {
+              ...options.memberEnrollment,
+              memberRoot,
+              serveMember: (id) => {
+                serveMember(id);
+              },
+            },
+          }),
       reportStore,
       reportSseClients,
       wikiPorts,
@@ -625,6 +640,28 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
     for (const [id, member] of members)
       memberIntakes.set(id, createStimulusIntake(intakeRuntime, id, member.chat));
     let stopped = false;
+    const serveMember = (principalId: string): StimulusIntake => {
+      if (stopped) throw new Error('Cannot serve a member after runtime stop');
+      executionAccess(principalId);
+      const existing = memberIntakes.get(principalId);
+      if (existing) return existing;
+      const member = prepareMember(principalId);
+      try {
+        intakeRuntime.servePrincipal({
+          access: member.initialAccess,
+          credentialPath: member.paths.credentialPath,
+        });
+      } catch (error) {
+        // Unregister, so a later serveMember can try again in this process.
+        sessions.remove(principalId);
+        members.delete(principalId);
+        void member.native.stop();
+        throw error;
+      }
+      const memberIntake = createStimulusIntake(intakeRuntime, principalId, member.chat);
+      memberIntakes.set(principalId, memberIntake);
+      return memberIntake;
+    };
     return {
       runtime: intakeRuntime,
       database,
@@ -635,28 +672,12 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       wikiRoot,
       intake,
       acceptSourceDelta: intake.acceptSourceDelta,
-      serveMember: (principalId) => {
-        if (stopped) throw new Error('Cannot serve a member after runtime stop');
-        executionAccess(principalId);
-        const existing = memberIntakes.get(principalId);
-        if (existing) return existing;
-        const member = prepareMember(principalId);
-        try {
-          intakeRuntime.servePrincipal({
-            access: member.initialAccess,
-            credentialPath: member.paths.credentialPath,
-          });
-        } catch (error) {
-          // Unregister, so a later serveMember can try again in this process.
-          sessions.remove(principalId);
-          members.delete(principalId);
-          void member.native.stop();
-          throw error;
-        }
-        const memberIntake = createStimulusIntake(intakeRuntime, principalId, member.chat);
-        memberIntakes.set(principalId, memberIntake);
-        return memberIntake;
-      },
+      serveMember,
+      completeMemberEnrollment: (selection) =>
+        sessions.turnChain(async () => {
+          if (stopped) throw new Error('Cannot enroll a member after runtime stop');
+          return surface.completeMemberEnrollment(selection);
+        }),
       stop: async () => {
         if (stopped) return;
         stopped = true;

@@ -75,6 +75,7 @@ export interface DaemonLogger {
 export interface DaemonGateway {
   /** This owner message has a delivered answer, an interruption notice included. */
   answered(sourceRef: string): boolean;
+  requestMemberEnrollment?(sourceRef: string): Promise<void>;
   recoverPendingResponses(): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -477,6 +478,22 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       workspaceDir: paths.workspaceDir,
       ownerPrincipalId: OWNER_PRINCIPAL_ID,
       agentId: OWNER_AGENT_ID,
+      ...(config.telegram.enabled && options.mode !== 'replay'
+        ? {
+            memberEnrollment: {
+              ownerUserIds: config.telegram.owner_user_ids ?? [],
+              requestSelection: async (sourceRef: string) => {
+                const telegram = gateways.get('telegram');
+                if (!telegram?.requestMemberEnrollment)
+                  throw Object.assign(
+                    new Error("Enrollment requires Telegram as the owner's messenger"),
+                    { name: 'denied' }
+                  );
+                await telegram.requestMemberEnrollment(sourceRef);
+              },
+            },
+          }
+        : {}),
       outboundAttempts: (event) => outboundEvents.record(event),
       sandboxNetworkProxy: {
         httpProxyPort: egressProxy.httpProxyPort,
@@ -687,6 +704,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       gateway = factory({
         token,
         intake,
+        onMemberSelection: (selection) => owner!.completeMemberEnrollment(selection),
         config: {
           enabled: true,
           allowedChats: config.telegram.allowed_chats,

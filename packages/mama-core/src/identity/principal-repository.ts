@@ -47,6 +47,14 @@ export interface PrincipalRepository {
     externalId: string;
     now: number;
   }): string;
+  /** Move only this identity, atomically; its current binding must match the expected principal. */
+  moveIdentityToMember(input: {
+    expectedPrincipalId: string;
+    connector: string;
+    namespace: string;
+    externalId: string;
+    now: number;
+  }): string;
   bindIdentity(
     principalId: string,
     connector: string,
@@ -82,7 +90,10 @@ export interface PrincipalRepository {
   listGrantedPartitions(): Array<{ kind: 'project'; id: string }>;
 }
 
-export type PrincipalRegistrationErrorCode = 'identity_bound_to_owner' | 'member_not_active';
+export type PrincipalRegistrationErrorCode =
+  | 'identity_bound_to_owner'
+  | 'member_not_active'
+  | 'identity_binding_mismatch';
 
 export class PrincipalRegistrationError extends Error {
   readonly code: PrincipalRegistrationErrorCode;
@@ -427,6 +438,44 @@ export function createPrincipalRepository(
     return principalId;
   }
 
+  function moveIdentityToMember(input: {
+    expectedPrincipalId: string;
+    connector: string;
+    namespace: string;
+    externalId: string;
+    now: number;
+  }): string {
+    return adapter.transaction(() => {
+      const current = resolveByExternal(input.connector, input.namespace, input.externalId);
+      if (!current || current.principalId !== input.expectedPrincipalId) {
+        throw new PrincipalRegistrationError(
+          'identity_binding_mismatch',
+          'External identity does not belong to the expected principal'
+        );
+      }
+      const principalId = mintPrincipalId(
+        'member',
+        input.connector,
+        input.namespace,
+        input.externalId
+      );
+      insertPrincipalStatement.run(principalId, 'member', null, input.now, input.now);
+      adapter
+        .prepare(
+          `UPDATE external_identities SET principal_id = ?
+         WHERE connector = ? AND namespace = ? AND external_id = ? AND principal_id = ?`
+        )
+        .run(
+          principalId,
+          input.connector,
+          input.namespace,
+          input.externalId,
+          input.expectedPrincipalId
+        );
+      return principalId;
+    });
+  }
+
   function transitionMember(
     principalId: string,
     status: Extract<PrincipalStatus, 'suspended' | 'offboarded'>,
@@ -571,6 +620,7 @@ export function createPrincipalRepository(
   return {
     resolveByExternal,
     registerMember,
+    moveIdentityToMember,
     bindIdentity,
     suspend(principalId, now) {
       transitionMember(principalId, 'suspended', now);

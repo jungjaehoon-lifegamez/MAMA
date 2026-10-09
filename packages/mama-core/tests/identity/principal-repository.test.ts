@@ -314,4 +314,91 @@ describe('Story TG-01/TG-04 / Phase 2b Task 1 AC: principal repository at migrat
       { principalId: secondId, status: 'suspended' },
     ]);
   });
+  it('moves exactly one identity from the expected principal to a new member', () => {
+    const repo = createPrincipalRepository(adapter);
+    repo.ensureOwner({
+      principalId: 'owner',
+      connector: 'fixture',
+      namespace: 'private',
+      externalId: 'keep',
+      now: 1,
+    });
+    repo.bindIdentity('owner', 'fixture', 'private', 'move', 2);
+    const member = repo.moveIdentityToMember({
+      expectedPrincipalId: 'owner',
+      connector: 'fixture',
+      namespace: 'private',
+      externalId: 'move',
+      now: 3,
+    });
+    expect(repo.resolveByExternal('fixture', 'private', 'move')).toEqual({
+      principalId: member,
+      kind: 'member',
+      status: 'active',
+    });
+    expect(repo.resolveByExternal('fixture', 'private', 'keep')).toEqual({
+      principalId: 'owner',
+      kind: 'owner',
+      status: 'active',
+    });
+    expect(repo.findById('owner')).toEqual({
+      principalId: 'owner',
+      kind: 'owner',
+      status: 'active',
+    });
+    expect(repo.listMembers()).toHaveLength(1);
+  });
+
+  it('refuses an identity move from a wrong expected principal without writing', () => {
+    const repo = createPrincipalRepository(adapter);
+    repo.ensureOwner({
+      principalId: 'owner',
+      connector: 'fixture',
+      namespace: 'private',
+      externalId: 'move',
+      now: 1,
+    });
+    expect(() =>
+      repo.moveIdentityToMember({
+        expectedPrincipalId: 'other',
+        connector: 'fixture',
+        namespace: 'private',
+        externalId: 'move',
+        now: 2,
+      })
+    ).toThrow(/expected principal/);
+    expect(repo.listMembers()).toEqual([]);
+    expect(repo.resolveByExternal('fixture', 'private', 'move')?.principalId).toBe('owner');
+  });
+
+  it('rolls back the member insert if the identity move fails', () => {
+    const repo = createPrincipalRepository(adapter);
+    repo.ensureOwner({
+      principalId: 'owner',
+      connector: 'fixture',
+      namespace: 'private',
+      externalId: 'move',
+      now: 1,
+    });
+    adapter
+      .prepare(
+        "CREATE TRIGGER reject_move BEFORE UPDATE ON external_identities BEGIN SELECT RAISE(ABORT, 'fixture move failure'); END"
+      )
+      .run();
+    try {
+      expect(() =>
+        repo.moveIdentityToMember({
+          expectedPrincipalId: 'owner',
+          connector: 'fixture',
+          namespace: 'private',
+          externalId: 'move',
+          now: 2,
+        })
+      ).toThrow('fixture move failure');
+      expect(repo.listMembers()).toEqual([]);
+      expect(repo.resolveByExternal('fixture', 'private', 'move')?.principalId).toBe('owner');
+    } finally {
+      adapter.prepare('DROP TRIGGER reject_move').run();
+    }
+  });
 });

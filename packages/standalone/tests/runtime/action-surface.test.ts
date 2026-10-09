@@ -79,6 +79,7 @@ describe('W1 action surface', () => {
       'graph.query',
       'help',
       'judge',
+      'manage.member.enroll',
       'manage.policy.read',
       'manage.policy.update',
       'manage.wiki.move',
