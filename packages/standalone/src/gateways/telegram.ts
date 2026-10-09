@@ -448,11 +448,25 @@ export class TelegramGateway extends BaseGateway {
     await this.bot!.api.sendMessage(Number(chatId), 'Enrollment selection received.', {
       reply_markup: { remove_keyboard: true },
     });
-    const result = await this.onMemberSelection!({
-      sourceMessageRef: pending.sourceMessageRef,
-      ownerUserId,
-      userId: String(shared.users[0]!.user_id),
-    });
+    let result: ActionResult;
+    try {
+      result = await this.onMemberSelection!({
+        sourceMessageRef: pending.sourceMessageRef,
+        ownerUserId,
+        userId: String(shared.users[0]!.user_id),
+      });
+    } catch (error) {
+      // The request is already consumed; the owner must still learn the outcome.
+      console.error('[telegram] member enrollment failed');
+      result = {
+        status: 'failed',
+        error: {
+          kind: 'internal',
+          code: 'enrollment_failed',
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
     const data =
       result.status === 'completed'
         ? (result.data as {

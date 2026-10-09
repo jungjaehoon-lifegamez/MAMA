@@ -65,6 +65,7 @@ async function fixture(
     noTelegram?: boolean;
     listed?: boolean;
     groupDestination?: boolean;
+    rejectCompletion?: boolean;
   } = {}
 ) {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'enrollment-home-')));
@@ -122,6 +123,7 @@ async function fixture(
       },
     },
     onMemberSelection: async (selection) => {
+      if (options.rejectCompletion) throw new Error('Cannot enroll a member after runtime stop');
       const result = await complete(selection);
       completions.push(result);
       return result;
@@ -321,6 +323,16 @@ describe('P7 owner DM enrollment through the real dispatcher', () => {
     await f.gateway.start();
     await f.share(lost);
     expect(f.completions).toHaveLength(1);
+  });
+
+  it('tells the owner the outcome when the host completion rejects after the selection', async () => {
+    const f = await fixture({ rejectCompletion: true });
+    await f.request();
+    await f.share(f.requestId());
+    expect(seams.send.mock.calls.at(-1)![1]).toBe(
+      'Enrollment refused: principal=none connector=telegram namespace=private. Cannot enroll a member after runtime stop'
+    );
+    expect(f.repo.listMembers()).toEqual([]);
   });
 
   it('moves the removed owner alias and clears smoke state only on first enrollment', async () => {
