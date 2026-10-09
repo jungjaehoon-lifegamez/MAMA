@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.71.0] / mama-core [8.2.0] - 2026-10-09
+
+The boundary between the owner and team members, with no member admitted yet. A member gets its own
+session, workspace and native sandbox, sends files only to its own DM, and changes only its own
+records from its own chat. The owner agent reads records through MAMA actions under the owner's
+access, which stop at a member's personal records, and its native tools no longer read the
+database, raw stores or member directories. With no member registered, the owner's turns are
+unchanged apart from those denies. The package changelogs list every change.
+
+### Added
+
+- A session per principal: `member_root` places each member's workspace, downloads and backend
+  homes outside the owner's home; boot serves active members on one shared serial chain, and a
+  member's session holds no owner policy.
+- The member native boundary: Claude Read and Edit rules, the shell sandbox and a Codex permission
+  profile deny the owner's home and other members' directories. Members use the owner's logins in
+  their own homes.
+- `deliver.telegram.file` in the member role: a member's file goes only to the member's own DM,
+  from its own workspace files; hard links and paths through a symlink are refused.
+- A member's refused connection alerts the owner with the principal, host and time only, from the
+  member's own sandbox proxy.
+
+### Changed
+
+- An owner rule is one the owner principal wrote, not one saved from any messenger chat.
+- In a member's own chat, `memory.save` replacing a record and `memory.retire` accept only records
+  bound to that member alone; sharing a personal record stays allowed.
+- The owner reads chat only in its own channels (those holding its messages), and its checkpoint
+  list, session-start source counts and viewer memory counts run under its access.
+- The owner agent's native reads deny the product database (with `-wal` and `-shm`), the raw
+  stores, `member_root` and the member temp root (owner decision, recorded in AGENTS.md).
+- Boot refuses `agent.codex_cwd` inside the connectors (raw store) directory.
+
 ## mama-os [0.70.0] / mama-core [8.1.0] - 2026-10-08
 
 Sharing for team members, with nothing admitted yet: the owner can bind common work to a member

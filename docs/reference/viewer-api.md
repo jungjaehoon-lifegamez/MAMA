@@ -49,7 +49,7 @@ All paths in this table use GET. Limits outside a route's accepted range return 
 | `/api/connectors/status`                        | Configured connector status; unavailable result if no provider is wired.                                                                                                           |
 | `/api/dashboard/status`                         | Memory statistics from the daemon database.                                                                                                                                        |
 | `/api/logs/daemon`                              | Log tail: `tail` (or `limit`) defaults to 500, maximum 2000; `since` is a file modification timestamp in milliseconds.                                                             |
-| `/api/security/events`                          | Recent structured security events; `limit` defaults to 50, maximum 2000.                                                                                                           |
+| `/api/security/events`                          | Recent structured security events; `limit` defaults to 50, maximum 2000. A member's refused connection holds only `principalId`, `host` and `time`.                                |
 
 Graph `kind` filters accept `memory`, `case`, `report`, `edge`, `raw`, `registry`, `observation`,
 and `entity`. These are graph projection names; task history is stored on work revisions.

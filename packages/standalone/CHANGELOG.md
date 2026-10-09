@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.71.0] - 2026-10-09
+
+### Added
+
+- `member_root` and a session per principal: each active member gets its own intake, session key,
+  agent id, workspace, downloads, Claude config directory and Codex home under `member_root`, on
+  the one shared serial chain; boot serves active members; a member session starts from its own
+  chat and holds no owner policy; Codex tool calls use the turn's access (#455).
+- The member native boundary: Claude Read and Edit rules and the Bash sandbox, and the member's
+  Codex permission profile, deny the owner's home, owner data paths and other members' directories;
+  each member gets a short Claude temp root of its own. Members sign in with the owner's logins in
+  their own homes (#456).
+- `deliver.telegram.file` in the member role: the file comes from the caller's own
+  `workspace/files` and goes only to the one Telegram DM the registry resolves for it; a hard link
+  or a path through a symlink is refused (#458).
+- Each Claude member session binds its own deny-all proxy; a member's refused connection is stored
+  and alerted as principal, host and time only, grouped per member and host, and the security
+  viewer shows it as `member_connect` (#461).
+
+### Changed
+
+- Owner rules are recognised by the writing principal, not by a messenger chat ref (#454).
+- In a member turn, `memory.save` with `replaces` and `memory.retire` refuse a target not bound to
+  the member's personal scope alone (#457).
+- The owner's chat reads use its own channels (stored chat channels with rows bound to the owner)
+  instead of a connector-wide read; the stored-source reader, `source.recent` and
+  `schedule.upcoming` use one access rule instead of owner exceptions; the owner's checkpoint list,
+  session-start source inventory and viewer memory stats run under its access (#459).
+- The owner's native session denies the product database (with `-wal` and `-shm`), the raw
+  stores, `member_root` and the member temp root, logical and physical paths, on both backends;
+  boot refuses `agent.codex_cwd` inside the connectors directory (#460).
+- A member's shell starts stay in `tool_traces`; they no longer reach the owner's alerts (#461).
+
 ## [0.70.0] - 2026-10-08
 
 ### Added
