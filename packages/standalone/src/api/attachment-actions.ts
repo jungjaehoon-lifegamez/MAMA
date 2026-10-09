@@ -350,7 +350,12 @@ export function createAttachmentActionRegistrations(
               ? { workspaceDir: ports.principalPaths(context.access.principalId).workspaceDir }
               : ports
           );
-          const validated = validateWorkspaceFile(filesRoot, path, OWNER_FILE_MAX_UPLOAD_BYTES);
+          const validated = validateWorkspaceFile(
+            filesRoot,
+            path,
+            OWNER_FILE_MAX_UPLOAD_BYTES,
+            isMember
+          );
           const caption = values.caption === undefined ? undefined : String(values.caption);
           const result =
             isMember && messenger === 'telegram'

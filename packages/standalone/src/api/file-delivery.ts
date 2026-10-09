@@ -51,18 +51,24 @@ export interface ValidatedWorkspaceFile {
 export function validateWorkspaceFile(
   filesRoot: string,
   inputPath: string,
-  maxBytes: number
+  maxBytes: number,
+  singleLink = false
 ): ValidatedWorkspaceFile {
-  const { fd, ...validated } = openWorkspaceFile(filesRoot, inputPath, maxBytes);
+  const { fd, ...validated } = openWorkspaceFile(filesRoot, inputPath, maxBytes, singleLink);
   closeSync(fd);
   return validated;
 }
 
-/** Keep this descriptor open through upload so a later path replacement cannot change its bytes. */
+/**
+ * Keep this descriptor open through upload so a later path replacement cannot change its bytes.
+ * singleLink: the daemon uploads with its own authority, so a member's file must be held by that
+ * one path alone; a hard link could alias a file outside the member's workspace.
+ */
 export function openWorkspaceFile(
   filesRoot: string,
   inputPath: string,
-  maxBytes: number
+  maxBytes: number,
+  singleLink = false
 ): ValidatedWorkspaceFile & { fd: number } {
   const rootPath = resolve(filesRoot);
   const rootMetadata = lstatSync(rootPath);
@@ -86,6 +92,7 @@ export function openWorkspaceFile(
   try {
     const opened = fstatSync(fd);
     if (!opened.isFile()) throw new Error('path must be a regular file');
+    if (singleLink && opened.nlink !== 1) throw new Error('path must not be a hard link');
     const size = opened.size;
     if (size > maxBytes) {
       throw new Error(`file exceeds the upload limit of ${maxBytes} bytes`);

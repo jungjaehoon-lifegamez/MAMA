@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -253,6 +254,7 @@ describe('P5 principal file delivery through the product dispatcher and Telegram
     'owner',
     'other member',
     'symlink',
+    'hard link',
     'outside files',
     'downloads',
     'directory',
@@ -273,6 +275,11 @@ describe('P5 principal file delivery through the product dispatcher and Telegram
     if (kind === 'symlink') {
       path = file(member, 'link.xlsx');
       symlinkSync(file(OWNER), path);
+    }
+    if (kind === 'hard link') {
+      // Same filesystem: the daemon would upload the owner's bytes through the member's path.
+      path = file(member, 'hard-link.xlsx');
+      linkSync(file(OWNER), path);
     }
     if (kind === 'directory') {
       path = file(member, 'directory');

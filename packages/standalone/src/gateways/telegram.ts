@@ -312,7 +312,12 @@ export class TelegramGateway extends BaseGateway {
       filesRoot = this.filesRoot;
     }
 
-    const validated = openWorkspaceFile(filesRoot, path, OWNER_FILE_MAX_UPLOAD_BYTES);
+    const validated = openWorkspaceFile(
+      filesRoot,
+      path,
+      OWNER_FILE_MAX_UPLOAD_BYTES,
+      member !== undefined
+    );
     try {
       const payloadIdentity = workspaceFileIdentity(validated.fd, caption);
       const claim = this.messageLedger.claim(`file:${operationId}`, {
