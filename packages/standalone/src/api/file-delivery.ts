@@ -5,12 +5,17 @@ import {
   lstatSync,
   openSync,
   read,
+  readlinkSync,
   readSync,
   realpathSync,
 } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import type { JudgmentAccess } from '@jungjaehoon/mama-core';
+
+// macOS <sys/fcntl.h>: reject symlinks in every path component, the last included. Combined with
+// O_NOFOLLOW, open fails with EINVAL.
+const O_NOFOLLOW_ANY = 0x20000000;
 
 export const OWNER_FILE_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 export const TELEGRAM_MAX_UPLOAD_BYTES = OWNER_FILE_MAX_UPLOAD_BYTES;
@@ -48,27 +53,54 @@ export interface ValidatedWorkspaceFile {
   sentAs: 'photo' | 'document';
 }
 
+export function openMemberWorkspaceFile(real: string): number {
+  let fd: number;
+  if (process.platform === 'darwin') {
+    try {
+      fd = openSync(real, constants.O_RDONLY | O_NOFOLLOW_ANY);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ELOOP') {
+        throw new Error('path must not pass through a symlink');
+      }
+      throw error;
+    }
+  } else if (process.platform === 'linux') {
+    fd = openSync(real, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } else {
+    throw new Error('member file delivery is not supported on this platform');
+  }
+  try {
+    if (process.platform === 'linux' && readlinkSync(`/proc/self/fd/${fd}`) !== real) {
+      throw new Error('path must not pass through a symlink');
+    }
+    if (fstatSync(fd).nlink !== 1) throw new Error('path must not be a hard link');
+    return fd;
+  } catch (error) {
+    closeSync(fd);
+    throw error;
+  }
+}
+
 export function validateWorkspaceFile(
   filesRoot: string,
   inputPath: string,
   maxBytes: number,
-  singleLink = false
+  member = false
 ): ValidatedWorkspaceFile {
-  const { fd, ...validated } = openWorkspaceFile(filesRoot, inputPath, maxBytes, singleLink);
+  const { fd, ...validated } = openWorkspaceFile(filesRoot, inputPath, maxBytes, member);
   closeSync(fd);
   return validated;
 }
 
 /**
  * Keep this descriptor open through upload so a later path replacement cannot change its bytes.
- * singleLink: the daemon uploads with its own authority, so a member's file must be held by that
- * one path alone; a hard link could alias a file outside the member's workspace.
+ * member: reject symlink components and hard links before uploading with the daemon's authority.
  */
 export function openWorkspaceFile(
   filesRoot: string,
   inputPath: string,
   maxBytes: number,
-  singleLink = false
+  member = false
 ): ValidatedWorkspaceFile & { fd: number } {
   const rootPath = resolve(filesRoot);
   const rootMetadata = lstatSync(rootPath);
@@ -88,11 +120,12 @@ export function openWorkspaceFile(
   if (real === root || !real.startsWith(`${root}${sep}`)) {
     throw new Error('path must stay under the workspace files directory');
   }
-  const fd = openSync(real, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const fd = member
+    ? openMemberWorkspaceFile(real)
+    : openSync(real, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const opened = fstatSync(fd);
     if (!opened.isFile()) throw new Error('path must be a regular file');
-    if (singleLink && opened.nlink !== 1) throw new Error('path must not be a hard link');
     const size = opened.size;
     if (size > maxBytes) {
       throw new Error(`file exceeds the upload limit of ${maxBytes} bytes`);
