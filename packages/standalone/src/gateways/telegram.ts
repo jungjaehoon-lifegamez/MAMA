@@ -388,8 +388,11 @@ export class TelegramGateway extends BaseGateway {
     const requestId = this.nextEnrollmentRequestId;
     this.nextEnrollmentRequestId = requestId === 0x7fffffff ? 1 : requestId + 1;
     this.pendingEnrollment = { requestId, sourceMessageRef: sourceRef, ownerUserId };
+    // Telegram shows a request_users button only on the reply keyboard, under the message box.
+    const prompt =
+      'Choose one member to enroll with the Choose member button under the message box, not in the chat. If it is hidden, open it with the keyboard icon in the message box.';
     try {
-      await this.bot.api.sendMessage(chatId, 'Choose one member to enroll.', {
+      await this.bot.api.sendMessage(chatId, prompt, {
         reply_markup: {
           one_time_keyboard: true,
           resize_keyboard: true,

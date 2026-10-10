@@ -186,7 +186,7 @@ describe('P7 owner DM enrollment through the real dispatcher', () => {
     expect(seams.send).toHaveBeenCalledTimes(1);
     expect(seams.send.mock.calls[0]).toMatchObject([
       Number(ownerId),
-      expect.any(String),
+      expect.stringContaining('under the message box, not in the chat'),
       {
         reply_markup: {
           one_time_keyboard: true,
@@ -297,7 +297,12 @@ describe('P7 owner DM enrollment through the real dispatcher', () => {
     await f.share(f.requestId(), kind === 'own' ? ownerId : selectedId);
     expect(f.completions[0]).toMatchObject({ status: 'completed', data: { status: 'refused' } });
     expect(f.repo.listMembers()).toEqual(before);
-    if (kind === 'listed') expect(JSON.stringify(f.completions)).toContain('owner_user_ids');
+    if (kind === 'listed') {
+      expect(JSON.stringify(f.completions)).toContain(
+        'is an owner listed in Telegram owner_user_ids'
+      );
+      expect(JSON.stringify(f.completions)).not.toContain('Remove the selected identity');
+    }
     expect(JSON.stringify(f.completions)).not.toContain(selectedId);
   });
 

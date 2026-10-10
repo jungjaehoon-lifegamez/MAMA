@@ -93,7 +93,7 @@ export function createMemberEnrollment(options: {
         return receipt(
           'refused',
           current?.principalId ?? null,
-          'Remove the selected identity from Telegram owner_user_ids and restart the daemon first'
+          'The selected identity is an owner listed in Telegram owner_user_ids; an owner is not enrolled as a member'
         );
       if (current && current.status !== 'active')
         return receipt(
