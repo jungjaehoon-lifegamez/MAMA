@@ -504,6 +504,8 @@ export class TelegramGateway extends BaseGateway {
             channelKey: chatId,
             occurredAt: message.date * 1000,
             text: 'Member selection for enrollment (Choose member button)',
+            // manage.member.list finds the receipts by this marker, not by the text.
+            payload: { enrollmentSelection: true },
           },
           reply: { text: receiptText, occurredAt: Date.now(), deliveryVerified },
         });

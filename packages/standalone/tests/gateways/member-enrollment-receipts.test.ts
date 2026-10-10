@@ -321,6 +321,15 @@ describe('enrollment receipts in the owner conversation', () => {
         status: 'completed',
         data: { total: 1, messages: [{ at: 2000, owner: selectionText, reply: sentText }] },
       });
+      // The member list the agent pulls carries the receipt; no registry row exists on refusal.
+      const members = await f.owner.surface.hostToolCall('manage.member.list', {}, 'fixture-list', {
+        session: { sourceMessageRef: f.sourceRef },
+      });
+      expect(members).toMatchObject({
+        status: 'completed',
+        data: { recentEnrollments: [{ at: new Date(2000).toISOString(), receipt: sentText }] },
+      });
+      expect(JSON.stringify(members)).not.toContain(String(selectedId));
       const stored = db
         .prepare(
           "SELECT source_id, author, channel, content, source_timestamp_ms, metadata_json, memory_scope_kind, memory_scope_id FROM connector_event_index WHERE source_connector='chat' AND source_entity_id IN (?, ?)"
@@ -343,7 +352,10 @@ describe('enrollment receipts in the owner conversation', () => {
       const receipt = stored.find((item) => item.source_id === `${ref}:reply`)!;
       expect(JSON.parse(String(receipt.metadata_json))).toMatchObject({ deliveryVerified: true });
       const selected = stored.find((item) => item.source_id === ref)!;
-      expect(JSON.parse(String(selected.metadata_json))).toMatchObject({ input: null });
+      // Only the host marker the member list reads; never the users_shared payload.
+      expect(JSON.parse(String(selected.metadata_json)).input).toEqual({
+        enrollmentSelection: true,
+      });
       expect(JSON.stringify([listed, stored])).not.toContain(String(selectedId));
       expect(await f.request(ref)).toMatchObject({ status: 'failed', error: { kind: 'denied' } });
       expect(await f.request('scheduled:fixture')).toMatchObject({

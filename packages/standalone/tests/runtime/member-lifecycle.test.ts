@@ -684,13 +684,13 @@ it('keeps resume suspended after a crash between runtime and temp moves, and ret
   expect(f.turns.at(-1)?.fresh).toBe(true);
 });
 
-it('lists only principal ids, statuses and grants, and leaves owner-only session/access input unchanged', async () => {
+it('lists only principal ids, statuses, grants and enrollment receipts, and leaves owner-only session/access input unchanged', async () => {
   const f = await fixture('codex', false);
   await f.settled(f.message('owner', 'fixture identical input'));
   const before = f.turns.at(-1)!;
   const access = JSON.stringify(before.access);
   const result = data(await f.manage('list', {}));
-  expect(result).toEqual({ members: [] });
+  expect(result).toEqual({ recentEnrollments: [], members: [] });
   await f.settled(f.message('owner', 'fixture identical input'));
   expect(f.turns.at(-1)!.session).toBe(before.session);
   expect(f.turns.at(-1)!.access).toBe(before.access);

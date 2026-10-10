@@ -62,7 +62,7 @@ export function memberLifecycleRegistrations(options: {
               'Resume a suspended member with retained grants. Move any remaining runtime and temp directories aside and serve a fresh environment.',
             offboard:
               'Permanently offboard an active or suspended member; revoke every grant atomically, end and unserve its session, move runtime/temp aside, and keep its identity binding.',
-            list: 'List member principal ids, statuses and unrevoked grants, including grants retained during suspension. Never returns transport identities or record content.',
+            list: 'List member principal ids, statuses and unrevoked grants, including grants retained during suspension, and the latest enrollment receipts the owner received (created, exists or refused, with the reason). Never returns transport identities or record content.',
           }[change]! +
           ' Only the owner own message turn is allowed; delta, scheduled/report, replay, member and subagent turns are denied. Changes apply after the running member turn on the shared serial chain and cancel queued inputs with a host reason.',
         inputSchema: {
@@ -97,7 +97,26 @@ export function memberLifecycleRegistrations(options: {
         }
         const repo = createPrincipalRepository(options.adapter);
         if (change === 'list') {
+          // Each users_shared pick ends in a host receipt in the owner's conversation record; a
+          // refused or failed pick leaves no registry row, so the receipt is its only trace.
+          const enrollmentReceipts = options.adapter
+            .prepare(
+              `SELECT m.source_timestamp_ms AS at, r.content AS receipt
+               FROM connector_event_index m
+               JOIN connector_event_index r ON r.source_connector = 'chat'
+                 AND r.source_entity_id = m.source_entity_id || ':reply'
+                 AND json_extract(r.metadata_json, '$.deliveryVerified') = 1
+               WHERE m.source_connector = 'chat' AND m.memory_scope_kind = 'user'
+                 AND m.memory_scope_id = ?
+                 AND json_extract(m.metadata_json, '$.input.enrollmentSelection') = 1
+               ORDER BY m.source_timestamp_ms DESC, m.rowid DESC LIMIT 5`
+            )
+            .all(options.ownerPrincipalId) as Array<{ at: number; receipt: string }>;
           return {
+            recentEnrollments: enrollmentReceipts.map(({ at, receipt }) => ({
+              at: new Date(at).toISOString(),
+              receipt,
+            })),
             members: repo.listMembers().map(({ principalId, status }) => ({
               principalId,
               status,
