@@ -497,15 +497,22 @@ export class TelegramGateway extends BaseGateway {
     } finally {
       // The gateway owns every outcome and the exact last text it tried to deliver.
       // Never pass users_shared payloads to conversation storage or owner-message intake.
-      this.recordMemberSelection?.({
-        message: {
-          id: sourceMessageRef(chatId, message.message_id),
-          channelKey: chatId,
-          occurredAt: message.date * 1000,
-          text: 'Member selection for enrollment (Choose member button)',
-        },
-        reply: { text: receiptText, occurredAt: Date.now(), deliveryVerified },
-      });
+      try {
+        this.recordMemberSelection?.({
+          message: {
+            id: sourceMessageRef(chatId, message.message_id),
+            channelKey: chatId,
+            occurredAt: message.date * 1000,
+            text: 'Member selection for enrollment (Choose member button)',
+          },
+          reply: { text: receiptText, occurredAt: Date.now(), deliveryVerified },
+        });
+      } catch (error) {
+        // A throw from finally would replace a send error already in flight; both must surface.
+        console.error(
+          `[telegram] enrollment receipt record failed: ${telegramErrorMessage(error)}`
+        );
+      }
     }
   }
 

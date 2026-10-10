@@ -158,7 +158,10 @@ async function fixture(outcome: string) {
       if (outcome === 'rejected') throw new Error('fixture completion rejected');
       return owner.completeMemberEnrollment(selection);
     },
-    recordMemberSelection: (exchange) => owner.recordHostExchange(exchange),
+    recordMemberSelection: (exchange) => {
+      if (outcome === 'record fails') throw new Error('fixture record failure');
+      owner.recordHostExchange(exchange);
+    },
     messageLedgerPath: join(home, 'ledger.json'),
     config: {
       allowedChats: [String(ownerId)],
@@ -390,4 +393,21 @@ describe('enrollment receipts in the owner conversation', () => {
       expect(JSON.stringify(f.turns[1]!.content)).not.toContain(selectionText);
     }
   );
+
+  it('logs a record failure without replacing the delivered receipt or a send error', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const f = await fixture('record fails');
+    await f.select();
+    expect(transport.send.mock.calls.at(-1)![1]).toMatch(/^Enrollment created:/);
+    expect(errors).toHaveBeenCalledWith(
+      expect.stringContaining('enrollment receipt record failed: fixture record failure')
+    );
+    errors.mockClear();
+    expect(await f.request()).toMatchObject({ data: { status: 'pending' } });
+    transport.send.mockRejectedValueOnce(new Error('fixture send failure'));
+    await expect(f.select()).rejects.toThrow('fixture send failure');
+    expect(errors).toHaveBeenCalledWith(
+      expect.stringContaining('enrollment receipt record failed: fixture record failure')
+    );
+  });
 });
