@@ -751,3 +751,50 @@ it('retries terminal offboard cleanup after runtime move succeeds and temp move 
   expect(() => f.runtime.serveMember(f.member)).toThrow(/offboarded/);
   expect((await f.manage('resume')).status).toBe('failed');
 });
+
+it('revokes a suspended member grant without a session, and resume serves only what remains', async () => {
+  const f = await fixture();
+  data(await f.manage('grant', partition(f.member)));
+  data(await f.manage('grant', partition(f.member, 'fixture-other')));
+  data(await f.manage('suspend'));
+  expect(data(await f.manage('revoke', partition(f.member)))).toMatchObject({
+    principalId: f.member,
+    change: 'revoke',
+    status: 'revoked',
+    sessionReset: false,
+  });
+  expect((await f.manage('grant', partition(f.member))).status).toBe('failed');
+  data(await f.manage('resume'));
+  expect(
+    createPrincipalRepository(f.runtime.database.adapter)
+      .listActiveGrants(f.member)
+      .map(({ scope }) => scope)
+  ).toEqual([{ kind: 'memory', scopeKind: 'project', scopeId: 'fixture-other' }]);
+});
+
+it('retries suspend cleanup after the status changed and a move failed', async () => {
+  const f = await fixture();
+  const temp = memberClaudeTmpDir(f.member);
+  roots.push(temp);
+  fs.mkdirSync(temp, { recursive: true });
+  fs.writeFileSync(join(temp, 'remaining.txt'), 'fixture temp');
+  const rename = fs.renameSync;
+  const crash = vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+    if (from === temp) throw new Error('fixture suspend crash after runtime move');
+    rename(from, to);
+  });
+  syncBuiltinESMExports();
+  expect((await f.manage('suspend')).status).toBe('failed');
+  const repo = createPrincipalRepository(f.runtime.database.adapter);
+  expect(repo.findById(f.member)?.status).toBe('suspended');
+  expect(fs.existsSync(temp)).toBe(true);
+  crash.mockRestore();
+  syncBuiltinESMExports();
+  expect(data(await f.manage('suspend'))).toMatchObject({
+    principalId: f.member,
+    status: 'suspended',
+    setAside: true,
+  });
+  expect(fs.existsSync(temp)).toBe(false);
+  expect(repo.findById(f.member)?.status).toBe('suspended');
+});

@@ -132,6 +132,26 @@ describe('Phase 2b Task 1 / AC #1-3: principal scope grants over migration 065',
     expect(repo.listActiveGrants(memberPrincipalId)).toHaveLength(1);
   });
 
+  it('revokes a grant a suspended member retains, but grants it nothing', () => {
+    const repo = createPrincipalRepository(adapter);
+    const { ownerPrincipalId, memberPrincipalId } = createOwnerAndMember();
+    const scope = { kind: 'memory' as const, scopeKind: 'project' as const, scopeId: 'kept' };
+    const other = { kind: 'memory' as const, scopeKind: 'project' as const, scopeId: 'other' };
+    repo.grantScope({ targetPrincipalId: memberPrincipalId, ownerPrincipalId, scope, now: 3 });
+    repo.suspend(memberPrincipalId, 4);
+    const mutation = { targetPrincipalId: memberPrincipalId, ownerPrincipalId, now: 5 };
+    expect(repo.revokeScope({ ...mutation, scope })).toBe('revoked');
+    expect(repo.revokeScope({ ...mutation, scope })).toBe('absent');
+    expect(() => repo.grantScope({ ...mutation, scope: other })).toThrowError(
+      expect.objectContaining({ code: 'target_not_active_member' })
+    );
+    expect(repo.listRetainedGrants(memberPrincipalId)).toEqual([]);
+    repo.offboard(memberPrincipalId, 6);
+    expect(() => repo.revokeScope({ ...mutation, scope })).toThrowError(
+      expect.objectContaining({ code: 'target_not_active_member' })
+    );
+  });
+
   function beforeMatchingWrite(
     realAdapter: DatabaseAdapter,
     sqlFragment: string,

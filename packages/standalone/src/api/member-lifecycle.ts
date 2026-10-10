@@ -126,15 +126,20 @@ export function memberLifecycleRegistrations(options: {
         if (scopeChange) {
           const scope = { kind: 'memory' as const, scopeKind, scopeId: scopeId.trim() };
           const ownerAccess = options.ownerAccess();
+          // A suspended member keeps its grants and has no session; the owner may still revoke one.
+          const served = principal.status === 'active';
+          if (!served && change === 'grant')
+            throw new Error(`Cannot grant to a ${principal.status} member`);
           // This overlap makes resolvePrincipalAccess throw at the next turn and at boot.
           validateMemberMemoryGrant(scope, ownerAccess);
-          resolvePrincipalAccess(principalId, {
-            adapter: options.adapter,
-            ownerAccess,
-            agentId: `member-agent:${principalId}`,
-          });
+          if (served)
+            resolvePrincipalAccess(principalId, {
+              adapter: options.adapter,
+              ownerAccess,
+              agentId: `member-agent:${principalId}`,
+            });
           // Reset first: a crash after the grant transaction cannot resume an old native context.
-          await ports.resetSession(principalId);
+          if (served) await ports.resetSession(principalId);
           const result = options.adapter.transaction(() => {
             const mutation = {
               targetPrincipalId: principalId,
@@ -144,14 +149,15 @@ export function memberLifecycleRegistrations(options: {
             };
             const status =
               change === 'grant' ? repo.grantScope(mutation) : repo.revokeScope(mutation);
-            resolvePrincipalAccess(principalId, {
-              adapter: options.adapter,
-              ownerAccess,
-              agentId: `member-agent:${principalId}`,
-            });
+            if (served)
+              resolvePrincipalAccess(principalId, {
+                adapter: options.adapter,
+                ownerAccess,
+                agentId: `member-agent:${principalId}`,
+              });
             return { status, cancelledInputs: ports.cancelQueued(principalId, `member_${change}`) };
           });
-          return { principalId, change, scope, ...result, sessionReset: true, setAside: false };
+          return { principalId, change, scope, ...result, sessionReset: served, setAside: false };
         }
         if (change === 'resume') {
           if (principal.status !== 'suspended')
@@ -170,10 +176,11 @@ export function memberLifecycleRegistrations(options: {
           };
         }
         const cancelledInputs = options.adapter.transaction(() => {
-          if (change === 'suspend') repo.suspend(principalId, Date.now());
-          // Terminal status already blocks admission. An explicit retry must still finish a
-          // failed stop/move without attempting the forbidden offboarded -> offboarded transition.
-          else if (principal.status !== 'offboarded') repo.offboard(principalId, Date.now());
+          // An explicit retry of the same change must still finish a failed stop/move without
+          // attempting a forbidden suspended -> suspended or offboarded -> offboarded transition.
+          if (change === 'suspend') {
+            if (principal.status !== 'suspended') repo.suspend(principalId, Date.now());
+          } else if (principal.status !== 'offboarded') repo.offboard(principalId, Date.now());
           return ports.cancelQueued(principalId, `member_${change}`);
         });
         // Inactive registry state denies new turns even if process stop or a move fails.
