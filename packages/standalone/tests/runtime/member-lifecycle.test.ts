@@ -32,7 +32,11 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 
-async function fixture(backend: 'codex' | 'claude' = 'codex', withMembers = true) {
+async function fixture(
+  backend: 'codex' | 'claude' = 'codex',
+  withMembers = true,
+  suspendedWithoutRoot = false
+) {
   // Only the unavailable socket listener is replaced; dispatcher, sessions and stores are real.
   vi.spyOn(ipc, 'createActionIpcServer').mockImplementation(async (_: ActionIpcServerOptions) => ({
     close: async () => {},
@@ -62,6 +66,7 @@ async function fixture(backend: 'codex' | 'claude' = 'codex', withMembers = true
         now: 3,
       })
     : 'unused-member';
+  if (suspendedWithoutRoot) repo.suspend(member, 4);
   await seed.close();
   const pool = new SessionPool();
   const natives = new Map<string, ReturnType<typeof createNativeSession>>();
@@ -90,7 +95,7 @@ async function fixture(backend: 'codex' | 'claude' = 'codex', withMembers = true
     credentialPath: join(home, 'runtime', 'credential'),
     runtimeRoot: home,
     workspaceDir: join(home, 'workspace'),
-    memberRoot: root,
+    ...(suspendedWithoutRoot ? {} : { memberRoot: root }),
     ownerPrincipalId: 'owner',
     agentId: 'owner-agent',
     scopes: [],
@@ -797,4 +802,32 @@ it('retries suspend cleanup after the status changed and a move failed', async (
   });
   expect(fs.existsSync(temp)).toBe(false);
   expect(repo.findById(f.member)?.status).toBe('suspended');
+});
+
+it('revokes a grant that became an owner default after it was granted', async () => {
+  const f = await fixture();
+  data(await f.manage('grant', partition(f.member, 'fixture-later-default')));
+  f.runtime.surface.ownerAccess.defaultScopes!.push({
+    kind: 'project',
+    id: 'fixture-later-default',
+  });
+  expect(
+    data(await f.manage('revoke', partition(f.member, 'fixture-later-default')))
+  ).toMatchObject({ principalId: f.member, change: 'revoke', status: 'revoked' });
+  expect(createPrincipalRepository(f.runtime.database.adapter).listActiveGrants(f.member)).toEqual(
+    []
+  );
+});
+
+it('refuses offboard without member_root before any change', async () => {
+  const f = await fixture('codex', true, true);
+  const result = await f.manage('offboard');
+  expect(result.status).toBe('failed');
+  expect((result as { error: { message: string } }).error.message).toContain('member_root');
+  expect(createPrincipalRepository(f.runtime.database.adapter).findById(f.member)?.status).toBe(
+    'suspended'
+  );
+  expect(data(await f.manage('list', {}))).toMatchObject({
+    members: [{ principalId: f.member, status: 'suspended' }],
+  });
 });

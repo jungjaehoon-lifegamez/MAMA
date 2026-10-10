@@ -354,29 +354,33 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       isOwnerMessageTurn: (sourceMessageRef) =>
         ownerMailbox?.readInput(sourceMessageRef, options.ownerPrincipalId)?.kind ===
         'owner_message',
-      memberLifecycle: {
-        resetSession: async (id) => {
-          const member = members.get(id);
-          if (!member) throw new Error(`Member session is not served: ${id}`);
-          await member.native.resetSession(member.native.sessionKey);
-        },
-        cancelQueued: (id, reason) => ownerMailbox!.cancelQueued(id, reason),
-        retire: (id) => retireMember(id),
-        resume: async (id) => {
-          if (memberRoot === undefined) throw new Error('Member lifecycle requires member_root');
-          // A suspended member may retain a session after an earlier stop/move failure.
-          await retireMember(id);
-          const repo = createPrincipalRepository(database.adapter);
-          repo.resume(id, Date.now());
-          try {
-            serveMember(id);
-          } catch (error) {
-            // A failed preparation never leaves an active registry entry with a partial runtime.
-            repo.suspend(id, Date.now());
-            throw error;
-          }
-        },
-      },
+      // Without member_root no member can be served or set aside, so no change may be committed.
+      ...(memberRoot === undefined
+        ? {}
+        : {
+            memberLifecycle: {
+              resetSession: async (id) => {
+                const member = members.get(id);
+                if (!member) throw new Error(`Member session is not served: ${id}`);
+                await member.native.resetSession(member.native.sessionKey);
+              },
+              cancelQueued: (id, reason) => ownerMailbox!.cancelQueued(id, reason),
+              retire: (id) => retireMember(id),
+              resume: async (id) => {
+                // A suspended member may retain a session after an earlier stop/move failure.
+                await retireMember(id);
+                const repo = createPrincipalRepository(database.adapter);
+                repo.resume(id, Date.now());
+                try {
+                  serveMember(id);
+                } catch (error) {
+                  // A failed preparation never leaves an active registry entry with a partial runtime.
+                  repo.suspend(id, Date.now());
+                  throw error;
+                }
+              },
+            },
+          }),
       ...(options.memberEnrollment === undefined
         ? {}
         : {

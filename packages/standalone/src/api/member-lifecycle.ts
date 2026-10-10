@@ -122,22 +122,25 @@ export function memberLifecycleRegistrations(options: {
             { name: 'denied' }
           );
         const ports = options.ports;
-        if (!ports) throw new Error('Member management requires a running member runtime');
+        if (!ports)
+          throw new Error('Member management requires member_root and a running member runtime');
         if (scopeChange) {
           const scope = { kind: 'memory' as const, scopeKind, scopeId: scopeId.trim() };
           const ownerAccess = options.ownerAccess();
           // A suspended member keeps its grants and has no session; the owner may still revoke one.
           const served = principal.status === 'active';
-          if (!served && change === 'grant')
-            throw new Error(`Cannot grant to a ${principal.status} member`);
-          // This overlap makes resolvePrincipalAccess throw at the next turn and at boot.
-          validateMemberMemoryGrant(scope, ownerAccess);
-          if (served)
+          // A revoke only removes access, so it is never refused for the state it repairs: only a
+          // grant can make the member's next turn or the owner's boot fail.
+          if (change === 'grant') {
+            if (!served) throw new Error(`Cannot grant to a ${principal.status} member`);
+            // This overlap makes resolvePrincipalAccess throw at the next turn and at boot.
+            validateMemberMemoryGrant(scope, ownerAccess);
             resolvePrincipalAccess(principalId, {
               adapter: options.adapter,
               ownerAccess,
               agentId: `member-agent:${principalId}`,
             });
+          }
           // Reset first: a crash after the grant transaction cannot resume an old native context.
           if (served) await ports.resetSession(principalId);
           const result = options.adapter.transaction(() => {
@@ -149,7 +152,7 @@ export function memberLifecycleRegistrations(options: {
             };
             const status =
               change === 'grant' ? repo.grantScope(mutation) : repo.revokeScope(mutation);
-            if (served)
+            if (change === 'grant')
               resolvePrincipalAccess(principalId, {
                 adapter: options.adapter,
                 ownerAccess,
