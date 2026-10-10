@@ -196,6 +196,8 @@ export interface StimulusDelivery {
    * which is the second claimer this door exists to remove.
    */
   onDead?(row: MailboxRow, reason: string): void | Promise<void>;
+  /** Terminal acknowledgement, including reconciliation. Reporting cannot change the drain. */
+  onSettled?(row: MailboxRow): void | Promise<void>;
   /**
    * Kinds delivered ahead of the rest. §4.3 forbids a host FIFO in which the
    * person's current request waits behind a mass replay; stating the owner's
@@ -537,6 +539,14 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
     }
   };
 
+  const announceSettled = async (row: MailboxRow): Promise<void> => {
+    try {
+      await delivery?.onSettled?.(row);
+    } catch (error) {
+      console.error(`[Runtime] onSettled failed input=${row.id}`, error);
+    }
+  };
+
   const deliverClaim = async (row: MailboxRow): Promise<DrainResult> => {
     const result = { delivered: 0, failed: 0, dead: 0 };
     try {
@@ -582,7 +592,7 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
           nativeRun = Promise.resolve()
             .then(() => {
               // A host can cancel a claimed input while it waits for a serial turn slot.
-              if (mailbox!.inputStatus(row.id) === 'dead')
+              if (mailbox!.inputStatus(row.id) !== 'claimed')
                 throw new StimulusQuarantine('Queued input cancelled by host');
               return invoke(content, {
                 ...request,
@@ -687,7 +697,14 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
       }
       mailbox!.nativeInputs.settle(row.id);
       result.delivered += 1;
+      await announceSettled(row);
     } catch (error) {
+      // A consumer erased a cancelled waiter while it held a delivery slot. No row remains to
+      // retry, quarantine or settle, and this stale delivery must never start a native turn.
+      if (mailbox!.inputStatus(row.id) === null) {
+        console.info(`[Runtime] deleted waiting input=${row.id}; no native turn or retry`);
+        return result;
+      }
       const reason = error instanceof Error ? error.message : String(error);
       const native = mailbox!.nativeInputs.get(row.id);
       if (native && native.state !== 'prepared') {
@@ -744,8 +761,10 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
       for (const row of unresolved) {
         if (activeDeliveries.has(row.id) || !servedPrincipals.has(row.principalId)) continue;
         try {
-          if ((await delivery.reconcile?.(row)) === 'settled')
+          if ((await delivery.reconcile?.(row)) === 'settled') {
             mailbox.nativeInputs.settle(row.id, true);
+            await announceSettled(row);
+          }
         } catch (error) {
           await markUncertain(row, error instanceof Error ? error.message : String(error));
         }
