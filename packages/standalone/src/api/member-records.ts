@@ -16,7 +16,12 @@ import type { RawStore } from '../storage/source-archive.js';
 import type { OwnerMessageLedger } from '../gateways/telegram-message-ledger.js';
 import type { createSerialTurnChain } from '../runtime/principal-sessions.js';
 import type { TelegramFileSender } from './file-delivery.js';
-import { buildMemberExport, memberFileInventory, memberTrees } from './member-export.js';
+import {
+  buildMemberExport,
+  memberFileInventory,
+  memberInventorySnapshot,
+  memberTrees,
+} from './member-export.js';
 
 export interface MemberRecordsTelegram extends TelegramFileSender {
   sendMemberText(access: JudgmentAccess, text: string, operationId: string): Promise<boolean>;
@@ -33,7 +38,13 @@ export interface MemberRecordsPorts {
   serve(id: string): void;
   isStopping(): boolean;
   resumeQueued(): void;
-  recordExchange(id: string, ref: string, text: string, deliveryVerified: boolean): void;
+  recordExchange(
+    id: string,
+    kind: 'export' | 'erase',
+    ref: string,
+    text: string,
+    deliveryVerified: boolean
+  ): void;
 }
 
 const denied = () =>
@@ -68,6 +79,7 @@ function receiptText(
   const stepNames: Record<string, string> = {
     retire: 'native session retirement',
     export_delivery: 'export delivery',
+    file_check: 'file check',
     core: 'personal records',
     chat_raw: 'chat records',
     message_ledger: 'delivery history',
@@ -81,7 +93,9 @@ function receiptText(
     lines.push(
       uncertain
         ? 'The export delivery is uncertain. Nothing was erased. Check whether the file arrived before asking again.'
-        : 'Earlier steps are done. Make a new erasure request and pass its preview confirmationToken in a later member message to finish the rest.'
+        : step === 'file_check'
+          ? 'Nothing was erased. Ask again for a new preview and pass its confirmationToken in a later member message.'
+          : 'Earlier steps are done. Make a new erasure request and pass its preview confirmationToken in a later member message to finish the rest.'
     );
   for (const [store, counts] of Object.entries(core?.counts ?? {})) {
     const nonZero = Object.entries(counts)
@@ -152,7 +166,7 @@ export function createMemberRecords(options: {
     } catch (error) {
       console.error('[Member records] receipt delivery failed', error);
     }
-    p.recordExchange(job.principalId, `host:${job.commandId}`, text, verified);
+    p.recordExchange(job.principalId, job.kind, `host:${job.commandId}`, text, verified);
   };
   let activeJobs = 0;
   const results = new Map<
@@ -234,6 +248,11 @@ export function createMemberRecords(options: {
         rmSync(archive.path, { force: true });
       }
       if (job.kind === 'erase') {
+        // The transient ZIP is gone. Check before retirement removes credentials or any
+        // queued input/store/file is deleted, while the shared slot still holds model turns.
+        failedStep = 'file_check';
+        if (memberInventorySnapshot(memberFileInventory(p.root, id)) !== archive.fileSnapshot)
+          throw new Error('Your files changed while the export was being sent');
         failedStep = 'retire';
         await p.retire(id);
         // Delivery and complete unserving/retirement precede cancellation. The shared slot

@@ -392,7 +392,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
               serve: (id) => {
                 serveMember(id);
               },
-              recordExchange: (id, ref, text, deliveryVerified) => {
+              recordExchange: (id, kind, ref, text, deliveryVerified) => {
                 const memberChat = new ChatSources(
                   sourceStore,
                   database.adapter,
@@ -404,7 +404,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
                   id: ref,
                   channelKey: 'records',
                   occurredAt: at,
-                  text: 'Personal records erasure host receipt',
+                  text: `Personal records ${kind === 'export' ? 'export' : 'erasure'} host receipt`,
                 });
                 memberChat.saveReply({
                   messageRef: ref,

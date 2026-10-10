@@ -146,7 +146,7 @@ async function setup() {
     const failedStep =
       failed?.[1] === 'native session retirement' ? 'retire' : failed?.[1].replaceAll(' ', '_');
     if (failed) {
-      if (!text.includes('delivery is uncertain')) {
+      if (!text.includes('delivery is uncertain') && failedStep !== 'file_check') {
         expect(text).toContain('Earlier steps are done.');
         expect(text).toContain('Make a new erasure request');
       }
@@ -614,6 +614,156 @@ it.each(['failed', 'oversize'])(
     expect(
       f.runtime.database.adapter.prepare('SELECT * FROM principal_erasure_receipts').all()
     ).toEqual([]);
+  }
+);
+
+it.each(['created', 'rewritten', 'omitted_rewritten'] as const)(
+  'keeps every store and queued message when a file is %s during export delivery',
+  async (change) => {
+    const f = await setup();
+    const db = f.runtime.database.adapter;
+    await f.act('memory.save', {
+      topic: 'fixture',
+      kind: 'decision',
+      summary: 'fixture personal',
+      details: 'fixture evidence',
+      source: { package: 'fixture', source_type: 'fixture' },
+    });
+    const rawStore = new RawStore(join(f.home, 'raw'));
+    try {
+      rawStore.save(
+        'chat',
+        [
+          {
+            source: 'chat',
+            sourceId: 'fixture-pending',
+            channel: 'fixture',
+            author: f.member,
+            content: 'fixture pending payload',
+            timestamp: new Date(),
+            type: 'message',
+            memoryScopeKind: 'user',
+            memoryScopeId: f.member,
+          },
+        ],
+        { collectOnly: true }
+      );
+      const file = join(f.paths.workspaceDir, 'files', 'personal.txt');
+      if (change === 'omitted_rewritten')
+        fs.linkSync(file, join(f.home, 'workspace', 'outside-link.txt'));
+      const preview = await f.preview();
+      const send = f.telegram.sendFile.getMockImplementation()!;
+      let uploading = false;
+      let accept!: () => void;
+      const wait = new Promise<void>((r) => {
+        accept = r;
+      });
+      let core!: ReturnType<typeof exportPrincipalRecords>;
+      let index!: unknown[];
+      let raw!: ReturnType<RawStore['exportScope']>;
+      const ledger = f.ledger.listForTelegramDm(f.memberDm);
+      const session = f.pool.getSessionInfo(`member:${f.member}:runtime`)!.sessionId;
+      f.telegram.sendFile.mockImplementationOnce(async (...args) => {
+        const sent = await send(...args);
+        core = exportPrincipalRecords(db, f.member);
+        index = db
+          .prepare(
+            "SELECT * FROM connector_event_index WHERE source_connector='chat' AND memory_scope_id=?"
+          )
+          .all(f.member);
+        raw = rawStore.exportScope('chat', 'user', f.member);
+        uploading = true;
+        await wait;
+        if (change === 'created') f.put(join(f.paths.workspaceDir, 'files', 'new.txt'));
+        else {
+          const before = fs.statSync(file);
+          f.put(file, 'changed bytes'); // Same inode and size; mtime must still be compared.
+          fs.utimesSync(file, before.atime, new Date(before.mtimeMs + 2000));
+          expect(fs.statSync(file).size).toBe(before.size);
+          expect(fs.statSync(file).ino).toBe(before.ino);
+        }
+        return sent;
+      });
+      try {
+        await f.confirm(preview.confirmationToken);
+        await vi.waitFor(() => expect(uploading).toBe(true));
+        const queued = f.message(f.member);
+        const turns = f.turns.length;
+        accept();
+        const receipt = await f.finish();
+        expect(receipt).toMatchObject({ status: 'failed', failedStep: 'file_check' });
+        expect(receipt.text).toContain('Your files changed while the export was being sent.');
+        expect(receipt.text).toContain('Nothing was erased.');
+        expect(receipt.text).toContain('Ask again');
+        expect(receipt.text).toContain('0 messages');
+        const remaining = exportPrincipalRecords(db, f.member);
+        for (const [store, rows] of Object.entries(core.stores))
+          for (const row of rows) expect(remaining.stores[store], store).toContainEqual(row);
+        const indexAfter = db
+          .prepare(
+            "SELECT * FROM connector_event_index WHERE source_connector='chat' AND memory_scope_id=?"
+          )
+          .all(f.member);
+        for (const row of index) expect(indexAfter).toContainEqual(row);
+        const rawAfter = rawStore.exportScope('chat', 'user', f.member);
+        for (const store of ['raw_items', 'pending_core_projections'] as const)
+          for (const row of raw[store]) expect(rawAfter[store]).toContainEqual(row);
+        expect(f.ledger.listForTelegramDm(f.memberDm)).toEqual(ledger);
+        expect(db.prepare('SELECT * FROM principal_erasure_receipts').all()).toEqual([]);
+        expect(f.runtime.runtime.servesPrincipal(f.member)).toBe(true);
+        expect(f.pool.getSessionInfo(`member:${f.member}:runtime`)!.sessionId).toBe(session);
+        expect(fs.existsSync(f.archive)).toBe(true);
+        expect(fs.existsSync(f.temp)).toBe(true);
+        expect(fs.existsSync(f.tempArchive)).toBe(true);
+        expect(fs.readFileSync(file, 'utf8')).toBe(
+          change === 'created' ? 'fixture bytes' : 'changed bytes'
+        );
+        if (change === 'created')
+          expect(fs.existsSync(join(f.paths.workspaceDir, 'files', 'new.txt'))).toBe(true);
+        expect(fs.existsSync(f.uploads[0].path!)).toBe(false);
+        await f.settled(queued, f.member);
+        expect(f.turns).toHaveLength(turns + 1);
+        expect(
+          db
+            .prepare('SELECT content FROM connector_event_index WHERE source_id=?')
+            .get(`host:${receipt.commandId}:reply`)
+        ).toEqual({ content: receipt.text });
+      } finally {
+        accept();
+      }
+    } finally {
+      rawStore.close();
+    }
+  }
+);
+
+it.each(['export', 'erase'] as const)(
+  'labels the %s host receipt with its job kind',
+  async (kind) => {
+    const f = await setup();
+    let commandId: string;
+    if (kind === 'export') commandId = data((await runExport(f)).result).commandId;
+    else {
+      const preview = await f.preview();
+      await f.confirm(preview.confirmationToken);
+      commandId = (await f.finish()).commandId;
+    }
+    const db = f.runtime.database.adapter;
+    expect(
+      db
+        .prepare('SELECT content FROM connector_event_index WHERE source_id=?')
+        .get(`host:${commandId}`)
+    ).toEqual({
+      content: `Personal records ${kind === 'export' ? 'export' : 'erasure'} host receipt`,
+    });
+    expect(
+      db
+        .prepare('SELECT content, metadata_json FROM connector_event_index WHERE source_id=?')
+        .get(`host:${commandId}:reply`)
+    ).toMatchObject({
+      content: f.receipts.at(-1)!.text,
+      metadata_json: expect.stringContaining('"deliveryVerified":true'),
+    });
   }
 );
 

@@ -56,6 +56,7 @@ export interface MemberExportFile {
   size: number;
   dev: number;
   ino: number;
+  mtimeMs: number;
   nlink: number;
   eligible: boolean;
   privateManaged: boolean;
@@ -89,6 +90,7 @@ export function memberFileInventory(root: string, id: string) {
         size: stat.size,
         dev: stat.dev,
         ino: stat.ino,
+        mtimeMs: stat.mtimeMs,
         nlink: stat.nlink,
         eligible,
         privateManaged,
@@ -126,6 +128,19 @@ export function memberFileInventory(root: string, id: string) {
     return true;
   });
   return { trees, allFiles, files, omittedFiles, links };
+}
+
+/** Include files left out of the ZIP: erasure removes those links and managed files too. */
+export function memberInventorySnapshot(
+  inventory: ReturnType<typeof memberFileInventory>,
+  omittedFiles: readonly string[] = inventory.omittedFiles
+): string {
+  return JSON.stringify({
+    files: inventory.allFiles
+      .map(({ path, dev, ino, size, mtimeMs, nlink }) => ({ path, dev, ino, size, mtimeMs, nlink }))
+      .sort((a, b) => a.path.localeCompare(b.path)),
+    omittedFiles: [...omittedFiles].sort(),
+  });
 }
 const oversized = (size: number) =>
   new Error(
@@ -213,7 +228,15 @@ export async function buildMemberExport(root: string, id: string, core: unknown,
     }
     zip.end();
     if (!finished) throw new Error('Member export zip did not finish');
-    return { path, filesRoot, size, fileCount, fileBytes, omittedFiles };
+    return {
+      path,
+      filesRoot,
+      size,
+      fileCount,
+      fileBytes,
+      omittedFiles,
+      fileSnapshot: memberInventorySnapshot(inventory, omittedFiles),
+    };
   } catch (error) {
     rmSync(path, { force: true });
     throw error;
