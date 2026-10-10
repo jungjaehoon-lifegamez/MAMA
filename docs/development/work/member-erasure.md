@@ -71,8 +71,18 @@ input `in_flight`). Store map and evidence: [checks](../checks.md#p9-plan-pass-2
 | 7   | Serve the member again in a fresh environment with its enrollment and grants. Send a host receipt with the counts to the member's DM through a new member-DM text port, and record it in the member's chat as a host exchange (#468), so the member's agent can answer about it                                                                                                                                                                                                              | The next member turn opens a new session in an empty workspace; the receipt is delivered, recorded with `deliveryVerified`, and its counts equal the core receipt plus the product counts |
 | 8   | A failure after deletion began sends a receipt naming the failed step, serves the member again and leaves the rest for a new confirmation                                                                                                                                                                                                                                                                                                                                                    | A fixture failure in step 6 yields that receipt and a second confirmation finishes the erase                                                                                              |
 
-Not in P9: a restart between the confirm and the erasure drops the confirmation silently. Member
-messages are first admitted in P10, so this joins P10's restart recovery for member messages.
+Done in #471, with these choices from eight review rounds: the erasure retires the member before
+taking the export, so no writer or intake exists while it is built; files go into the zip
+uncompressed so the 50 MiB limit is checked before anything is read; host-managed directories give
+only transcripts, history and the action journal; links that leave the member's trees are named and
+left out; the file inventory is taken again right before the trees are deleted. An export runs
+after its turn, holds the shared chain only while its zip is built, and a member has one at a time.
+
+Not in P9: a restart between the confirm and the erasure drops the confirmation silently, a member-DM
+receipt is not re-sent after a restart, and an erasure pauses claims for every principal until its
+export is delivered. Member messages are first admitted in P10, so these join P10. Core follow-up:
+the preview and the export call B1's snapshot, which reads whole tables and filters in JS; a
+bounded count for the preview and a streaming export are core work.
 Security alerts about a member keep the principal, host and time (decision 7) and stay.
 
 ## Proof
