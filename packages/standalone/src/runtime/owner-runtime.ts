@@ -275,13 +275,17 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
   let delivery: ReplayClockDelivery | undefined;
   let ownerMailbox: Mailbox | undefined;
   let actionSurface: ActionSurface | undefined;
+  let stopping = false;
   const sessions = createPrincipalSessions(
     options.ownerPrincipalId,
     {
       onUncertain: options.onStimulusUncertain,
       onDead: options.onStimulusDead,
     },
-    (id) => !actionSurface?.memberRecords.isBlocked(id)
+    (id) => {
+      if (stopping) throw new Error('Runtime is stopping');
+      return !actionSurface?.memberRecords.isBlocked(id);
+    }
   );
   const members = new Map<string, ReturnType<typeof createMemberSession>>();
   const memberIntakes = new Map<string, StimulusIntake>();
@@ -370,6 +374,14 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         : {
             memberRecords: {
               root: memberRoot,
+              isStopping: () => stopping,
+              resumeQueued: () => {
+                void intakeRuntime
+                  .drainOnce()
+                  .catch((error) =>
+                    console.error('[Owner runtime] queued delivery resume failed', error)
+                  );
+              },
               rawStore: sourceStore,
               mailbox: () => ownerMailbox!,
               ledger: () => options.messageLedger?.(),
@@ -712,7 +724,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           surface.memberRecords.onUncertain(row, reason);
           return sessions.delivery.onUncertain?.(row, reason);
         },
-        ...(options.deliveryReady === undefined ? {} : { ready: options.deliveryReady }),
+        ready: () =>
+          !stopping && !surface.memberRecords.isBusy() && (options.deliveryReady?.() ?? true),
       },
       reclaimStaleSocket: true,
     });
@@ -746,6 +759,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       if (setAside) setAsideMemberPaths(memberRoot, id);
     };
     let stopped = false;
+    let stopPromise: Promise<void> | undefined;
     const serveMember = (principalId: string): StimulusIntake => {
       if (stopped) throw new Error('Cannot serve a member after runtime stop');
       executionAccess(principalId);
@@ -797,14 +811,18 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         chat.saveOwnerMessage(message);
         chat.saveReply({ ...reply, messageRef: message.id, author: 'host' });
       },
-      stop: async () => {
-        if (stopped) return;
-        await surface.memberRecords.idle();
-        stopped = true;
-        recordOrders.stop();
-        await intakeRuntime.stop();
-        rawStore?.close();
-        await database.close();
+      stop: () => {
+        if (stopPromise) return stopPromise;
+        stopping = true;
+        stopPromise = (async () => {
+          await surface.memberRecords.idle();
+          stopped = true;
+          recordOrders.stop();
+          await intakeRuntime.stop();
+          rawStore?.close();
+          await database.close();
+        })();
+        return stopPromise;
       },
     };
   } catch (error) {

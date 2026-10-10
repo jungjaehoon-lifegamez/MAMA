@@ -13,20 +13,44 @@ interface SessionEntry {
 
 /** One serial chain for complete owner/member turns; session state stays in each delivery. */
 export function createSerialTurnChain() {
-  let tail = Promise.resolve();
-  return async <T>(execute: () => Promise<T>): Promise<T> => {
-    const previous = tail;
-    let release!: () => void;
-    tail = new Promise<void>((resolve) => {
-      release = resolve;
+  const queue: Array<() => Promise<void>> = [];
+  let running = false;
+  let holds = 0;
+  const pump = () => {
+    if (running || holds || !queue.length) return;
+    running = true;
+    const work = queue.shift()!;
+    void work().finally(() => {
+      running = false;
+      pump();
     });
-    await previous;
-    try {
-      return await execute();
-    } finally {
-      release();
-    }
   };
+  const add = <T>(execute: () => Promise<T>, next: boolean): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      const work = async () => {
+        try {
+          resolve(await execute());
+        } catch (error) {
+          reject(error);
+        }
+      };
+      if (next) queue.unshift(work);
+      else queue.push(work);
+      pump();
+    });
+  return Object.assign(<T>(execute: () => Promise<T>) => add(execute, false), {
+    next: <T>(execute: () => Promise<T>) => add(execute, true),
+    hold: () => {
+      holds++;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        holds--;
+        pump();
+      };
+    },
+  });
 }
 
 export function createPrincipalSessions(

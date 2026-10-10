@@ -769,7 +769,7 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
           await markUncertain(row, error instanceof Error ? error.message : String(error));
         }
       }
-      for (let count = 0; count < maxPerTick && !stopped; count++) {
+      for (let count = 0; count < maxPerTick && !stopped && delivery.ready?.() !== false; count++) {
         const waiting = [...activeDeliveries.values()].filter((active) => !active.accepted).length;
         if (waiting >= maxPendingInputs) break;
         const row = mailbox.claimNext(delivery.prefer ? { prefer: delivery.prefer } : {});

@@ -167,3 +167,90 @@ it('does not invoke a native turn or reject the drain when a cancelled waiting r
   expect(logged.mock.calls[0][0]).toContain('deleted');
   expect(runtime.mailbox!.readInput('fixture-waiter', 'owner')).toBeNull();
 });
+
+it('keeps queued inputs when readiness closes during an asynchronous reconcile', async () => {
+  const root = fs.mkdtempSync(join(tmpdir(), 'ready-reconcile-'));
+  const db = new NodeSQLiteAdapter({ dbPath: join(root, 'db') }) as unknown as DatabaseAdapter;
+  db.connect();
+  db.runMigrations(join(__dirname, '../../db/migrations'));
+  let resume!: () => void,
+    reconciling = false,
+    ready = true;
+  const gate = new Promise<void>((r) => {
+    resume = r;
+  });
+  const delivered = vi.fn(async (_row, context) => {
+    context.onInputDispatch({
+      backend: 'codex',
+      sessionId: 'fixture-session',
+      inputId: context.nativeInputId,
+    });
+    context.onAccepted({
+      backend: 'codex',
+      sessionId: 'fixture-session',
+      turnId: 'fixture-turn-next',
+    });
+  });
+  const catalog = createCatalog([]);
+  const runtime = await startRuntime({
+    paths: { socketPath: join(root, 'socket') },
+    catalog,
+    dispatch: createDispatcher(catalog),
+    principals: [
+      {
+        access: { principalId: 'owner', agentId: 'fixture-agent', scopes: [], actions: [] },
+        credentialPath: join(root, 'credential'),
+      },
+    ],
+    mailbox: { adapter: db },
+    delivery: {
+      intervalMs: 0,
+      ready: () => ready,
+      deliver: delivered,
+      reconcile: async () => {
+        reconciling = true;
+        await gate;
+        return 'settled';
+      },
+    },
+  });
+  cleanup.push(async () => {
+    resume();
+    await runtime.stop();
+    db.disconnect();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  runtime.accept({
+    id: 'fixture-accepted',
+    principalId: 'owner',
+    kind: 'owner_message',
+    channelKey: 'fixture',
+    occurredAt: Date.now(),
+  });
+  const row = runtime.mailbox!.claimNext()!,
+    prepared = runtime.mailbox!.nativeInputs.prepare(row.id);
+  runtime.mailbox!.nativeInputs.dispatch(row.id, {
+    backend: 'codex',
+    sessionId: 'fixture-session',
+    inputId: prepared.invocationId!,
+  });
+  runtime.mailbox!.nativeInputs.accept(row.id, {
+    backend: 'codex',
+    sessionId: 'fixture-session',
+    turnId: 'fixture-turn',
+  });
+  const drain = runtime.drainOnce();
+  await vi.waitFor(() => expect(reconciling).toBe(true));
+  ready = false;
+  runtime.accept({
+    id: 'fixture-queued',
+    principalId: 'owner',
+    kind: 'owner_message',
+    channelKey: 'fixture',
+    occurredAt: Date.now(),
+  });
+  resume();
+  await drain;
+  expect(runtime.mailbox!.readInput('fixture-queued', 'owner')?.status).toBe('pending');
+  expect(delivered).not.toHaveBeenCalled();
+});

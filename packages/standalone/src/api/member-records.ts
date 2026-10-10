@@ -1,19 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import {
-  closeSync,
-  constants,
-  existsSync,
-  fstatSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readSync,
-  readdirSync,
-  rmSync,
-  writeSync,
-} from 'node:fs';
-import { basename, dirname, join, relative, resolve } from 'node:path';
-import { Zip, ZipDeflate, strToU8 } from 'fflate';
+import { rmSync } from 'node:fs';
+import { relative } from 'node:path';
 import {
   createPrincipalRepository,
   exportPrincipalRecords,
@@ -27,13 +14,11 @@ import type { DatabaseInstance } from '@jungjaehoon/mama-core/db-manager';
 import type { Mailbox, MailboxRow } from '@jungjaehoon/mama-core/runtime/mailbox';
 import type { RawStore } from '../storage/source-archive.js';
 import type { OwnerMessageLedger } from '../gateways/telegram-message-ledger.js';
-import { memberPaths, memberClaudeTmpDir } from '../runtime/member-paths.js';
 import type { createSerialTurnChain } from '../runtime/principal-sessions.js';
-import { physicalReadPath } from '../runtime/backend-security.js';
-import { OWNER_FILE_MAX_UPLOAD_BYTES, type TelegramFileSender } from './file-delivery.js';
+import type { TelegramFileSender } from './file-delivery.js';
+import { buildMemberExport, memberFileInventory, memberTrees } from './member-export.js';
 
 export interface MemberRecordsTelegram extends TelegramFileSender {
-  /** Host-only member DM, resolved from current registry access; true means Telegram accepted it. */
   sendMemberText(access: JudgmentAccess, text: string, operationId: string): Promise<boolean>;
 }
 export interface MemberRecordsPorts {
@@ -46,72 +31,9 @@ export interface MemberRecordsPorts {
   turnChain: ReturnType<typeof createSerialTurnChain>;
   retire(id: string): Promise<void>;
   serve(id: string): void;
+  isStopping(): boolean;
+  resumeQueued(): void;
   recordExchange(id: string, ref: string, text: string, deliveryVerified: boolean): void;
-}
-
-// Writers: member-session.ts supplies the member codexHome/authSourcePath; the core
-// CodexAppServerProcess copies auth to <codexHome>/auth.json. memberPaths supplies
-// runtime/session-credential to startRuntime, whose writeCredential writes that exact file.
-export const MEMBER_EXPORT_CREDENTIAL_FILES = [
-  '.codex/auth.json',
-  'runtime/session-credential',
-] as const;
-const archiveSuffix = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
-
-function memberTrees(root: string, id: string): string[] {
-  const paths = memberPaths(root, id);
-  const temp = memberClaudeTmpDir(id);
-  // IDs are already safe path components; escape '-' too so the expression matches exactly.
-  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const archives = (parent: string, identity: string) =>
-    existsSync(parent)
-      ? readdirSync(parent)
-          .filter((name) =>
-            new RegExp(`^\\.retired-${escape(identity)}-${archiveSuffix}$`).test(name)
-          )
-          .map((name) => join(parent, name))
-      : [];
-  return [
-    paths.runtimeRoot,
-    temp,
-    ...archives(root, id),
-    ...archives(dirname(temp), basename(temp)),
-  ].filter(existsSync);
-}
-interface MemberFile {
-  path: string;
-  name: string;
-  size: number;
-}
-function filesInTrees(root: string, id: string): MemberFile[] {
-  const files: MemberFile[] = [];
-  const walk = (path: string, name: string, runtimeRoot: string | undefined) => {
-    const stat = lstatSync(path);
-    const local = runtimeRoot === undefined ? undefined : relative(runtimeRoot, path);
-    if (stat.isDirectory()) {
-      // NativeSession creates this exact temporary directory. Member folders named temp/tmp
-      // elsewhere, and regular files in the member's separate Claude temp tree, are records.
-      if (local === 'workspace/.tmp') return;
-      for (const entry of readdirSync(path).sort())
-        walk(join(path, entry), `${name}/${entry}`, runtimeRoot);
-    } else if (stat.isFile()) {
-      if (MEMBER_EXPORT_CREDENTIAL_FILES.some((file) => local === file)) return;
-      if (
-        local !== undefined &&
-        new RegExp(`^workspace/files/member-export-${archiveSuffix}\\.zip$`).test(local)
-      )
-        return;
-      if (stat.nlink !== 1) throw new Error(`Member export refuses a hard-linked file: ${name}`);
-      files.push({ path, name, size: stat.size });
-    }
-  };
-  const liveRuntime = memberPaths(root, id).runtimeRoot;
-  for (const tree of memberTrees(root, id)) {
-    const runtimeRoot =
-      tree === liveRuntime ? tree : dirname(tree) === root ? join(tree, 'runtime') : undefined;
-    walk(tree, `files/${basename(tree)}`, runtimeRoot);
-  }
-  return files;
 }
 
 const denied = () =>
@@ -131,13 +53,17 @@ interface Scheduled {
   principalId: string;
   inputId: number;
   commandId: string;
+  kind: 'export' | 'erase';
+  release(): void;
 }
 
 function receiptText(
   core: PrincipalErasureReceipt | undefined,
   product: Record<string, number>,
   failure: unknown,
-  step: string
+  step: string,
+  omittedFiles: readonly string[],
+  uncertain: boolean
 ): string {
   const stepNames: Record<string, string> = {
     retire: 'native session retirement',
@@ -153,7 +79,9 @@ function receiptText(
   ];
   if (failure)
     lines.push(
-      'Earlier steps are done. Make a new erasure request and pass its preview confirmationToken in a later member message to finish the rest.'
+      uncertain
+        ? 'The export delivery is uncertain. Nothing was erased. Check whether the file arrived before asking again.'
+        : 'Earlier steps are done. Make a new erasure request and pass its preview confirmationToken in a later member message to finish the rest.'
     );
   for (const [store, counts] of Object.entries(core?.counts ?? {})) {
     const nonZero = Object.entries(counts)
@@ -162,13 +90,18 @@ function receiptText(
     if (nonZero.length) lines.push(`${store}: ${nonZero.join(', ')}.`);
   }
   for (const [store, n] of Object.entries(product)) {
-    if (n > 0 && !['files', 'fileBytes', 'fileTrees'].includes(store))
+    if (n > 0 && !['files', 'fileBytes', 'fileTrees', 'cancelledMessages'].includes(store))
       lines.push(`${store}: ${n} deleted.`);
   }
   lines.push(
     `Files: ${product.files ?? 0} files, ${product.fileBytes ?? 0} bytes.`,
+    `${product.cancelledMessages ?? 0} ${product.cancelledMessages === 1 ? 'message sent after your confirmation was' : 'messages sent after your confirmation were'} cancelled unanswered.`,
     'Your enrollment and grants are kept.'
   );
+  for (const name of omittedFiles)
+    lines.push(
+      `Left out of the export (a link is outside your files or in a private host directory): ${name}.`
+    );
   return lines.join('\n');
 }
 
@@ -209,85 +142,6 @@ export function createMemberRecords(options: {
       counts: Object.fromEntries(Object.entries(stores).map(([name, rows]) => [name, rows.length])),
     };
   };
-  const buildAndSend = async (id: string, operationId: string) => {
-    const p = ports();
-    const core = exportPrincipalRecords(options.adapter, id);
-    const product = productExport(id);
-    const files = filesInTrees(p.root, id);
-    const filesRoot = join(memberPaths(p.root, id).workspaceDir, 'files');
-    // Reject linked ancestors before creating the output: validating only at upload is too late.
-    if (physicalReadPath(filesRoot) !== resolve(filesRoot))
-      throw new Error('Member export output directory must not be a symlink');
-    mkdirSync(filesRoot, { recursive: true, mode: 0o700 });
-    const path = join(filesRoot, `member-export-${randomUUID()}.zip`);
-    const fd = openSync(
-      path,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
-      0o600
-    );
-    let size = 0;
-    let finished = false;
-    const zip = new Zip((error, chunk, final) => {
-      if (error) throw error;
-      writeSync(fd, chunk);
-      size += chunk.length;
-      finished = final;
-    });
-    try {
-      const json = (name: string, value: unknown) => {
-        const entry = new ZipDeflate(name, { level: 6 });
-        zip.add(entry);
-        entry.push(strToU8(JSON.stringify(value)), true);
-      };
-      json('core.json', core);
-      json('product.json', product);
-      const buffer = Buffer.alloc(64 * 1024);
-      for (const file of files) {
-        const input = openSync(file.path, constants.O_RDONLY | constants.O_NOFOLLOW);
-        try {
-          const stat = fstatSync(input);
-          if (!stat.isFile() || stat.nlink !== 1)
-            throw new Error(`Member export file changed: ${file.name}`);
-          const entry = new ZipDeflate(file.name, { level: 6 });
-          zip.add(entry);
-          let count: number;
-          while ((count = readSync(input, buffer, 0, buffer.length, null)) > 0)
-            entry.push(buffer.subarray(0, count));
-          entry.push(new Uint8Array(), true);
-        } finally {
-          closeSync(input);
-        }
-      }
-      zip.end();
-      if (!finished) throw new Error('Member export zip did not finish');
-    } catch (error) {
-      rmSync(path, { force: true });
-      throw error;
-    } finally {
-      closeSync(fd);
-    }
-    try {
-      if (size > OWNER_FILE_MAX_UPLOAD_BYTES)
-        throw new Error(
-          `Member export is ${size} bytes; Telegram limit is ${OWNER_FILE_MAX_UPLOAD_BYTES} bytes (50 MiB)`
-        );
-      const telegram = p.telegram();
-      if (!telegram) throw new Error('Member Telegram delivery is not configured');
-      const result = await telegram.sendFile(path, undefined, operationId, {
-        access: p.access(id),
-        filesRoot,
-      });
-      // sendFile resolves only on Telegram acceptance or a verified delivered idempotent receipt.
-      return {
-        path,
-        size,
-        delivery: result,
-        counts: { core: core.counts, product: product.counts },
-      };
-    } finally {
-      rmSync(path, { force: true });
-    }
-  };
   const sendReceipt = async (job: Scheduled, text: string) => {
     const p = ports();
     let verified = false;
@@ -300,71 +154,185 @@ export function createMemberRecords(options: {
     }
     p.recordExchange(job.principalId, `host:${job.commandId}`, text, verified);
   };
+  let activeJobs = 0;
+  const results = new Map<
+    string,
+    {
+      status: 'sent' | 'not_sent' | 'erased' | 'failed';
+      fileCount: number;
+      fileBytes: number;
+      omittedFiles: string[];
+      failedStep?: string;
+    }
+  >();
   const enqueue = (work: () => Promise<void>) => {
-    const pending = ports().turnChain(work);
+    const pending = ports().turnChain.next(async () => {
+      activeJobs++;
+      try {
+        await work();
+      } finally {
+        activeJobs--;
+        if (!ports().isStopping()) ports().resumeQueued();
+      }
+    });
     jobs.add(pending);
     void pending
       .catch((error) => console.error('[Member records] scheduled work failed', error))
       .finally(() => jobs.delete(pending));
   };
-  const cancelConfirmation = (row: MailboxRow, outcome: 'dead' | 'uncertain', reason: string) => {
+  const take = (row: MailboxRow) => {
     const job = scheduled.get(row.id);
-    if (!job || row.principalId !== job.principalId) return;
+    if (!job || job.principalId !== row.principalId) return;
     scheduled.delete(row.id);
-    blocked.delete(job.principalId);
-    const text = `Erasure did not run because the confirming turn did not complete (${outcome}: ${reason}).\nYour personal records and files were kept. Make a new erasure request and confirm its preview in a later member message.\nYour enrollment and grants are kept.`;
-    enqueue(() => sendReceipt(job, text));
+    return job;
   };
-  const erase = async (job: Scheduled) => {
-    const p = ports();
-    const { principalId: id, commandId } = job;
-    const product: Record<string, number> = {};
-    let core: PrincipalErasureReceipt | undefined;
-    let failedStep = 'retire';
-    let failure: unknown;
-    try {
-      p.mailbox().cancelQueued(id, 'member_erase');
-      await p.retire(id);
-      failedStep = 'export_delivery';
-      await buildAndSend(id, `${commandId}:export`);
-      failedStep = 'connector_event_index';
-      product.connector_event_index = options.adapter
-        .prepare(
-          "DELETE FROM connector_event_index WHERE source_connector='chat' AND memory_scope_kind='user' AND memory_scope_id=?"
+  const cancelConfirmation = (row: MailboxRow, outcome: 'dead' | 'uncertain', reason: string) => {
+    const job = take(row);
+    if (!job) return;
+    blocked.delete(job.principalId);
+    if (!ports().isStopping()) {
+      const label = job.kind === 'erase' ? 'Erasure' : 'Export';
+      enqueue(() =>
+        sendReceipt(
+          job,
+          `${label} did not run because the ${job.kind === 'erase' ? 'confirming' : 'requesting'} turn did not complete (${outcome}: ${reason}).\nYour personal records and files were kept. Make a new request in a later member message.\nYour enrollment and grants are kept.`
         )
-        .run(id).changes;
-      failedStep = 'core';
-      core = erasePrincipalRecords(options.adapter, { principalId: id, commandId });
-      failedStep = 'chat_raw';
-      Object.assign(product, p.rawStore.eraseScope('chat', 'user', id));
-      failedStep = 'message_ledger';
-      const ledger = p.ledger();
-      if (!ledger) throw new Error('Live message ledger is not configured');
-      product.message_ledger = ledger.eraseTelegramDm(dm(p.access(id)));
-      failedStep = 'files';
-      product.files = 0;
-      product.fileBytes = 0;
-      product.fileTrees = 0;
-      for (const tree of memberTrees(p.root, id)) {
-        // Delete links as links, never traverse into an owner's or another member's directory.
-        const remaining = filesInTrees(p.root, id).filter(
-          (file) =>
-            relative(tree, file.path) !== '..' && !relative(tree, file.path).startsWith('../')
+      );
+    }
+    job.release();
+  };
+  const runJob = async (job: Scheduled) => {
+    const p = ports(),
+      id = job.principalId;
+    const product: Record<string, number> = { cancelledMessages: 0 };
+    let core: PrincipalErasureReceipt | undefined;
+    let archive: Awaited<ReturnType<typeof buildMemberExport>> | undefined;
+    let failedStep = 'export',
+      failure: unknown,
+      uncertain = false;
+    let delivered = false;
+    try {
+      archive = await buildMemberExport(
+        p.root,
+        id,
+        exportPrincipalRecords(options.adapter, id),
+        productExport(id)
+      );
+      failedStep = 'export_delivery';
+      try {
+        const telegram = p.telegram();
+        if (!telegram) throw new Error('Member Telegram delivery is not configured');
+        await telegram.sendFile(archive.path, undefined, `${job.commandId}:export`, {
+          access: p.access(id),
+          filesRoot: archive.filesRoot,
+        });
+        delivered = true;
+      } catch (error) {
+        uncertain = p.ledger()?.get(`file:${job.commandId}:export`)?.deliveryUncertain === true;
+        throw error;
+      } finally {
+        rmSync(archive.path, { force: true });
+      }
+      if (job.kind === 'erase') {
+        failedStep = 'retire';
+        await p.retire(id);
+        // Delivery and complete unserving/retirement precede cancellation. The shared slot
+        // prevents any member turn or steering while these queued rows are cancelled.
+        p.mailbox().cancelQueued(id, 'member_erase');
+        product.cancelledMessages = Number(
+          (
+            options.adapter
+              .prepare(
+                "SELECT count(*) AS n FROM mailbox_inputs WHERE principal_id=? AND id>? AND kind='owner_message' AND status='dead' AND last_error='member_erase'"
+              )
+              .get(id, job.inputId) as { n: number }
+          ).n
         );
-        rmSync(tree, { recursive: true, force: true });
-        product.files += remaining.length;
-        product.fileBytes += remaining.reduce((n, file) => n + file.size, 0);
-        product.fileTrees++;
+        failedStep = 'connector_event_index';
+        product.connector_event_index = options.adapter
+          .prepare(
+            "DELETE FROM connector_event_index WHERE source_connector='chat' AND memory_scope_kind='user' AND memory_scope_id=?"
+          )
+          .run(id).changes;
+        failedStep = 'core';
+        core = erasePrincipalRecords(options.adapter, {
+          principalId: id,
+          commandId: job.commandId,
+        });
+        failedStep = 'chat_raw';
+        Object.assign(product, p.rawStore.eraseScope('chat', 'user', id));
+        failedStep = 'message_ledger';
+        const ledger = p.ledger();
+        if (!ledger) throw new Error('Live message ledger is not configured');
+        product.message_ledger = ledger.eraseTelegramDm(dm(p.access(id)));
+        failedStep = 'files';
+        product.files = 0;
+        product.fileBytes = 0;
+        product.fileTrees = 0;
+        for (const tree of memberTrees(p.root, id)) {
+          const remaining = memberFileInventory(p.root, id).allFiles.filter(
+            (file) =>
+              relative(tree, file.path) !== '..' && !relative(tree, file.path).startsWith('../')
+          );
+          rmSync(tree, { recursive: true, force: true });
+          product.files += remaining.length;
+          product.fileBytes += remaining.reduce((n, file) => n + file.size, 0);
+          product.fileTrees++;
+        }
       }
     } catch (error) {
       failure = error;
     }
     try {
-      p.serve(id);
-      await sendReceipt(job, receiptText(core, product, failure, failedStep));
+      try {
+        p.serve(id);
+      } catch (error) {
+        failedStep = 'serve';
+        failure = error;
+      }
+      const omittedFiles = archive?.omittedFiles ?? [];
+      results.set(job.commandId, {
+        status:
+          job.kind === 'erase' ? (failure ? 'failed' : 'erased') : delivered ? 'sent' : 'not_sent',
+        fileCount: archive?.fileCount ?? 0,
+        fileBytes: archive?.fileBytes ?? 0,
+        omittedFiles,
+        ...(failure ? { failedStep } : {}),
+      });
+      let text: string;
+      if (job.kind === 'erase')
+        text = receiptText(core, product, failure, failedStep, omittedFiles, uncertain);
+      else {
+        text = uncertain
+          ? `Export delivery is uncertain at ${failedStep}: ${failure instanceof Error ? failure.message : String(failure)}.`
+          : failure
+            ? delivered
+              ? `Export sent, but service restoration stopped at ${failedStep}: ${failure instanceof Error ? failure.message : String(failure)}.`
+              : `Export not sent at ${failedStep}: ${failure instanceof Error ? failure.message : String(failure)}.`
+            : 'Export sent: your personal records and files were sent to your registered Telegram DM.';
+        if (uncertain)
+          text +=
+            '\nThe export delivery is uncertain. Check whether the file arrived before asking again.';
+        text += `\nFiles: ${archive?.fileCount ?? 0} files, ${archive?.fileBytes ?? 0} bytes.\nYour enrollment and grants are kept.`;
+        for (const name of omittedFiles)
+          text += `\nLeft out of the export (a link is outside your files or in a private host directory): ${name}.`;
+      }
+      await sendReceipt(job, text);
     } finally {
       blocked.delete(id);
     }
+  };
+  const schedule = (kind: Scheduled['kind'], row: MailboxRow) => {
+    const commandId = `member-${kind}:${row.principalId}:${row.id}`;
+    scheduled.set(row.id, {
+      principalId: row.principalId,
+      inputId: row.id,
+      commandId,
+      kind,
+      release: ports().turnChain.hold(),
+    });
+    blocked.add(row.principalId);
+    return { status: 'scheduled', commandId };
   };
   const registrations: ActionRegistration[] = [
     'records.export',
@@ -374,7 +342,7 @@ export function createMemberRecords(options: {
       name,
       summary:
         name === 'records.export'
-          ? "Export the caller's personal records and files as one zip to their registered Telegram DM (50 MiB), excluding credentials. Only an active member's own message turn is allowed."
+          ? "Schedule export of the caller's personal records and files as one zip to their registered Telegram DM (50 MiB). The host exports after this member message completes and records a receipt. Excludes account settings and names files whose links leave the member's trees."
           : "Preview erasure of the caller's personal records and files. Pass the confirmationToken from this preview in a later member message to confirm. The host exports after that turn completes and erases only after Telegram accepts the export. Enrollment, grants and shared revisions are kept.",
       inputSchema: {
         type: 'object',
@@ -401,8 +369,7 @@ export function createMemberRecords(options: {
       const p = ports();
       const row = p.mailbox().readInput(ref, id);
       if (!row || row.kind !== 'owner_message' || blocked.has(id)) throw denied();
-      if (name === 'records.export')
-        return buildAndSend(id, `member-export:${id}:${row.id}:${randomUUID()}`);
+      if (name === 'records.export') return schedule('export', row);
       const value = (input as { confirmationToken?: string }).confirmationToken;
       if (value !== undefined) {
         const token = tokens.get(id);
@@ -415,14 +382,12 @@ export function createMemberRecords(options: {
         )
           throw denied();
         tokens.delete(id);
-        const commandId = `member-erase:${id}:${row.id}`;
-        scheduled.set(row.id, { principalId: id, inputId: row.id, commandId });
-        blocked.add(id);
-        return { status: 'scheduled', commandId };
+        return schedule('erase', row);
       }
       const core = exportPrincipalRecords(options.adapter, id);
       const product = productExport(id);
-      const files = filesInTrees(p.root, id);
+      const inventory = memberFileInventory(p.root, id);
+      const files = inventory.files;
       const token: Token = {
         value: randomUUID(),
         principalId: id,
@@ -436,18 +401,21 @@ export function createMemberRecords(options: {
         fileCount: files.length,
         fileBytes: files.reduce((n, file) => n + file.size, 0),
         confirmationToken: token.value,
+        omittedFiles: inventory.omittedFiles,
       };
     },
   }));
   return {
     registrations,
+    result: (commandId: string) => results.get(commandId),
+    isBusy: () => activeJobs > 0 || blocked.size > 0,
     isBlocked: (id: string) => blocked.has(id),
     onSettled: (row: MailboxRow) => {
-      const job = scheduled.get(row.id);
-      if (!job || row.principalId !== job.principalId) return;
-      scheduled.delete(row.id);
-      // Never await this inside core's drain. The next shared slot owns the complete job.
-      enqueue(() => erase(job));
+      const job = take(row);
+      if (!job) return;
+      if (ports().isStopping()) blocked.delete(job.principalId);
+      else enqueue(() => runJob(job));
+      job.release();
     },
     onDead: (row: MailboxRow, reason: string) => cancelConfirmation(row, 'dead', reason),
     onUncertain: (row: MailboxRow, reason: string) => cancelConfirmation(row, 'uncertain', reason),

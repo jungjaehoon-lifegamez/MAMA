@@ -1,6 +1,7 @@
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { strFromU8, unzipSync } from 'fflate';
 import { expect, it, vi } from 'vitest';
@@ -26,13 +27,15 @@ interface FixtureData {
   counts: Record<string, unknown>;
   fileCount: number;
   fileBytes: number;
+  commandId: string;
 }
 const data = (r: ActionResult): FixtureData => {
   expect(r.status, JSON.stringify(r)).toBe('completed');
   return (r as { data: FixtureData }).data;
 };
 async function setup() {
-  const uploads: Array<{ bytes: Buffer; principal: string; operationId: string }> = [];
+  const uploads: Array<{ bytes: Buffer; principal: string; operationId: string; path?: string }> =
+    [];
   const receipts: Array<{ text: string; principal: string; operationId: string }> = [];
   const telegram = {
     sendFile: vi.fn(async (path, _caption, operationId, member) => {
@@ -41,6 +44,7 @@ async function setup() {
         bytes: fs.readFileSync(file.path),
         principal: member.access.principalId,
         operationId,
+        path,
       });
       return { sentAs: 'document' as const, size: file.size, messageId: 'fixture-accepted' };
     }),
@@ -95,11 +99,21 @@ async function setup() {
   f.ledger.claim(`telegram:${f.memberDm}:123`);
   await f.settled(f.message('owner', 'owner chat'));
   const preview = async () => data((await f.act('records.erase')).result);
-  const confirm = async (token: string) =>
-    data((await f.act('records.erase', { confirmationToken: token })).result);
+  let latestCommand: string | undefined;
+  const confirm = async (token: string) => {
+    const result = data((await f.act('records.erase', { confirmationToken: token })).result);
+    latestCommand = result.commandId;
+    return result;
+  };
   const finish = async () => {
-    await vi.waitFor(() => expect(receipts.length).toBeGreaterThan(0));
-    const { text, operationId } = receipts.at(-1)!;
+    await vi.waitFor(() =>
+      expect(
+        receipts.some((r) => !latestCommand || r.operationId === `${latestCommand}:receipt`)
+      ).toBe(true)
+    );
+    const { text, operationId } = latestCommand
+      ? receipts.find((r) => r.operationId === `${latestCommand}:receipt`)!
+      : receipts.at(-1)!;
     expect(text).not.toMatch(/^\s*\{/);
     expect(text).toContain('Your enrollment and grants are kept.');
     const commandId = operationId.replace(/:receipt$/, '');
@@ -132,8 +146,10 @@ async function setup() {
     const failedStep =
       failed?.[1] === 'native session retirement' ? 'retire' : failed?.[1].replaceAll(' ', '_');
     if (failed) {
-      expect(text).toContain('Earlier steps are done.');
-      expect(text).toContain('Make a new erasure request');
+      if (!text.includes('delivery is uncertain')) {
+        expect(text).toContain('Earlier steps are done.');
+        expect(text).toContain('Make a new erasure request');
+      }
     } else expect(text).toMatch(/^Your personal records and files were erased\./);
     return {
       text,
@@ -186,7 +202,8 @@ async function setup() {
 
 it('exports core and product rows and regular files, excluding credentials and prior zips', async () => {
   const f = await setup();
-  const r = data((await f.act('records.export')).result);
+  const request = await runExport(f);
+  expect(data(request.result).status).toBe('scheduled');
   expect(f.uploads).toHaveLength(1);
   expect(f.uploads[0].principal).toBe(f.member);
   const zip = unzipSync(f.uploads[0].bytes);
@@ -202,7 +219,6 @@ it('exports core and product rows and regular files, excluding credentials and p
       Object.entries(product.stores).map(([name, rows]) => [name, (rows as unknown[]).length])
     )
   );
-  expect(r.counts).toEqual({ core: core.counts, product: product.counts });
   expect(core.counts.decisions).toBe(
     exportPrincipalRecords(f.runtime.database.adapter, f.member).counts.decisions
   );
@@ -221,7 +237,7 @@ it('exports core and product rows and regular files, excluding credentials and p
   expect(
     zip[`files/${f.archive.split('/').at(-1)}/runtime/runtime/session-credential`]
   ).toBeUndefined();
-  expect(fs.existsSync((r as FixtureData & { path: string }).path)).toBe(false);
+  expect(fs.existsSync(f.uploads[0].path!)).toBe(false);
   expect(keys).toContain('archived.txt');
   expect(keys).toContain('transcript.jsonl');
   expect(keys).toContain('archived-temp.txt');
@@ -236,7 +252,7 @@ it.each(['owner', 'delta', 'scheduled', 'replay', 'subagent', 'unknown-ref'])(
   'denies %s and lists actions only for the member',
   async (origin) => {
     const f = await setup();
-    data((await f.act('records.export')).result); // positive control fails before P9
+    await runExport(f); // positive control fails before P9
     const own = f.message(f.member);
     await f.settled(own, f.member);
     const mailbox = f.runtime.runtime.mailbox!;
@@ -416,6 +432,16 @@ it('erases after settlement, preserves owner and shared rows, receipts counts an
   const oldPoolSession = f.pool.getSessionInfo(`member:${f.member}:runtime`)!.sessionId;
   expect(p.fileCount).toBeGreaterThan(0);
   expect(p.fileBytes).toBeGreaterThan(0);
+  const expectedFiles = { count: 0, bytes: 0 };
+  const countFiles = (path: string) => {
+    const stat = fs.lstatSync(path);
+    if (stat.isDirectory()) for (const entry of fs.readdirSync(path)) countFiles(join(path, entry));
+    else if (stat.isFile() && path !== f.paths.credentialPath) {
+      expectedFiles.count++;
+      expectedFiles.bytes += stat.size;
+    }
+  };
+  for (const tree of [f.paths.runtimeRoot, f.archive, f.temp, f.tempArchive]) countFiles(tree);
   expect(await f.confirm(p.confirmationToken)).toMatchObject({ status: 'scheduled' });
   const receipt = await f.finish();
   expect(receipt.status).toBe('erased');
@@ -424,13 +450,8 @@ it('erases after settlement, preserves owner and shared rows, receipts counts an
     commandId: receipt.commandId,
   });
   expect(receipt.core).toEqual(coreReceipt.counts);
-  const exportedFiles = Object.entries(unzipSync(f.uploads[0].bytes)).filter(([name]) =>
-    name.startsWith('files/')
-  );
-  expect(receipt.product.files).toBe(exportedFiles.length);
-  expect(receipt.product.fileBytes).toBe(
-    exportedFiles.reduce((n, [, bytes]) => n + bytes.length, 0)
-  );
+  expect(receipt.product.files).toBe(expectedFiles.count);
+  expect(receipt.product.fileBytes).toBe(expectedFiles.bytes);
   expect(receipt.text).not.toContain('principal_erasure_receipts: 0');
   expect(Object.values(coreReceipt.counts).every((count) => count.in_flight === 0)).toBe(true);
   const erasedCited = db
@@ -568,7 +589,7 @@ it.each(['failed', 'oversize'])(
     expect(await f.confirm(p.confirmationToken)).toMatchObject({ status: 'scheduled' });
     const receipt = await f.finish();
     expect(receipt.status).toBe('failed');
-    expect(receipt.failedStep).toBe('export_delivery');
+    expect(receipt.failedStep).toBe(kind === 'oversize' ? 'export' : 'export_delivery');
     if (kind === 'oversize') {
       expect(receipt.error).toMatch(/\d+ bytes/);
       expect(f.telegram.sendFile).not.toHaveBeenCalled();
@@ -621,7 +642,9 @@ it('prevents pending and claimed waiters from starting a turn or escaping the dr
     payload: { text: 'pending' },
   });
   await vi.waitFor(() =>
-    expect(f.runtime.runtime.mailbox!.readInput(queued, f.member)?.status).toBe('claimed')
+    expect(['pending', 'claimed']).toContain(
+      f.runtime.runtime.mailbox!.readInput(queued, f.member)?.status
+    )
   );
   release();
   f.blockMember(undefined);
@@ -659,13 +682,13 @@ it('reports the failed deletion step, restores serving, and a new confirmation f
 
 it('rejects a symlinked export output before writing any private ZIP outside the member tree', async () => {
   const f = await setup();
-  data((await f.act('records.export')).result);
+  await runExport(f);
   const files = join(f.paths.workspaceDir, 'files');
   fs.rmSync(files, { recursive: true });
   const outside = join(f.home, 'workspace');
   const before = fs.readdirSync(outside);
   fs.symlinkSync(outside, files);
-  expect((await f.act('records.export')).result.status).toBe('failed');
+  expect((await runExport(f)).text).toContain('Export not sent');
   expect(fs.readdirSync(outside)).toEqual(before);
 });
 
@@ -759,7 +782,7 @@ it('records an unaccepted receipt as deliveryVerified=false and keeps enrollment
 
 it('refuses inactive and unregistered principals and accepts no principal parameter', async () => {
   const f = await setup();
-  data((await f.act('records.export')).result);
+  await runExport(f);
   const ref = f.message(f.member);
   await f.settled(ref, f.member);
   expect((await f.dispatch(f.member, ref, 'records.export', { principalId: 'owner' })).status).toBe(
@@ -793,7 +816,7 @@ it('removes an export ZIP after Telegram rejects the standalone export', async (
   const f = await setup();
   const before = fs.readdirSync(join(f.paths.workspaceDir, 'files'));
   f.telegram.sendFile.mockRejectedValueOnce(new Error('fixture export rejected'));
-  expect((await f.act('records.export')).result.status).toBe('failed');
+  expect((await runExport(f)).text).toContain('Export not sent');
   expect(fs.readdirSync(join(f.paths.workspaceDir, 'files'))).toEqual(before);
 });
 
@@ -844,5 +867,413 @@ it.each(['dead', 'uncertain'] as const)(
     await f.runtime.surface.memberRecords.idle();
     expect(f.receipts).toHaveLength(1);
     expect(f.uploads).toEqual([]);
+  }
+);
+
+async function runExport(f: Awaited<ReturnType<typeof setup>>) {
+  const request = await f.act('records.export');
+  if (request.result.status === 'completed' && data(request.result).status === 'scheduled') {
+    await f.settled(request.ref, f.member);
+    await f.runtime.surface.memberRecords.idle();
+  }
+  const text =
+    f.receipts.at(-1)?.text ??
+    (request.result.status === 'failed'
+      ? request.result.error.message
+      : JSON.stringify(data(request.result)));
+  return { ...request, text };
+}
+
+it('refuses a sparse 100 GiB export by size before reading a file', async () => {
+  const f = await setup();
+  const huge = join(f.paths.workspaceDir, 'files', 'huge.bin');
+  f.put(huge, '');
+  fs.truncateSync(huge, 100 * 1024 ** 3);
+  const read = vi.spyOn(fs, 'readSync').mockImplementation(() => {
+    throw new Error('fixture file read must not happen');
+  });
+  syncBuiltinESMExports();
+  const result = await runExport(f);
+  expect(read).not.toHaveBeenCalled();
+  expect(Number(/Member export is (\d+) bytes/.exec(result.text)![1])).toBeGreaterThanOrEqual(
+    100 * 1024 ** 3
+  );
+  expect(f.uploads).toEqual([]);
+});
+
+it('caps output before a growing file writes over 50 MiB and removes the partial ZIP', async () => {
+  const f = await setup();
+  const file = join(f.paths.workspaceDir, 'files', 'growing.bin');
+  f.put(file, 'x');
+  const open = fs.openSync,
+    read = fs.readSync,
+    write = fs.writeSync;
+  let input = -1;
+  let output = -1;
+  let readBytes = 0;
+  let written = 0;
+  vi.spyOn(fs, 'openSync').mockImplementation((path, flags, mode) => {
+    const fd = open(path, flags, mode);
+    if (path === file) input = fd;
+    if (String(path).endsWith('.zip')) output = fd;
+    return fd;
+  });
+  vi.spyOn(fs, 'readSync').mockImplementation(((fd, buffer, offset, length, position) => {
+    if (fd !== input) return read(fd, buffer, offset, length, position);
+    if (readBytes >= 51 * 1024 ** 2) return 0;
+    buffer.fill(0, offset, offset + length);
+    readBytes += length;
+    return length;
+  }) as typeof fs.readSync);
+  vi.spyOn(fs, 'writeSync').mockImplementation(((
+    fd,
+    buffer,
+    offset = 0,
+    length = buffer.length - offset,
+    position = null
+  ) => {
+    const n = write(fd, buffer, offset, length, position);
+    if (fd === output) written += n;
+    return n;
+  }) as typeof fs.writeSync);
+  syncBuiltinESMExports();
+  const result = await runExport(f);
+  expect(result.text).toContain('50 MiB');
+  expect(written).toBeLessThanOrEqual(OWNER_FILE_MAX_UPLOAD_BYTES);
+  expect(readBytes).toBeLessThanOrEqual(OWNER_FILE_MAX_UPLOAD_BYTES + 64 * 1024);
+  expect(f.uploads).toEqual([]);
+  expect(
+    fs
+      .readdirSync(join(f.paths.workspaceDir, 'files'))
+      .filter((name) => /^member-export-/.test(name))
+  ).toEqual(['member-export-00000000-0000-0000-0000-000000000002.zip']);
+});
+
+it('retries short writes until every ZIP chunk is written', async () => {
+  const f = await setup();
+  const write = fs.writeSync;
+  vi.spyOn(fs, 'writeSync').mockImplementation(((
+    fd,
+    buffer,
+    offset = 0,
+    length = buffer.length - offset,
+    position = null
+  ) =>
+    write(
+      fd,
+      buffer,
+      offset,
+      Math.max(1, Math.floor(length / 2)),
+      position
+    )) as typeof fs.writeSync);
+  syncBuiltinESMExports();
+  await runExport(f);
+  expect(f.uploads).toHaveLength(1);
+  expect(
+    strFromU8(unzipSync(f.uploads[0].bytes)[`files/${f.member}/workspace/files/personal.txt`])
+  ).toBe('fixture bytes');
+});
+
+it.each(['fifo', 'inode', 'ancestor link'] as const)(
+  'refuses a file swapped to %s after the walk without a blocking read',
+  async (swap) => {
+    const f = await setup();
+    const target = join(f.paths.workspaceDir, 'files', 'swap.txt');
+    f.put(target);
+    const open = fs.openSync;
+    let swapped = false;
+    vi.spyOn(fs, 'openSync').mockImplementation((path, flags, mode) => {
+      if (path === target && !swapped) {
+        swapped = true;
+        expect(Number(flags) & fs.constants.O_NONBLOCK).not.toBe(0);
+        if (process.platform === 'darwin') expect(Number(flags) & 0x20000000).not.toBe(0);
+        fs.renameSync(target, join(f.paths.workspaceDir, 'original.txt'));
+        if (swap === 'fifo') execFileSync('mkfifo', [target]);
+        else if (swap === 'inode') fs.writeFileSync(target, 'replacement bytes');
+        else {
+          const dir = join(f.paths.workspaceDir, 'files');
+          fs.renameSync(dir, join(f.paths.workspaceDir, 'moved-files'));
+          fs.symlinkSync(join(f.paths.workspaceDir, 'moved-files'), dir);
+        }
+      }
+      return open(path, flags, mode);
+    });
+    syncBuiltinESMExports();
+    const result = await runExport(f);
+    expect(swapped).toBe(true);
+    expect(f.uploads).toEqual([]);
+    expect(result.text).toContain('Export not sent');
+  }
+);
+
+it('omits outside hard links by name but exports all inside links and erases only the member links', async () => {
+  const f = await setup();
+  const outside = join(f.home, 'workspace', 'outside.txt');
+  f.put(outside, 'outside bytes');
+  const external = join(f.paths.workspaceDir, 'files', 'outside-link.txt');
+  fs.linkSync(outside, external);
+  const inside = join(f.paths.workspaceDir, 'files', 'inside-a.txt');
+  f.put(inside, 'inside bytes');
+  fs.linkSync(inside, join(f.paths.workspaceDir, 'files', 'inside-b.txt'));
+  const p = await f.preview();
+  await f.confirm(p.confirmationToken);
+  const receipt = await f.finish();
+  expect(receipt.status).toBe('erased');
+  const zip = unzipSync(f.uploads[0].bytes);
+  expect(zip[`files/${f.member}/workspace/files/outside-link.txt`]).toBeUndefined();
+  for (const name of ['inside-a.txt', 'inside-b.txt'])
+    expect(strFromU8(zip[`files/${f.member}/workspace/files/${name}`])).toBe('inside bytes');
+  expect(receipt.text).toContain('outside-link.txt');
+  expect(fs.existsSync(external)).toBe(false);
+  expect(fs.readFileSync(outside, 'utf8')).toBe('outside bytes');
+});
+
+it('exports only transcripts/history/journal from managed directories, including retired trees', async () => {
+  const f = await setup();
+  for (const root of [f.paths.runtimeRoot, join(f.archive, 'runtime')]) {
+    for (const path of [
+      'claude-config/.claude.json',
+      '.codex/auth.json.42.00000000-0000-0000-0000-000000000001.tmp',
+      'runtime/session-credential.00000000-0000-0000-0000-000000000001.tmp',
+      '.codex/config.toml',
+      'codex-runtime/home/account.json',
+    ])
+      f.put(join(root, path), 'fixture account details');
+    for (const path of [
+      'claude-config/history.jsonl',
+      '.codex/history.jsonl',
+      'claude-config/projects/fixture/session.jsonl',
+      '.codex/sessions/fixture/session.jsonl',
+      'runtime/client-journal.jsonl',
+    ])
+      f.put(join(root, path), 'fixture transcript');
+  }
+  fs.linkSync(
+    join(f.paths.claudeConfigDir, '.claude.json'),
+    join(f.paths.workspaceDir, 'files', 'account-link.json')
+  );
+  await runExport(f);
+  const zip = unzipSync(f.uploads[0].bytes);
+  const keys = Object.keys(zip);
+  expect(
+    Object.values(zip).some((bytes) => strFromU8(bytes).includes('fixture account details'))
+  ).toBe(false);
+  for (const prefix of [`files/${f.member}`, `files/${basename(f.archive)}/runtime`]) {
+    for (const path of [
+      'claude-config/history.jsonl',
+      '.codex/history.jsonl',
+      'claude-config/projects/fixture/session.jsonl',
+      '.codex/sessions/fixture/session.jsonl',
+      'runtime/client-journal.jsonl',
+    ])
+      expect(strFromU8(zip[`${prefix}/${path}`])).toBe('fixture transcript');
+  }
+  expect(keys.some((key) => key.endsWith('.claude.json'))).toBe(false);
+});
+
+it('schedules export until settlement and runs it ahead of waiting member turns on the chain', async () => {
+  const f = await setup();
+  let complete!: () => void;
+  f.holdMemberCompletion(
+    new Promise<void>((r) => {
+      complete = r;
+    })
+  );
+  const request = await f.act('records.export');
+  expect(data(request.result).status).toBe('scheduled');
+  expect(f.uploads).toEqual([]);
+  const before = f.turns.length;
+  const queued = f.message(f.member);
+  await Promise.resolve();
+  expect(f.turns).toHaveLength(before);
+  f.telegram.sendFile.mockImplementationOnce(async (path, _caption, operationId, member) => {
+    expect(f.turns).toHaveLength(before);
+    const file = validateWorkspaceFile(member.filesRoot, path, OWNER_FILE_MAX_UPLOAD_BYTES, true);
+    f.uploads.push({
+      bytes: fs.readFileSync(file.path),
+      principal: member.access.principalId,
+      operationId,
+    });
+    return { sentAs: 'document', size: file.size, messageId: 'fixture-accepted' };
+  });
+  complete();
+  f.holdMemberCompletion(undefined);
+  await f.settled(queued, f.member);
+  await f.runtime.surface.memberRecords.idle();
+  const receipt = f.receipts.at(-1)!.text;
+  expect(receipt).toContain('Export sent');
+  expect(receipt).toMatch(/Files: \d+ files, \d+ bytes/);
+  expect(
+    f.runtime.database.adapter
+      .prepare('SELECT content FROM connector_event_index WHERE memory_scope_id=? AND content=?')
+      .all(f.member, receipt)
+  ).toHaveLength(1);
+});
+
+it.each(['failed', 'success'] as const)(
+  'keeps queued messages until %s delivery and reports cancellation accurately',
+  async (outcome) => {
+    const f = await setup();
+    const preview = await f.preview();
+    let accept!: () => void;
+    let uploading = false;
+    const wait = new Promise<void>((r) => {
+      accept = r;
+    });
+    f.telegram.sendFile.mockImplementationOnce(async () => {
+      uploading = true;
+      await wait;
+      if (outcome === 'failed') throw new Error('fixture rejected');
+      return { sentAs: 'document', size: 1, messageId: 'fixture-accepted' };
+    });
+    try {
+      await f.confirm(preview.confirmationToken);
+      await vi.waitFor(() => expect(uploading).toBe(true));
+      const queued = f.message(f.member);
+      const n = f.turns.length;
+      await vi.waitFor(() =>
+        expect(f.runtime.runtime.mailbox!.readInput(queued, f.member)).not.toBeNull()
+      );
+      expect(['pending', 'claimed']).toContain(
+        f.runtime.runtime.mailbox!.readInput(queued, f.member)!.status
+      );
+      expect(f.turns).toHaveLength(n);
+      accept();
+      const receipt = await f.finish();
+      if (outcome === 'failed') {
+        await f.settled(queued, f.member);
+        expect(receipt.text).toContain('0 messages');
+      } else {
+        expect(f.runtime.runtime.mailbox!.readInput(queued, f.member)).toBeNull();
+        expect(receipt.text).toContain('1 message');
+        expect(f.turns).toHaveLength(n);
+      }
+    } finally {
+      accept();
+    }
+  }
+);
+
+it.each(['export', 'erase'] as const)(
+  'still records a serve failure receipt in the %s job',
+  async (kind) => {
+    const f = await setup();
+    const prepare = f.runtime.database.adapter.prepare.bind(f.runtime.database.adapter);
+    let fail = false;
+    const inject = () => {
+      fail = true;
+      vi.spyOn(f.runtime.database.adapter, 'prepare').mockImplementation((sql) => {
+        if (fail && /SELECT kind, status FROM principals/.test(sql)) {
+          fail = false;
+          throw new Error('fixture serve failed');
+        }
+        return prepare(sql);
+      });
+    };
+    if (kind === 'export') {
+      f.telegram.sendFile.mockImplementationOnce(async () => {
+        inject();
+        return { sentAs: 'document', size: 1, messageId: 'fixture-accepted' };
+      });
+      const result = await runExport(f);
+      expect(result.text).toContain('serve');
+      expect(result.text).toContain('fixture serve failed');
+    } else {
+      const p = await f.preview();
+      const rm = fs.rmSync;
+      vi.spyOn(fs, 'rmSync').mockImplementation((path, opts) => {
+        rm(path, opts);
+        if (path === f.paths.runtimeRoot) inject();
+      });
+      syncBuiltinESMExports();
+      await f.confirm(p.confirmationToken);
+      await vi.waitFor(() => expect(f.receipts).toHaveLength(1));
+      expect(f.receipts[0].text).toContain('serve');
+      expect(f.receipts[0].text).toContain('fixture serve failed');
+    }
+    expect(
+      f.runtime.database.adapter
+        .prepare('SELECT content FROM connector_event_index WHERE memory_scope_id=? AND content=?')
+        .all(f.member, f.receipts[0].text)
+    ).toHaveLength(1);
+  }
+);
+
+it('drops a confirmation that settles during stop without starting a job or cancelling messages', async () => {
+  const f = await setup();
+  const p = await f.preview();
+  let release!: () => void;
+  f.holdMemberCompletion(
+    new Promise<void>((r) => {
+      release = r;
+    })
+  );
+  const request = await f.act('records.erase', { confirmationToken: p.confirmationToken });
+  expect(data(request.result).status).toBe('scheduled');
+  const queued = f.message(f.member);
+  let finishStop!: () => void;
+  let stopping = false;
+  vi.spyOn(f.runtime.surface.memberRecords, 'idle').mockImplementation(async () => {
+    stopping = true;
+    await new Promise<void>((r) => {
+      finishStop = r;
+    });
+  });
+  const stop = f.runtime.stop();
+  try {
+    await vi.waitFor(() => expect(stopping).toBe(true));
+    release();
+    f.holdMemberCompletion(undefined);
+    await f.settled(request.ref, f.member);
+    expect(f.telegram.sendFile).not.toHaveBeenCalled();
+    expect(f.runtime.runtime.mailbox!.readInput(queued, f.member)?.status).not.toBe('dead');
+    expect(
+      f.runtime.database.adapter.prepare('SELECT * FROM principal_erasure_receipts').all()
+    ).toEqual([]);
+  } finally {
+    release();
+    finishStop?.();
+    await stop;
+  }
+});
+
+it('keeps records and asks the member to check an uncertain upload before asking again', async () => {
+  const f = await setup();
+  const p = await f.preview();
+  f.telegram.sendFile.mockImplementationOnce(async (_path, _caption, operationId) => {
+    f.ledger.claim(`file:${operationId}`, {
+      deliveryTarget: `telegram:${f.memberDm}`,
+      payloadIdentity: 'a'.repeat(64),
+    });
+    f.ledger.markFailed(`file:${operationId}`);
+    throw new Error('fixture upload timed out');
+  });
+  await f.confirm(p.confirmationToken);
+  const receipt = await f.finish();
+  expect(receipt.status).toBe('failed');
+  expect(receipt.text).toContain('Check whether the file arrived');
+  expect(receipt.text).not.toContain('Make a new erasure request');
+  expect(fs.existsSync(join(f.paths.workspaceDir, 'files', 'personal.txt'))).toBe(true);
+});
+
+it.each(['dead', 'uncertain'] as const)(
+  'drops a scheduled export on %s and permits the next member turn',
+  async (outcome) => {
+    const f = await setup();
+    f.finishMemberTurn(outcome === 'dead' ? 'before_acceptance' : 'after_acceptance');
+    const request = await f.act('records.export');
+    expect(data(request.result).status).toBe('scheduled');
+    await vi.waitFor(() => expect(f.receipts).toHaveLength(1));
+    expect(f.receipts[0].text).toContain(
+      'Export did not run because the requesting turn did not complete'
+    );
+    expect(f.receipts[0].text).toContain(outcome);
+    expect(f.uploads).toEqual([]);
+    await f.settled(f.message(f.member), f.member);
+    expect(
+      f.runtime.database.adapter
+        .prepare('SELECT content FROM connector_event_index WHERE memory_scope_id=? AND content=?')
+        .all(f.member, f.receipts[0].text)
+    ).toHaveLength(1);
   }
 );

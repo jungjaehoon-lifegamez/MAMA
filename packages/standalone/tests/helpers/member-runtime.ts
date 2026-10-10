@@ -86,6 +86,7 @@ export async function fixture(
   const ledger = new OwnerMessageLedger(join(home, 'ledger.json'));
   let gate: Promise<void> | undefined;
   let memberGate: Promise<void> | undefined;
+  let completionGate: Promise<void> | undefined;
   let readIds: string[] = [];
   const reads: ActionResult[][] = [];
   let sequence = 0;
@@ -186,6 +187,7 @@ export async function fixture(
               await Promise.all(readIds.map((id) => call('memory.read:record', { memory_id: id })))
             );
           }
+          if (principal !== 'owner' && completionGate) await completionGate;
           if (failure) {
             if (failure === 'before_acceptance') {
               // Exhaust the durable retry budget for this prepared input, so the real core
@@ -263,6 +265,9 @@ export async function fixture(
     memberDm: memberIdentity,
     ledger,
     natives,
+    holdMemberCompletion: (promise: Promise<void> | undefined) => {
+      completionGate = promise;
+    },
     finishMemberTurn: (failure: 'before_acceptance' | 'after_acceptance') => {
       finishFailure = failure;
     },
