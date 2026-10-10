@@ -63,6 +63,75 @@ describe('Phase 2b Task 1 / AC #1-3: principal scope grants over migration 065',
     return { ownerPrincipalId: owner!.principalId, memberPrincipalId };
   }
 
+  it('enforces legal lifecycle transitions and resumes suspended members only', () => {
+    const repo = createPrincipalRepository(adapter);
+    const { memberPrincipalId: member } = createOwnerAndMember();
+    expect(() => repo.resume(member, 3)).toThrow(/active/);
+    repo.suspend(member, 4);
+    expect(() => repo.suspend(member, 5)).toThrow(/suspended/);
+    repo.resume(member, 6);
+    expect(repo.findById(member)?.status).toBe('active');
+    repo.offboard(member, 7);
+    expect(() => repo.suspend(member, 8)).toThrow(/offboarded/);
+    expect(() => repo.resume(member, 9)).toThrow(/offboarded/);
+    expect(() => repo.offboard(member, 10)).toThrow(/offboarded/);
+  });
+
+  it.each(['active', 'suspended'])(
+    'offboards an %s member with every grant in one transaction and keeps its identity',
+    (status) => {
+      const repo = createPrincipalRepository(adapter);
+      const { ownerPrincipalId, memberPrincipalId } = createOwnerAndMember();
+      for (const scope of [
+        { kind: 'memory', scopeKind: 'project', scopeId: 'fixture-partition' },
+        { kind: 'source', connector: 'fixture', channelId: 'fixture-source' },
+      ] as PrincipalScopeGrantRef[])
+        repo.grantScope({ targetPrincipalId: memberPrincipalId, ownerPrincipalId, scope, now: 3 });
+      if (status === 'suspended') repo.suspend(memberPrincipalId, 4);
+      // Trigger fails the status write: revocation must roll back with it.
+      adapter.exec(
+        `CREATE TRIGGER fail_offboard BEFORE UPDATE OF status ON principals WHEN NEW.status='offboarded' BEGIN SELECT RAISE(ABORT, 'fixture crash'); END`
+      );
+      try {
+        expect(() => repo.offboard(memberPrincipalId, 5)).toThrow('fixture crash');
+        expect(
+          adapter
+            .prepare('SELECT count(*) AS n FROM principal_scope_grants WHERE revoked_at IS NULL')
+            .get()
+        ).toEqual({ n: 2 });
+        expect(repo.findById(memberPrincipalId)?.status).toBe(status);
+      } finally {
+        adapter.exec('DROP TRIGGER fail_offboard');
+      }
+      repo.offboard(memberPrincipalId, 6);
+      expect(
+        adapter
+          .prepare('SELECT count(*) AS n FROM principal_scope_grants WHERE revoked_at IS NULL')
+          .get()
+      ).toEqual({ n: 0 });
+      expect(repo.resolveByExternal('telegram', 'private', 'member-external')).toEqual({
+        principalId: memberPrincipalId,
+        kind: 'member',
+        status: 'offboarded',
+      });
+    }
+  );
+
+  it('lists retained grants while suspended and restores them on resume', () => {
+    const repo = createPrincipalRepository(adapter);
+    const { ownerPrincipalId, memberPrincipalId } = createOwnerAndMember();
+    repo.grantScope({
+      targetPrincipalId: memberPrincipalId,
+      ownerPrincipalId,
+      scope: { kind: 'memory', scopeKind: 'project', scopeId: 'fixture-partition' },
+      now: 3,
+    });
+    repo.suspend(memberPrincipalId, 4);
+    expect(repo.listRetainedGrants(memberPrincipalId)).toHaveLength(1);
+    repo.resume(memberPrincipalId, 5);
+    expect(repo.listActiveGrants(memberPrincipalId)).toHaveLength(1);
+  });
+
   function beforeMatchingWrite(
     realAdapter: DatabaseAdapter,
     sqlFragment: string,

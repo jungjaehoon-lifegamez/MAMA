@@ -3,6 +3,11 @@ import {
   type MemberEnrollmentPorts,
   type MemberSelection,
 } from '../api/member-enrollment.js';
+import {
+  memberLifecycleRegistrations,
+  MEMBER_MANAGEMENT_ACTIONS,
+  type MemberLifecyclePorts,
+} from '../api/member-lifecycle.js';
 import { traceSummary } from '@jungjaehoon/mama-core/runtime/trace-summary';
 import { createNativeToolTraceObserver } from '@jungjaehoon/mama-core/runtime/native-tool-trace-observer';
 import type { OutboundAttemptEvent } from '../api/security-events.js';
@@ -74,6 +79,7 @@ const OWNER_ACTIONS = [
   'judge',
   'owner.timezone.set',
   'manage.member.enroll',
+  ...MEMBER_MANAGEMENT_ACTIONS,
   'owner.messages',
   'memory.checkpoint.list',
   'memory.checkpoint.save',
@@ -166,6 +172,7 @@ export interface ActionSurfaceOptions {
   configPath: string;
   isOwnerMessageTurn: (sourceMessageRef: string) => boolean;
   memberEnrollment?: MemberEnrollmentPorts;
+  memberLifecycle?: MemberLifecyclePorts;
 }
 
 export interface ActionSurface {
@@ -300,6 +307,13 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
   };
   const registrations = [
     ...core,
+    ...memberLifecycleRegistrations({
+      adapter: options.adapter,
+      ownerPrincipalId: options.ownerPrincipalId,
+      ownerAccess: () => ownerAccess,
+      isOwnerMessageTurn: options.isOwnerMessageTurn,
+      ports: options.memberLifecycle,
+    }),
     ...memberShareActionRegistrations({
       adapter: options.adapter,
       ownerPrincipalId: options.ownerPrincipalId,

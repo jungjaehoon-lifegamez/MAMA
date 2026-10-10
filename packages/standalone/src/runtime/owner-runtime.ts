@@ -4,7 +4,7 @@ import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import { createPrincipalSessions } from './principal-sessions.js';
 import { createMemberSession } from './member-session.js';
 import { ownerDataReadPaths, ownerNativeDataReadPaths } from './backend-security.js';
-import { validateMemberRoot } from './member-paths.js';
+import { validateMemberRoot, setAsideMemberPaths } from './member-paths.js';
 import { resolvePrincipalAccess } from './principal-access.js';
 import {
   beginModelRun,
@@ -354,6 +354,29 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       isOwnerMessageTurn: (sourceMessageRef) =>
         ownerMailbox?.readInput(sourceMessageRef, options.ownerPrincipalId)?.kind ===
         'owner_message',
+      memberLifecycle: {
+        resetSession: async (id) => {
+          const member = members.get(id);
+          if (!member) throw new Error(`Member session is not served: ${id}`);
+          await member.native.resetSession(member.native.sessionKey);
+        },
+        cancelQueued: (id, reason) => ownerMailbox!.cancelQueued(id, reason),
+        retire: (id) => retireMember(id),
+        resume: async (id) => {
+          if (memberRoot === undefined) throw new Error('Member lifecycle requires member_root');
+          // A suspended member may retain a session after an earlier stop/move failure.
+          await retireMember(id);
+          const repo = createPrincipalRepository(database.adapter);
+          repo.resume(id, Date.now());
+          try {
+            serveMember(id);
+          } catch (error) {
+            // A failed preparation never leaves an active registry entry with a partial runtime.
+            repo.suspend(id, Date.now());
+            throw error;
+          }
+        },
+      },
       ...(options.memberEnrollment === undefined
         ? {}
         : {
@@ -637,8 +660,27 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
     ownerMailbox = intakeRuntime.mailbox;
     recordOrders.recover();
     const intake = createStimulusIntake(intakeRuntime, options.ownerPrincipalId, chat);
-    for (const [id, member] of members)
-      memberIntakes.set(id, createStimulusIntake(intakeRuntime, id, member.chat));
+    const createMemberIntake = (id: string, member: ReturnType<typeof createMemberSession>) =>
+      createStimulusIntake(intakeRuntime, id, {
+        saveOwnerMessage: (input) => {
+          executionAccess(id);
+          if (!intakeRuntime.servesPrincipal(id))
+            throw new Error(`Member session is not served: ${id}`);
+          return member.chat.saveOwnerMessage(input);
+        },
+        saveReply: (input) => member.chat.saveReply(input),
+      });
+    for (const [id, member] of members) memberIntakes.set(id, createMemberIntake(id, member));
+    const retireMember = async (id: string) => {
+      if (memberRoot === undefined) throw new Error('Member lifecycle requires member_root');
+      intakeRuntime.unservePrincipal(id);
+      const member = members.get(id);
+      if (member) await member.native.stop();
+      sessions.remove(id);
+      members.delete(id);
+      memberIntakes.delete(id);
+      setAsideMemberPaths(memberRoot, id);
+    };
     let stopped = false;
     const serveMember = (principalId: string): StimulusIntake => {
       if (stopped) throw new Error('Cannot serve a member after runtime stop');
@@ -658,7 +700,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         void member.native.stop();
         throw error;
       }
-      const memberIntake = createStimulusIntake(intakeRuntime, principalId, member.chat);
+      const memberIntake = createMemberIntake(principalId, member);
       memberIntakes.set(principalId, memberIntake);
       return memberIntake;
     };

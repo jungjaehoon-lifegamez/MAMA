@@ -4,6 +4,21 @@ import type { JudgmentAccess } from '@jungjaehoon/mama-core/knowledge';
 import type { MemoryScopeRef } from '@jungjaehoon/mama-core/memory/types';
 import { MEMBER_ACTIONS } from './action-surface.js';
 
+/** A member grant must not expose the owner's default records or make boot/turn access fail. */
+export function validateMemberMemoryGrant(
+  scope: { scopeKind: string; scopeId: string },
+  ownerAccess: JudgmentAccess
+): void {
+  if (
+    (ownerAccess.defaultScopes ?? ownerAccess.scopes).some(
+      (defaultScope) => defaultScope.kind === scope.scopeKind && defaultScope.id === scope.scopeId
+    )
+  )
+    throw new Error(
+      `member memory grant overlaps owner default scope: ${scope.scopeKind}:${scope.scopeId}`
+    );
+}
+
 export interface PrincipalAccessOptions {
   adapter: DatabaseInstance;
   ownerAccess: JudgmentAccess;
@@ -38,19 +53,13 @@ export function resolvePrincipalAccess(
     throw new Error(`member ${principalId} requires exactly one Telegram private identity`);
   const dmId = identities[0]!.external_id;
   // Unscoped owner work binds its defaults; partition write authority does not make a default.
-  const ownerDefaults = new Set(
-    (ownerAccess.defaultScopes ?? ownerAccess.scopes).map((scope) => `${scope.kind}\0${scope.id}`)
-  );
   const readScopes: MemoryScopeRef[] = [];
   const connectors = new Set(['chat']);
   // chat-sources stores gateway channelKey under the transport prefix.
   const channels: Record<string, string[]> = { chat: [`telegram:${dmId}`] };
   for (const { scope } of createPrincipalRepository(adapter).listActiveGrants(principalId)) {
     if (scope.kind === 'memory') {
-      if (ownerDefaults.has(`${scope.scopeKind}\0${scope.scopeId}`))
-        throw new Error(
-          `member memory grant overlaps owner default scope: ${scope.scopeKind}:${scope.scopeId}`
-        );
+      validateMemberMemoryGrant(scope, ownerAccess);
       readScopes.push({ kind: scope.scopeKind, id: scope.scopeId });
     } else {
       connectors.add(scope.connector);

@@ -580,8 +580,12 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
           const observer = request?.streamCallbacks;
           const invoke = options.nativeSession.runTurn.bind(options.nativeSession);
           nativeRun = Promise.resolve()
-            .then(() =>
-              invoke(content, {
+            .then(() => {
+              // A host can cancel a claimed input while it waits for a serial turn slot.
+              const current = mailbox!.readInput(row.stimulusId, row.principalId);
+              if (current?.status === 'dead')
+                throw new StimulusQuarantine('Queued input cancelled by host');
+              return invoke(content, {
                 ...request,
                 nativeInputId: inputId,
                 streamCallbacks: {
@@ -595,8 +599,8 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
                     observer?.onAccepted?.(receipt);
                   },
                 },
-              })
-            )
+              });
+            })
             .then((nativeResult) => {
               if (!mailbox!.nativeInputs.get(row.id)?.receipt) {
                 mailbox!.nativeInputs.uncertain(row.id, 'Native result has no accepted receipt');

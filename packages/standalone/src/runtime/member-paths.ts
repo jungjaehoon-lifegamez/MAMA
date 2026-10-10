@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { sessionCredentialPath } from './session-credential.js';
 import {
@@ -77,6 +77,21 @@ export function memberPaths(root: string, principalId: string) {
 }
 
 export type MemberPaths = ReturnType<typeof memberPaths>;
+
+/** Archives remain under member_root, covered by the owner deny and every other member deny. */
+export function setAsideMemberPaths(root: string, principalId: string): void {
+  const runtime = memberPaths(root, principalId).runtimeRoot;
+  const temp = memberClaudeTmpDir(principalId);
+  const paths = [runtime, temp].filter((path) => existsSync(path));
+  for (const path of paths) {
+    if (physical(path) !== physical(dirname(path)) + sep + path.split(sep).at(-1))
+      throw new Error('Member directory to set aside must not be a symlink');
+  }
+  if (!paths.length) return;
+  const archive = join(root, `.retired-${principalId}-${randomUUID()}`);
+  mkdirSync(archive, { mode: 0o700 });
+  for (const path of paths) renameSync(path, join(archive, path === runtime ? 'runtime' : 'temp'));
+}
 
 export function ensureMemberPaths(root: string, principalId: string): MemberPaths {
   const paths = memberPaths(root, principalId);

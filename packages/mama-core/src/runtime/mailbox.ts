@@ -724,6 +724,18 @@ export class Mailbox {
       .run(reason.slice(0, 500), id);
   }
 
+  /** Cancel only inputs that have not reached the native transport, including leased waiters. */
+  cancelQueued(principalId: string, reason: string): number {
+    return this.db
+      .prepare(
+        `UPDATE mailbox_inputs SET status = 'dead', last_error = ?, claimed_at = NULL
+       WHERE principal_id = ? AND status IN ('pending', 'claimed')
+         AND NOT EXISTS (SELECT 1 FROM native_input_deliveries AS native
+           WHERE native.input_id = mailbox_inputs.id AND native.state <> 'prepared')`
+      )
+      .run(reason.slice(0, 500), principalId).changes;
+  }
+
   replayStale(olderThanMs: number, now = this.now()): number {
     return this.replayStaleDetailed(olderThanMs, now).replayed;
   }
