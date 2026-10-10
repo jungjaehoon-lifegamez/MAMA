@@ -126,7 +126,7 @@ export function createMemberRecords(options: {
   const tokens = new Map<string, Token>();
   const scheduled = new Map<number, Scheduled>();
   const blocked = new Set<string>();
-  const jobs = new Set<Promise<void>>();
+  const jobs = new Set<Promise<unknown>>();
   const ports = () => {
     if (!options.ports) throw new Error('Member records require member_root and delivery ports');
     return options.ports;
@@ -167,21 +167,30 @@ export function createMemberRecords(options: {
     }
     p.recordExchange(job.principalId, job.kind, `host:${job.commandId}`, text, verified);
   };
-  let activeJobs = 0;
-  const enqueue = (work: () => Promise<void>) => {
-    const pending = ports().turnChain.next(async () => {
-      activeJobs++;
-      try {
-        await work();
-      } finally {
-        activeJobs--;
-        if (!ports().isStopping()) ports().resumeQueued();
-      }
-    });
-    jobs.add(pending);
-    void pending
+  // Members whose erasure is scheduled or running. Only these pause claims for everyone: the
+  // member must stay unserved with its queue untouched until the export is delivered. An export
+  // deletes nothing, so it holds the chain only while its archive is built.
+  const erasing = new Set<string>();
+  const track = (work: Promise<unknown>) => {
+    jobs.add(work);
+    void work
       .catch((error) => console.error('[Member records] scheduled work failed', error))
-      .finally(() => jobs.delete(pending));
+      .finally(() => jobs.delete(work));
+  };
+  const enqueue = (work: (leaveChain: () => void) => Promise<void>) => {
+    track(
+      ports().turnChain.next(async () => {
+        let leaveChain!: () => void;
+        const left = new Promise<void>((resolve) => (leaveChain = resolve));
+        const run = work(leaveChain);
+        track(run);
+        try {
+          await Promise.race([left, run]);
+        } finally {
+          if (!ports().isStopping()) ports().resumeQueued();
+        }
+      })
+    );
   };
   const take = (row: MailboxRow) => {
     const job = scheduled.get(row.id);
@@ -193,6 +202,7 @@ export function createMemberRecords(options: {
     const job = take(row);
     if (!job) return;
     blocked.delete(job.principalId);
+    erasing.delete(job.principalId);
     if (!ports().isStopping()) {
       const label = job.kind === 'erase' ? 'Erasure' : 'Export';
       enqueue(() =>
@@ -204,9 +214,18 @@ export function createMemberRecords(options: {
     }
     job.release();
   };
-  const runJob = async (job: Scheduled) => {
+  const runJob = async (job: Scheduled, leaveChain: () => void) => {
     const p = ports(),
       id = job.principalId;
+    let left = false;
+    // An export's archive is a consistent snapshot once built: the member may run turns again
+    // and the upload continues outside the shared chain.
+    const leave = () => {
+      if (left || job.kind !== 'export') return;
+      left = true;
+      blocked.delete(id);
+      leaveChain();
+    };
     const product: Record<string, number> = { cancelledMessages: 0 };
     let core: PrincipalErasureReceipt | undefined;
     let archive: Awaited<ReturnType<typeof buildMemberExport>> | undefined;
@@ -223,6 +242,7 @@ export function createMemberRecords(options: {
         exportPrincipalRecords(options.adapter, id),
         productExport(id)
       );
+      leave();
       failedStep = 'export_delivery';
       try {
         const telegram = p.telegram();
@@ -320,7 +340,11 @@ export function createMemberRecords(options: {
       }
       await sendReceipt(job, text);
     } finally {
-      blocked.delete(id);
+      if (job.kind === 'export') leave();
+      else {
+        blocked.delete(id);
+        erasing.delete(id);
+      }
     }
   };
   const schedule = (kind: Scheduled['kind'], row: MailboxRow) => {
@@ -333,6 +357,7 @@ export function createMemberRecords(options: {
       release: ports().turnChain.hold(),
     });
     blocked.add(row.principalId);
+    if (kind === 'erase') erasing.add(row.principalId);
     return { status: 'scheduled', commandId };
   };
   const registrations: ActionRegistration[] = [
@@ -410,13 +435,15 @@ export function createMemberRecords(options: {
   }));
   return {
     registrations,
-    isBusy: () => activeJobs > 0 || blocked.size > 0,
+    isBusy: () => erasing.size > 0,
     isBlocked: (id: string) => blocked.has(id),
     onSettled: (row: MailboxRow) => {
       const job = take(row);
       if (!job) return;
-      if (ports().isStopping()) blocked.delete(job.principalId);
-      else enqueue(() => runJob(job));
+      if (ports().isStopping()) {
+        blocked.delete(job.principalId);
+        erasing.delete(job.principalId);
+      } else enqueue((leaveChain) => runJob(job, leaveChain));
       job.release();
     },
     onDead: (row: MailboxRow, reason: string) => cancelConfirmation(row, 'dead', reason),

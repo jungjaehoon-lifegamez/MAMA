@@ -1171,6 +1171,39 @@ it.each(['dead', 'uncertain'] as const)(
   }
 );
 
+it('lets owner turns run while an export uploads; only an erasure pauses claims', async () => {
+  const f = await setup();
+  const send = f.telegram.sendFile.getMockImplementation()!;
+  let finishUpload!: () => void;
+  const uploading = new Promise<void>((resolve) => (finishUpload = resolve));
+  let uploadStarted!: () => void;
+  const started = new Promise<void>((resolve) => (uploadStarted = resolve));
+  f.telegram.sendFile.mockImplementationOnce(async (...args) => {
+    uploadStarted();
+    await uploading;
+    return send(...args);
+  });
+  const request = await f.act('records.export');
+  expect(data(request.result).status).toBe('scheduled');
+  await started;
+  expect(f.runtime.surface.memberRecords.isBusy()).toBe(false);
+  expect(f.runtime.surface.memberRecords.isBlocked(f.member)).toBe(false);
+  await f.settled(f.message('owner', 'owner turn during the upload'));
+  finishUpload();
+  await f.runtime.surface.memberRecords.idle();
+  expect(f.receipts.at(-1)!.text).toMatch(/^Export sent/);
+  let busyDuringEraseUpload: boolean | undefined;
+  f.telegram.sendFile.mockImplementationOnce(async (...args) => {
+    busyDuringEraseUpload = f.runtime.surface.memberRecords.isBusy();
+    return send(...args);
+  });
+  const p = await f.preview();
+  await f.confirm(p.confirmationToken);
+  await vi.waitFor(() => expect(f.receipts).toHaveLength(2));
+  expect(busyDuringEraseUpload).toBe(true);
+  expect(f.runtime.surface.memberRecords.isBusy()).toBe(false);
+});
+
 async function runExport(f: Awaited<ReturnType<typeof setup>>) {
   const request = await f.act('records.export');
   if (request.result.status === 'completed' && data(request.result).status === 'scheduled') {
