@@ -57,7 +57,7 @@ export function memberLifecycleRegistrations(options: {
             revoke:
               'Revoke a project-partition memory grant. Reset the member native session; keep workspace files, other grants and personal start context.',
             suspend:
-              'Suspend an active member, end and unserve its session, and move runtime and temp directories aside under member_root. Keep grants and identity.',
+              'Suspend an active member, end and unserve its session, and set its runtime directory aside under member_root and its temp directory aside under the member temp root. Keep grants and identity.',
             resume:
               'Resume a suspended member with retained grants. Move any remaining runtime and temp directories aside and serve a fresh environment.',
             offboard:

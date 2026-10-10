@@ -679,7 +679,12 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       if (memberRoot === undefined) throw new Error('Member lifecycle requires member_root');
       intakeRuntime.unservePrincipal(id);
       const member = members.get(id);
-      if (member) await member.native.stop();
+      if (member) {
+        // Stopping keeps the shared session-pool entry; reset first so a resume cannot reopen the
+        // archived native context.
+        await member.native.resetSession(member.native.sessionKey);
+        await member.native.stop();
+      }
       sessions.remove(id);
       members.delete(id);
       memberIntakes.delete(id);

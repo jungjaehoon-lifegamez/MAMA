@@ -242,6 +242,7 @@ async function fixture(
     message,
     settled,
     manage,
+    pool,
     blockOwner: (promise: Promise<void> | undefined) => {
       gate = promise;
     },
@@ -350,7 +351,11 @@ it('suspends and resumes with preserved grants in fresh directories, then offboa
   fs.mkdirSync(temp, { recursive: true });
   fs.writeFileSync(join(paths.workspaceDir, 'old.txt'), 'old workspace');
   fs.writeFileSync(join(temp, 'old.txt'), 'old temp');
+  const poolKey = `member:${f.member}:runtime`;
+  expect(f.pool.peekSession(poolKey).sessionId).toBeDefined();
   const receipt = data(await f.manage('suspend'));
+  // Real backends resume whatever session id the shared pool still holds for this key.
+  expect(f.pool.peekSession(poolKey).sessionId).toBeUndefined();
   expect(receipt).toMatchObject({
     principalId: f.member,
     change: 'suspend',
