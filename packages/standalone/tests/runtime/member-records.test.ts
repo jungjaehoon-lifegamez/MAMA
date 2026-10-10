@@ -14,6 +14,7 @@ import {
 } from '@jungjaehoon/mama-core';
 import { fixture, roots } from '../helpers/member-runtime.js';
 import { memberPaths, memberClaudeTmpDir } from '../../src/runtime/member-paths.js';
+import { memberFileInventory } from '../../src/api/member-export.js';
 import { resolvePrincipalAccess } from '../../src/runtime/principal-access.js';
 import { OWNER_FILE_MAX_UPLOAD_BYTES, validateWorkspaceFile } from '../../src/api/file-delivery.js';
 import Database from '../../src/storage-sqlite.js';
@@ -27,6 +28,8 @@ interface FixtureData {
   counts: Record<string, unknown>;
   fileCount: number;
   fileBytes: number;
+  eraseFileCount: number;
+  eraseFileBytes: number;
   commandId: string;
 }
 const data = (r: ActionResult): FixtureData => {
@@ -663,6 +666,12 @@ it.each(['created', 'rewritten', 'omitted_rewritten'] as const)(
       let raw!: ReturnType<RawStore['exportScope']>;
       const ledger = f.ledger.listForTelegramDm(f.memberDm);
       const session = f.pool.getSessionInfo(`member:${f.member}:runtime`)!.sessionId;
+      let complete!: () => void;
+      f.holdMemberCompletion(
+        new Promise<void>((r) => {
+          complete = r;
+        })
+      );
       f.telegram.sendFile.mockImplementationOnce(async (...args) => {
         const sent = await send(...args);
         core = exportPrincipalRecords(db, f.member);
@@ -686,9 +695,12 @@ it.each(['created', 'rewritten', 'omitted_rewritten'] as const)(
       });
       try {
         await f.confirm(preview.confirmationToken);
-        await vi.waitFor(() => expect(uploading).toBe(true));
         const queued = f.message(f.member);
         const turns = f.turns.length;
+        complete();
+        f.holdMemberCompletion(undefined);
+        await vi.waitFor(() => expect(uploading).toBe(true));
+        expect(f.runtime.runtime.mailbox!.readInput(queued, f.member)!.status).toBe('pending');
         accept();
         const receipt = await f.finish();
         expect(receipt).toMatchObject({ status: 'failed', failedStep: 'file_check' });
@@ -698,7 +710,17 @@ it.each(['created', 'rewritten', 'omitted_rewritten'] as const)(
         expect(receipt.text).toContain('0 messages');
         const remaining = exportPrincipalRecords(db, f.member);
         for (const [store, rows] of Object.entries(core.stores))
-          for (const row of rows) expect(remaining.stores[store], store).toContainEqual(row);
+          for (const row of rows)
+            expect(remaining.stores[store], store).toContainEqual(
+              store === 'mailbox_inputs' && row.status === 'pending'
+                ? expect.objectContaining({
+                    id: row.id,
+                    principal_id: row.principal_id,
+                    stimulus_id: row.stimulus_id,
+                    payload_json: row.payload_json,
+                  })
+                : row
+            );
         const indexAfter = db
           .prepare(
             "SELECT * FROM connector_event_index WHERE source_connector='chat' AND memory_scope_id=?"
@@ -711,7 +733,9 @@ it.each(['created', 'rewritten', 'omitted_rewritten'] as const)(
         expect(f.ledger.listForTelegramDm(f.memberDm)).toEqual(ledger);
         expect(db.prepare('SELECT * FROM principal_erasure_receipts').all()).toEqual([]);
         expect(f.runtime.runtime.servesPrincipal(f.member)).toBe(true);
-        expect(f.pool.getSessionInfo(`member:${f.member}:runtime`)!.sessionId).toBe(session);
+        expect([...f.pool.listSessions().values()].some((s) => s.sessionId === session)).toBe(
+          false
+        );
         expect(fs.existsSync(f.archive)).toBe(true);
         expect(fs.existsSync(f.temp)).toBe(true);
         expect(fs.existsSync(f.tempArchive)).toBe(true);
@@ -729,6 +753,8 @@ it.each(['created', 'rewritten', 'omitted_rewritten'] as const)(
             .get(`host:${receipt.commandId}:reply`)
         ).toEqual({ content: receipt.text });
       } finally {
+        complete();
+        f.holdMemberCompletion(undefined);
         accept();
       }
     } finally {
@@ -736,6 +762,126 @@ it.each(['created', 'rewritten', 'omitted_rewritten'] as const)(
     }
   }
 );
+
+it('retires before snapshot and export, includes retirement writes, and refuses unserved intake', async () => {
+  const f = await setup();
+  const intake = f.runtime.serveMember(f.member);
+  const native = f.natives.get(f.member)!;
+  const reset = native.resetSession.bind(native);
+  const stop = native.stop.bind(native);
+  const order: string[] = [];
+  vi.spyOn(native, 'resetSession').mockImplementation(async (...args) => {
+    order.push('reset');
+    await reset(...args);
+  });
+  vi.spyOn(native, 'stop').mockImplementationOnce(async () => {
+    order.push('stop');
+    await stop();
+    f.put(join(f.paths.workspaceDir, 'files', 'retirement.txt'), 'fixture retirement write');
+  });
+  const send = f.telegram.sendFile.getMockImplementation()!;
+  const refused = 'fixture-message-during-delivery';
+  f.telegram.sendFile.mockImplementationOnce(async (...args) => {
+    order.push('export');
+    expect(order).toEqual(['reset', 'stop', 'export']);
+    expect(f.runtime.runtime.servesPrincipal(f.member)).toBe(false);
+    expect(() => f.runtime.serveMember(f.member)).toThrow('Member session is not served');
+    expect(() =>
+      intake.acceptOwnerMessage({
+        id: refused,
+        channelKey: 'fixture',
+        occurredAt: Date.now(),
+        text: 'fixture refused message',
+      })
+    ).toThrow('Member session is not served');
+    expect(f.runtime.runtime.mailbox!.readInput(refused, f.member)).toBeNull();
+    const db = f.runtime.database.adapter;
+    expect(
+      db.prepare('SELECT * FROM connector_event_index WHERE source_id=?').get(refused)
+    ).toBeUndefined();
+    expect(
+      db.prepare('SELECT * FROM observation_versions WHERE source_id=?').get(refused)
+    ).toBeUndefined();
+    const raw = new Database(join(f.home, 'raw', 'chat', 'raw.db'));
+    try {
+      expect(raw.prepare('SELECT * FROM raw_items WHERE source_id=?').get(refused)).toBeUndefined();
+      expect(
+        raw.prepare('SELECT * FROM pending_core_projections WHERE raw_source_id=?').get(refused)
+      ).toBeUndefined();
+    } finally {
+      raw.close();
+    }
+    const sent = await send(...args);
+    const zip = unzipSync(f.uploads.at(-1)!.bytes);
+    expect(strFromU8(zip[`files/${f.member}/workspace/files/retirement.txt`])).toBe(
+      'fixture retirement write'
+    );
+    return sent;
+  });
+  const preview = await f.preview();
+  await f.confirm(preview.confirmationToken);
+  expect((await f.finish()).status).toBe('erased');
+  expect(order).toEqual(['reset', 'stop', 'export']);
+});
+
+it('checks the delivered inventory and deletes member trees without yielding between them', async () => {
+  const f = await setup();
+  const lstat = fs.lstatSync;
+  const rm = fs.rmSync;
+  let delivered = false;
+  let removed = false;
+  let observed: boolean | undefined;
+  const send = f.telegram.sendFile.getMockImplementation()!;
+  f.telegram.sendFile.mockImplementationOnce(async (...args) => {
+    const sent = await send(...args);
+    delivered = true;
+    return sent;
+  });
+  vi.spyOn(fs, 'lstatSync').mockImplementation(((...args) => {
+    const stat = lstat(...args);
+    if (delivered && observed === undefined) {
+      observed = false;
+      queueMicrotask(() => {
+        observed = removed;
+      });
+    }
+    return stat;
+  }) as typeof fs.lstatSync);
+  vi.spyOn(fs, 'rmSync').mockImplementation((path, options) => {
+    rm(path, options);
+    if (path === f.paths.runtimeRoot) removed = true;
+  });
+  syncBuiltinESMExports();
+  const preview = await f.preview();
+  await f.confirm(preview.confirmationToken);
+  expect((await f.finish()).status).toBe('erased');
+  expect(observed).toBe(true);
+});
+
+it('previews separate export and deletion totals including managed and temporary files without private names', async () => {
+  const f = await setup();
+  f.put(join(f.paths.workspaceDir, '.tmp', 'preview-temp.txt'), 'fixture temporary bytes');
+  f.put(join(f.paths.claudeConfigDir, '.claude.json'), 'fixture account details');
+  fs.linkSync(
+    join(f.paths.workspaceDir, 'files', 'personal.txt'),
+    join(f.home, 'workspace', 'outside-link.txt')
+  );
+  const preview = await f.preview();
+  const inventory = memberFileInventory(f.root, f.member);
+  expect(preview).toMatchObject({
+    fileCount: inventory.files.length,
+    fileBytes: inventory.files.reduce((n, file) => n + file.size, 0),
+    eraseFileCount: inventory.allFiles.length,
+    eraseFileBytes: inventory.allFiles.reduce((n, file) => n + file.size, 0),
+  });
+  expect(preview.eraseFileCount).toBeGreaterThan(preview.fileCount);
+  expect(preview.eraseFileBytes).toBeGreaterThan(preview.fileBytes);
+  expect(inventory.allFiles.some((file) => file.path.endsWith('preview-temp.txt'))).toBe(true);
+  expect(inventory.allFiles.some((file) => file.path.endsWith('.claude.json'))).toBe(true);
+  expect(JSON.stringify(preview)).not.toMatch(
+    /auth\.json|session-credential|\.claude\.json|preview-temp/
+  );
+});
 
 it.each(['export', 'erase'] as const)(
   'labels the %s host receipt with its job kind',
@@ -1223,6 +1369,8 @@ it('exports only transcripts/history/journal from managed directories, including
 
 it('schedules export until settlement and runs it ahead of waiting member turns on the chain', async () => {
   const f = await setup();
+  const reset = vi.spyOn(f.natives.get(f.member)!, 'resetSession');
+  const stop = vi.spyOn(f.natives.get(f.member)!, 'stop');
   let complete!: () => void;
   f.holdMemberCompletion(
     new Promise<void>((r) => {
@@ -1232,6 +1380,9 @@ it('schedules export until settlement and runs it ahead of waiting member turns 
   const request = await f.act('records.export');
   expect(data(request.result).status).toBe('scheduled');
   expect(f.uploads).toEqual([]);
+  // Initial session setup may reset the native handle. Only the post-turn job is checked.
+  reset.mockClear();
+  stop.mockClear();
   const before = f.turns.length;
   const queued = f.message(f.member);
   await Promise.resolve();
@@ -1251,6 +1402,8 @@ it('schedules export until settlement and runs it ahead of waiting member turns 
   await f.settled(queued, f.member);
   await f.runtime.surface.memberRecords.idle();
   const receipt = f.receipts.at(-1)!.text;
+  expect(reset).not.toHaveBeenCalled();
+  expect(stop).not.toHaveBeenCalled();
   expect(receipt).toContain('Export sent');
   expect(receipt).toMatch(/Files: \d+ files, \d+ bytes/);
   expect(
@@ -1265,6 +1418,12 @@ it.each(['failed', 'success'] as const)(
   async (outcome) => {
     const f = await setup();
     const preview = await f.preview();
+    let complete!: () => void;
+    f.holdMemberCompletion(
+      new Promise<void>((r) => {
+        complete = r;
+      })
+    );
     let accept!: () => void;
     let uploading = false;
     const wait = new Promise<void>((r) => {
@@ -1278,19 +1437,38 @@ it.each(['failed', 'success'] as const)(
     });
     try {
       await f.confirm(preview.confirmationToken);
-      await vi.waitFor(() => expect(uploading).toBe(true));
       const queued = f.message(f.member);
       const n = f.turns.length;
+      complete();
+      f.holdMemberCompletion(undefined);
+      await vi.waitFor(() => expect(uploading).toBe(true));
       await vi.waitFor(() =>
         expect(f.runtime.runtime.mailbox!.readInput(queued, f.member)).not.toBeNull()
       );
-      expect(['pending', 'claimed']).toContain(
-        f.runtime.runtime.mailbox!.readInput(queued, f.member)!.status
-      );
+      expect(f.runtime.runtime.mailbox!.readInput(queued, f.member)!.status).toBe('pending');
       expect(f.turns).toHaveLength(n);
+      const eraseLedger = f.ledger.eraseTelegramDm.bind(f.ledger);
+      let ledgerErased = false;
+      vi.spyOn(f.ledger, 'eraseTelegramDm').mockImplementation((dm) => {
+        expect(fs.existsSync(join(f.paths.workspaceDir, 'files', 'personal.txt'))).toBe(false);
+        expect(f.runtime.runtime.mailbox!.readInput(queued, f.member)).toBeNull();
+        expect(
+          f.runtime.database.adapter.prepare('SELECT * FROM principal_erasure_receipts').all()
+        ).toHaveLength(1);
+        const erased = eraseLedger(dm);
+        ledgerErased = true;
+        return erased;
+      });
+      const cancel = f.runtime.runtime.mailbox!.cancelQueued.bind(f.runtime.runtime.mailbox!);
+      vi.spyOn(f.runtime.runtime.mailbox!, 'cancelQueued').mockImplementation((...args) => {
+        expect(fs.existsSync(join(f.paths.workspaceDir, 'files', 'personal.txt'))).toBe(false);
+        expect(ledgerErased).toBe(false);
+        return cancel(...args);
+      });
       accept();
       const receipt = await f.finish();
       if (outcome === 'failed') {
+        expect(ledgerErased).toBe(false);
         await f.settled(queued, f.member);
         expect(receipt.text).toContain('0 messages');
       } else {
@@ -1299,6 +1477,8 @@ it.each(['failed', 'success'] as const)(
         expect(f.turns).toHaveLength(n);
       }
     } finally {
+      complete();
+      f.holdMemberCompletion(undefined);
       accept();
     }
   }

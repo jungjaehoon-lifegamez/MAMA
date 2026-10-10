@@ -20,7 +20,6 @@ import {
   buildMemberExport,
   memberFileInventory,
   memberInventorySnapshot,
-  memberTrees,
 } from './member-export.js';
 
 export interface MemberRecordsTelegram extends TelegramFileSender {
@@ -221,11 +220,13 @@ export function createMemberRecords(options: {
     const product: Record<string, number> = { cancelledMessages: 0 };
     let core: PrincipalErasureReceipt | undefined;
     let archive: Awaited<ReturnType<typeof buildMemberExport>> | undefined;
-    let failedStep = 'export',
+    let failedStep = job.kind === 'erase' ? 'retire' : 'export',
       failure: unknown,
       uncertain = false;
     let delivered = false;
     try {
+      if (job.kind === 'erase') await p.retire(id);
+      failedStep = 'export';
       archive = await buildMemberExport(
         p.root,
         id,
@@ -248,25 +249,42 @@ export function createMemberRecords(options: {
         rmSync(archive.path, { force: true });
       }
       if (job.kind === 'erase') {
-        // The transient ZIP is gone. Check before retirement removes credentials or any
-        // queued input/store/file is deleted, while the shared slot still holds model turns.
+        // Retirement removed the writers and intake before the snapshot. Check and delete
+        // synchronously after delivery, with no await between them that could admit a write.
         failedStep = 'file_check';
-        if (memberInventorySnapshot(memberFileInventory(p.root, id)) !== archive.fileSnapshot)
+        const inventory = memberFileInventory(p.root, id);
+        if (memberInventorySnapshot(inventory) !== archive.fileSnapshot)
           throw new Error('Your files changed while the export was being sent');
-        failedStep = 'retire';
-        await p.retire(id);
-        // Delivery and complete unserving/retirement precede cancellation. The shared slot
-        // prevents any member turn or steering while these queued rows are cancelled.
-        p.mailbox().cancelQueued(id, 'member_erase');
+        failedStep = 'files';
+        product.files = 0;
+        product.fileBytes = 0;
+        product.fileTrees = 0;
+        for (const tree of inventory.trees) {
+          const remaining = inventory.allFiles.filter(
+            (file) =>
+              relative(tree, file.path) !== '..' && !relative(tree, file.path).startsWith('../')
+          );
+          rmSync(tree, { recursive: true, force: true });
+          product.files += remaining.length;
+          product.fileBytes += remaining.reduce((n, file) => n + file.size, 0);
+          product.fileTrees++;
+        }
+        failedStep = 'queued_inputs';
+        // Delivered in the export and never dispatched: cancelled here, they are terminal, so
+        // the core erase below removes them with their refs.
         product.cancelledMessages = Number(
           (
             options.adapter
               .prepare(
-                "SELECT count(*) AS n FROM mailbox_inputs WHERE principal_id=? AND id>? AND kind='owner_message' AND status='dead' AND last_error='member_erase'"
+                `SELECT count(*) AS n FROM mailbox_inputs WHERE principal_id=? AND id>?
+             AND kind='owner_message' AND status IN ('pending', 'claimed')
+             AND NOT EXISTS (SELECT 1 FROM native_input_deliveries n
+               WHERE n.input_id=mailbox_inputs.id AND n.state<>'prepared')`
               )
               .get(id, job.inputId) as { n: number }
           ).n
         );
+        p.mailbox().cancelQueued(id, 'member_erase');
         failedStep = 'connector_event_index';
         product.connector_event_index = options.adapter
           .prepare(
@@ -284,20 +302,6 @@ export function createMemberRecords(options: {
         const ledger = p.ledger();
         if (!ledger) throw new Error('Live message ledger is not configured');
         product.message_ledger = ledger.eraseTelegramDm(dm(p.access(id)));
-        failedStep = 'files';
-        product.files = 0;
-        product.fileBytes = 0;
-        product.fileTrees = 0;
-        for (const tree of memberTrees(p.root, id)) {
-          const remaining = memberFileInventory(p.root, id).allFiles.filter(
-            (file) =>
-              relative(tree, file.path) !== '..' && !relative(tree, file.path).startsWith('../')
-          );
-          rmSync(tree, { recursive: true, force: true });
-          product.files += remaining.length;
-          product.fileBytes += remaining.reduce((n, file) => n + file.size, 0);
-          product.fileTrees++;
-        }
       }
     } catch (error) {
       failure = error;
@@ -362,7 +366,7 @@ export function createMemberRecords(options: {
       summary:
         name === 'records.export'
           ? "Schedule export of the caller's personal records and files as one zip to their registered Telegram DM (50 MiB). The host exports after this member message completes and records a receipt. Excludes account settings and names files whose links leave the member's trees."
-          : "Preview erasure of the caller's personal records and files. Pass the confirmationToken from this preview in a later member message to confirm. The host exports after that turn completes and erases only after Telegram accepts the export. Enrollment, grants and shared revisions are kept.",
+          : "Preview erasure of the caller's personal records and files, with separate file totals for export and deletion. Pass the confirmationToken from this preview in a later member message to confirm. The host exports after that turn completes and erases only after Telegram accepts the export. Enrollment, grants and shared revisions are kept.",
       inputSchema: {
         type: 'object',
         additionalProperties: false,
@@ -419,6 +423,8 @@ export function createMemberRecords(options: {
         counts: { core: core.counts, product: product.counts },
         fileCount: files.length,
         fileBytes: files.reduce((n, file) => n + file.size, 0),
+        eraseFileCount: inventory.allFiles.length,
+        eraseFileBytes: inventory.allFiles.reduce((n, file) => n + file.size, 0),
         confirmationToken: token.value,
         omittedFiles: inventory.omittedFiles,
       };

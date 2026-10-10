@@ -801,7 +801,13 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       wikiRoot,
       intake,
       acceptSourceDelta: intake.acceptSourceDelta,
-      serveMember,
+      serveMember: (id) => {
+        // Erasure owns restoration once it unserves the member. Intake callers must not
+        // recreate a writer while the host takes and delivers that member's snapshot.
+        if (surface.memberRecords.isBlocked(id) && !intakeRuntime.servesPrincipal(id))
+          throw new Error(`Member session is not served: ${id}`);
+        return serveMember(id);
+      },
       completeMemberEnrollment: (selection) =>
         sessions.turnChain(async () => {
           if (stopped) throw new Error('Cannot enroll a member after runtime stop');
