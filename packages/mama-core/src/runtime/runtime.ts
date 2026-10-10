@@ -582,8 +582,7 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
           nativeRun = Promise.resolve()
             .then(() => {
               // A host can cancel a claimed input while it waits for a serial turn slot.
-              const current = mailbox!.readInput(row.stimulusId, row.principalId);
-              if (current?.status === 'dead')
+              if (mailbox!.inputStatus(row.id) === 'dead')
                 throw new StimulusQuarantine('Queued input cancelled by host');
               return invoke(content, {
                 ...request,

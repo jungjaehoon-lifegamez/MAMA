@@ -724,6 +724,13 @@ export class Mailbox {
       .run(reason.slice(0, 500), id);
   }
 
+  /** One row's current status; a stimulus id can name several rows. */
+  inputStatus(id: number): MailboxRow['status'] | null {
+    return (
+      (this.stmtRetryStatus.get(id) as { status: MailboxRow['status'] } | undefined)?.status ?? null
+    );
+  }
+
   /** Cancel only inputs that have not reached the native transport, including leased waiters. */
   cancelQueued(principalId: string, reason: string): number {
     return this.db

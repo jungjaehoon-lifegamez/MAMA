@@ -1,7 +1,7 @@
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import {
   createPrincipalRepository,
@@ -361,9 +361,20 @@ it('suspends and resumes with preserved grants in fresh directories, then offboa
   expect(
     archives.some((name) => fs.existsSync(join(f.root, name, 'runtime', 'workspace', 'old.txt')))
   ).toBe(true);
-  expect(archives.some((name) => fs.existsSync(join(f.root, name, 'temp', 'old.txt')))).toBe(true);
+  // The temp archive stays beside the temp dir, so the move never crosses filesystems.
+  const tempArchives = fs
+    .readdirSync(dirname(temp))
+    .filter((name) => name.startsWith(`.retired-${basename(temp)}-`))
+    .map((name) => join(dirname(temp), name));
+  for (const archive of tempArchives) roots.push(archive);
+  expect(tempArchives.some((path) => fs.existsSync(join(path, 'old.txt')))).toBe(true);
   const deniedPaths = otherMemberReadPaths(f.root, f.member, [f.member]);
-  expect(deniedPaths).toEqual(expect.arrayContaining(archives.map((name) => join(f.root, name))));
+  expect(deniedPaths).toEqual(
+    expect.arrayContaining([
+      ...archives.map((name) => join(f.root, name)),
+      ...tempArchives.map((path) => fs.realpathSync(path)),
+    ])
+  );
   const count = f.runtime.database.adapter
     .prepare('SELECT count(*) AS n FROM connector_event_index')
     .get();

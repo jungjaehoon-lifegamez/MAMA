@@ -240,6 +240,16 @@ describe('the mechanism', () => {
     expect(mailbox.claimNext()).toBeNull();
   });
 
+  it('reads a cancelled row by its id when a newer row shares its stimulus id', () => {
+    const mailbox = new Mailbox(freshDb('cancel-row'));
+    mailbox.enqueue(stimulus({ id: 'same', refs: [{ refId: 'e1', observationRef: null }] }));
+    const claimed = mailbox.claimNext()!;
+    expect(mailbox.cancelQueued('principal-owner', 'host cancel')).toBe(1);
+    mailbox.enqueue(stimulus({ id: 'same', refs: [{ refId: 'e2', observationRef: null }] }));
+    expect(mailbox.readInput('same', 'principal-owner')?.status).toBe('pending');
+    expect(mailbox.inputStatus(claimed.id)).toBe('dead');
+  });
+
   it('a fully redelivered stimulus is a duplicate, not a second row', () => {
     const mailbox = new Mailbox(freshDb('duplicate'));
     expect(mailbox.enqueue(stimulus({ id: 'only' }))).not.toBeNull();

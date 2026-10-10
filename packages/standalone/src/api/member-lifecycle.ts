@@ -156,6 +156,8 @@ export function memberLifecycleRegistrations(options: {
         if (change === 'resume') {
           if (principal.status !== 'suspended')
             throw new Error(`Cannot resume a ${principal.status} member`);
+          // Cancel before serving: once served, a queued input is a fresh one the member just sent.
+          const cancelledInputs = ports.cancelQueued(principalId, 'member_resume');
           // The port moves residual directories before activating, so an interrupted retry is safe.
           await ports.resume(principalId);
           return {
@@ -164,7 +166,7 @@ export function memberLifecycleRegistrations(options: {
             status: 'active',
             sessionReset: true,
             freshEnvironment: true,
-            cancelledInputs: ports.cancelQueued(principalId, 'member_resume'),
+            cancelledInputs,
           };
         }
         const cancelledInputs = options.adapter.transaction(() => {
