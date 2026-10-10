@@ -1,4 +1,8 @@
-import type { NativeSessionHandle, StimulusDelivery } from '@jungjaehoon/mama-core/runtime/runtime';
+import {
+  StimulusQuarantine,
+  type NativeSessionHandle,
+  type StimulusDelivery,
+} from '@jungjaehoon/mama-core/runtime/runtime';
 import type { NativeSessionRequest, NativeSession } from './native-session.js';
 import type { ReplayClockDelivery } from './stimulus-delivery.js';
 
@@ -9,25 +13,50 @@ interface SessionEntry {
 
 /** One serial chain for complete owner/member turns; session state stays in each delivery. */
 export function createSerialTurnChain() {
-  let tail = Promise.resolve();
-  return async <T>(execute: () => Promise<T>): Promise<T> => {
-    const previous = tail;
-    let release!: () => void;
-    tail = new Promise<void>((resolve) => {
-      release = resolve;
+  const queue: Array<() => Promise<void>> = [];
+  let running = false;
+  let holds = 0;
+  const pump = () => {
+    if (running || holds || !queue.length) return;
+    running = true;
+    const work = queue.shift()!;
+    void work().finally(() => {
+      running = false;
+      pump();
     });
-    await previous;
-    try {
-      return await execute();
-    } finally {
-      release();
-    }
   };
+  const add = <T>(execute: () => Promise<T>, next: boolean): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      const work = async () => {
+        try {
+          resolve(await execute());
+        } catch (error) {
+          reject(error);
+        }
+      };
+      if (next) queue.unshift(work);
+      else queue.push(work);
+      pump();
+    });
+  return Object.assign(<T>(execute: () => Promise<T>) => add(execute, false), {
+    next: <T>(execute: () => Promise<T>) => add(execute, true),
+    hold: () => {
+      holds++;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        holds--;
+        pump();
+      };
+    },
+  });
 }
 
 export function createPrincipalSessions(
   ownerPrincipalId: string,
-  unserved: Pick<StimulusDelivery, 'onUncertain' | 'onDead'> = {}
+  unserved: Pick<StimulusDelivery, 'onUncertain' | 'onDead'> = {},
+  canRun: (principalId: string) => boolean = () => true
 ) {
   const entries = new Map<string, SessionEntry>();
   const turnChain = createSerialTurnChain();
@@ -45,6 +74,8 @@ export function createPrincipalSessions(
     runTurn: (content, request) => {
       // This value is set by delivery from the claimed mailbox row, never by model input.
       const principalId = (request as NativeSessionRequest & { principalId: string }).principalId;
+      if (!canRun(principalId))
+        throw new StimulusQuarantine('Queued input cancelled by host: member_erase');
       const session = get(principalId).native;
       if (!session.runTurn) throw new Error(`Principal ${principalId} has no native turn port`);
       return session.runTurn(content, request);

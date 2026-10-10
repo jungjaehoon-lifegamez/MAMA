@@ -1,7 +1,10 @@
 import { createStimulusDelivery } from '../../src/runtime/stimulus-delivery.js';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
 import { expect, it } from 'vitest';
-import { createPrincipalSessions } from '../../src/runtime/principal-sessions.js';
+import {
+  createSerialTurnChain,
+  createPrincipalSessions,
+} from '../../src/runtime/principal-sessions.js';
 
 it('serializes the whole delivery across principals and routes the claimed principal to its native session', async () => {
   const events: string[] = [];
@@ -82,4 +85,31 @@ it('reports a parked row of a principal it no longer serves', async () => {
   await sessions.delivery.onUncertain!({ principalId: 'fixture-gone' } as never, 'interrupted');
   await sessions.delivery.onDead!({ principalId: 'fixture-gone' } as never, 'not served');
   expect(reported).toEqual(['uncertain fixture-gone interrupted', 'dead fixture-gone not served']);
+});
+
+it('holds queued turns until settlement and lets the host job take the next slot', async () => {
+  const chain = createSerialTurnChain();
+  const events: string[] = [];
+  let finish!: () => void;
+  const gate = new Promise<void>((r) => {
+    finish = r;
+  });
+  const active = chain(async () => {
+    events.push('turn');
+    await gate;
+  });
+  await Promise.resolve();
+  const release = chain.hold();
+  const queued = chain(async () => {
+    events.push('queued');
+  });
+  finish();
+  await active;
+  expect(events).toEqual(['turn']);
+  const job = chain.next(async () => {
+    events.push('host');
+  });
+  release();
+  await Promise.all([queued, job]);
+  expect(events).toEqual(['turn', 'host', 'queued']);
 });

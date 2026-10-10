@@ -18,6 +18,25 @@ describe('TelegramMessageLedger', () => {
     }
   });
 
+  it('erases one member DM and keeps the entries named to keep and every other DM', () => {
+    const root = mkdtempSync(join(tmpdir(), 'ledger-erase-dm-'));
+    try {
+      const path = join(root, 'ledger.json');
+      const ledger = new TelegramMessageLedger(path);
+      const member = { deliveryTarget: 'telegram:12', payloadIdentity: 'a'.repeat(64) };
+      ledger.claim('outbound:member', member);
+      ledger.claim('file:erase:export', member);
+      ledger.claim('outbound:other', { ...member, deliveryTarget: 'telegram:123' });
+      expect(ledger.eraseTelegramDm('12', ['file:erase:export'])).toBe(1);
+      const reopened = new TelegramMessageLedger(path);
+      expect(reopened.get('outbound:member')).toBeNull();
+      expect(reopened.get('file:erase:export')).not.toBeNull();
+      expect(reopened.get('outbound:other')).not.toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('keeps the delivered receipt when a regenerated payload has the same delivery key', () => {
     const root = mkdtempSync(join(tmpdir(), 'ledger-regenerated-'));
     try {

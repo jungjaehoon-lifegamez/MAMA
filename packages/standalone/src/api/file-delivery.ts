@@ -15,7 +15,7 @@ import type { JudgmentAccess } from '@jungjaehoon/mama-core';
 
 // macOS <sys/fcntl.h>: reject symlinks in every path component, the last included. Combined with
 // O_NOFOLLOW, open fails with EINVAL.
-const O_NOFOLLOW_ANY = 0x20000000;
+export const O_NOFOLLOW_ANY = 0x20000000;
 
 export const OWNER_FILE_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 export const TELEGRAM_MAX_UPLOAD_BYTES = OWNER_FILE_MAX_UPLOAD_BYTES;

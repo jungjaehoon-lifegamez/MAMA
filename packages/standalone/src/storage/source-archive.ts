@@ -855,6 +855,47 @@ export class RawStore {
     return rows.map((row) => this.mapRawRowToNormalizedItem(row));
   }
 
+  /** Product privacy operations select scope, including host replies and pending snapshots. */
+  exportScope(
+    connector: string,
+    kind: string,
+    id: string
+  ): Record<string, Record<string, unknown>[]> {
+    const db = this.getDb(connector);
+    return {
+      raw_items: db
+        .prepare(
+          'SELECT * FROM raw_items WHERE memory_scope_kind=? AND memory_scope_id=? ORDER BY id'
+        )
+        .all(kind, id) as Record<string, unknown>[],
+      pending_core_projections: db
+        .prepare(
+          `SELECT p.* FROM pending_core_projections p
+        WHERE p.raw_source_id IN (SELECT source_id FROM raw_items WHERE memory_scope_kind=? AND memory_scope_id=?)
+          OR (json_extract(p.payload_json,'$.memoryScopeKind')=? AND json_extract(p.payload_json,'$.memoryScopeId')=?)
+        ORDER BY p.sequence`
+        )
+        .all(kind, id, kind, id) as Record<string, unknown>[],
+    };
+  }
+
+  eraseScope(connector: string, kind: string, id: string): Record<string, number> {
+    const db = this.getDb(connector);
+    return db.transaction(() => {
+      const pending_core_projections = db
+        .prepare(
+          `DELETE FROM pending_core_projections
+        WHERE raw_source_id IN (SELECT source_id FROM raw_items WHERE memory_scope_kind=? AND memory_scope_id=?)
+          OR (json_extract(payload_json,'$.memoryScopeKind')=? AND json_extract(payload_json,'$.memoryScopeId')=?)`
+        )
+        .run(kind, id, kind, id).changes;
+      const raw_items = db
+        .prepare('DELETE FROM raw_items WHERE memory_scope_kind=? AND memory_scope_id=?')
+        .run(kind, id).changes;
+      return { raw_items, pending_core_projections };
+    })();
+  }
+
   close(): void {
     for (const db of this.dbs.values()) {
       db.close();
