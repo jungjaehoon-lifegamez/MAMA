@@ -2,6 +2,8 @@ import type { MemberEnrollmentPorts, MemberSelection } from '../api/member-enrol
 import type { ActionResult } from '@jungjaehoon/mama-core';
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import { createPrincipalSessions } from './principal-sessions.js';
+import type { MemberRecordsTelegram } from '../api/member-records.js';
+import type { OwnerMessageLedger } from '../gateways/telegram-message-ledger.js';
 import { createMemberSession } from './member-session.js';
 import { ownerDataReadPaths, ownerNativeDataReadPaths } from './backend-security.js';
 import { validateMemberRoot, setAsideMemberPaths } from './member-paths.js';
@@ -66,6 +68,8 @@ import {
 } from './stimulus-delivery.js';
 
 export interface OwnerRuntimeOptions {
+  messageLedger?: () => OwnerMessageLedger | undefined;
+  memberRecordsTelegram?: () => MemberRecordsTelegram | undefined;
   /** Native shell commands that open a network connection, reported as they start (W35). */
   outboundAttempts?: (event: OutboundAttemptEvent | MemberConnectionEvent) => void;
   backend: RuntimeBackend;
@@ -270,10 +274,15 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
   let nativeSession: OwnerRuntimeOptions['nativeSession'] = options.nativeSession;
   let delivery: ReplayClockDelivery | undefined;
   let ownerMailbox: Mailbox | undefined;
-  const sessions = createPrincipalSessions(options.ownerPrincipalId, {
-    onUncertain: options.onStimulusUncertain,
-    onDead: options.onStimulusDead,
-  });
+  let actionSurface: ActionSurface | undefined;
+  const sessions = createPrincipalSessions(
+    options.ownerPrincipalId,
+    {
+      onUncertain: options.onStimulusUncertain,
+      onDead: options.onStimulusDead,
+    },
+    (id) => !actionSurface?.memberRecords.isBlocked(id)
+  );
   const members = new Map<string, ReturnType<typeof createMemberSession>>();
   const memberIntakes = new Map<string, StimulusIntake>();
   const reportStore = createPersistentReportStore({
@@ -353,13 +362,47 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       storedSourceReader,
       timeZone: options.timeZone,
       configPath: join(options.runtimeRoot, 'config.yaml'),
-      isOwnerMessageTurn: (sourceMessageRef) =>
-        ownerMailbox?.readInput(sourceMessageRef, options.ownerPrincipalId)?.kind ===
-        'owner_message',
+      isOwnerMessageTurn: (sourceMessageRef, principalId = options.ownerPrincipalId) =>
+        ownerMailbox?.readInput(sourceMessageRef, principalId)?.kind === 'owner_message',
       // Without member_root no member can be served or set aside, so no change may be committed.
       ...(memberRoot === undefined
         ? {}
         : {
+            memberRecords: {
+              root: memberRoot,
+              rawStore: sourceStore,
+              mailbox: () => ownerMailbox!,
+              ledger: () => options.messageLedger?.(),
+              telegram: () => options.memberRecordsTelegram?.(),
+              access: (id) => executionAccess(id),
+              turnChain: sessions.turnChain,
+              retire: (id) => retireMember(id, false),
+              serve: (id) => {
+                serveMember(id);
+              },
+              recordExchange: (id, ref, text, deliveryVerified) => {
+                const memberChat = new ChatSources(
+                  sourceStore,
+                  database.adapter,
+                  id,
+                  `member-agent:${id}`
+                );
+                const at = Date.now();
+                memberChat.saveOwnerMessage({
+                  id: ref,
+                  channelKey: 'records',
+                  occurredAt: at,
+                  text: 'Personal records erasure host receipt',
+                });
+                memberChat.saveReply({
+                  messageRef: ref,
+                  text,
+                  occurredAt: at,
+                  deliveryVerified,
+                  author: 'host',
+                });
+              },
+            },
             memberLifecycle: {
               resetSession: async (id) => {
                 const member = members.get(id);
@@ -430,6 +473,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           })()),
     });
     // The surface keeps this shared object live: access.scopes resolves active partitions on use.
+    actionSurface = surface;
     const access: JudgmentAccess = surface.ownerAccess;
     const standingText = ownerSystemPrompt(
       options.backend,
@@ -659,6 +703,15 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       nativeSession: sessions.native,
       delivery: {
         ...sessions.delivery,
+        onSettled: surface.memberRecords.onSettled,
+        onDead: (row, reason) => {
+          surface.memberRecords.onDead(row, reason);
+          return sessions.delivery.onDead?.(row, reason);
+        },
+        onUncertain: (row, reason) => {
+          surface.memberRecords.onUncertain(row, reason);
+          return sessions.delivery.onUncertain?.(row, reason);
+        },
         ...(options.deliveryReady === undefined ? {} : { ready: options.deliveryReady }),
       },
       reclaimStaleSocket: true,
@@ -677,7 +730,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         saveReply: (input) => member.chat.saveReply(input),
       });
     for (const [id, member] of members) memberIntakes.set(id, createMemberIntake(id, member));
-    const retireMember = async (id: string) => {
+    const retireMember = async (id: string, setAside = true) => {
       if (memberRoot === undefined) throw new Error('Member lifecycle requires member_root');
       intakeRuntime.unservePrincipal(id);
       const member = members.get(id);
@@ -690,14 +743,23 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       sessions.remove(id);
       members.delete(id);
       memberIntakes.delete(id);
-      setAsideMemberPaths(memberRoot, id);
+      if (setAside) setAsideMemberPaths(memberRoot, id);
     };
     let stopped = false;
     const serveMember = (principalId: string): StimulusIntake => {
       if (stopped) throw new Error('Cannot serve a member after runtime stop');
       executionAccess(principalId);
       const existing = memberIntakes.get(principalId);
-      if (existing) return existing;
+      if (existing) {
+        // A failed reset/stop leaves the existing native handle available, but its socket was
+        // already unserved. Restore the actual registration, not just the cached intake.
+        if (!intakeRuntime.servesPrincipal(principalId))
+          intakeRuntime.servePrincipal({
+            access: executionAccess(principalId),
+            credentialPath: members.get(principalId)!.paths.credentialPath,
+          });
+        return existing;
+      }
       const member = prepareMember(principalId);
       try {
         intakeRuntime.servePrincipal({
@@ -737,6 +799,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       },
       stop: async () => {
         if (stopped) return;
+        await surface.memberRecords.idle();
         stopped = true;
         recordOrders.stop();
         await intakeRuntime.stop();

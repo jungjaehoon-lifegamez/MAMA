@@ -407,6 +407,24 @@ describe('P5 principal file delivery through the product dispatcher and Telegram
     expect(seams.api.sendDocument).toHaveBeenCalledOnce();
   });
 
+  it('sends a host receipt through registry-resolved own member DM and returns Telegram acceptance', async () => {
+    expect(await gateway.sendMemberText(access(), 'fixture receipt', 'fixture-receipt')).toBe(true);
+    expect(seams.api.sendMessage).toHaveBeenCalledWith(Number(MEMBER_DM), 'fixture receipt');
+    const ledger = new TelegramMessageLedger(join(root, 'ledger.json'));
+    expect(ledger.listForTelegramDm(MEMBER_DM)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ state: 'delivered', deliveryTarget: `telegram:${MEMBER_DM}` }),
+      ])
+    );
+    await expect(
+      gateway.sendMemberText({ ...access(), destinations: [] }, 'fixture receipt', 'missing')
+    ).rejects.toThrow(/destination/);
+    seams.api.sendMessage.mockRejectedValueOnce(new Error('fixture Telegram refusal'));
+    await expect(
+      gateway.sendMemberText(access(), 'fixture refusal', 'fixture-refusal')
+    ).rejects.toThrow(/refusal/);
+  });
+
   it('keeps member text sends and inbound admission outside the file exception', async () => {
     await memberControl();
     await expect(gateway.sendMessage(MEMBER_DM, 'fixture', 'member-text')).rejects.toThrow(

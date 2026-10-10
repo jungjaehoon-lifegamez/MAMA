@@ -35,6 +35,8 @@ const ROLE = [
   'judge',
   'memory.save',
   'memory.share',
+  'records.export',
+  'records.erase',
   'memory.retire',
   'memory.checkpoint.list',
   'memory.checkpoint.save',

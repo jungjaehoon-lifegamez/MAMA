@@ -8,6 +8,7 @@ import {
   MEMBER_MANAGEMENT_ACTIONS,
   type MemberLifecyclePorts,
 } from '../api/member-lifecycle.js';
+import { createMemberRecords, type MemberRecordsPorts } from '../api/member-records.js';
 import { traceSummary } from '@jungjaehoon/mama-core/runtime/trace-summary';
 import { createNativeToolTraceObserver } from '@jungjaehoon/mama-core/runtime/native-tool-trace-observer';
 import type { OutboundAttemptEvent } from '../api/security-events.js';
@@ -132,6 +133,8 @@ export const MEMBER_ACTIONS = [
   'judge',
   'memory.save',
   'memory.share',
+  'records.export',
+  'records.erase',
   'memory.retire',
   'memory.checkpoint.list',
   'memory.checkpoint.save',
@@ -170,12 +173,14 @@ export interface ActionSurfaceOptions {
   helpTopics?: Readonly<Record<string, string>>;
   timeZone: TimeZoneSetting;
   configPath: string;
-  isOwnerMessageTurn: (sourceMessageRef: string) => boolean;
+  isOwnerMessageTurn: (sourceMessageRef: string, principalId?: string) => boolean;
+  memberRecords?: MemberRecordsPorts;
   memberEnrollment?: MemberEnrollmentPorts;
   memberLifecycle?: MemberLifecyclePorts;
 }
 
 export interface ActionSurface {
+  memberRecords: ReturnType<typeof createMemberRecords>;
   completeMemberEnrollment(selection: MemberSelection): ReturnType<ActionDispatcher>;
   createNativeEffectObserver(
     modelRunId: string,
@@ -209,6 +214,11 @@ export function ownerMemoryScopes(
 }
 
 export function createActionSurface(options: ActionSurfaceOptions): ActionSurface {
+  const memberRecords = createMemberRecords({
+    adapter: options.adapter,
+    isMessageTurn: options.isOwnerMessageTurn,
+    ports: options.memberRecords,
+  });
   const enrollment = createMemberEnrollment({
     adapter: options.adapter,
     ownerPrincipalId: options.ownerPrincipalId,
@@ -315,6 +325,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       timeZone: options.timeZone,
       ports: options.memberLifecycle,
     }),
+    ...memberRecords.registrations,
     ...memberShareActionRegistrations({
       adapter: options.adapter,
       ownerPrincipalId: options.ownerPrincipalId,
@@ -473,6 +484,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
   };
 
   return {
+    memberRecords,
     createNativeEffectObserver: (modelRunId, access = ownerAccess) => {
       const traces = createNativeToolTraceObserver(options.adapter, modelRunId);
       return options.outboundAttempts === undefined

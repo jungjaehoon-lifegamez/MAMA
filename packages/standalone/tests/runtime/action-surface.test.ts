@@ -124,7 +124,17 @@ describe('W1 action surface', () => {
         .list()
         .map((contract) => contract.name)
         .sort()
-    ).toEqual([...expected, 'memory.share'].sort());
+    ).toEqual([...expected, 'memory.share', 'records.export', 'records.erase'].sort());
+    const personal = surface.catalog
+      .list()
+      .filter((contract) => contract.name.startsWith('records.'));
+    for (const contract of personal) {
+      expect(contract.summary).toContain('personal records and files');
+      expect(contract.summary).not.toContain('core/product rows');
+    }
+    const erase = personal.find((contract) => contract.name === 'records.erase')!;
+    expect(erase.summary).toContain('confirmationToken');
+    expect(erase.summary).toContain('later member message');
     expect(surface.ownerAccess.actions.slice().sort()).toEqual(expected);
     // Codex calls actions from its own exec; code_act is for Claude.
     expect(

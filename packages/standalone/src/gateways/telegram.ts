@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomInt } from 'node:crypto';
-import type { ActionResult } from '@jungjaehoon/mama-core';
+import type { ActionResult, JudgmentAccess } from '@jungjaehoon/mama-core';
 import type { MemberSelection } from '../api/member-enrollment.js';
 import { closeSync } from 'node:fs';
 import { basename } from 'node:path';
@@ -294,6 +294,22 @@ export class TelegramGateway extends BaseGateway {
     const ownerChatId = this.config.ownerChatId?.trim();
     if (!ownerChatId) throw new Error('telegram.owner_chat_id is required for delta delivery');
     await this.sendMessage(ownerChatId, text, idempotencyKey);
+  }
+
+  /** Host receipt only. The dispatcher never exposes arbitrary member text/destination input. */
+  async sendMemberText(
+    access: JudgmentAccess,
+    text: string,
+    operationId: string
+  ): Promise<boolean> {
+    const destinations = access.destinations?.filter((target) => target.kind === 'telegram');
+    if (destinations?.length !== 1 || !destinations[0]!.id.trim())
+      throw new Error('Member text delivery requires exactly one Telegram destination');
+    if (!this.bot || !this.connected) throw new Error('Telegram gateway not connected');
+    if (!operationId.trim()) throw new Error('Member text operation id is required');
+    const chatId = destinations[0]!.id;
+    await this.runInChatQueue(chatId, () => this.sendMessageNow(chatId, text, operationId));
+    return this.messageLedger.get(outboundLedgerKey(operationId))?.state === 'delivered';
   }
 
   async sendFile(

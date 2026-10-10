@@ -73,6 +73,7 @@ export interface DaemonLogger {
 }
 
 export interface DaemonGateway {
+  sendMemberText?: import('../../api/member-records.js').MemberRecordsTelegram['sendMemberText'];
   /** This owner message has a delivered answer, an interruption notice included. */
   answered(sourceRef: string): boolean;
   requestMemberEnrollment?(sourceRef: string): Promise<void>;
@@ -339,6 +340,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   let owner: OwnerRuntime | undefined;
   let viewer: ViewerServer | null = null;
   let connectors: ConnectorRuntime | undefined;
+  let messageLedger: OwnerMessageLedger | undefined;
   let gateway: DaemonGateway | null = null;
   const gateways = new Map<MessengerName, DaemonGateway>();
   let reportScheduler: ReportScheduler | undefined;
@@ -519,6 +521,14 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
               stagingDir: join(paths.runtimeRoot, 'outgoing'),
             },
           }),
+      messageLedger: () => messageLedger,
+      memberRecordsTelegram: () =>
+        gateway?.sendMemberText && gateway.sendFile
+          ? {
+              sendFile: gateway.sendFile.bind(gateway),
+              sendMemberText: gateway.sendMemberText.bind(gateway),
+            }
+          : undefined,
       attachmentPorts: {
         downloadsDir: paths.downloadsDir,
         connectors: () => connectors?.registry ?? null,
@@ -694,7 +704,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
     currentStage = 'messengers';
     const intake = loggedOwnerIntake(owner.intake, logger);
     const ledgerPath = paths.ownerMessageLedgerPath;
-    const messageLedger = new OwnerMessageLedger(ledgerPath, { log: (line) => logger.info(line) });
+    messageLedger = new OwnerMessageLedger(ledgerPath, { log: (line) => logger.info(line) });
     const filesRoot = join(paths.workspaceDir, 'files');
     if (config.telegram.enabled) {
       const token = process.env.MAMA_TELEGRAM_TOKEN;

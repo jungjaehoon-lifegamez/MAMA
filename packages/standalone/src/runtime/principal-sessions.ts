@@ -1,4 +1,8 @@
-import type { NativeSessionHandle, StimulusDelivery } from '@jungjaehoon/mama-core/runtime/runtime';
+import {
+  StimulusQuarantine,
+  type NativeSessionHandle,
+  type StimulusDelivery,
+} from '@jungjaehoon/mama-core/runtime/runtime';
 import type { NativeSessionRequest, NativeSession } from './native-session.js';
 import type { ReplayClockDelivery } from './stimulus-delivery.js';
 
@@ -27,7 +31,8 @@ export function createSerialTurnChain() {
 
 export function createPrincipalSessions(
   ownerPrincipalId: string,
-  unserved: Pick<StimulusDelivery, 'onUncertain' | 'onDead'> = {}
+  unserved: Pick<StimulusDelivery, 'onUncertain' | 'onDead'> = {},
+  canRun: (principalId: string) => boolean = () => true
 ) {
   const entries = new Map<string, SessionEntry>();
   const turnChain = createSerialTurnChain();
@@ -45,6 +50,8 @@ export function createPrincipalSessions(
     runTurn: (content, request) => {
       // This value is set by delivery from the claimed mailbox row, never by model input.
       const principalId = (request as NativeSessionRequest & { principalId: string }).principalId;
+      if (!canRun(principalId))
+        throw new StimulusQuarantine('Queued input cancelled by host: member_erase');
       const session = get(principalId).native;
       if (!session.runTurn) throw new Error(`Principal ${principalId} has no native turn port`);
       return session.runTurn(content, request);

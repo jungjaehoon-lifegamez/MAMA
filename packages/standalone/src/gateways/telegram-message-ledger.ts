@@ -97,6 +97,28 @@ export class OwnerMessageLedger {
     return this.get(key) !== null;
   }
 
+  /** Exact DM boundaries cover explicit deliveries and legacy inbound reply keys. */
+  listForTelegramDm(dm: string): OwnerMessageLedgerEntry[] {
+    return [...this.entries.values()]
+      .filter(
+        (entry) =>
+          entry.deliveryTarget === `telegram:${dm}` || entry.key.startsWith(`telegram:${dm}:`)
+      )
+      .map((entry) => ({ ...entry }));
+  }
+
+  eraseTelegramDm(dm: string): number {
+    const selected = this.listForTelegramDm(dm);
+    for (const entry of selected) this.entries.delete(entry.key);
+    try {
+      this.save();
+    } catch (error) {
+      for (const entry of selected) this.entries.set(entry.key, entry);
+      throw error;
+    }
+    return selected.length;
+  }
+
   listUndelivered(): OwnerMessageLedgerEntry[] {
     this.prune();
     return [...this.entries.values()]

@@ -49,12 +49,13 @@
     "access": "public"
   },
   "dependencies": {
-    "@slack/web-api": "^7.13.0",
-    "@slack/socket-mode": "^2.0.5",
-    "discord.js": "^14.25.1",
     "@jungjaehoon/mama-core": "workspace:*",
+    "@slack/socket-mode": "^2.0.5",
+    "@slack/web-api": "^7.13.0",
     "better-sqlite3": "^12.8.0",
+    "discord.js": "^14.25.1",
     "express": "^5.2.1",
+    "fflate": "0.8.3",
     "grammy": "^1.42.0",
     "htmlparser2": "12.0.0",
     "js-yaml": "^4.1.1"
