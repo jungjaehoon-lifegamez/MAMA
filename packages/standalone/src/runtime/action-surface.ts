@@ -312,6 +312,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       ownerPrincipalId: options.ownerPrincipalId,
       ownerAccess: () => ownerAccess,
       isOwnerMessageTurn: options.isOwnerMessageTurn,
+      timeZone: options.timeZone,
       ports: options.memberLifecycle,
     }),
     ...memberShareActionRegistrations({

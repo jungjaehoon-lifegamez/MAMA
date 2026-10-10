@@ -63,6 +63,7 @@ async function fixture(outcome: string) {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'enrollment-receipt-home-')));
   const memberRoot = realpathSync(mkdtempSync(join(tmpdir(), 'enrollment-receipt-members-')));
   roots.push(home, memberRoot);
+  vi.stubEnv('TZ', 'America/New_York');
   vi.stubEnv('HOME', home);
   vi.stubEnv('MAMA_DB_PATH', join(home, 'state.db'));
   transport.send.mockReset().mockResolvedValue({ message_id: 1 });
@@ -88,7 +89,7 @@ async function fixture(outcome: string) {
     ownerPrincipalId: 'owner',
     agentId: 'owner-agent',
     scopes: [],
-    timeZone: createTimeZoneSetting('UTC'),
+    timeZone: createTimeZoneSetting('Europe/Berlin'),
     maxTurns: 5,
     timeout: 1000,
     lessons: async () => [],
@@ -327,7 +328,14 @@ describe('enrollment receipts in the owner conversation', () => {
       });
       expect(members).toMatchObject({
         status: 'completed',
-        data: { recentEnrollments: [{ at: new Date(2000).toISOString(), receipt: sentText }] },
+        data: {
+          recentEnrollments: [
+            {
+              at: `${new Date(2000).toLocaleString('ko-KR', { timeZone: 'Europe/Berlin' })} (Europe/Berlin)`,
+              receipt: sentText,
+            },
+          ],
+        },
       });
       expect(JSON.stringify(members)).not.toContain(String(selectedId));
       const stored = db

@@ -6,6 +6,7 @@ import {
 } from '@jungjaehoon/mama-core';
 import type { DatabaseInstance } from '@jungjaehoon/mama-core/db-manager';
 import { validateMemberMemoryGrant, resolvePrincipalAccess } from '../runtime/principal-access.js';
+import type { TimeZoneSetting } from '../runtime/timezone.js';
 
 export const MEMBER_MANAGEMENT_ACTIONS = [
   'manage.member.grant',
@@ -29,6 +30,7 @@ export function memberLifecycleRegistrations(options: {
   ownerPrincipalId: string;
   ownerAccess(): JudgmentAccess;
   isOwnerMessageTurn(sourceMessageRef: string): boolean;
+  timeZone: TimeZoneSetting;
   ports?: MemberLifecyclePorts;
 }): ActionRegistration[] {
   const properties: NonNullable<ActionContract['inputSchema']['properties']> = {
@@ -62,7 +64,7 @@ export function memberLifecycleRegistrations(options: {
               'Resume a suspended member with retained grants. Move any remaining runtime and temp directories aside and serve a fresh environment.',
             offboard:
               'Permanently offboard an active or suspended member; revoke every grant atomically, end and unserve its session, move runtime/temp aside, and keep its identity binding.',
-            list: 'List member principal ids, statuses and unrevoked grants, including grants retained during suspension, and the latest enrollment receipts the owner received (created, exists or refused, with the reason). Never returns transport identities or record content.',
+            list: 'List member principal ids, statuses and unrevoked grants, including grants retained during suspension, and the latest enrollment receipts the owner received (created, exists or refused, with the reason). Receipts carry the owner-local time of each pick. Never returns transport identities or record content.',
           }[change]! +
           ' Only the owner own message turn is allowed; delta, scheduled/report, replay, member and subagent turns are denied. Changes apply after the running member turn on the shared serial chain and cancel queued inputs with a host reason.',
         inputSchema: {
@@ -97,6 +99,7 @@ export function memberLifecycleRegistrations(options: {
         }
         const repo = createPrincipalRepository(options.adapter);
         if (change === 'list') {
+          const timeZone = options.timeZone.get();
           // Each users_shared pick ends in a host receipt in the owner's conversation record; a
           // refused or failed pick leaves no registry row, so the receipt is its only trace.
           const enrollmentReceipts = options.adapter
@@ -114,7 +117,7 @@ export function memberLifecycleRegistrations(options: {
             .all(options.ownerPrincipalId) as Array<{ at: number; receipt: string }>;
           return {
             recentEnrollments: enrollmentReceipts.map(({ at, receipt }) => ({
-              at: new Date(at).toISOString(),
+              at: `${new Date(at).toLocaleString('ko-KR', { timeZone })} (${timeZone})`,
               receipt,
             })),
             members: repo.listMembers().map(({ principalId, status }) => ({

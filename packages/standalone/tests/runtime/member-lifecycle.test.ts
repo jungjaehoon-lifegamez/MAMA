@@ -35,7 +35,8 @@ afterEach(async () => {
 async function fixture(
   backend: 'codex' | 'claude' = 'codex',
   withMembers = true,
-  suspendedWithoutRoot = false
+  suspendedWithoutRoot = false,
+  timeZone = 'UTC'
 ) {
   // Only the unavailable socket listener is replaced; dispatcher, sessions and stores are real.
   vi.spyOn(ipc, 'createActionIpcServer').mockImplementation(async (_: ActionIpcServerOptions) => ({
@@ -100,7 +101,7 @@ async function fixture(
     agentId: 'owner-agent',
     scopes: [],
     connectors: [],
-    timeZone: createTimeZoneSetting('UTC'),
+    timeZone: createTimeZoneSetting(timeZone),
     timeout: 1_000,
     maxTurns: 10,
     embedder: { embed: async () => new Float32Array(1024).fill(0.25) },
@@ -706,6 +707,55 @@ it('lists only principal ids, statuses, grants and enrollment receipts, and leav
       'manage.member.list',
     ])
   );
+});
+
+it('lists enrollment pick times in the current owner timezone without member_root', async () => {
+  vi.stubEnv('TZ', 'America/New_York');
+  const f = await fixture('codex', true, true, 'Asia/Seoul');
+  const at = Date.parse('2026-10-10T14:17:13.000Z');
+  const receipt = 'Enrollment refused: fixture reason';
+  f.runtime.recordHostExchange({
+    message: {
+      id: 'fixture:enrollment-selection',
+      channelKey: 'fixture',
+      occurredAt: at,
+      text: 'fixture enrollment selection',
+      payload: { enrollmentSelection: true },
+    },
+    reply: { text: receipt, occurredAt: at + 1, deliveryVerified: true },
+  });
+  const first = data(await f.manage('list', {}));
+  expect.soft(first).toEqual({
+    recentEnrollments: [
+      {
+        at: `${new Date(at).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} (Asia/Seoul)`,
+        receipt,
+      },
+    ],
+    members: [{ principalId: f.member, status: 'suspended', grants: [] }],
+  });
+  fs.writeFileSync(join(f.home, 'config.yaml'), 'version: 1\ntimezone: Asia/Seoul\n');
+  const ref = f.message('owner', 'fixture timezone change');
+  await f.settled(ref);
+  data(
+    await f.runtime.surface.hostToolCall(
+      'owner.timezone.set',
+      { timeZone: 'Europe/Berlin' },
+      'fixture-timezone-change',
+      { session: { sourceMessageRef: ref } }
+    )
+  );
+  const second = data(await f.manage('list', {}));
+  expect.soft(second).toEqual({
+    recentEnrollments: [
+      {
+        at: `${new Date(at).toLocaleString('ko-KR', { timeZone: 'Europe/Berlin' })} (Europe/Berlin)`,
+        receipt,
+      },
+    ],
+    members: first.members,
+  });
+  expect.soft(second.recentEnrollments).not.toEqual(first.recentEnrollments);
 });
 
 it('lists retained source-channel grants without revealing their transport identifiers', async () => {
