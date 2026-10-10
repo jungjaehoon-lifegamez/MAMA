@@ -290,8 +290,14 @@ export function createMemberRecords(options: {
       try {
         p.serve(id);
       } catch (error) {
-        failedStep = 'serve';
-        failure = error;
+        // Keep the step that stopped the job: it decides what was erased and what remains.
+        if (failure === undefined) {
+          failedStep = 'serve';
+          failure = error;
+        } else
+          failure = new Error(
+            `${failure instanceof Error ? failure.message : String(failure)}; serving the member again also failed: ${error instanceof Error ? error.message : String(error)}`
+          );
       }
       const omittedFiles = archive?.omittedFiles ?? [];
       let text: string;

@@ -1489,6 +1489,31 @@ it.each(['failed', 'success'] as const)(
   }
 );
 
+it('keeps the step that stopped an erasure when serving the member again also fails', async () => {
+  const f = await setup();
+  const prepare = f.runtime.database.adapter.prepare.bind(f.runtime.database.adapter);
+  let fail = false;
+  vi.spyOn(f.runtime.database.adapter, 'prepare').mockImplementation((sql) => {
+    if (fail && /SELECT kind, status FROM principals/.test(sql)) {
+      fail = false;
+      throw new Error('fixture serve failed');
+    }
+    return prepare(sql);
+  });
+  f.telegram.sendFile.mockImplementationOnce(async () => {
+    fail = true;
+    throw new Error('fixture rejected');
+  });
+  const p = await f.preview();
+  await f.confirm(p.confirmationToken);
+  await vi.waitFor(() => expect(f.receipts).toHaveLength(1));
+  expect(f.receipts[0].text).toContain('Erasure stopped at export delivery');
+  expect(f.receipts[0].text).toContain('Nothing was erased.');
+  expect(f.receipts[0].text).toContain(
+    'serving the member again also failed: fixture serve failed'
+  );
+});
+
 it.each(['export', 'erase'] as const)(
   'still records a serve failure receipt in the %s job',
   async (kind) => {

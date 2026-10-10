@@ -61,10 +61,26 @@ export interface MemberExportFile {
   eligible: boolean;
   privateManaged: boolean;
 }
+// Every ZIP entry costs at least its local and central headers (30 + 46 bytes) and its name twice,
+// so a tree whose entries alone pass the upload limit cannot be exported. Charging every walked
+// entry that cost bounds the walk before it holds an unbounded inventory.
+const ZIP_ENTRY_HEADER_BYTES = 30 + 46;
 export function memberFileInventory(root: string, id: string) {
   const allFiles: MemberExportFile[] = [];
+  const symlinks: string[] = [];
+  let walked = 0;
   const walk = (path: string, name: string, runtimeRoot: string | undefined) => {
+    walked += ZIP_ENTRY_HEADER_BYTES + 2 * Buffer.byteLength(name);
+    if (walked > OWNER_FILE_MAX_UPLOAD_BYTES)
+      throw new Error(
+        `Member files hold too many entries for one export (over ${OWNER_FILE_MAX_UPLOAD_BYTES} bytes of ZIP headers alone)`
+      );
     const stat = lstatSync(path);
+    if (stat.isSymbolicLink()) {
+      // Never followed; named so the member knows the export left it out.
+      symlinks.push(name);
+      return;
+    }
     if (stat.isDirectory()) {
       for (const entry of readdirSync(path).sort())
         walk(join(path, entry), `${name}/${entry}`, runtimeRoot);
@@ -115,7 +131,7 @@ export function memberFileInventory(root: string, id: string) {
   const privateInodes = new Set(
     allFiles.filter((file) => file.privateManaged).map((file) => `${file.dev}:${file.ino}`)
   );
-  const omittedFiles: string[] = [];
+  const omittedFiles: string[] = [...symlinks];
   const files = allFiles.filter((file) => {
     if (!file.eligible) return false;
     if (
@@ -163,11 +179,20 @@ export async function buildMemberExport(root: string, id: string, core: unknown,
     throw new Error('Member export output directory must not be a symlink');
   mkdirSync(filesRoot, { recursive: true, mode: 0o700 });
   const path = join(filesRoot, `member-export-${randomUUID()}.zip`);
+  // Refuse a link in any component at creation, not only in the file name: the directory was
+  // checked above, but a swapped ancestor would otherwise place the archive outside the member.
   const output = openSync(
     path,
-    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+    constants.O_WRONLY |
+      constants.O_CREAT |
+      constants.O_EXCL |
+      (process.platform === 'darwin' ? O_NOFOLLOW_ANY : constants.O_NOFOLLOW),
     0o600
   );
+  if (process.platform === 'linux' && readlinkSync(`/proc/self/fd/${output}`) !== path) {
+    closeSync(output);
+    throw new Error('Member export output directory changed while the archive was created');
+  }
   let size = 0,
     finished = false,
     fileCount = 0,
