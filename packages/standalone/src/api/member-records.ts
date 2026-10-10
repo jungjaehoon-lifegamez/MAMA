@@ -92,7 +92,7 @@ function receiptText(
     lines.push(
       uncertain
         ? 'The export delivery is uncertain. Nothing was erased. Check whether the file arrived before asking again.'
-        : step === 'file_check'
+        : ['retire', 'export', 'export_delivery', 'file_check'].includes(step)
           ? 'Nothing was erased. Ask again for a new preview and pass its confirmationToken in a later member message.'
           : 'Earlier steps are done. Make a new erasure request and pass its preview confirmationToken in a later member message to finish the rest.'
     );
@@ -108,7 +108,7 @@ function receiptText(
   }
   lines.push(
     `Files: ${product.files ?? 0} files, ${product.fileBytes ?? 0} bytes.`,
-    `${product.cancelledMessages ?? 0} ${product.cancelledMessages === 1 ? 'message sent after your confirmation was' : 'messages sent after your confirmation were'} cancelled unanswered.`,
+    `${product.cancelledMessages ?? 0} ${product.cancelledMessages === 1 ? 'message in the queue was' : 'messages in the queue were'} cancelled unanswered.`,
     'Your enrollment and grants are kept.'
   );
   for (const name of omittedFiles)
@@ -168,16 +168,6 @@ export function createMemberRecords(options: {
     p.recordExchange(job.principalId, job.kind, `host:${job.commandId}`, text, verified);
   };
   let activeJobs = 0;
-  const results = new Map<
-    string,
-    {
-      status: 'sent' | 'not_sent' | 'erased' | 'failed';
-      fileCount: number;
-      fileBytes: number;
-      omittedFiles: string[];
-      failedStep?: string;
-    }
-  >();
   const enqueue = (work: () => Promise<void>) => {
     const pending = ports().turnChain.next(async () => {
       activeJobs++;
@@ -272,19 +262,7 @@ export function createMemberRecords(options: {
         failedStep = 'queued_inputs';
         // Delivered in the export and never dispatched: cancelled here, they are terminal, so
         // the core erase below removes them with their refs.
-        product.cancelledMessages = Number(
-          (
-            options.adapter
-              .prepare(
-                `SELECT count(*) AS n FROM mailbox_inputs WHERE principal_id=? AND id>?
-             AND kind='owner_message' AND status IN ('pending', 'claimed')
-             AND NOT EXISTS (SELECT 1 FROM native_input_deliveries n
-               WHERE n.input_id=mailbox_inputs.id AND n.state<>'prepared')`
-              )
-              .get(id, job.inputId) as { n: number }
-          ).n
-        );
-        p.mailbox().cancelQueued(id, 'member_erase');
+        product.cancelledMessages = p.mailbox().cancelQueued(id, 'member_erase');
         failedStep = 'connector_event_index';
         product.connector_event_index = options.adapter
           .prepare(
@@ -301,7 +279,9 @@ export function createMemberRecords(options: {
         failedStep = 'message_ledger';
         const ledger = p.ledger();
         if (!ledger) throw new Error('Live message ledger is not configured');
-        product.message_ledger = ledger.eraseTelegramDm(dm(p.access(id)));
+        product.message_ledger = ledger.eraseTelegramDm(dm(p.access(id)), [
+          `file:${job.commandId}:export`,
+        ]);
       }
     } catch (error) {
       failure = error;
@@ -314,14 +294,6 @@ export function createMemberRecords(options: {
         failure = error;
       }
       const omittedFiles = archive?.omittedFiles ?? [];
-      results.set(job.commandId, {
-        status:
-          job.kind === 'erase' ? (failure ? 'failed' : 'erased') : delivered ? 'sent' : 'not_sent',
-        fileCount: archive?.fileCount ?? 0,
-        fileBytes: archive?.fileBytes ?? 0,
-        omittedFiles,
-        ...(failure ? { failedStep } : {}),
-      });
       let text: string;
       if (job.kind === 'erase')
         text = receiptText(core, product, failure, failedStep, omittedFiles, uncertain);
@@ -432,7 +404,6 @@ export function createMemberRecords(options: {
   }));
   return {
     registrations,
-    result: (commandId: string) => results.get(commandId),
     isBusy: () => activeJobs > 0 || blocked.size > 0,
     isBlocked: (id: string) => blocked.has(id),
     onSettled: (row: MailboxRow) => {

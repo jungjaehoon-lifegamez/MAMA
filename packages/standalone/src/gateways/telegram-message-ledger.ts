@@ -107,8 +107,9 @@ export class OwnerMessageLedger {
       .map((entry) => ({ ...entry }));
   }
 
-  eraseTelegramDm(dm: string): number {
-    const selected = this.listForTelegramDm(dm);
+  /** `keep` holds entries written after the export was taken, such as its own delivery. */
+  eraseTelegramDm(dm: string, keep: readonly string[] = []): number {
+    const selected = this.listForTelegramDm(dm).filter((entry) => !keep.includes(entry.key));
     for (const entry of selected) this.entries.delete(entry.key);
     try {
       this.save();

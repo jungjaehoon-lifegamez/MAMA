@@ -149,7 +149,12 @@ async function setup() {
     const failedStep =
       failed?.[1] === 'native session retirement' ? 'retire' : failed?.[1].replaceAll(' ', '_');
     if (failed) {
-      if (!text.includes('delivery is uncertain') && failedStep !== 'file_check') {
+      if (
+        ['retire', 'export', 'export_delivery', 'file_check'].includes(failedStep!) &&
+        !text.includes('delivery is uncertain')
+      )
+        expect(text).toContain('Nothing was erased.');
+      else if (!text.includes('delivery is uncertain')) {
         expect(text).toContain('Earlier steps are done.');
         expect(text).toContain('Make a new erasure request');
       }
