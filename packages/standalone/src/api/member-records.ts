@@ -171,6 +171,9 @@ export function createMemberRecords(options: {
   // member must stay unserved with its queue untouched until the export is delivered. An export
   // deletes nothing, so it holds the chain only while its archive is built.
   const erasing = new Set<string>();
+  // Members with an export still uploading: their turns run, but no second export or erasure
+  // starts until this one is delivered, so archives and uploads never pile up.
+  const exporting = new Set<string>();
   const track = (work: Promise<unknown>) => {
     jobs.add(work);
     void work
@@ -223,6 +226,7 @@ export function createMemberRecords(options: {
     const leave = () => {
       if (left || job.kind !== 'export') return;
       left = true;
+      exporting.add(id);
       blocked.delete(id);
       leaveChain();
     };
@@ -340,8 +344,10 @@ export function createMemberRecords(options: {
       }
       await sendReceipt(job, text);
     } finally {
-      if (job.kind === 'export') leave();
-      else {
+      if (job.kind === 'export') {
+        leave();
+        exporting.delete(id);
+      } else {
         blocked.delete(id);
         erasing.delete(id);
       }
@@ -395,6 +401,11 @@ export function createMemberRecords(options: {
       const p = ports();
       const row = p.mailbox().readInput(ref, id);
       if (!row || row.kind !== 'owner_message' || blocked.has(id)) throw denied();
+      if (exporting.has(id))
+        throw Object.assign(
+          new Error('An export is still being sent to your DM; ask again after it arrives'),
+          { name: 'denied' }
+        );
       if (name === 'records.export') return schedule('export', row);
       const value = (input as { confirmationToken?: string }).confirmationToken;
       if (value !== undefined) {

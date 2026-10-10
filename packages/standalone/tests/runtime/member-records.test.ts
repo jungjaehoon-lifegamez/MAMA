@@ -1189,6 +1189,11 @@ it('lets owner turns run while an export uploads; only an erasure pauses claims'
   expect(f.runtime.surface.memberRecords.isBusy()).toBe(false);
   expect(f.runtime.surface.memberRecords.isBlocked(f.member)).toBe(false);
   await f.settled(f.message('owner', 'owner turn during the upload'));
+  // The member's turns run, but a second export waits for this upload.
+  expect((await f.act('records.export')).result).toMatchObject({
+    status: 'failed',
+    error: { kind: 'denied' },
+  });
   finishUpload();
   await f.runtime.surface.memberRecords.idle();
   expect(f.receipts.at(-1)!.text).toMatch(/^Export sent/);
