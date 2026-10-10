@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.73.0] / mama-core [8.4.0] - 2026-10-10
+
+Member management from the owner's DM, still with no member admitted. The owner grants and revokes
+a member's project access, suspends, resumes and offboards a member, and lists members. The package
+changelogs list every change.
+
+### Added
+
+- `manage.member.grant`, `.revoke`, `.suspend`, `.resume`, `.offboard` and `.list` (owner message
+  turn only; never the owner or a co-owner as target). Changes apply after a running member turn.
+  Grant and revoke reset the member's session and keep its files; suspend and offboard end the
+  session and set its directories aside; resume starts fresh with the grants that remain; offboard
+  revokes every grant and keeps the identity, so the id cannot be enrolled again (#466).
+
+### Changed
+
+- The enrollment keyboard says the button is under the message box, and an id in `owner_user_ids`
+  is refused as an owner rather than with advice to remove it (#465).
+
 ## mama-os [0.72.0] / mama-core [8.3.0] - 2026-10-10
 
 Member enrollment, with no member admitted yet. In the owner's own DM, the owner asks MAMA to enroll

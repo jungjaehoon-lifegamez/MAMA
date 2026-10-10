@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.73.0] - 2026-10-10
+
+### Added
+
+- Owner member management (owner message turn only; targets must be registry members, so the owner
+  and co-owners are refused; refused without `member_root`): `manage.member.grant` and `.revoke`
+  (project-partition memory reads; reset the member's session, keep its files), `.suspend` and
+  `.offboard` (cancel queued inputs, reset and stop the session, set the runtime directory aside
+  under `member_root` and the temp directory under the member temp root), `.resume` (fresh
+  environment with the remaining grants) and `.list` (principal, status, grants; no transport id).
+  Retries finish an interrupted cleanup (#466).
+
+### Changed
+
+- The enrollment keyboard prompt says where the button is; an id in `owner_user_ids` is refused as
+  an owner (#465).
+
 ## [0.72.0] - 2026-10-10
 
 ### Added

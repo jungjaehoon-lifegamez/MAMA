@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.4.0] - 2026-10-10
+
+### Added
+
+- `PrincipalRepository.resume` and `listRetainedGrants`; member status changes are limited to
+  active↔suspended and active|suspended→offboarded, and offboard revokes every grant in the same
+  transaction. `revokeScope` accepts a suspended member (#466).
+- `Mailbox.cancelQueued` cancels a principal's inputs that have not reached the native transport,
+  and `Mailbox.inputStatus` reads one row; the runtime rechecks a claimed row before invoking a
+  native turn (#466).
+
 ## [8.3.0] - 2026-10-10
 
 ### Added
