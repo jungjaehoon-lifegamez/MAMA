@@ -705,6 +705,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         token,
         intake,
         onMemberSelection: (selection) => owner!.completeMemberEnrollment(selection),
+        recordMemberSelection: (exchange) => owner!.recordHostExchange(exchange),
         config: {
           enabled: true,
           allowedChats: config.telegram.allowed_chats,

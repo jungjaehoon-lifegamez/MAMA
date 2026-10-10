@@ -9,7 +9,7 @@ import { Bot, InputFile } from 'grammy';
 import type { Context } from 'grammy';
 import type { JsonValue } from '@jungjaehoon/mama-core/knowledge';
 import { BaseGateway } from './base-gateway.js';
-import type { OwnerMessageInput, TurnIntake } from './turn-contract.js';
+import type { OwnerHostExchangeInput, OwnerMessageInput, TurnIntake } from './turn-contract.js';
 import {
   captureTelegramTextFormatting,
   selectTelegramTextEntities,
@@ -66,6 +66,8 @@ export interface TelegramGatewayOptions {
   /** What the owner is told when a turn on their message was cut off. */
   interruptedNotice?: string;
   onMemberSelection?: (selection: MemberSelection) => Promise<ActionResult>;
+  /** Store the final transport receipt as history, outside the owner-message intake. */
+  recordMemberSelection?: (exchange: OwnerHostExchangeInput) => void;
 }
 
 function entityOptions<T>(entities: TelegramFormattedText['entities']): T {
@@ -159,6 +161,7 @@ export class TelegramGateway extends BaseGateway {
   private nextEnrollmentRequestId = randomInt(1, 0x7fffffff);
   private pendingEnrollment?: { requestId: number; sourceMessageRef: string; ownerUserId: string };
   private readonly onMemberSelection?: TelegramGatewayOptions['onMemberSelection'];
+  private readonly recordMemberSelection?: TelegramGatewayOptions['recordMemberSelection'];
   private bot: Bot | null = null;
   private lastError: string | null = null;
   private lastMessageAt: number | undefined;
@@ -171,6 +174,7 @@ export class TelegramGateway extends BaseGateway {
     super({ intake: options.intake });
     this.token = options.token;
     this.onMemberSelection = options.onMemberSelection;
+    this.recordMemberSelection = options.recordMemberSelection;
     this.config = {
       enabled: options.config?.enabled ?? true,
       allowedChats: options.config?.allowedChats ?? [],
@@ -416,81 +420,93 @@ export class TelegramGateway extends BaseGateway {
     const chatId = String(message.chat.id);
     const ownerUserId = String(message.from!.id);
     if (message.chat.type !== 'private' || chatId !== ownerUserId) return;
-    const pending = this.pendingEnrollment;
-    const shared = message.users_shared!;
-    if (
-      !pending ||
-      shared.request_id !== pending.requestId ||
-      ownerUserId !== pending.ownerUserId
-    ) {
-      await this.bot!.api.sendMessage(
-        Number(chatId),
-        'Enrollment refused: principal=none connector=telegram namespace=private. No matching pending request; ask again.',
-        {
-          reply_markup: { remove_keyboard: true },
-        }
-      );
-      return;
-    }
-    // Consume before awaiting the serial host chain, so concurrent duplicate updates cannot enroll.
-    this.pendingEnrollment = undefined;
-    if (
-      shared.users.length !== 1 ||
-      !Number.isSafeInteger(shared.users[0]!.user_id) ||
-      shared.users[0]!.user_id <= 0
-    ) {
-      await this.bot!.api.sendMessage(
-        Number(chatId),
-        'Enrollment refused: principal=none connector=telegram namespace=private. Choose exactly one user; ask again.',
-        {
-          reply_markup: { remove_keyboard: true },
-        }
-      );
-      return;
-    }
-    await this.bot!.api.sendMessage(Number(chatId), 'Enrollment selection received.', {
-      reply_markup: { remove_keyboard: true },
-    });
-    let result: ActionResult;
-    try {
-      result = await this.onMemberSelection!({
-        sourceMessageRef: pending.sourceMessageRef,
-        ownerUserId,
-        userId: String(shared.users[0]!.user_id),
+    let receiptText = 'Enrollment selection received.';
+    let deliveryVerified = false;
+    const sendReceipt = async (text: string): Promise<void> => {
+      receiptText = text;
+      deliveryVerified = false;
+      await this.bot!.api.sendMessage(Number(chatId), text, {
+        reply_markup: { remove_keyboard: true },
       });
-    } catch (error) {
-      // The request is already consumed; the owner must still learn the outcome.
-      console.error('[telegram] member enrollment failed');
-      result = {
-        status: 'failed',
-        error: {
-          kind: 'internal',
-          code: 'enrollment_failed',
-          message: error instanceof Error ? error.message : String(error),
+      deliveryVerified = true;
+    };
+    try {
+      const pending = this.pendingEnrollment;
+      const shared = message.users_shared!;
+      if (
+        !pending ||
+        shared.request_id !== pending.requestId ||
+        ownerUserId !== pending.ownerUserId
+      ) {
+        await sendReceipt(
+          'Enrollment refused: principal=none connector=telegram namespace=private. No matching pending request; ask again.'
+        );
+        return;
+      }
+      // Consume before awaiting the serial host chain, so concurrent duplicate updates cannot enroll.
+      this.pendingEnrollment = undefined;
+      if (
+        shared.users.length !== 1 ||
+        !Number.isSafeInteger(shared.users[0]!.user_id) ||
+        shared.users[0]!.user_id <= 0
+      ) {
+        await sendReceipt(
+          'Enrollment refused: principal=none connector=telegram namespace=private. Choose exactly one user; ask again.'
+        );
+        return;
+      }
+      await sendReceipt('Enrollment selection received.');
+      let result: ActionResult;
+      try {
+        result = await this.onMemberSelection!({
+          sourceMessageRef: pending.sourceMessageRef,
+          ownerUserId,
+          userId: String(shared.users[0]!.user_id),
+        });
+      } catch (error) {
+        // The request is already consumed; the owner must still learn the outcome.
+        console.error('[telegram] member enrollment failed');
+        result = {
+          status: 'failed',
+          error: {
+            kind: 'internal',
+            code: 'enrollment_failed',
+            message: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+      const data =
+        result.status === 'completed'
+          ? (result.data as {
+              status: string;
+              principalId: string | null;
+              connector: string;
+              namespace: string;
+              message?: string;
+            })
+          : {
+              status: 'refused',
+              principalId: null,
+              connector: 'telegram',
+              namespace: 'private',
+              message: result.error.message,
+            };
+      await sendReceipt(
+        `Enrollment ${data.status}: principal=${data.principalId ?? 'none'} connector=${data.connector} namespace=${data.namespace}${data.message ? `. ${data.message}` : ''}`
+      );
+    } finally {
+      // The gateway owns every outcome and the exact last text it tried to deliver.
+      // Never pass users_shared payloads to conversation storage or owner-message intake.
+      this.recordMemberSelection?.({
+        message: {
+          id: sourceMessageRef(chatId, message.message_id),
+          channelKey: chatId,
+          occurredAt: message.date * 1000,
+          text: 'Member selection for enrollment (Choose member button)',
         },
-      };
+        reply: { text: receiptText, occurredAt: Date.now(), deliveryVerified },
+      });
     }
-    const data =
-      result.status === 'completed'
-        ? (result.data as {
-            status: string;
-            principalId: string | null;
-            connector: string;
-            namespace: string;
-            message?: string;
-          })
-        : {
-            status: 'refused',
-            principalId: null,
-            connector: 'telegram',
-            namespace: 'private',
-            message: result.error.message,
-          };
-    await this.bot!.api.sendMessage(
-      Number(chatId),
-      `Enrollment ${data.status}: principal=${data.principalId ?? 'none'} connector=${data.connector} namespace=${data.namespace}${data.message ? `. ${data.message}` : ''}`,
-      { reply_markup: { remove_keyboard: true } }
-    );
   }
 
   getLastError(): string | null {

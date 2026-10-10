@@ -52,6 +52,7 @@ import { storedSourceFamilies } from '../connectors/framework/stored-index-read.
 import { createOwnerPolicyProvider, type OwnerPolicyProvider } from './owner-policy.js';
 import { readSessionStartInput } from './session-start-context.js';
 import { ChatSources } from '../storage/chat-sources.js';
+import type { OwnerHostExchangeInput } from '../gateways/turn-contract.js';
 import { createJevClient } from '../replay/jev-client.js';
 import { createRecordOrders, type RecordOrderEvent } from './record-orders.js';
 import { initTokenEstimator } from '@jungjaehoon/mama-core/runtime/token-estimator';
@@ -151,6 +152,7 @@ export interface OwnerRuntime {
   readonly acceptSourceDelta: StimulusIntake['acceptSourceDelta'];
   serveMember(principalId: string): StimulusIntake;
   completeMemberEnrollment(selection: MemberSelection): Promise<ActionResult>;
+  recordHostExchange(input: OwnerHostExchangeInput): void;
   stop(): Promise<void>;
 }
 
@@ -729,6 +731,10 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           if (stopped) throw new Error('Cannot enroll a member after runtime stop');
           return surface.completeMemberEnrollment(selection);
         }),
+      recordHostExchange: ({ message, reply }) => {
+        chat.saveOwnerMessage(message);
+        chat.saveReply({ ...reply, messageRef: message.id, author: 'host' });
+      },
       stop: async () => {
         if (stopped) return;
         stopped = true;

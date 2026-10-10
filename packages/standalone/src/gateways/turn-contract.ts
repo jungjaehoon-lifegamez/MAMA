@@ -28,6 +28,12 @@ export interface OwnerReplyInput {
   deliveryVerified: boolean;
 }
 
+/** Conversation history supplied by the host, without admitting an owner model turn. */
+export interface OwnerHostExchangeInput {
+  message: OwnerMessageInput;
+  reply: Pick<OwnerReplyInput, 'text' | 'occurredAt' | 'deliveryVerified'>;
+}
+
 export interface TurnOutcomeBase {
   response: string;
   sessionId: string;
