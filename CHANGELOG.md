@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.74.0] / mama-core [8.5.0] - 2026-10-11
+
+A member exports and erases its own personal records, still with no member admitted. The owner's
+conversation record and member list now carry each enrollment result, in the owner's time. The
+package changelogs list every change.
+
+### Added
+
+- `records.export` and `records.erase` (member role, the member's own message turn only). An export
+  sends one zip of the member's personal records and files to its own DM after the turn. An erasure
+  shows a preview, needs confirmation in a later member message, then retires the member, sends the
+  export and deletes only after Telegram accepts it; the member keeps its enrollment and grants and
+  starts again in a fresh environment (#471).
+
+### Changed
+
+- Each enrollment pick and its receipt go into the owner's conversation record (#468), and
+  `manage.member.list` returns the latest enrollment receipts (#469) with owner-local times (#470).
+
 ## mama-os [0.73.0] / mama-core [8.4.0] - 2026-10-10
 
 Member management from the owner's DM, still with no member admitted. The owner grants and revokes

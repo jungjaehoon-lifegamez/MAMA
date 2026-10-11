@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.5.0] - 2026-10-11
+
+### Added
+
+- `StimulusDelivery.onSettled(row)`, called after an input is acknowledged on both the delivered and
+  the reconciled path, beside `onDead` and `onUncertain`. A throwing hook is logged and changes no
+  drain result (#471).
+
+### Changed
+
+- The drain checks `ready()` before each claim. A claimed input that waits for a turn slot starts
+  no native turn unless its row is still `claimed`; when a consumer removed the row meanwhile, the
+  delivery returns and logs the input id (#471).
+
 ## [8.4.0] - 2026-10-10
 
 ### Added

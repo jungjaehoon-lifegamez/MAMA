@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.74.0] - 2026-10-11
+
+### Added
+
+- `records.export` and `records.erase` for members (own message turn only; no principal input;
+  owner, delta, scheduled, replay and subagent turns are denied). An export runs after its turn and
+  sends one zip to the member's registered DM (50 MiB): the member's core and chat records and the
+  files of its runtime, temp and retired trees, never credentials or host account files; links that
+  leave the member's trees are named and left out; one export per member at a time. `records.erase`
+  previews counts and issues a single-use token; a later member message confirms it. After that turn
+  settles the host retires the member, sends the export and, once Telegram accepts it and the files
+  are unchanged, deletes the member's trees, chat index, core records (B1), chat raw rows and DM
+  ledger entries, then serves the member again and records a plain receipt in its chat. Failed,
+  oversized or uncertain deliveries erase nothing (#471).
+- Host receipts to a registered member DM (`TelegramGateway.sendMemberText`) (#471).
+- Dependency `fflate` 0.8.3 for the export zip (#471).
+
+### Changed
+
+- The owner's conversation record keeps each enrollment selection and its receipt (#468).
+- `manage.member.list` returns `recentEnrollments` (#469) with owner-local times and the zone
+  named (#470).
+- The shared turn chain can run host work next and hold its slot until an input settles; only an
+  erasure pauses claims while it runs (#471).
+
 ## [0.73.0] - 2026-10-10
 
 ### Added
