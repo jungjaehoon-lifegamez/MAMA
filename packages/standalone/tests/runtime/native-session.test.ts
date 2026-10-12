@@ -12,6 +12,8 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
+import { EventEmitter } from 'node:events';
+import { PassThrough, Writable } from 'node:stream';
 import type { DatabaseInstance, Knowledge } from '@jungjaehoon/mama-core';
 import type {
   IModelRunner,
@@ -90,7 +92,7 @@ describe('personal Claude account email', () => {
     projects: { fixture: { allowedTools: [] } },
   };
 
-  function fixture(roles: string[] = []) {
+  function fixture(roles: string[] = [], realDriver = false) {
     const root = mkdtempSync(join(tmpdir(), 'personal-email-'));
     const configDir = join(root, 'member', 'claude-config');
     const configPath = join(configDir, '.claude.json');
@@ -106,7 +108,17 @@ describe('personal Claude account email', () => {
       claudeConfigDir: configDir,
       actionSurface,
       sessionPool: pool,
-      agent: model,
+      ...(realDriver
+        ? {}
+        : {
+            createAgent: (options: NativeDriverOptions) => ({
+              ...model,
+              prompt: (...args: Parameters<IModelRunner['prompt']>) => {
+                options.beforeSpawn?.();
+                return model.prompt(...args);
+              },
+            }),
+          }),
       timeout: 1_000,
       maxTurns: 10,
       principal: {
@@ -139,7 +151,7 @@ describe('personal Claude account email', () => {
   }
 
   it.each([{ roles: [] }, { roles: ['owner'] }])(
-    'atomically removes only the account email before every personal turn with roles $roles',
+    'atomically removes only the account email before each personal spawn with roles $roles',
     async ({ roles }) => {
       const f = fixture(roles);
       const seen: unknown[] = [];
@@ -166,6 +178,71 @@ describe('personal Claude account email', () => {
         expect(readdirSync(f.configDir)).toEqual(['.claude.json']);
       } finally {
         await f.close();
+      }
+    }
+  );
+
+  it.each([{ roles: [] }, { roles: ['owner'] }])(
+    'removes a restored email at the replacement spawn in the same personal turn with roles $roles',
+    async ({ roles }) => {
+      const childProcess = createRequire(import.meta.url)('node:child_process');
+      const children: Array<EventEmitter & { inputs: string[] }> = [];
+      const seen: unknown[] = [];
+      // Exercise the real product, adapter and process driver; only the executable is fake.
+      const spawn = vi.spyOn(childProcess, 'spawn').mockImplementation(() => {
+        const child = Object.assign(new EventEmitter(), {
+          pid: 123,
+          killed: false,
+          inputs: [] as string[],
+          stdout: new PassThrough(),
+          stderr: new PassThrough(),
+          stdin: new Writable(),
+          kill: () => {
+            child.killed = true;
+            child.emit('close', 0);
+            return true;
+          },
+        });
+        child.stdin = new Writable({
+          write: (chunk, _encoding, done) => {
+            child.inputs.push(chunk.toString());
+            done();
+            queueMicrotask(() => {
+              child.stdout.write(chunk);
+              child.stdout.write(
+                JSON.stringify({
+                  type: 'result',
+                  subtype: 'success',
+                  result: 'fixture answer',
+                  usage: {},
+                }) + '\n'
+              );
+            });
+          },
+        });
+        seen.push(JSON.parse(readFileSync(f.configPath, 'utf8')));
+        children.push(child);
+        return child;
+      });
+      const f = fixture(roles, true);
+      try {
+        writeFileSync(f.configPath, JSON.stringify(profile));
+        const result = await f.session.runTurn([{ type: 'text', text: 'Fixture request' }], {
+          prepareSessionContent: async () => {
+            if (children.length === 1) {
+              writeFileSync(f.configPath, JSON.stringify(profile));
+              children[0].emit('close', 1);
+            }
+            return [{ type: 'text', text: 'Fixture prepared request' }];
+          },
+        });
+        expect(result.response).toBe('fixture answer');
+        expect(children[0].inputs).toEqual([]);
+        expect(children[1].inputs).toHaveLength(1);
+        expect(seen).toEqual([stripped, stripped]);
+      } finally {
+        await f.close();
+        spawn.mockRestore();
       }
     }
   );
@@ -220,6 +297,7 @@ describe('personal Claude account email', () => {
     writeFileSync(commonConfigPath, JSON.stringify(profile));
     vi.stubEnv('CLAUDE_CONFIG_DIR', commonConfigDir);
     const commonPool = new SessionPool({ cleanupInterval: 0 });
+    let commonDriver: NativeDriverOptions | undefined;
     const common = createNativeSession({
       backend: 'claude',
       model: 'fixture',
@@ -227,7 +305,10 @@ describe('personal Claude account email', () => {
       runtimeRoot: join(f.root, 'common-runtime'),
       actionSurface: surface(),
       sessionPool: commonPool,
-      agent: runner('claude'),
+      createAgent: (options) => {
+        commonDriver = options;
+        return runner('claude');
+      },
       timeout: 1_000,
       maxTurns: 10,
     });
@@ -239,6 +320,7 @@ describe('personal Claude account email', () => {
       const paths = [f.configPath, commonConfigPath];
       const before = paths.map((path) => ({ bytes: readFileSync(path), stat: statSync(path) }));
       await common.runTurn([{ type: 'text', text: 'Fixture common request' }]);
+      expect(commonDriver?.beforeSpawn).toBeUndefined();
       paths.forEach((path, index) => {
         expect(readFileSync(path)).toEqual(before[index].bytes);
         const after = statSync(path);

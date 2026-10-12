@@ -65,6 +65,8 @@ export interface ClaudeCLIWrapperOptions {
   env?: Record<string, string>;
   /** Complete inherited environment supplied by the consumer; env is applied afterward. */
   processEnv?: NodeJS.ProcessEnv;
+  /** Synchronous consumer preparation before each spawn; throwing prevents that start. */
+  beforeSpawn?: () => void;
   /** Noninteractive consumers use dontAsk with explicit permission rules. */
   permissionMode?: 'default' | 'acceptEdits' | 'dontAsk' | 'plan';
   /** If true, use GatewayToolExecutor instead of MCP (default: false) */
@@ -228,6 +230,7 @@ export class ClaudeCLIWrapper {
           if (safe.trim()) console.error(`[ClaudeCLI:stderr] ${safe.trim()}`);
         }
       );
+      this.options.beforeSpawn?.();
       const claude = spawn('claude', args, {
         stdio: ['pipe', 'pipe', 'pipe'],
         // ⚠️ NEVER spawn in the user's home directory — it breaks agent isolation.

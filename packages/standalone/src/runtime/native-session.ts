@@ -68,6 +68,7 @@ export interface NativeDriverOptions {
   permissionMode?: 'dontAsk';
   shellEnvironment?: Record<string, string>;
   processEnv: NodeJS.ProcessEnv;
+  beforeSpawn?: () => void;
   deniedReadPaths: string[];
   allowLoginShell?: boolean;
   requestTimeout: number;
@@ -213,11 +214,15 @@ function driverOptions(
   webTools: boolean
 ): NativeDriverOptions {
   const path = process.env.PATH;
+  const configDir = options.claudeConfigDir;
   if (options.backend === 'codex' && !path?.trim()) {
     throw new Error('Owner Codex shell requires the host PATH');
   }
   return {
     backend: options.backend,
+    ...(options.principal !== undefined && options.backend === 'claude' && configDir !== undefined
+      ? { beforeSpawn: () => removePersonalClaudeEmail(configDir) }
+      : {}),
     processEnv: {
       ...backendEnvironment(),
       ...(options.principal === undefined ? {} : { TMPDIR: join(options.workspaceDir, '.tmp') }),
@@ -357,6 +362,7 @@ function createDriver(
       : claudeMemberDisallowedTools)(nativeOptions.deniedReadPaths, options.workspaceDir),
     processEnv: nativeOptions.processEnv,
     env: { CLAUDE_CODE_TMPDIR: claudeTmpDir(options) },
+    beforeSpawn: nativeOptions.beforeSpawn,
     pluginDir: nativeOptions.pluginDir,
     requestTimeout: nativeOptions.requestTimeout,
     ...(nativeOptions.requestMaxMs === undefined
@@ -585,15 +591,6 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
       }),
     resetSession: (sessionKey) => runnerRef.current!.resetSession(sessionKey),
     runTurn: (content, request) => {
-      // Profile refresh can restore the email during a run. Strip it before every turn so any
-      // process started by the driver reads the personal profile without the login's email.
-      if (
-        options.principal !== undefined &&
-        options.backend === 'claude' &&
-        options.claudeConfigDir !== undefined
-      ) {
-        removePersonalClaudeEmail(options.claudeConfigDir);
-      }
       const nativeRequest = {
         ...(request ?? {}),
         sessionKey: request?.sessionKey ?? sessionKey,

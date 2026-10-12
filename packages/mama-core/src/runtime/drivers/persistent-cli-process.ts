@@ -122,6 +122,8 @@ export interface PersistentProcessOptions {
   env?: Record<string, string>;
   /** Complete inherited environment supplied by the consumer; env is applied afterward. */
   processEnv?: NodeJS.ProcessEnv;
+  /** Synchronous consumer preparation before each spawn; throwing prevents that start. */
+  beforeSpawn?: () => void;
   /** Structurally allowed tools (--allowedTools CLI flag) */
   allowedTools?: string[];
   /** Structurally disallowed tools (--disallowedTools CLI flag) */
@@ -401,6 +403,9 @@ export class PersistentClaudeProcess extends EventEmitter {
     this.startPromise = this.doStart();
     try {
       await this.startPromise;
+    } catch (error) {
+      this.state = 'dead';
+      throw error;
     } finally {
       this.startPromise = null;
     }
@@ -473,6 +478,7 @@ export class PersistentClaudeProcess extends EventEmitter {
         if (safe.trim()) console.error(`[PersistentCLI:stderr] ${safe.trim()}`);
       }
     );
+    this.options.beforeSpawn?.();
     this.process = spawn('claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       // ⚠️ NEVER spawn in the user's home directory — it breaks agent isolation.
