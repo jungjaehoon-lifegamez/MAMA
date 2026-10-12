@@ -1,3 +1,7 @@
+import {
+  telegramPrincipalFixture,
+  closeTelegramPrincipalFixtures,
+} from './telegram-principal-fixture.js';
 import { chatFixture } from './chat-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -47,7 +51,8 @@ import { createReportScheduler } from '../../src/runtime/report-scheduler.js';
 
 const temporaryRoots: string[] = [];
 
-afterEach(() => {
+afterEach(async () => {
+  await closeTelegramPrincipalFixtures();
   seams.handlers.clear();
   seams.start.mockReset().mockImplementation(() => new Promise(() => {}));
   seams.api.sendMessage.mockClear();
@@ -64,7 +69,7 @@ function message(overrides: Record<string, unknown> = {}): Record<string, unknow
   return {
     message_id: 11,
     date: 1_700_000_000,
-    chat: { id: 7, type: 'private' },
+    chat: { id: 7, type: 'supergroup' },
     from: { id: 9, is_bot: false },
     text: 'owner text',
     ...overrides,
@@ -93,12 +98,12 @@ async function gatewayFor(
   vi.stubEnv('HOME', root);
   const gateway = new TelegramGateway({
     token: 'fixture-token',
+    ...(await telegramPrincipalFixture(root, intake)),
     intake,
     log,
     messageLedgerPath: ledgerPath ?? join(root, 'telegram-ledger.json'),
     config: {
       allowedChats: ['7'],
-      ownerUserIds: ['9'],
       ownerChatId: '7',
       polling: false,
     },
@@ -127,6 +132,7 @@ describe('TelegramGateway', () => {
       });
       const gateway = new TelegramGateway({
         token: 'fixture-token',
+        ...(await telegramPrincipalFixture(root, intakeFor([]))),
         intake: intakeFor([]),
         messageLedgerPath: path,
         config: { allowedChats: ['7'] },
@@ -337,6 +343,7 @@ describe('TelegramGateway', () => {
     seams.start.mockRejectedValueOnce(error);
     const gateway = new TelegramGateway({
       token: 'fixture-token',
+      ...(await telegramPrincipalFixture(root, intakeFor([]))),
       intake: intakeFor([]),
       messageLedgerPath: join(root, 'ledger.json'),
       config: { allowedChats: ['7'] },
@@ -439,13 +446,13 @@ describe('TelegramGateway', () => {
     await gateway.stop();
   });
 
-  it('rejects messages outside the configured owner allowlist', async () => {
+  it('rejects group messages outside the common allowlist or registered owner roles', async () => {
     const received: OwnerMessageInput[] = [];
     const gateway = await gatewayFor(intakeFor(received));
     const handler = seams.handlers.get('message');
     expect(handler).toBeTypeOf('function');
 
-    await handler!({ message: message({ chat: { id: 8, type: 'private' } }) });
+    await handler!({ message: message({ chat: { id: 8, type: 'supergroup' } }) });
     await handler!({ message: message({ from: { id: 10, is_bot: false } }) });
 
     expect(received).toEqual([]);

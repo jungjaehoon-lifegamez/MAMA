@@ -62,7 +62,7 @@ function prompt(
 }
 
 function minimal(backend = 'codex', launch = 'n') {
-  return [backend, 'fixture-model', '100', '101', '', 'n', 'n', 'n', launch];
+  return [backend, 'fixture-model', '100', '', 'n', 'n', 'n', launch];
 }
 
 function options(adapter: PromptAdapter) {
@@ -160,11 +160,12 @@ describe('owner-only onboarding', () => {
       expect(config.telegram).toMatchObject({
         enabled: true,
         owner_chat_id: '100',
-        owner_user_ids: ['101'],
         allowed_chats: ['100'],
         polling: true,
       });
       expect(config.telegram).not.toHaveProperty('token');
+      expect(config.telegram).not.toHaveProperty('owner_user_ids');
+      expect(p.output.join('\n')).toContain('mama register-owner <telegram id>');
       expect(loadConnectorConfig(join(root, 'connectors.json'))).toMatchObject({
         ok: true,
         enabledNames: [],
@@ -189,7 +190,7 @@ describe('owner-only onboarding', () => {
 
   it('sets up a Discord owner gateway in init without enabling a source connector', async () => {
     const p = prompt(
-      ['codex', 'fixture-model', '100', '101', '', 'y', 'channel_test', 'user_test', 'n', 'n', 'n'],
+      ['codex', 'fixture-model', '100', '', 'y', 'channel_test', 'user_test', 'n', 'n', 'n'],
       [fixtureSecrets.MAMA_TELEGRAM_TOKEN, 'fixture-discord-owner']
     );
     await runInit(options(p.adapter));
@@ -208,7 +209,7 @@ describe('owner-only onboarding', () => {
 
   it('sets up Slack bot and Socket Mode credentials for an owner gateway', async () => {
     const p = prompt(
-      ['codex', 'fixture-model', '100', '101', '', 'n', 'y', 'channel_test', 'user_test', 'n', 'n'],
+      ['codex', 'fixture-model', '100', '', 'n', 'y', 'channel_test', 'user_test', 'n', 'n'],
       [fixtureSecrets.MAMA_TELEGRAM_TOKEN, 'fixture-slack-owner', 'fixture-slack-app-owner']
     );
     await runInit(options(p.adapter));
@@ -231,7 +232,6 @@ describe('owner-only onboarding', () => {
         'claude',
         'fixture-model',
         '100',
-        '101',
         'slack,chatwork,trello,kagemusha,calendar,notion,discord,telegram',
         'channel-a,channel-b',
         'room-a',
@@ -328,7 +328,6 @@ describe('owner-only onboarding', () => {
         'codex',
         'fixture-model',
         '100',
-        '101',
         'gmail,drive,sheets,notion,obsidian,claude-code,imessage',
         'folder-fixture',
         'spreadsheet-fixture',

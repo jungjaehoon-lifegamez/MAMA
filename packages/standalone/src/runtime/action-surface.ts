@@ -39,7 +39,7 @@ import { ownerTimeZoneActionRegistrations } from '../api/owner-timezone-actions.
 import { ownerPolicyActionRegistrations } from '../api/owner-policy-actions.js';
 import { actionCatalogLine, helpActionRegistrations } from '../api/help-actions.js';
 import { CODE_ACT_CONTRACT, codeActRegistration } from '../api/code-act-actions.js';
-import { guardOwnerRules } from './owner-authority.js';
+import { guardOwnerRules, holdsOwnerRole } from './owner-authority.js';
 import { workNoUpdateActionRegistrations } from '../api/record-actions.js';
 import { judgeActionRegistrations, type JudgePorts } from '../api/judge-actions.js';
 import {
@@ -79,7 +79,6 @@ const OWNER_ACTIONS = [
   'drive.download',
   'judge',
   'owner.timezone.set',
-  'manage.member.enroll',
   ...MEMBER_MANAGEMENT_ACTIONS,
   'owner.messages',
   'memory.checkpoint.list',
@@ -214,6 +213,7 @@ export function ownerMemoryScopes(
 }
 
 export function createActionSurface(options: ActionSurfaceOptions): ActionSurface {
+  let principals: ReturnType<typeof createPrincipalRepository> | undefined;
   const memberRecords = createMemberRecords({
     adapter: options.adapter,
     isMessageTurn: options.isOwnerMessageTurn,
@@ -368,6 +368,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     }),
     // Drive has no running connector (its poller stays off), so drive.* call gws directly.
     ...driveActionRegistrations({
+      adapter: options.adapter,
       ownerPrincipalId: options.ownerPrincipalId,
       ...(options.attachmentPorts?.downloadsDir === undefined
         ? {}
@@ -395,10 +396,14 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       ? []
       : ownerMessageActionRegistrations(options.ownerMessages)),
     ...helpActionRegistrations({
-      // The procedures are the owner's (reports, publishing, corrections); a member's would point it
-      // at actions it is not granted.
       topics: (access) =>
-        access.principalId === options.ownerPrincipalId ? (options.helpTopics ?? {}) : {},
+        access.principalId === options.ownerPrincipalId ||
+        holdsOwnerRole(
+          (principals ??= createPrincipalRepository(options.adapter)),
+          access.principalId
+        )
+          ? (options.helpTopics ?? {})
+          : {},
       contracts: () =>
         catalog.list().filter((contract) => contract.name !== CODE_ACT_CONTRACT.name),
     }),
@@ -436,7 +441,6 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     },
   });
   // Built on the first scopes read, so constructing a surface touches no table.
-  let principals: ReturnType<typeof createPrincipalRepository> | undefined;
   const ownerAccess: JudgmentAccess = {
     principalId: options.ownerPrincipalId,
     agentId: options.agentId,

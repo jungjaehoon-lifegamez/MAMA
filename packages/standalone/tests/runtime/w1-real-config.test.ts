@@ -160,7 +160,6 @@ describe('W1 real owner configuration shape', () => {
         enabled: true,
         owner_chat_id: '123456789',
         allowed_chats: ['123456789'],
-        owner_user_ids: ['123456789'],
       },
     });
     expect(connectors).toMatchObject({

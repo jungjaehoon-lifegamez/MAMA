@@ -224,6 +224,15 @@ describe('live delta reports', () => {
   });
   it('delivers the interrupted notice when an accepted owner turn fails without restarting', async () => {
     const { daemon } = await boot('[ack]', 'live', false, true);
+    const { createPrincipalRepository } = await import('@jungjaehoon/mama-core');
+    const repository = createPrincipalRepository(daemon.owner.database.adapter);
+    const person = repository.registerMember({
+      connector: 'telegram',
+      namespace: 'private',
+      externalId: '9',
+      now: 1,
+    });
+    repository.grantRole({ principalId: person, role: 'owner', now: 1 });
     telegram.editMessageText.mockResolvedValue(true);
     const { Bot } = await import('grammy');
     const bot = vi.mocked(Bot).mock.results.at(-1)!.value;
@@ -232,7 +241,7 @@ describe('live delta reports', () => {
       message: {
         message_id: 99,
         date: 1,
-        chat: { id: 7, type: 'private' },
+        chat: { id: 7, type: 'group' },
         from: { id: 9, is_bot: false, first_name: 'Fixture' },
         text: 'Owner request',
       },

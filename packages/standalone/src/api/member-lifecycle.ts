@@ -7,6 +7,7 @@ import {
 import type { DatabaseInstance } from '@jungjaehoon/mama-core/db-manager';
 import { validateMemberMemoryGrant, resolvePrincipalAccess } from '../runtime/principal-access.js';
 import type { TimeZoneSetting } from '../runtime/timezone.js';
+import { holdsOwnerRole } from '../runtime/owner-authority.js';
 
 export const MEMBER_MANAGEMENT_ACTIONS = [
   'manage.member.grant',
@@ -33,6 +34,7 @@ export function memberLifecycleRegistrations(options: {
   timeZone: TimeZoneSetting;
   ports?: MemberLifecyclePorts;
 }): ActionRegistration[] {
+  let principals: ReturnType<typeof createPrincipalRepository> | undefined;
   const properties: NonNullable<ActionContract['inputSchema']['properties']> = {
     principalId: {
       type: 'string',
@@ -97,7 +99,7 @@ export function memberLifecycleRegistrations(options: {
             { name: 'denied' }
           );
         }
-        const repo = createPrincipalRepository(options.adapter);
+        const repo = (principals ??= createPrincipalRepository(options.adapter));
         if (change === 'list') {
           const timeZone = options.timeZone.get();
           // Each users_shared pick ends in a host receipt in the owner's conversation record; a
@@ -138,11 +140,10 @@ export function memberLifecycleRegistrations(options: {
         };
         const principal = repo.findById(principalId);
         if (!principal) throw new Error(`Unknown principal: ${principalId}`);
-        if (principal.kind !== 'member')
-          throw Object.assign(
-            new Error('The owner principal cannot be a member-management target'),
-            { name: 'denied' }
-          );
+        if (principal.kind !== 'member' || holdsOwnerRole(repo, principalId))
+          throw Object.assign(new Error('An owner cannot be a member-management target'), {
+            name: 'denied',
+          });
         const ports = options.ports;
         if (!ports)
           throw new Error('Member management requires member_root and a running member runtime');

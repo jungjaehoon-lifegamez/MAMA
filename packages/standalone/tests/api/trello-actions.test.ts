@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createCatalog, createDispatcher, type ActionContext } from '@jungjaehoon/mama-core';
+import {
+  createCatalog,
+  createDispatcher,
+  createPrincipalRepository,
+  type ActionContext,
+} from '@jungjaehoon/mama-core';
 
 import { trelloActionRegistrations } from '../../src/api/trello-actions.js';
 import { ConnectorRegistry } from '../../src/connectors/framework/connector-registry.js';
@@ -154,6 +159,29 @@ describe('trello.read', () => {
     vi.unstubAllEnvs();
     await db?.close();
     rmSync(home, { recursive: true, force: true });
+  });
+
+  it('reads every configured board for an owner-role member without per-board grants', async () => {
+    const { dispatch, owner } = await setup();
+    const repository = createPrincipalRepository(db.adapter);
+    const person = repository.registerMember({
+      connector: 'telegram',
+      namespace: 'private',
+      externalId: 'fixture-owner-dm',
+      now: 1,
+    });
+    repository.grantRole({ principalId: person, role: 'owner', now: 2 });
+    expect(
+      await dispatch(
+        { action: 'trello.read', input: { view: 'boards' } },
+        {
+          access: { ...owner, principalId: person },
+        }
+      )
+    ).toMatchObject({
+      status: 'completed',
+      data: { boards: [{ board: 'board-key' }, { board: 'board-b-key' }] },
+    });
   });
 
   it('lists the boards with their lists and open card counts', async () => {

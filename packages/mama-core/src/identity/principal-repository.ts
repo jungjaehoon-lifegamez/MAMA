@@ -38,6 +38,19 @@ export interface PrincipalScopeGrantMutationInput {
   now: number;
 }
 
+export interface PrincipalRoleRecord {
+  principalId: string;
+  role: string;
+  createdAt: number;
+}
+
+export type EnsureOwnerInput = {
+  now?: number;
+} & (
+  | { principalId: string; connector?: never; namespace?: never; externalId?: never }
+  | { principalId?: string; connector: string; namespace: string; externalId: string }
+);
+
 export interface PrincipalRepository {
   resolveByExternal(connector: string, namespace: string, externalId: string): PrincipalRow | null;
   registerMember(input: {
@@ -67,21 +80,20 @@ export interface PrincipalRepository {
   /** Terminal transition; every retained grant is revoked in the same transaction. */
   offboard(principalId: string, now: number): void;
   /**
-   * Without principalId, retain identity-based minting. A named id must be nonblank.
+   * A named id without an identity creates the common principal. Without principalId,
+   * retain identity-based minting. A named id must be nonblank.
    * An active named owner returns exists, binding an unbound identity in the same transaction.
    * Named registration returns conflict for an identity bound elsewhere, another active
    * owner, or a named principal with a different kind/status; no rows change on conflict.
    * Keep the three result words for existing callers rather than add conflict details.
    */
-  ensureOwner(input: {
-    principalId?: string;
-    connector: string;
-    namespace: string;
-    externalId: string;
-    now: number;
-  }): 'created' | 'exists' | 'conflict';
+  ensureOwner(input: EnsureOwnerInput): 'created' | 'exists' | 'conflict';
   findById(principalId: string): PrincipalRow | null;
   listMembers(): Array<{ principalId: string; displayName?: string; status: string }>;
+  grantRole(input: { principalId: string; role: string; now?: number }): 'created' | 'exists';
+  /** Role assignments remain visible while a member is suspended or offboarded. */
+  listRoles(principalId: string): PrincipalRoleRecord[];
+  listActiveMembersWithRole(role: string): PrincipalRow[];
   grantScope(input: PrincipalScopeGrantMutationInput): 'created' | 'exists';
   revokeScope(input: PrincipalScopeGrantMutationInput): 'revoked' | 'absent';
   listActiveGrants(principalId: string): PrincipalScopeGrantRecord[];
@@ -122,6 +134,22 @@ export class PrincipalScopeGrantError extends Error {
     this.name = 'PrincipalScopeGrantError';
     this.code = code;
   }
+}
+
+export class PrincipalRoleError extends Error {
+  constructor(
+    readonly code: 'invalid_role' | 'target_not_active_member',
+    message: string
+  ) {
+    super(message);
+    this.name = 'PrincipalRoleError';
+  }
+}
+
+function canonicalRole(role: string): string {
+  if (typeof role !== 'string' || role.trim().length === 0)
+    throw new PrincipalRoleError('invalid_role', 'Role must be nonblank text');
+  return role.trim();
 }
 
 type PrincipalKind = PrincipalRow['kind'];
@@ -514,18 +542,32 @@ export function createPrincipalRepository(
     });
   }
 
-  function ensureOwner(input: {
-    principalId?: string;
-    connector: string;
-    namespace: string;
-    externalId: string;
-    now: number;
-  }): 'created' | 'exists' | 'conflict' {
+  function ensureOwner(input: EnsureOwnerInput): 'created' | 'exists' | 'conflict' {
     if (input.principalId !== undefined && input.principalId.trim().length === 0) {
       throw new Error('principalId must be nonblank');
     }
+    const hasIdentity =
+      input.connector !== undefined ||
+      input.namespace !== undefined ||
+      input.externalId !== undefined;
+    if (
+      hasIdentity &&
+      (typeof input.connector !== 'string' ||
+        typeof input.namespace !== 'string' ||
+        typeof input.externalId !== 'string')
+    )
+      throw new Error('Owner identity requires connector, namespace and externalId together');
+    if (!hasIdentity && input.principalId === undefined)
+      throw new Error('Owner requires a principalId or an external identity');
+    const now = input.now ?? Date.now();
+    const bind = (principalId: string): void => {
+      if (hasIdentity)
+        bindIdentity(principalId, input.connector!, input.namespace!, input.externalId!, now);
+    };
     return adapter.transaction(() => {
-      const existing = resolveByExternal(input.connector, input.namespace, input.externalId);
+      const existing = hasIdentity
+        ? resolveByExternal(input.connector!, input.namespace!, input.externalId!)
+        : null;
       if (input.principalId !== undefined) {
         if (existing && existing.principalId !== input.principalId) return 'conflict';
         const named = selectPrincipalStatement.get(input.principalId) as
@@ -538,24 +580,12 @@ export function createPrincipalRepository(
         if (activeOwner && activeOwner.principal_id !== input.principalId) return 'conflict';
         if (named) {
           if (!existing) {
-            bindIdentity(
-              input.principalId,
-              input.connector,
-              input.namespace,
-              input.externalId,
-              input.now
-            );
+            bind(input.principalId);
           }
           return 'exists';
         }
-        insertPrincipalStatement.run(input.principalId, 'owner', null, input.now, input.now);
-        bindIdentity(
-          input.principalId,
-          input.connector,
-          input.namespace,
-          input.externalId,
-          input.now
-        );
+        insertPrincipalStatement.run(input.principalId, 'owner', null, now, now);
+        bind(input.principalId);
         return 'created';
       }
       if (existing) {
@@ -567,12 +597,12 @@ export function createPrincipalRepository(
 
       const principalId = mintPrincipalId(
         'owner',
-        input.connector,
-        input.namespace,
-        input.externalId
+        input.connector!,
+        input.namespace!,
+        input.externalId!
       );
-      insertPrincipalStatement.run(principalId, 'owner', null, input.now, input.now);
-      bindIdentity(principalId, input.connector, input.namespace, input.externalId, input.now);
+      insertPrincipalStatement.run(principalId, 'owner', null, now, now);
+      bind(principalId);
       return 'created';
     });
   }
@@ -660,6 +690,42 @@ export function createPrincipalRepository(
       return row ? { principalId: row.principal_id, kind: row.kind, status: row.status } : null;
     },
     listMembers,
+    grantRole: ({ principalId, role, now = Date.now() }) => {
+      const canonical = canonicalRole(role);
+      return adapter.transaction(() => {
+        const principal = selectPrincipalStatement.get(principalId) as
+          | PrincipalDatabaseRow
+          | undefined;
+        if (principal?.kind !== 'member' || principal.status !== 'active')
+          throw new PrincipalRoleError(
+            'target_not_active_member',
+            'Role target must be an active member principal'
+          );
+        const result = adapter
+          .prepare(
+            'INSERT INTO principal_roles (principal_id, role, created_at) VALUES (?, ?, ?) ON CONFLICT (principal_id, role) DO NOTHING'
+          )
+          .run(principalId, canonical, now);
+        return result.changes === 1 ? 'created' : 'exists';
+      });
+    },
+    listRoles: (principalId) =>
+      adapter
+        .prepare(
+          'SELECT principal_id AS principalId, role, created_at AS createdAt FROM principal_roles WHERE principal_id=? ORDER BY created_at, role'
+        )
+        .all(principalId) as PrincipalRoleRecord[],
+    listActiveMembersWithRole: (role) =>
+      (
+        adapter
+          .prepare(
+            `SELECT p.principal_id, p.kind, p.status FROM principals p
+       JOIN principal_roles r ON r.principal_id=p.principal_id
+       WHERE r.role=? AND p.kind='member' AND p.status='active'
+       ORDER BY p.created_at, p.principal_id`
+          )
+          .all(canonicalRole(role)) as PrincipalDatabaseRow[]
+      ).map(mapPrincipal),
     grantScope,
     revokeScope,
     listActiveGrants,

@@ -1,73 +1,199 @@
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-
-import {
-  createAdapter,
-  createPrincipalRepository,
-  type PrincipalRepository,
-} from '@jungjaehoon/mama-core';
-
-import { loadConfig } from '../../runtime/config.js';
+import { dirname, join } from 'node:path';
+import { createPrincipalRepository, moveRecordsUserScope } from '@jungjaehoon/mama-core';
+import { CodexThreadRegistry } from '@jungjaehoon/mama-core/runtime/drivers/codex-thread-registry';
+import { loadConfig, defaultConfigPath } from '../../runtime/config.js';
+import { openCoreDatabase } from '../../runtime/core-db.js';
+import { clearMemberSmokeState } from '../../api/member-smoke-state.js';
+import { OwnerMessageLedger } from '../../gateways/telegram-message-ledger.js';
+import { holdsOwnerRole } from '../../runtime/owner-authority.js';
+import { RawStore } from '../../storage/source-archive.js';
 import { CliInputError } from '../prompt.js';
 import { OWNER_PRINCIPAL_ID } from './daemon.js';
 
-type OwnerResult = ReturnType<PrincipalRepository['ensureOwner']>;
+export interface OwnerCutoverCounts {
+  principalsCreated: number;
+  membersCreated: number;
+  identitiesMoved: number;
+  rolesGranted: number;
+  rawItems: number;
+  pendingProjections: number;
+  indexRows: number;
+  observations: number;
+  checkpoints: number;
+  threadsCleared: number;
+}
+const emptyCounts = (): OwnerCutoverCounts => ({
+  principalsCreated: 0,
+  membersCreated: 0,
+  identitiesMoved: 0,
+  rolesGranted: 0,
+  rawItems: 0,
+  pendingProjections: 0,
+  indexRows: 0,
+  observations: 0,
+  checkpoints: 0,
+  threadsCleared: 0,
+});
 
-/** Rolls back every binding when one owner id belongs to someone else. */
-class OwnerConflict extends Error {}
-
-/** Register against the daemon's existing schema, without starting its runtime or collectors. */
+/** One explicitly named person; core retains its identity-free common principal. */
 export async function runRegisterOwner(
   args: readonly string[] = [],
   options: { home?: string; configPath?: string } = {}
-): Promise<OwnerResult> {
-  if (args.length !== 0) throw new CliInputError('Usage: mama register-owner');
+): Promise<OwnerCutoverCounts> {
+  if (args.length !== 1 || !/^[1-9][0-9]*$/.test(args[0]))
+    throw new CliInputError('Usage: mama register-owner <telegram id>');
+  const externalId = args[0];
   const home = options.home ?? homedir();
-  const config = loadConfig({ home, ...(options.configPath ? { path: options.configPath } : {}) });
-  // Every id the gateway admits as the owner (explicit, or derived from a single allowed chat) is
-  // an identity of the one owner, so each binds to the owner principal. An id bound to anyone else
-  // is a conflict, and then nothing is written.
-  const ownerIds = config.telegram.owner_user_ids;
-  if (ownerIds.length === 0) {
-    throw new CliInputError('telegram.owner_user_ids must contain at least one user id');
+  const configPath = options.configPath ?? defaultConfigPath(home);
+  const config = loadConfig({ home, path: configPath });
+  if (!config.member_root) throw new CliInputError('Set member_root before mama register-owner');
+  const root = dirname(configPath);
+  const ledgerPath = join(root, 'runtime', 'owner-message-ledger.json');
+  if (existsSync(ledgerPath)) {
+    const entry = new OwnerMessageLedger(ledgerPath)
+      .listForTelegramDm(externalId)
+      .find(({ state }) => state === 'processing' || state === 'ready');
+    if (entry)
+      throw new CliInputError(`Cutover refused: DM message ledger entry is ${entry.state}`);
   }
-  const adapter = createAdapter({ dbPath: config.database.path });
-  let result: OwnerResult;
-  let counts: { principals: number; identities: number };
+  const database = await openCoreDatabase({ path: config.database.path });
+  const adapter = database.adapter;
+  const rawStore = new RawStore(join(root, 'connectors'));
+  let counts: OwnerCutoverCounts;
   try {
-    adapter.connect();
-    try {
-      result = adapter.transaction(() => {
-        const repository = createPrincipalRepository(adapter);
-        const now = Date.now();
-        const results = ownerIds.map((externalId) =>
-          repository.ensureOwner({
-            principalId: OWNER_PRINCIPAL_ID,
+    const repo = createPrincipalRepository(adapter);
+    // Include terminal mailbox rows when native delivery remains uncertain.
+    const inFlight = adapter
+      .prepare(
+        `SELECT m.status,n.state FROM mailbox_inputs m LEFT JOIN native_input_deliveries n ON n.input_id=m.id
+       WHERE m.principal_id=? AND m.kind='owner_message' AND m.channel_key=?
+         AND m.stimulus_id LIKE 'telegram:%'
+         AND (m.status IN ('pending','claimed') OR n.state='uncertain') LIMIT 1`
+      )
+      .get(OWNER_PRINCIPAL_ID, externalId) as { status: string; state: string | null } | undefined;
+    if (inFlight)
+      throw new CliInputError(
+        `Cutover refused: DM input is ${inFlight.state === 'uncertain' ? 'uncertain' : inFlight.status}`
+      );
+    const current = repo.resolveByExternal('telegram', 'private', externalId);
+    if (current && current.status !== 'active')
+      throw new CliInputError(`Cutover refused: the identity's principal is ${current.status}`);
+    if (current?.kind === 'member' && holdsOwnerRole(repo, current.principalId)) {
+      counts = emptyCounts();
+    } else {
+      const firstOwner =
+        repo.listActiveMembersWithRole('owner').length === 0 &&
+        !repo.listMembers().some((p) => holdsOwnerRole(repo, p.principalId));
+      const now = Date.now();
+      const channel = `telegram:${externalId}`;
+      let createdMember: string | undefined;
+      counts = rawStore.withChatCutover(adapter, (moveRaw) => {
+        const result = emptyCounts();
+        const common = repo.ensureOwner({ principalId: OWNER_PRINCIPAL_ID, now });
+        if (common === 'conflict')
+          throw new CliInputError(
+            'Cutover refused: common principal conflicts with the existing registry'
+          );
+        result.principalsCreated = common === 'created' ? 1 : 0;
+        let person: string;
+        if (current?.principalId === OWNER_PRINCIPAL_ID) {
+          person = repo.moveIdentityToMember({
+            connector: 'telegram',
+            namespace: 'private',
+            externalId,
+            expectedPrincipalId: OWNER_PRINCIPAL_ID,
+            now,
+          });
+          result.membersCreated = 1;
+          result.identitiesMoved = 1;
+        } else if (!current) {
+          person = repo.registerMember({
             connector: 'telegram',
             namespace: 'private',
             externalId,
             now,
-          })
-        );
-        if (results.includes('conflict')) throw new OwnerConflict();
-        return results.includes('created') ? 'created' : 'exists';
-      });
-    } catch (error) {
-      if (!(error instanceof OwnerConflict)) throw error;
-      result = 'conflict';
-    }
-    counts = {
-      principals: (
-        adapter.prepare('SELECT COUNT(*) AS count FROM principals').get() as { count: number }
-      ).count,
-      identities: (
-        adapter.prepare('SELECT COUNT(*) AS count FROM external_identities').get() as {
-          count: number;
+          });
+          result.membersCreated = 1;
+        } else if (current.kind === 'member') {
+          person = current.principalId;
+        } else {
+          throw new CliInputError('Cutover refused: identity belongs to another common principal');
         }
-      ).count,
-    };
+        if (result.membersCreated > 0) createdMember = person;
+        result.rolesGranted =
+          repo.grantRole({ principalId: person, role: 'owner', now }) === 'created' ? 1 : 0;
+        Object.assign(
+          result,
+          moveRaw({ channel, fromPrincipalId: OWNER_PRINCIPAL_ID, toPrincipalId: person })
+        );
+        const observations = adapter
+          .prepare(
+            "SELECT observation_id FROM observation_versions WHERE source='chat' AND channel=? AND memory_scope_kind='user' AND (memory_scope_id=? OR (memory_scope_id=? AND author=?))"
+          )
+          .all(channel, OWNER_PRINCIPAL_ID, person, OWNER_PRINCIPAL_ID) as Array<{
+          observation_id: string;
+        }>;
+        const checkpoints = firstOwner
+          ? (adapter
+              .prepare(
+                `SELECT c.id FROM checkpoints c WHERE c.timestamp <= ? AND (
+            NOT EXISTS (SELECT 1 FROM checkpoint_scope_bindings b WHERE b.checkpoint_id=c.id)
+            OR EXISTS (SELECT 1 FROM checkpoint_scope_bindings b JOIN memory_scopes s ON s.id=b.scope_id
+              WHERE b.checkpoint_id=c.id AND s.kind='user' AND s.external_id=?))`
+              )
+              .all(now, OWNER_PRINCIPAL_ID) as Array<{ id: number }>)
+          : [];
+        const moved = moveRecordsUserScope(adapter, {
+          recordIds: [
+            ...observations.map((row) => row.observation_id),
+            ...checkpoints.map((row) => row.id),
+          ],
+          fromPrincipalId: OWNER_PRINCIPAL_ID,
+          toPrincipalId: person,
+          authorPrincipalId: person,
+          bindUnscoped: firstOwner,
+        });
+        result.observations = moved.records.observations;
+        result.checkpoints = moved.records.checkpoints;
+        result.indexRows = adapter
+          .prepare(
+            "UPDATE connector_event_index SET memory_scope_id=?, author=CASE WHEN author=? THEN ? ELSE author END WHERE source_connector='chat' AND channel=? AND memory_scope_kind='user' AND (memory_scope_id=? OR (memory_scope_id=? AND author=?))"
+          )
+          .run(
+            person,
+            OWNER_PRINCIPAL_ID,
+            person,
+            channel,
+            OWNER_PRINCIPAL_ID,
+            person,
+            OWNER_PRINCIPAL_ID
+          ).changes;
+        return result;
+      });
+      // Filesystem changes follow the committed cutover; active member state belongs to them.
+      if (createdMember !== undefined) clearMemberSmokeState(config.member_root, createdMember);
+      // First cutover discards the mixed DM/common history. Later registrations preserve it.
+      const threadRoot = join(root, 'codex-runtime', 'threads');
+      if (firstOwner && existsSync(threadRoot)) {
+        const threads = new CodexThreadRegistry({ rootDir: threadRoot });
+        for (const key of ['owner:runtime', 'owner:replay']) {
+          if (threads.load(key)) {
+            threads.remove(key);
+            counts.threadsCleared++;
+          }
+        }
+      }
+    }
   } finally {
-    adapter.disconnect();
+    rawStore.close();
+    await database.close();
   }
-  console.log(`${result} principals=${counts.principals} identities=${counts.identities}`);
-  return result;
+  console.log(
+    Object.entries(counts)
+      .map(([key, value]) => `${key}=${value}`)
+      .join(' ')
+  );
+  return counts;
 }

@@ -1,10 +1,11 @@
 /**
- * C6 (plan W3, W4): a second consumer installs the packed mama-core in a temporary directory and
+ * C6 (plan W3, W4): a second consumer unpacks mama-core in a temporary directory and
  * writes, revises, links, reads and searches its own records through public exports only.
  *
  * The archive's conformance package depended on the core through a workspace link, so it never
- * met the published package: its files list, its exports map or its install. Here the tarball is
- * packed and installed outside the repository, Node's exports map refuses any private subpath,
+ * met the published package: its files list or its exports map. Here the tarball is
+ * unpacked outside the repository, with existing dependencies linked for an offline run.
+ * Node's exports map refuses any private subpath,
  * and the consumer runs with no MAMA setting and a home directory of its own. It keeps no vectors:
  * it writes with embedder: null and searches with an embedder that answers null, so the model must
  * never load (on this install its first search used to start a model download).
@@ -16,8 +17,9 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  realpathSync,
   rmSync,
-  writeFileSync,
+  symlinkSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -55,19 +57,23 @@ describe('a second consumer of the packed core', () => {
       expect(tarball).toBeDefined();
       const app = join(root, 'app');
       cpSync(CONSUMER_FIXTURE, app, { recursive: true });
-      writeFileSync(
-        join(app, 'package.json'),
-        JSON.stringify({
-          name: 'mama-second-consumer',
-          private: true,
-          type: 'module',
-          dependencies: { '@jungjaehoon/mama-core': `file:${join(root, tarball!)}` },
-          // pnpm 10 runs no dependency build scripts unless named; without its native binding
-          // the first openDatabase fails.
-          pnpm: { onlyBuiltDependencies: ['better-sqlite3'] },
-        })
+      const packedCore = join(root, 'packed-core');
+      mkdirSync(packedCore);
+      run(
+        'tar',
+        ['-xzf', join(root, tarball!), '-C', packedCore, '--strip-components=1'],
+        root,
+        process.env
       );
-      run('pnpm', ['install', '--prefer-offline', '--ignore-workspace'], app, process.env);
+      // Only dependencies are linked. The core executed below comes from the tarball.
+      symlinkSync(join(CORE_DIR, 'node_modules'), join(packedCore, 'node_modules'), 'dir');
+      mkdirSync(join(app, 'node_modules', '@jungjaehoon'), { recursive: true });
+      symlinkSync(packedCore, join(app, 'node_modules', '@jungjaehoon', 'mama-core'), 'dir');
+      const modelCache = join(
+        realpathSync(join(CORE_DIR, 'node_modules', '@huggingface', 'transformers')),
+        '.cache'
+      );
+      const hadModelCache = existsSync(modelCache);
 
       const home = join(root, 'home');
       mkdirSync(home);
@@ -99,11 +105,17 @@ describe('a second consumer of the packed core', () => {
         searchHits: string[];
         searchMs: number;
         privatePath: string;
+        role: string;
+        roleMember: string;
+        memberId: string;
+        commonIdentityCount: number;
+        scopeMove: { records: { checkpoints: number } };
+        movedRecordVisible: boolean;
       };
 
       expect(result.ownTable).toBe(true);
       expect(result.foreignTables).toEqual([]);
-      expect(result.scopeKinds).toEqual(['workbench']);
+      expect(result.scopeKinds).toEqual(['user', 'workbench']);
       expect(result.judgment).toBe('committed');
       expect(result.revision).toBe(2);
       expect(result.status).toBe('done');
@@ -120,25 +132,13 @@ describe('a second consumer of the packed core', () => {
       expect(result.searchMs).toBeLessThan(5_000);
       // The core's embedding model never loaded: no load notice, and no model cache was created.
       expect(`${consumer.stdout}${consumer.stderr}`).not.toContain('Loading embedding model');
-      const transformers = readdirSync(join(app, 'node_modules', '.pnpm')).filter((name) =>
-        name.startsWith('@huggingface+transformers')
-      );
-      for (const name of transformers)
-        expect(
-          existsSync(
-            join(
-              app,
-              'node_modules',
-              '.pnpm',
-              name,
-              'node_modules',
-              '@huggingface',
-              'transformers',
-              '.cache'
-            )
-          )
-        ).toBe(false);
+      expect(existsSync(modelCache)).toBe(hadModelCache);
       expect(result.privatePath).toBe('ERR_PACKAGE_PATH_NOT_EXPORTED');
+      expect(result.role).toBe('bench-reviewer');
+      expect(result.roleMember).toBe(result.memberId);
+      expect(result.commonIdentityCount).toBe(0);
+      expect(result.scopeMove.records.checkpoints).toBe(1);
+      expect(result.movedRecordVisible).toBe(true);
       // The core wrote nothing into the consumer's home.
       expect(readdirSync(home)).toEqual([]);
     } finally {

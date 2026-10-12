@@ -3,12 +3,18 @@
  * through the registered TrelloConnector, so the credentials stay in the connector. Past changes
  * are stored history (source.search, source.read); nothing here is cached.
  */
-import type { ActionContext, ActionRegistration } from '@jungjaehoon/mama-core';
+import {
+  createPrincipalRepository,
+  type ActionContext,
+  type ActionRegistration,
+  type PrincipalRepository,
+} from '@jungjaehoon/mama-core';
 import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
 
 import type { ConnectorRegistry } from '../connectors/framework/connector-registry.js';
 import { TrelloConnector } from '../connectors/trello/index.js';
 import type { TrelloBoardChannel } from '../connectors/trello/actions.js';
+import { holdsOwnerRole } from '../runtime/owner-authority.js';
 
 export interface TrelloReadPorts {
   connectors?: () => ConnectorRegistry | null;
@@ -39,10 +45,15 @@ function connectorFrom(ports: TrelloReadPorts): TrelloConnector {
 function permittedBoards(
   connector: TrelloConnector,
   access: ActionContext['access'],
-  ownerPrincipalId: string
+  ports: TrelloReadPorts,
+  principals: () => PrincipalRepository
 ): TrelloBoardChannel[] {
   const boards = connector.boards();
-  if (access.principalId === ownerPrincipalId) return boards;
+  if (
+    access.principalId === ports.ownerPrincipalId ||
+    holdsOwnerRole(principals(), access.principalId)
+  )
+    return boards;
   const granted = access.channels?.trello ?? [];
   const permitted = boards.filter((board) => granted.includes(board.key));
   if (permitted.length === 0) throw outOfScope();
@@ -67,6 +78,7 @@ function boardNamed(
 }
 
 export function trelloActionRegistrations(ports: TrelloReadPorts): ActionRegistration[] {
+  let principals: PrincipalRepository | undefined;
   return [
     {
       contract: {
@@ -112,7 +124,12 @@ export function trelloActionRegistrations(ports: TrelloReadPorts): ActionRegistr
       exec: async (input, context) => {
         const values = input as Record<string, unknown>;
         const connector = connectorFrom(ports);
-        const permitted = permittedBoards(connector, context.access, ports.ownerPrincipalId);
+        const permitted = permittedBoards(
+          connector,
+          context.access,
+          ports,
+          () => (principals ??= createPrincipalRepository(ports.adapter))
+        );
         switch (values.view) {
           case 'boards':
             return { boards: await connector.readBoards(permitted) };

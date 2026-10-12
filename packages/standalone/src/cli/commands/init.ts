@@ -249,10 +249,9 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
   const secrets: Partial<Record<SecretName, string>> = {
     MAMA_TELEGRAM_TOKEN: nonblankLine(await prompt.secret('Telegram bot token')),
   };
-  const chatId = await text(prompt, 'Telegram owner chat id');
-  const userId = await text(prompt, 'Telegram owner user id');
-  if (!/^-?[1-9]\d*$/.test(chatId) || !/^[1-9]\d*$/.test(userId)) {
-    throw new CliInputError('Enter numeric Telegram chat and user ids.');
+  const chatId = await text(prompt, 'Telegram common chat id');
+  if (!/^-?[1-9]\d*$/.test(chatId)) {
+    throw new CliInputError('Enter a numeric Telegram chat id.');
   }
   const connectors = await collectConnectors(prompt, secrets);
   const discordEnabled = await yes(prompt, 'Enable Discord owner messages');
@@ -362,7 +361,6 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
         enabled: true,
         owner_chat_id: chatId,
         allowed_chats: [chatId],
-        owner_user_ids: [userId],
         polling: true,
       },
       discord: discordConfig,
@@ -405,6 +403,7 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
   }
   writeFileSync(configPath, yaml.dump(config), { flag: 'wx', mode: 0o600 });
   prompt.write('Setup written. Credentials are stored only in auth.env (0600).');
+  prompt.write('Before starting the daemon, run: mama register-owner <telegram id>.');
   if (!backendPath)
     prompt.write(`Install ${backend} and add its bin directory to PATH in ~/.mama/start.sh.`);
   prompt.write(

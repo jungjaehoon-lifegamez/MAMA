@@ -110,7 +110,6 @@ describe('one owner native session', () => {
         'graph.query',
         'help',
         'judge',
-        'manage.member.enroll',
         'manage.member.grant',
         'manage.member.list',
         'manage.member.offboard',

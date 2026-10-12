@@ -43,7 +43,6 @@ function validConfig(): W1Config {
     telegram: {
       enabled: false,
       allowed_chats: ['chat-test'],
-      owner_user_ids: ['owner-test'],
       polling: false,
       file_delivery: true,
     },
@@ -65,6 +64,23 @@ function validConfig(): W1Config {
 }
 
 describe('W1 runtime configuration', () => {
+  it.each([[], ['legacy-owner'], null])(
+    'refuses deprecated Telegram owner identities before returning a config (%j)',
+    (ownerIds) => {
+      const path = join(testHome, 'config.yaml');
+      writeFileSync(
+        path,
+        JSON.stringify({
+          ...validConfig(),
+          telegram: { ...validConfig().telegram, owner_user_ids: ownerIds },
+        })
+      );
+      expect(() => loadConfig({ path, home: testHome })).toThrow(
+        /telegram\.owner_user_ids.*mama register-owner/
+      );
+    }
+  );
+
   it('accepts member_root outside HOME and rejects relative or overlapping roots', () => {
     const root = join(realpathSync(tmpdir()), 'fixture-members-root');
     expect(parseConfig({ ...validConfig(), member_root: root }).member_root).toBe(root);

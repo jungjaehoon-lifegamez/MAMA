@@ -397,3 +397,22 @@ describe('owner chat raw sources', () => {
     expect(JSON.stringify(recent)).toContain(message.text);
   });
 });
+
+describe('common chat sender attribution', () => {
+  it('stores the sender principal as author while the common session owns the scope', () => {
+    chat.saveOwnerMessage({ ...message, senderPrincipalId: 'member-sender' });
+    const row = database.adapter
+      .prepare(
+        "SELECT author, memory_scope_kind, memory_scope_id FROM connector_event_index WHERE source_connector = 'chat' AND source_id = ?"
+      )
+      .get(message.id);
+    expect(row).toEqual({
+      author: 'member-sender',
+      memory_scope_kind: 'user',
+      memory_scope_id: 'owner-test',
+    });
+    expect(chat.exchanges(0, Date.now())).toEqual([
+      { at: message.occurredAt, owner: message.text, reply: null },
+    ]);
+  });
+});

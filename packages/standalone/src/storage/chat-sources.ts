@@ -10,7 +10,7 @@ export function ownerMessageItem(input: OwnerMessageInput, principalId: string):
     source: 'chat',
     sourceId: input.id,
     channel: `${input.id.split(':')[0]}:${input.channelKey}`,
-    author: principalId,
+    author: input.senderPrincipalId ?? principalId,
     content: input.text,
     timestamp: new Date(input.occurredAt),
     type: 'message',

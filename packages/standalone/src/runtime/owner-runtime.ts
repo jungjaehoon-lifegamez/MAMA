@@ -155,6 +155,7 @@ export interface OwnerRuntime {
   readonly intake: StimulusIntake;
   readonly acceptSourceDelta: StimulusIntake['acceptSourceDelta'];
   serveMember(principalId: string): StimulusIntake;
+  principalPaths(principalId: string): { workspaceDir: string; downloadsDir: string };
   completeMemberEnrollment(selection: MemberSelection): Promise<ActionResult>;
   recordHostExchange(input: OwnerHostExchangeInput): void;
   stop(): Promise<void>;
@@ -295,13 +296,12 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
   const reportSseClients = new Set<ServerResponse>();
   let wikiRoot: string | null = null;
   try {
+    const principals = createPrincipalRepository(database.adapter);
     const knowledge = createKnowledge({
       adapter: database.adapter,
       embedder: runtimeEmbedder(options),
     });
-    const activeMembers = createPrincipalRepository(database.adapter)
-      .listMembers()
-      .filter((member) => member.status === 'active');
+    const activeMembers = principals.listMembers().filter((member) => member.status === 'active');
     if (activeMembers.length && options.memberRoot === undefined)
       throw new Error('Active members require member_root');
     const ownerDeniedPaths = options.memberRoot === undefined ? [] : ownerDataReadPaths(options);
@@ -426,13 +426,12 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
               resume: async (id) => {
                 // A suspended member may retain a session after an earlier stop/move failure.
                 await retireMember(id);
-                const repo = createPrincipalRepository(database.adapter);
-                repo.resume(id, Date.now());
+                principals.resume(id, Date.now());
                 try {
                   serveMember(id);
                 } catch (error) {
                   // A failed preparation never leaves an active registry entry with a partial runtime.
-                  repo.suspend(id, Date.now());
+                  principals.suspend(id, Date.now());
                   throw error;
                 }
               },
@@ -637,16 +636,13 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
     sessions.add(options.ownerPrincipalId, { native: nativeSession, delivery });
     const prepareMember = (principalId: string) => {
       if (memberRoot === undefined) throw new Error('Active members require member_root');
-      const principal = createPrincipalRepository(database.adapter).findById(principalId);
+      const principal = principals.findById(principalId);
       if (principal?.kind !== 'member' || principal.status !== 'active')
         throw new Error(`serveMember requires an active member: ${principalId}`);
       const member = createMemberSession(principalId, memberRoot, {
         options,
         ownerDeniedPaths,
-        registeredMemberIds: () =>
-          createPrincipalRepository(database.adapter)
-            .listMembers()
-            .map((row) => row.principalId),
+        registeredMemberIds: () => principals.listMembers().map((row) => row.principalId),
         database,
         rawStore: sourceStore,
         surface,
@@ -808,14 +804,37 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           throw new Error(`Member session is not served: ${id}`);
         return serveMember(id);
       },
+      principalPaths: (principalId) => {
+        if (principalId === options.ownerPrincipalId) {
+          const downloadsDir = options.attachmentPorts?.downloadsDir;
+          if (!downloadsDir?.trim()) throw new Error('Owner downloads directory is required');
+          return {
+            workspaceDir: options.workspaceDir,
+            downloadsDir,
+          };
+        }
+        executionAccess(principalId);
+        sessions.get(principalId);
+        return members.get(principalId)!.paths;
+      },
       completeMemberEnrollment: (selection) =>
         sessions.turnChain(async () => {
           if (stopped) throw new Error('Cannot enroll a member after runtime stop');
           return surface.completeMemberEnrollment(selection);
         }),
       recordHostExchange: ({ message, reply }) => {
-        chat.saveOwnerMessage(message);
-        chat.saveReply({ ...reply, messageRef: message.id, author: 'host' });
+        const person = message.id.startsWith('telegram:')
+          ? principals.resolveByExternal('telegram', 'private', message.channelKey)
+          : null;
+        const archive =
+          person?.kind === 'member' && person.status === 'active'
+            ? (serveMember(person.principalId), members.get(person.principalId)!.chat)
+            : chat;
+        archive.saveOwnerMessage({
+          ...message,
+          ...(person ? { senderPrincipalId: person.principalId } : {}),
+        });
+        archive.saveReply({ ...reply, messageRef: message.id, author: 'host' });
       },
       stop: () => {
         if (stopPromise) return stopPromise;

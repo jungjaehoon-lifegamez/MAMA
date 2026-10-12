@@ -256,6 +256,39 @@ it('exports core and product rows and regular files, excluding credentials and p
   );
 });
 
+it('exports an owner-role member own records and files without the common records it may read', async () => {
+  const f = await setup();
+  const repo = createPrincipalRepository(f.runtime.database.adapter);
+  repo.grantRole({ principalId: f.member, role: 'owner', now: 5 });
+  const input = {
+    topic: 'fixture-owner-role',
+    kind: 'fact',
+    summary: 'PERSONAL_OWNER_ROLE_RECORD',
+    details: 'Fixture personal details',
+    source: { package: 'fixture', source_type: 'fixture' },
+  };
+  await f.act('memory.save', input);
+  data(
+    await f.runtime.surface.hostToolCall(
+      'memory.save',
+      {
+        ...input,
+        summary: 'COMMON_OWNER_ROLE_RECORD',
+      },
+      'fixture-common-record'
+    )
+  );
+  await runExport(f);
+  const zip = unzipSync(f.uploads[0].bytes);
+  expect(f.uploads[0].principal).toBe(f.member);
+  expect(strFromU8(zip['core.json'])).toContain('PERSONAL_OWNER_ROLE_RECORD');
+  expect(strFromU8(zip['core.json'])).not.toContain('COMMON_OWNER_ROLE_RECORD');
+  expect(strFromU8(zip['product.json'])).not.toContain('owner chat');
+  expect(Object.keys(zip).join('\n')).toContain('personal.txt');
+  expect(Object.keys(zip).join('\n')).not.toContain('owner.txt');
+  expect(repo.listRoles(f.member)).toHaveLength(1);
+});
+
 it.each(['owner', 'delta', 'scheduled', 'replay', 'subagent', 'unknown-ref'])(
   'denies %s and lists actions only for the member',
   async (origin) => {

@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomInt } from 'node:crypto';
-import type { ActionResult, JudgmentAccess } from '@jungjaehoon/mama-core';
+import type { ActionResult, JudgmentAccess, PrincipalRepository } from '@jungjaehoon/mama-core';
 import type { MemberSelection } from '../api/member-enrollment.js';
+import { holdsOwnerRole } from '../runtime/owner-authority.js';
 import { closeSync } from 'node:fs';
 import { basename } from 'node:path';
 
@@ -48,7 +49,6 @@ type EditMessageTextOther = Parameters<TelegramApi['editMessageText']>[3];
 export interface TelegramGatewayConfig {
   enabled: boolean;
   allowedChats?: string[];
-  ownerUserIds?: string[];
   ownerChatId?: string;
   polling?: boolean;
 }
@@ -56,6 +56,9 @@ export interface TelegramGatewayConfig {
 export interface TelegramGatewayOptions {
   token: string;
   intake: TurnIntake;
+  registry: Pick<PrincipalRepository, 'resolveByExternal' | 'listRoles'>;
+  memberIntake: (principalId: string) => TurnIntake;
+  principalPaths: (principalId: string) => { downloadsDir: string };
   config?: Partial<TelegramGatewayConfig>;
   messageLedgerPath?: string;
   messageLedger?: OwnerMessageLedger;
@@ -142,11 +145,14 @@ function outboundLedgerKey(idempotencyKey: string): string {
   return `outbound:${createHash('sha256').update(`text\0${idempotencyKey}`).digest('hex')}`;
 }
 
-/** Telegram owner ingress and its durable response transport. */
+/** Telegram personal/common ingress and its durable response transport. */
 export class TelegramGateway extends BaseGateway {
   readonly source = 'telegram' as const;
 
   private readonly token: string;
+  private readonly registry: TelegramGatewayOptions['registry'];
+  private readonly memberIntake: TelegramGatewayOptions['memberIntake'];
+  private readonly principalPaths: TelegramGatewayOptions['principalPaths'];
   private readonly config: TelegramGatewayConfig;
   private readonly filesRoot?: string;
   private readonly downloadsDir?: string;
@@ -173,14 +179,14 @@ export class TelegramGateway extends BaseGateway {
   constructor(options: TelegramGatewayOptions) {
     super({ intake: options.intake });
     this.token = options.token;
+    this.registry = options.registry;
+    this.memberIntake = options.memberIntake;
+    this.principalPaths = options.principalPaths;
     this.onMemberSelection = options.onMemberSelection;
     this.recordMemberSelection = options.recordMemberSelection;
     this.config = {
       enabled: options.config?.enabled ?? true,
       allowedChats: options.config?.allowedChats ?? [],
-      ...(options.config?.ownerUserIds === undefined
-        ? {}
-        : { ownerUserIds: options.config.ownerUserIds }),
       ...(options.config?.ownerChatId === undefined
         ? {}
         : { ownerChatId: options.config.ownerChatId }),
@@ -263,16 +269,16 @@ export class TelegramGateway extends BaseGateway {
     return this.messageLedger.get(sourceRef)?.state === 'delivered';
   }
 
-  /** Final response callback used by the owner runtime after a native turn settles. */
+  /** Final response callback used after a common or personal native turn settles. */
   async deliverResponse(sourceRef: string, response: string): Promise<void> {
     const chatId = chatIdFromSourceMessageRef(sourceRef);
-    this.requireAllowedChat(chatId);
     const existing = this.messageLedger.get(sourceRef);
     if (!existing) throw new Error(`Telegram response has no accepted message ${sourceRef}`);
     if (existing.deliveryTarget && existing.deliveryTarget !== `telegram:${chatId}`) {
       throw new Error('Telegram response destination conflicts with its accepted message');
     }
     if (existing.state === 'delivered') return;
+    this.responseIntake(sourceRef);
     if (existing.state === 'ready' && existing.response !== response) {
       throw new Error('Telegram response conflicts with its durable ledger entry');
     }
@@ -400,7 +406,7 @@ export class TelegramGateway extends BaseGateway {
       });
     const ownerUserId = chatIdFromSourceMessageRef(sourceRef);
     const chatId = Number(ownerUserId);
-    if (!this.bot || !this.onMemberSelection || !this.ownerAllowed(ownerUserId, ownerUserId)) {
+    if (!this.bot || !this.onMemberSelection || !this.ownerAllowed(ownerUserId)) {
       throw Object.assign(new Error("Enrollment requires the owner's own Telegram DM"), {
         name: 'denied',
       });
@@ -432,7 +438,10 @@ export class TelegramGateway extends BaseGateway {
     }
   }
 
-  private async completeMemberSelection(message: TelegramMessage): Promise<void> {
+  private async completeMemberSelection(
+    message: TelegramMessage,
+    senderPrincipalId: string
+  ): Promise<void> {
     const chatId = String(message.chat.id);
     const ownerUserId = String(message.from!.id);
     if (message.chat.type !== 'private' || chatId !== ownerUserId) return;
@@ -518,6 +527,7 @@ export class TelegramGateway extends BaseGateway {
           message: {
             id: sourceMessageRef(chatId, message.message_id),
             channelKey: chatId,
+            senderPrincipalId,
             occurredAt: message.date * 1000,
             text: 'Member selection for enrollment (Choose member button)',
             // manage.member.list finds the receipts by this marker, not by the text.
@@ -542,10 +552,26 @@ export class TelegramGateway extends BaseGateway {
     return this.lastMessageAt;
   }
 
-  private ownerAllowed(chatId: string, userId: string): boolean {
-    if (!this.config.allowedChats?.includes(chatId)) return false;
-    if (this.config.ownerUserIds !== undefined) return this.config.ownerUserIds.includes(userId);
-    return this.config.allowedChats.length === 1 && this.config.allowedChats[0] === userId;
+  private ownerAllowed(userId: string): boolean {
+    const principal = this.registry.resolveByExternal('telegram', 'private', userId);
+    return (
+      principal?.kind === 'member' &&
+      principal.status === 'active' &&
+      holdsOwnerRole(this.registry, principal.principalId)
+    );
+  }
+
+  private responseIntake(sourceRef: string): TurnIntake {
+    const chatId = chatIdFromSourceMessageRef(sourceRef);
+    const recipient = this.registry.resolveByExternal('telegram', 'private', chatId);
+    if (recipient) {
+      if (recipient.kind !== 'member' || recipient.status !== 'active') {
+        throw new Error('Telegram DM response requires its registered active member');
+      }
+      return this.memberIntake(recipient.principalId);
+    }
+    this.requireAllowedChat(chatId);
+    return this.intake;
   }
 
   private requireAllowedChat(chatId: string): void {
@@ -558,7 +584,13 @@ export class TelegramGateway extends BaseGateway {
     if (!message.chat || !message.from) return;
     const chatId = String(message.chat.id);
     const userId = String(message.from.id);
-    if (message.from.is_bot || !this.ownerAllowed(chatId, userId)) {
+    const principal = this.registry.resolveByExternal('telegram', 'private', userId);
+    const privateChat = message.chat.type === 'private';
+    const admitted =
+      principal?.kind === 'member' &&
+      principal.status === 'active' &&
+      (privateChat || (this.config.allowedChats?.includes(chatId) && this.ownerAllowed(userId)));
+    if (message.from.is_bot || !admitted) {
       const chatHash = createHash('sha256').update(`chat\0${chatId}`).digest('hex');
       const senderHash = createHash('sha256').update(`sender\0${userId}`).digest('hex');
       console.warn(
@@ -568,11 +600,12 @@ export class TelegramGateway extends BaseGateway {
     }
 
     if (message.users_shared) {
-      await this.completeMemberSelection(message);
+      await this.completeMemberSelection(message, principal!.principalId);
       return;
     }
 
     const ref = sourceMessageRef(chatId, message.message_id);
+    const intake = privateChat ? this.memberIntake(principal!.principalId) : this.intake;
     const now = Date.now();
     const previous = this.recentMessageIds.get(ref);
     if (previous !== undefined && now - previous <= MESSAGE_DEDUP_TTL_MS) return;
@@ -588,7 +621,7 @@ export class TelegramGateway extends BaseGateway {
       return;
     }
     if (durable?.state === 'processing' && this.activePresenters.has(ref)) return;
-    if (durable?.state === 'processing' && this.intake.isPending?.(ref)) return;
+    if (durable?.state === 'processing' && intake.isPending?.(ref)) return;
     if (durable?.state === 'processing') {
       this.messageLedger.markInterrupted(ref, this.interruptedNotice, 'html-v1');
       await this.deliverReadyEntry(ref);
@@ -617,12 +650,15 @@ export class TelegramGateway extends BaseGateway {
       const attachments = await downloadTelegramFiles(files, {
         api: this.bot!.api,
         token: this.token,
-        downloadsDir: this.downloadsDir,
+        downloadsDir: privateChat
+          ? this.principalPaths(principal!.principalId).downloadsDir
+          : this.downloadsDir,
         messageId: message.message_id,
       });
       const input: OwnerMessageInput = {
         id: ref,
         channelKey: chatId,
+        senderPrincipalId: principal!.principalId,
         occurredAt: message.date * 1000,
         text: selected.text.trim()
           ? selected.text
@@ -636,7 +672,7 @@ export class TelegramGateway extends BaseGateway {
               } as unknown as JsonValue,
             }),
       };
-      this.intake.acceptOwnerMessage(input);
+      intake.acceptOwnerMessage(input);
       this.emitEvent({
         type: 'message_received',
         source: 'telegram',
@@ -687,6 +723,7 @@ export class TelegramGateway extends BaseGateway {
       const current = this.messageLedger.get(sourceRef);
       if (!current || current.state === 'delivered') return;
       if (current.deliveryUncertain) throw new Error('Telegram response delivery is uncertain');
+      const intake = this.responseIntake(sourceRef);
       const presenter =
         this.activePresenters.get(sourceRef) ?? this.createResponsePresenter(sourceRef, chatId);
       try {
@@ -699,7 +736,7 @@ export class TelegramGateway extends BaseGateway {
       if (current.responseAuthor === undefined) {
         this.log(`telegram reply archive skipped key=${sourceRef} reason=missing_response_author`);
       } else {
-        this.intake.recordOwnerReply({
+        intake.recordOwnerReply({
           messageRef: sourceRef,
           text: current.response!,
           occurredAt: this.messageLedger.get(sourceRef)!.updatedAt,
@@ -737,13 +774,12 @@ export class TelegramGateway extends BaseGateway {
           continue;
         }
         if (!entry.key.startsWith('telegram:')) continue;
-        const chatId = chatIdFromSourceMessageRef(entry.key);
-        if (!this.config.allowedChats?.includes(chatId)) continue;
+        const intake = this.responseIntake(entry.key);
         if (entry.state === 'ready' && entry.response !== undefined) {
           await this.deliverReadyEntry(entry.key);
           continue;
         }
-        if (entry.state === 'processing' && !this.intake.isPending?.(entry.key)) {
+        if (entry.state === 'processing' && !intake.isPending?.(entry.key)) {
           this.messageLedger.markInterrupted(entry.key, this.interruptedNotice, 'html-v1');
           await this.deliverReadyEntry(entry.key);
         }

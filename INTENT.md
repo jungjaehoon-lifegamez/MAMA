@@ -74,7 +74,9 @@ member permissions and non-owner input wait until the checks below pass on real 
   link the agent did not state.
   Member erasure is the exception for records bound only to that member's own scope:
   delete uncited records; where kept work cites them, retain only an erased id and scope,
-  wiping content and vectors. Shared revisions written by the member stay.
+  wiping content and vectors. Shared revisions written by the member stay. When owners became
+  members (owner, 2026-10-12), the first owner's DM chat and checkpoints from before that change
+  moved once from the common principal to that owner's personal scope.
 - Jev, when the owner turns it on, is a classifier the agent uses to narrow candidates before it
   judges and links. Everything works without it.
 

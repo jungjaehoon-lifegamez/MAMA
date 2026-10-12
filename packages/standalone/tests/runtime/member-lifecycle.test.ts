@@ -9,6 +9,7 @@ import {
   otherMemberReadPaths,
 } from '../../src/runtime/member-paths.js';
 import { fixture, roots } from '../helpers/member-runtime.js';
+import { upsertConnectorEventIndex } from '../../src/connectors/framework/event-index.js';
 
 const partition = (principalId: string, scopeId = 'fixture-partition') => ({
   principalId,
@@ -195,7 +196,131 @@ it('suspends and resumes with preserved grants in fresh directories, then offboa
     ownerUserId: 'fixture-owner',
     userId: 'fixture-member',
   });
-  expect(data(enrollment)).toMatchObject({ status: 'refused', principalId: f.member });
+  expect(enrollment).toMatchObject({
+    status: 'failed',
+    error: {
+      code: 'action_not_granted',
+      message: 'principal owner may not call manage.member.enroll',
+    },
+  });
+});
+
+it.each(['codex', 'claude'] as const)(
+  'runs an owner-role person in its own native member session with common reads and personal writes (%s)',
+  async (backend) => {
+    const f = await fixture(backend);
+    const repo = createPrincipalRepository(f.runtime.database.adapter);
+    repo.grantRole({ principalId: f.member, role: 'owner', now: 5 });
+    const input = {
+      topic: 'fixture-role-memory',
+      kind: 'fact',
+      summary: 'PERSONAL_OWNER_MEMORY',
+      details: 'Fixture personal memory',
+      source: { package: 'fixture', source_type: 'fixture' },
+    };
+    const own = data((await f.act('memory.save', input)).result).id as string;
+    const common = data(
+      await f.runtime.surface.hostToolCall(
+        'memory.save',
+        { ...input, summary: 'COMMON_MEMORY' },
+        'fixture-common-owner-save'
+      )
+    ).id as string;
+    expect(
+      f.runtime.database.adapter
+        .prepare(
+          `
+      SELECT s.kind, s.external_id AS id FROM memory_scope_bindings b
+      JOIN memory_scopes s ON s.id = b.scope_id WHERE b.memory_id = ?`
+        )
+        .all(own)
+    ).toEqual([{ kind: 'user', id: f.member }]);
+    f.read([own, common]);
+    await f.settled(f.message(f.member), f.member);
+    expect(f.reads.at(-1)!.map((r) => Boolean(data(r).record))).toEqual([true, true]);
+    expect(f.turns.at(-1)).toMatchObject({
+      principal: f.member,
+      access: {
+        scopes: [{ kind: 'user', id: f.member }],
+        defaultScopes: [{ kind: 'user', id: f.member }],
+      },
+    });
+    expect(f.natives.get(f.member)!.sessionKey).toBe(`member:${f.member}:runtime`);
+    expect(f.drivers.get(f.member)!.workspaceDir).toBe(memberPaths(f.root, f.member).workspaceDir);
+    if (backend === 'codex') expect(f.drivers.get(f.member)!.webSearch).toBe(false);
+    else {
+      expect(f.turns.at(-1)!.nativeTools).toContain('Read');
+      expect(f.turns.at(-1)!.nativeTools).not.toContain('WebFetch');
+      expect(f.turns.at(-1)!.nativeTools).not.toContain('WebSearch');
+    }
+    expect((await f.manage('suspend')).status).toBe('failed');
+    expect(repo.findById(f.member)?.status).toBe('active');
+    expect(repo.listRoles(f.member)).toEqual([
+      { principalId: f.member, role: 'owner', createdAt: 5 },
+    ]);
+  }
+);
+
+it('writes a live source delta through the common native session without binding any person scope', async () => {
+  const f = await fixture();
+  const repo = createPrincipalRepository(f.runtime.database.adapter);
+  repo.grantRole({ principalId: f.member, role: 'owner', now: 5 });
+  const at = Date.now();
+  upsertConnectorEventIndex(f.runtime.database.adapter, {
+    source_connector: 'fixture',
+    source_type: 'message',
+    source_id: 'fixture-delta-source',
+    channel: 'fixture-common-source',
+    content: 'Fixture source change',
+    source_timestamp_ms: at,
+  });
+  const row = f.runtime.database.adapter
+    .prepare(
+      `SELECT current_observation_id AS ref
+    FROM connector_event_index WHERE source_id = ?`
+    )
+    .get('fixture-delta-source') as { ref: string };
+  const result = data(
+    await f.actDelta(
+      'memory.save',
+      {
+        topic: 'fixture-delta',
+        kind: 'fact',
+        summary: 'COMMON_DELTA_MEMORY',
+        details: 'Fixture common source change',
+        source: { package: 'fixture', source_type: 'source_delta' },
+      },
+      {
+        kind: 'source_delta',
+        collector: 'fixture',
+        channel: 'fixture-common-source',
+        coalesceKey: 'fixture-common-delta',
+        preview: ['Fixture source change'],
+        refs: [
+          {
+            connector: 'fixture',
+            observationRef: row.ref,
+            sourceId: 'fixture-delta-source',
+            sourceEntityId: 'fixture-delta-source',
+            sourceAt: new Date(at).toISOString(),
+            observedAt: new Date(at).toISOString(),
+            contentHash: null,
+          },
+        ],
+      }
+    )
+  );
+  expect(f.turns.at(-1)!.principal).toBe('owner');
+  expect(
+    f.runtime.database.adapter
+      .prepare(
+        `
+    SELECT s.kind, s.external_id AS id FROM memory_scope_bindings b
+    JOIN memory_scopes s ON s.id = b.scope_id WHERE b.memory_id = ?
+    AND s.kind = 'user'`
+      )
+      .all(result.id)
+  ).toEqual([{ kind: 'user', id: 'owner' }]);
 });
 
 it.each(['grant', 'revoke', 'suspend', 'resume', 'offboard'])(

@@ -3,6 +3,7 @@ import type { DatabaseInstance } from '@jungjaehoon/mama-core/db-manager';
 import type { JudgmentAccess } from '@jungjaehoon/mama-core/knowledge';
 import type { MemoryScopeRef } from '@jungjaehoon/mama-core/memory/types';
 import { MEMBER_ACTIONS } from './action-surface.js';
+import { holdsOwnerRole } from './owner-authority.js';
 
 /** A member grant must not expose the owner's default records or make boot/turn access fail. */
 export function validateMemberMemoryGrant(
@@ -52,12 +53,14 @@ export function resolvePrincipalAccess(
   if (identities.length !== 1)
     throw new Error(`member ${principalId} requires exactly one Telegram private identity`);
   const dmId = identities[0]!.external_id;
+  const repository = createPrincipalRepository(adapter);
+  const ownerRole = holdsOwnerRole(repository, principalId);
   // Unscoped owner work binds its defaults; partition write authority does not make a default.
   const readScopes: MemoryScopeRef[] = [];
   const connectors = new Set(['chat']);
   // chat-sources stores gateway channelKey under the transport prefix.
   const channels: Record<string, string[]> = { chat: [`telegram:${dmId}`] };
-  for (const { scope } of createPrincipalRepository(adapter).listActiveGrants(principalId)) {
+  for (const { scope } of repository.listActiveGrants(principalId)) {
     if (scope.kind === 'memory') {
       validateMemberMemoryGrant(scope, ownerAccess);
       readScopes.push({ kind: scope.scopeKind, id: scope.scopeId });
@@ -68,16 +71,50 @@ export function resolvePrincipalAccess(
       channels[scope.connector] = granted;
     }
   }
+  if (ownerRole) {
+    readScopes.push(...ownerAccess.scopes, ...(ownerAccess.readScopes ?? []));
+    for (const connector of ownerAccess.connectors ?? []) connectors.add(connector);
+    // The shared authority never turns another person's Telegram DM into a common source.
+    const privateChannels = new Set(
+      (
+        adapter
+          .prepare(
+            `SELECT external_id FROM external_identities
+          WHERE connector = 'telegram' AND namespace = 'private' AND principal_id <> ?`
+          )
+          .all(principalId) as Array<{ external_id: string }>
+      ).map(({ external_id }) => `telegram:${external_id}`)
+    );
+    for (const [connector, commonChannels] of Object.entries(ownerAccess.channels ?? {})) {
+      channels[connector] = [
+        ...new Set([
+          ...(channels[connector] ?? []),
+          ...commonChannels.filter(
+            (channel) => connector !== 'chat' || !privateChannels.has(channel)
+          ),
+        ]),
+      ];
+    }
+  }
   const personalScope = { kind: 'user' as const, id: principalId };
   return {
     principalId,
     agentId,
     scopes: [personalScope],
     defaultScopes: [personalScope],
-    readScopes,
+    readScopes: [
+      ...new Map(readScopes.map((scope) => [`${scope.kind}\0${scope.id}`, scope])).values(),
+    ],
     connectors: [...connectors],
     channels,
     destinations: [{ kind: 'telegram', id: dmId }],
-    actions: MEMBER_ACTIONS,
+    ...(ownerRole
+      ? {
+          connectorWideRead: (ownerAccess.connectorWideRead ?? []).filter(
+            (source) => source !== 'chat'
+          ),
+        }
+      : {}),
+    actions: ownerRole ? [...MEMBER_ACTIONS, 'drive.read', 'report.read'] : MEMBER_ACTIONS,
   };
 }

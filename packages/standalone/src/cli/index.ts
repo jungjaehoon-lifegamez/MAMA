@@ -28,9 +28,9 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'register-owner') {
+    await requireDaemonStopped('register-owner');
     const { runRegisterOwner } = await import('./commands/register-owner.js');
-    const result = await runRegisterOwner(process.argv.slice(3));
-    if (result === 'conflict') process.exitCode = 1;
+    await runRegisterOwner(process.argv.slice(3));
     return;
   }
   if (command === 'daemon') {
@@ -61,7 +61,7 @@ async function main(): Promise<void> {
     return;
   }
   console.log(
-    'Usage: mama init | secret set <NAME> | secret list | register-owner | daemon | replay | backfill <file> | status | stop'
+    'Usage: mama init | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status | stop'
   );
 }
 

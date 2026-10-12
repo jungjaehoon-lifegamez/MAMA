@@ -56,8 +56,8 @@ export function guardMemberSharedRecords(
             )
           )
             throw denied(
-              `${id} is not only yours: shared records change in the group room, not in this ` +
-                'chat. Save your own note instead, or raise it in the group room.'
+              `${id} is not only yours: shared records change in the common channel. ` +
+                'Save your own note instead, or ask in the common channel.'
             );
         }
       }

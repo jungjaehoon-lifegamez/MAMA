@@ -6,14 +6,21 @@
  */
 import { mkdirSync, rmSync, statSync } from 'node:fs';
 import { extname, join } from 'node:path';
-import type { ActionContext, ActionRegistration } from '@jungjaehoon/mama-core';
+import {
+  createPrincipalRepository,
+  type ActionContext,
+  type ActionRegistration,
+} from '@jungjaehoon/mama-core';
+import type { DatabaseInstance } from '@jungjaehoon/mama-core/db-manager';
 
 import { execGwsAsync, type GwsCallOptions } from '../connectors/framework/gws-utils.js';
 import { safeFileName } from './attachment-actions.js';
+import { holdsOwnerRole } from '../runtime/owner-authority.js';
 
 export type GwsCall = (args: string[], options?: GwsCallOptions) => Promise<unknown>;
 
 export interface DriveActionPorts {
+  adapter: DatabaseInstance;
   ownerPrincipalId: string;
   downloadsDir?: string;
   gws?: GwsCall;
@@ -107,6 +114,7 @@ function fileView(file: DriveFile) {
 }
 
 export function driveActionRegistrations(ports: DriveActionPorts): ActionRegistration[] {
+  let principals: ReturnType<typeof createPrincipalRepository> | undefined;
   const gws = ports.gws ?? execGwsAsync;
   /**
    * Pages until `max` entries or the end, because Drive may return short or empty pages before
@@ -208,7 +216,14 @@ export function driveActionRegistrations(ports: DriveActionPorts): ActionRegistr
         ],
       },
       exec: async (input, context) => {
-        ownerOnly('drive.read', context.access, ports.ownerPrincipalId);
+        if (
+          context.access.principalId !== ports.ownerPrincipalId &&
+          !holdsOwnerRole(
+            (principals ??= createPrincipalRepository(ports.adapter)),
+            context.access.principalId
+          )
+        )
+          ownerOnly('drive.read', context.access, ports.ownerPrincipalId);
         const values = input as Record<string, unknown>;
         switch (values.view) {
           case 'drives': {

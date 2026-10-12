@@ -2,9 +2,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createCatalog, createDispatcher, type ActionContext } from '@jungjaehoon/mama-core';
+import {
+  createCatalog,
+  createDispatcher,
+  createPrincipalRepository,
+  type ActionContext,
+} from '@jungjaehoon/mama-core';
 
 import { driveActionRegistrations, driveId, type GwsCall } from '../../src/api/drive-actions.js';
+import { openCoreDatabase, type CoreDatabase } from '../../src/runtime/core-db.js';
 
 const FOLDER = 'application/vnd.google-apps.folder';
 const SHEET = 'application/vnd.google-apps.spreadsheet';
@@ -32,6 +38,7 @@ const files: Record<string, Record<string, unknown>> = {
 };
 
 let home: string;
+let db: CoreDatabase;
 let calls: Array<{ args: string[]; params: Record<string, unknown>; timeoutMs?: number }>;
 let pages: Array<Record<string, unknown>>;
 
@@ -75,7 +82,12 @@ const owner: ActionContext['access'] = {
 function dispatcher() {
   return createDispatcher(
     createCatalog(
-      driveActionRegistrations({ ownerPrincipalId: 'owner', downloadsDir: home, gws: fakeGws })
+      driveActionRegistrations({
+        adapter: db.adapter,
+        ownerPrincipalId: 'owner',
+        downloadsDir: home,
+        gws: fakeGws,
+      })
     )
   );
 }
@@ -84,12 +96,36 @@ const entries = (count: number, from = 0) =>
   Array.from({ length: count }, (_, i) => ({ ...files.bin1, id: `f${from + i}` }));
 
 describe('drive.read and drive.download', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     home = mkdtempSync(join(tmpdir(), 'drive-read-'));
+    db = await openCoreDatabase({ path: join(home, 'state.db') });
     calls = [];
     pages = [{ files: [files.fold1, files.bin1], incompleteSearch: false }];
   });
-  afterEach(() => rmSync(home, { recursive: true, force: true }));
+  afterEach(async () => {
+    await db?.close();
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('lets an owner-role member read Drive while refusing the common download directory', async () => {
+    const repository = createPrincipalRepository(db.adapter);
+    const person = repository.registerMember({
+      connector: 'telegram',
+      namespace: 'private',
+      externalId: 'fixture-owner-dm',
+      now: 1,
+    });
+    repository.grantRole({ principalId: person, role: 'owner', now: 2 });
+    const access = { ...owner, principalId: person };
+    const dispatch = dispatcher();
+    expect(
+      await dispatch({ action: 'drive.read', input: { view: 'file', file: 'bin1' } }, { access })
+    ).toMatchObject({ status: 'completed', data: { file: { id: 'bin1' } } });
+    expect(
+      await dispatch({ action: 'drive.download', input: { file: 'bin1' } }, { access })
+    ).toMatchObject({ status: 'failed', error: { code: 'drive_out_of_scope' } });
+    expect(existsSync(join(home, 'drive'))).toBe(false);
+  });
 
   it('reads ids out of the link forms cards and messages carry', () => {
     expect(driveId('bin1', 'file')).toBe('bin1');

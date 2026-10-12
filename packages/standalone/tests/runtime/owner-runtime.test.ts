@@ -271,6 +271,7 @@ describe('owner runtime assembly', () => {
       timeout: 1_000,
     });
     try {
+      expect(() => owner.principalPaths('owner')).toThrow('Owner downloads directory is required');
       const result = await owner.surface.hostToolCall(
         'work.create',
         {

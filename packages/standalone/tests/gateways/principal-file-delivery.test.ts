@@ -78,6 +78,12 @@ describe('P5 principal file delivery through the product dispatcher and Telegram
   let ownerWorkspace: string;
   let ports: AttachmentActionPorts;
   let uploaded: Array<{ chatId: string; bytes: Buffer; filename: string }>;
+  const memberIntake = {
+    acceptOwnerMessage: vi
+      .fn()
+      .mockReturnValue({ inputId: 'fixture-member-input', state: 'accepted' }),
+    recordOwnerReply: () => {},
+  };
   const intake = {
     acceptOwnerMessage: vi.fn().mockReturnValue({ inputId: 'fixture-input', state: 'accepted' }),
     recordOwnerReply: () => {},
@@ -132,6 +138,8 @@ describe('P5 principal file delivery through the product dispatcher and Telegram
   };
 
   beforeEach(async () => {
+    memberIntake.acceptOwnerMessage.mockClear();
+    intake.acceptOwnerMessage.mockClear();
     root = realpathSync(mkdtempSync(join(tmpdir(), 'principal-files-')));
     vi.stubEnv('HOME', root);
     vi.stubEnv('MAMA_DB_PATH', join(root, 'core.db'));
@@ -179,6 +187,9 @@ describe('P5 principal file delivery through the product dispatcher and Telegram
     gateway = new TelegramGateway({
       token: 'fixture-token',
       intake,
+      registry: repository,
+      memberIntake: () => memberIntake,
+      principalPaths: paths,
       config: { allowedChats: [OWNER_DM], ownerChatId: OWNER_DM, polling: false },
       filesRoot: join(ownerWorkspace, 'files'),
       messageLedgerPath: join(root, 'ledger.json'),
@@ -248,6 +259,24 @@ describe('P5 principal file delivery through the product dispatcher and Telegram
       .prepare('SELECT actor_principal_id FROM tool_traces WHERE operation_id = ?')
       .get(`${member}-document`);
     expect(trace).toEqual({ actor_principal_id: member });
+  });
+
+  it('delivers an owner-role member file to its own DM and refuses common file delivery', async () => {
+    repository.grantRole({ principalId: member, role: 'owner', now: 4 });
+    completed(await dispatch(member, 'owner-member-document', { path: file() }));
+    expect(uploaded).toEqual([{ chatId: MEMBER_DM, bytes: DOCUMENT, filename: 'result.xlsx' }]);
+    for (const action of ['deliver.discord.file', 'deliver.slack.file', 'deliver.drive.file']) {
+      expect(
+        await dispatch(member, `owner-member-${action}`, { path: file() }, action)
+      ).toMatchObject({
+        status: 'failed',
+        error: {
+          code: 'action_not_granted',
+          message: `principal ${member} may not call ${action}`,
+        },
+      });
+    }
+    expect(uploaded).toHaveLength(1);
   });
 
   it.each([
@@ -425,7 +454,7 @@ describe('P5 principal file delivery through the product dispatcher and Telegram
     ).rejects.toThrow(/refusal/);
   });
 
-  it('keeps member text sends and inbound admission outside the file exception', async () => {
+  it('keeps arbitrary member text sends denied while admitting registered member DMs', async () => {
     await memberControl();
     await expect(gateway.sendMessage(MEMBER_DM, 'fixture', 'member-text')).rejects.toThrow(
       /allowlist/
@@ -439,6 +468,7 @@ describe('P5 principal file delivery through the product dispatcher and Telegram
         text: 'fixture',
       },
     });
+    expect(memberIntake.acceptOwnerMessage).toHaveBeenCalledOnce();
     expect(intake.acceptOwnerMessage).not.toHaveBeenCalled();
     await seams.handlers.get('message')!({
       message: {
@@ -449,6 +479,6 @@ describe('P5 principal file delivery through the product dispatcher and Telegram
         text: 'fixture',
       },
     });
-    expect(intake.acceptOwnerMessage).toHaveBeenCalledOnce();
+    expect(intake.acceptOwnerMessage).not.toHaveBeenCalled();
   });
 });

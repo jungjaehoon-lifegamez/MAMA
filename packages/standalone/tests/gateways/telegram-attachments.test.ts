@@ -1,3 +1,7 @@
+import {
+  telegramPrincipalFixture,
+  closeTelegramPrincipalFixtures,
+} from './telegram-principal-fixture.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   mkdirSync,
@@ -44,9 +48,16 @@ beforeEach(async () => {
   vi.stubGlobal('fetch', download);
   gateway = new TelegramGateway({
     token: 'fixture-token',
+    ...(await telegramPrincipalFixture(root, {
+      recordOwnerReply: () => {},
+      acceptOwnerMessage: (input) => {
+        received.push(input);
+        return { inputId: input.id, state: 'accepted' };
+      },
+    })),
     messageLedgerPath: join(root, 'ledger.json'),
     downloadsDir: join(root, 'downloads'),
-    config: { allowedChats: ['7'], ownerUserIds: ['9'], polling: false },
+    config: { allowedChats: ['7'], polling: false },
     intake: {
       recordOwnerReply: () => {},
       acceptOwnerMessage: (input) => {
@@ -59,6 +70,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await gateway.stop();
+  await closeTelegramPrincipalFixtures();
   vi.unstubAllGlobals();
   rmSync(root, { recursive: true, force: true });
 });
@@ -68,7 +80,7 @@ async function send(media: Record<string, unknown>, caption?: string) {
     message: {
       message_id: 11,
       date: 1_700_000_000,
-      chat: { id: 7, type: 'private' },
+      chat: { id: 7, type: 'supergroup' },
       from: { id: 9, is_bot: false },
       ...media,
       ...(caption === undefined ? {} : { caption }),

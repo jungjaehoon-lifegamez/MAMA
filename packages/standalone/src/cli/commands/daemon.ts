@@ -1,3 +1,4 @@
+import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import {
   closeSync,
   existsSync,
@@ -483,7 +484,6 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       ...(config.telegram.enabled && options.mode !== 'replay'
         ? {
             memberEnrollment: {
-              ownerUserIds: config.telegram.owner_user_ids ?? [],
               requestSelection: async (sourceRef: string) => {
                 const telegram = gateways.get('telegram');
                 if (!telegram?.requestMemberEnrollment)
@@ -558,11 +558,12 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         ? {}
         : {
             onOwnerResult: deliverOwnerResponse,
+            onMemberResult: deliverOwnerResponse,
             onStimulusUncertain: async (row) => {
               logger.error(
                 `stimulus parked uncertain kind=${row.kind ?? 'unknown'} mailbox_id=${row.id}`
               );
-              if (row.kind !== 'owner_message' || row.principalId !== OWNER_PRINCIPAL_ID) return;
+              if (row.kind !== 'owner_message') return;
               const selected = gateways.get(sourceForRef(row.stimulusId));
               if (!selected)
                 throw new Error('Owner messenger is not available for an interrupted response');
@@ -714,12 +715,14 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       gateway = factory({
         token,
         intake,
+        registry: createPrincipalRepository(owner.database.adapter),
+        memberIntake: (principalId) => loggedOwnerIntake(owner!.serveMember(principalId), logger),
+        principalPaths: (principalId) => owner!.principalPaths(principalId),
         onMemberSelection: (selection) => owner!.completeMemberEnrollment(selection),
         recordMemberSelection: (exchange) => owner!.recordHostExchange(exchange),
         config: {
           enabled: true,
           allowedChats: config.telegram.allowed_chats,
-          ownerUserIds: config.telegram.owner_user_ids,
           ownerChatId: config.telegram.owner_chat_id,
           polling: config.telegram.polling,
         },

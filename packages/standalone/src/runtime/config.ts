@@ -28,7 +28,6 @@ export interface W1TelegramConfig {
   enabled: boolean;
   owner_chat_id?: string;
   allowed_chats: string[];
-  owner_user_ids: string[];
   polling: boolean;
   /** Whether the owner agent may send files through Telegram; on unless turned off. */
   file_delivery: boolean;
@@ -300,26 +299,6 @@ function parseAgent(value: unknown, home: string, state: ParseState): W1AgentCon
   };
 }
 
-function deriveTelegramOwnerIds(
-  telegramRaw: Record<string, unknown>,
-  allowedChats: readonly string[]
-): string[] {
-  if (telegramRaw.owner_user_ids !== undefined) {
-    return Array.from(
-      new Set(
-        stringList(telegramRaw.owner_user_ids, 'telegram.owner_user_ids').map((id) => id.trim())
-      )
-    );
-  }
-
-  const normalizedAllowedChatIds = Array.from(new Set(allowedChats.map((chatId) => chatId.trim())));
-  const positiveAllowedChatIds = normalizedAllowedChatIds.filter((chatId) =>
-    /^[1-9]\d*$/.test(chatId)
-  );
-  const [onlyOwnerId] = positiveAllowedChatIds;
-  return onlyOwnerId === undefined ? [] : positiveAllowedChatIds.length === 1 ? [onlyOwnerId] : [];
-}
-
 function parseMessenger(
   value: unknown,
   name: 'discord' | 'slack',
@@ -463,9 +442,14 @@ function parseConfigValue(
   if (Object.hasOwn(telegramRaw, 'token')) {
     throw new ConfigError('run mama secret set MAMA_TELEGRAM_TOKEN and remove telegram.token');
   }
+  if (Object.hasOwn(telegramRaw, 'owner_user_ids')) {
+    throw new ConfigError(
+      'telegram.owner_user_ids is no longer supported; run mama register-owner <telegram id>'
+    );
+  }
   collectIgnoredKeys(
     telegramRaw,
-    ['enabled', 'owner_chat_id', 'allowed_chats', 'owner_user_ids', 'polling', 'file_delivery'],
+    ['enabled', 'owner_chat_id', 'allowed_chats', 'polling', 'file_delivery'],
     'telegram',
     state
   );
@@ -542,7 +526,6 @@ function parseConfigValue(
         enabled: telegramEnabled,
         ...(ownerChatId === undefined ? {} : { owner_chat_id: ownerChatId }),
         allowed_chats: allowedChats,
-        owner_user_ids: deriveTelegramOwnerIds(telegramRaw, allowedChats),
         // Absent means the daemon polls, as in the archive gateway (`polling !== false`);
         // only an explicit `false` hands inbound polling to another instance.
         polling: (telegramRaw.polling ?? true) as boolean,

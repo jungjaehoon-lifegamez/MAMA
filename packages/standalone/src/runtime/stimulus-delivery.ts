@@ -46,6 +46,7 @@ export interface OwnerMessageInput {
   text: string;
   replyTo?: string | null;
   payload?: JsonValue;
+  senderPrincipalId?: string;
 }
 
 export interface ScheduledInput {
@@ -199,8 +200,13 @@ export function createStimulusIntake(
   principalId: string,
   chat: Pick<ChatSources, 'saveOwnerMessage' | 'saveReply'>
 ): StimulusIntake {
-  const ownerPayload = (input: OwnerMessageInput): JsonValue =>
-    input.payload === undefined ? { text: input.text } : { text: input.text, input: input.payload };
+  const ownerPayload = (input: OwnerMessageInput): JsonValue => ({
+    text: input.text,
+    ...(input.payload === undefined ? {} : { input: input.payload }),
+    ...(input.senderPrincipalId === undefined
+      ? {}
+      : { senderPrincipalId: input.senderPrincipalId }),
+  });
   return {
     accept: (stimulus) => runtime.accept({ ...stimulus, principalId }),
     isPending: (sourceMessageRef) => {

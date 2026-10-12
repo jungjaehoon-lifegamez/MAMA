@@ -56,7 +56,9 @@ it does not automatically follow a different installation.
 ## The Telegram bot is silent
 
 Confirm that `telegram.enabled` and `telegram.polling` are true, the owner chat is
-allowlisted, and the sender is in `owner_user_ids`. Inspect recent logs for
+allowlisted for a group, and the sender is an active registered member with the `owner` role.
+For a private DM, confirm the sender is an active member registered by
+`mama register-owner <telegram id>`; the DM need not be allowlisted. Inspect recent logs for
 `telegram polling stopped`, `telegram message dropped`, or a boot-stage failure.
 A disabled poller cannot receive owner turns. A second poller using the same bot
 can also prevent normal operation.

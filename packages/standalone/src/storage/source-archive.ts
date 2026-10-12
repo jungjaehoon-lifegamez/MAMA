@@ -10,6 +10,7 @@ import { join } from 'path';
 
 import { canonicalizeJSON } from '@jungjaehoon/mama-core/canonicalize';
 import Database from '../storage-sqlite.js';
+import type { DatabaseInstance } from '@jungjaehoon/mama-core/db-manager';
 import {
   applyPendingProjectionSnapshotsMigration,
   applyRawItemRevisionsMigration,
@@ -853,6 +854,145 @@ export class RawStore {
       .all(sanitizedCount) as RawRow[];
 
     return rows.map((row) => this.mapRawRowToNormalizedItem(row));
+  }
+
+  /**
+   * The stopped-daemon cutover moves raw snapshots and core projections in the same SQLite
+   * transaction. DELETE journals let SQLite's attached-database super-journal cover both files.
+   */
+  withChatCutover<T>(
+    adapter: DatabaseInstance,
+    apply: (
+      move: (input: { channel: string; fromPrincipalId: string; toPrincipalId: string }) => {
+        rawItems: number;
+        pendingProjections: number;
+      }
+    ) => T
+  ): T {
+    const raw = this.getDb('chat');
+    raw.close();
+    this.dbs.delete('chat');
+    const mainJournal = (
+      adapter.prepare('PRAGMA main.journal_mode').get() as { journal_mode: string }
+    ).journal_mode;
+    // Values come from SQLite's closed journal-mode enum before use in SQL restoration.
+    if (!/^(delete|truncate|persist|memory|wal|off)$/i.test(mainJournal))
+      throw new Error('Unexpected SQLite journal mode');
+    adapter.prepare('ATTACH DATABASE ? AS owner_cutover_chat').run(this.getDbPath('chat'));
+    const rawJournal = (
+      adapter.prepare('PRAGMA owner_cutover_chat.journal_mode').get() as { journal_mode: string }
+    ).journal_mode;
+    if (!/^(delete|truncate|persist|memory|wal|off)$/i.test(rawJournal))
+      throw new Error('Unexpected SQLite journal mode');
+    try {
+      adapter.exec('PRAGMA main.journal_mode = DELETE');
+      adapter.exec('PRAGMA owner_cutover_chat.journal_mode = DELETE');
+      return adapter.transaction(() => {
+        const move = (input: {
+          channel: string;
+          fromPrincipalId: string;
+          toPrincipalId: string;
+        }) => {
+          const rows = adapter
+            .prepare(
+              `SELECT r.* FROM owner_cutover_chat.raw_items r
+               WHERE r.channel=? AND r.memory_scope_kind='user' AND (
+                 r.memory_scope_id IN (?,?) OR EXISTS (
+                   SELECT 1 FROM owner_cutover_chat.pending_core_projections p
+                   WHERE p.raw_source_id=r.source_id
+                     AND json_extract(p.payload_json,'$.memoryScopeKind')='user'
+                     AND json_extract(p.payload_json,'$.memoryScopeId')=?))`
+            )
+            .all(
+              input.channel,
+              input.fromPrincipalId,
+              input.toPrincipalId,
+              input.fromPrincipalId
+            ) as RawRow[];
+          let rawItems = 0;
+          let pendingProjections = 0;
+          for (const row of rows) {
+            const author = row.author === input.fromPrincipalId ? input.toPrincipalId : row.author;
+            if (row.memory_scope_id !== input.toPrincipalId || author !== row.author) {
+              const item = {
+                ...this.mapRawRowToNormalizedItem(row),
+                author,
+                memoryScopeId: input.toPrincipalId,
+              };
+              // Body hashes retain the original evidence identity; the revision hash also contains
+              // author and must match a later redelivery of this relocated item.
+              const revisionHash = createHash('sha256')
+                .update(
+                  canonicalizeRawContent({
+                    ...item,
+                    sourceId: row.origin_source_id ?? row.source_id,
+                  })
+                )
+                .digest('hex');
+              rawItems += adapter
+                .prepare(
+                  'UPDATE owner_cutover_chat.raw_items SET memory_scope_id=?, author=?, revision_hash=? WHERE id=?'
+                )
+                .run(input.toPrincipalId, author, revisionHash, row.id).changes;
+            }
+            const pending = adapter
+              .prepare(
+                'SELECT sequence, payload_json, payload_hash FROM owner_cutover_chat.pending_core_projections WHERE raw_source_id=? ORDER BY sequence'
+              )
+              .all(row.source_id) as Array<{
+              sequence: number;
+              payload_json: string;
+              payload_hash: string;
+            }>;
+            const retained = new Map<
+              string,
+              { sequence: number; payloadJson: string; changed: boolean }
+            >();
+            const duplicates: number[] = [];
+            for (const projection of pending) {
+              const payload = JSON.parse(projection.payload_json) as Record<string, unknown>;
+              payload.memoryScopeKind = 'user';
+              payload.memoryScopeId = input.toPrincipalId;
+              if (payload.author === input.fromPrincipalId) payload.author = input.toPrincipalId;
+              const payloadJson = canonicalizeJSON(payload);
+              const normalized = parseProjectionSnapshot(payloadJson, projection.sequence);
+              const payloadHash = projectionPayloadHash(normalized);
+              // A moved scope/author can make queued identities equal. Capture time and collectOnly
+              // are not part of that identity: preserve the earliest sequence and its capture data.
+              if (retained.has(payloadHash)) duplicates.push(projection.sequence);
+              else
+                retained.set(payloadHash, {
+                  sequence: projection.sequence,
+                  payloadJson,
+                  changed:
+                    payloadJson !== projection.payload_json ||
+                    payloadHash !== projection.payload_hash,
+                });
+            }
+            // Remove later equivalents before changing hashes, so the queue's UNIQUE pair remains
+            // valid. Existing core observations and their receipts are never removed or renumbered.
+            for (const sequence of duplicates)
+              pendingProjections += adapter
+                .prepare('DELETE FROM owner_cutover_chat.pending_core_projections WHERE sequence=?')
+                .run(sequence).changes;
+            for (const [payloadHash, projection] of retained) {
+              if (!projection.changed) continue;
+              pendingProjections += adapter
+                .prepare(
+                  'UPDATE owner_cutover_chat.pending_core_projections SET payload_json=?, payload_hash=? WHERE sequence=?'
+                )
+                .run(projection.payloadJson, payloadHash, projection.sequence).changes;
+            }
+          }
+          return { rawItems, pendingProjections };
+        };
+        return apply(move);
+      });
+    } finally {
+      adapter.exec(`PRAGMA owner_cutover_chat.journal_mode = ${rawJournal}`);
+      adapter.exec('DETACH DATABASE owner_cutover_chat');
+      adapter.exec(`PRAGMA main.journal_mode = ${mainJournal}`);
+    }
   }
 
   /** Product privacy operations select scope, including host replies and pending snapshots. */

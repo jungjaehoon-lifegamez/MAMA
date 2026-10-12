@@ -1,4 +1,4 @@
-// A second consumer of mama-core, run from the packed tarball installed in a temporary
+// A second consumer of mama-core, run from the packed tarball unpacked in a temporary
 // directory. It imports public subpaths only, keeps its own database, principal and scope kind,
 // and writes, revises, links, reads and searches its own records. It keeps no vectors: its
 // embedder answers null, so search goes by text. It prints one JSON line.
@@ -11,7 +11,8 @@ const dir = mkdtempSync(join(tmpdir(), 'mama-second-consumer-db-'));
 try {
   const { openDatabase } = await import('@jungjaehoon/mama-core/db-manager');
   const { createKnowledge } = await import('@jungjaehoon/mama-core/knowledge');
-  const { recallMemory } = await import('@jungjaehoon/mama-core');
+  const { recallMemory, createPrincipalRepository, moveRecordsUserScope } =
+    await import('@jungjaehoon/mama-core');
   const db = await openDatabase({
     path: join(dir, 'bench.db'),
     migrations: [{ name: 'bench', dir: fileURLToPath(new URL('./migrations', import.meta.url)) }],
@@ -21,6 +22,30 @@ try {
     const knowledge = createKnowledge({ adapter: db.adapter, embedder: null });
     const scopes = [{ kind: 'workbench', id: 'bench-1' }];
     const access = { principalId: 'bench-principal', agentId: 'bench-agent', scopes };
+    const principals = createPrincipalRepository(db.adapter);
+    principals.ensureOwner({ principalId: 'bench-common', now: 1 });
+    const memberId = principals.registerMember({
+      connector: 'instrument',
+      namespace: 'bench',
+      externalId: 'reviewer-1',
+      now: 2,
+    });
+    principals.grantRole({ principalId: memberId, role: 'bench-reviewer', now: 3 });
+    const checkpointId = db.adapter
+      .prepare('INSERT INTO checkpoints (timestamp, summary) VALUES (?, ?)')
+      .run(1, 'personal calibration checkpoint').lastInsertRowid;
+    const scopeMove = moveRecordsUserScope(db.adapter, {
+      recordIds: [Number(checkpointId)],
+      fromPrincipalId: 'bench-common',
+      toPrincipalId: memberId,
+      bindUnscoped: true,
+    });
+    const movedRecordVisible =
+      db.adapter
+        .prepare(
+          "SELECT 1 FROM checkpoint_scope_bindings b JOIN memory_scopes s ON s.id=b.scope_id WHERE b.checkpoint_id=? AND s.kind='user' AND s.external_id=?"
+        )
+        .get(checkpointId, memberId) !== undefined;
 
     const finding = await knowledge.appendJudgment(
       {
@@ -119,6 +144,14 @@ try {
         searchHits: recalled.memories.map((memory) => memory.id),
         searchMs,
         privatePath,
+        role: principals.listRoles(memberId)[0]?.role,
+        roleMember: principals.listActiveMembersWithRole('bench-reviewer')[0]?.principalId,
+        memberId,
+        commonIdentityCount: db.adapter
+          .prepare('SELECT COUNT(*) AS n FROM external_identities WHERE principal_id=?')
+          .get('bench-common').n,
+        scopeMove,
+        movedRecordVisible,
       })
     );
   } finally {

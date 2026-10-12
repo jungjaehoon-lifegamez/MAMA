@@ -37,13 +37,13 @@ path. See [Backends](../guides/backends.md).
 ## Run onboarding in your terminal
 
 Create a Telegram bot through BotFather, start a private conversation with it, and
-have your owner chat and user IDs ready. Then run:
+have your common Telegram chat ID ready. Then run:
 
 ```bash
 mama init
 ```
 
-Enter the backend, model, Telegram bot token, owner chat and user IDs, and any
+Enter the backend, model, Telegram bot token, common chat ID, and any
 source connectors you want to enable. Tokens are entered with terminal echo off;
 do not send them to the agent. `mama init` requires a terminal and refuses to
 overwrite an existing `config.yaml`, `connectors.json`, `start.sh`, or a selected
@@ -63,7 +63,7 @@ Setup writes these files under `~/.mama/`:
 
 | File              | Purpose                                                        |
 | ----------------- | -------------------------------------------------------------- |
-| `config.yaml`     | Backend, database, Telegram owner identity and wiki settings   |
+| `config.yaml`     | Backend, database, common Telegram channel and wiki settings   |
 | `connectors.json` | Source channels, roles and credential variable names           |
 | `auth.env`        | Tokens, mode 0600; includes a generated viewer bearer token    |
 | `start.sh`        | Loads credentials, sets the executable PATH, starts the daemon |
@@ -106,3 +106,7 @@ To rotate a token, run `mama secret set MAMA_TELEGRAM_TOKEN` (or another support
 secret name) in your terminal, then restart the daemon. `mama secret list` prints
 names only. For launchd restart/stop and setup errors, see
 [Troubleshooting](../guides/troubleshooting.md).
+
+Before starting the daemon, set `member_root` to an absolute directory outside HOME in
+`config.yaml`, and run `mama register-owner <telegram id>` for each owner. Each owner gets a
+personal member session; the common group keeps the common session.

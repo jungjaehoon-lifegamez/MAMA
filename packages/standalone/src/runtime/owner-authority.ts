@@ -10,6 +10,14 @@
  * subagent's calls carry `subagent:<thread>`: the agent that heard the owner records the correction.
  */
 import type { ActionContext, ActionRegistration, DatabaseInstance } from '@jungjaehoon/mama-core';
+import type { PrincipalRepository } from '@jungjaehoon/mama-core';
+
+export function holdsOwnerRole(
+  repository: Pick<PrincipalRepository, 'listRoles'>,
+  principalId: string
+): boolean {
+  return repository.listRoles(principalId).some(({ role }) => role === 'owner');
+}
 
 export const RULE_KINDS = ['lesson', 'preference', 'constraint', 'workflow'] as const;
 export const POLICY_UPDATE_ACTION = 'manage.policy.update';
@@ -132,7 +140,7 @@ export function guardOwnerRules(
       if (owned.size > 0 && !ownerSpeaking(context, ownerPrincipalId)) {
         const error = new Error(
           `${[...owned].join(', ')} ${owned.size === 1 ? 'is an owner rule' : 'are owner rules'}: ` +
-            'only the owner changes one, in an owner chat turn. Save what you learned as a lesson ' +
+            'change it in the common channel. Save what you learned as a personal lesson ' +
             'without replacing it, or ask the owner in your reply or report.'
         );
         error.name = 'denied';

@@ -8,6 +8,8 @@ export interface OwnerMessageInput {
   /** Stable provider-qualified source message reference used as the mailbox stimulus identity. */
   id: string;
   channelKey: string;
+  /** The registered sender; room/session ownership is separate. */
+  senderPrincipalId?: string;
   occurredAt: number;
   text: string;
   replyTo?: string | null;

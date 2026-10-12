@@ -341,6 +341,7 @@ export * from './knowledge/case-timeline-range.js';
 export * from './knowledge/observations.js';
 export * from './identity/principal-repository.js';
 export * from './identity/principal-records.js';
+export * from './identity/move-records-user-scope.js';
 export { isErasedRecord, type ErasedRecord } from './identity/erased-record.js';
 export * from './knowledge/question-type.js';
 export * from './knowledge/search-quality.js';

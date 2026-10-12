@@ -9,22 +9,22 @@ nav_order: 3
 Use `mama` from `@jungjaehoon/mama-os` to configure and run the owner agent. Start with
 [owner setup](../start/owner-setup.md). Running `mama` without a command prints the supported syntax.
 
-| Command                  | What it does                                                                                                                                        |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mama init`              | Prompts in a terminal and writes a new installation. No flags are supported.                                                                        |
-| `mama secret set <NAME>` | Prompts with echo disabled and atomically updates one supported secret in `~/.mama/auth.env`. Restart the daemon afterward.                         |
-| `mama secret list`       | Prints configured secret names only. It does not print values.                                                                                      |
-| `mama register-owner`    | Registers the owner once as the principal that grants team members access, bound to every Telegram owner ID. Prints the result and row counts only. |
-| `mama daemon`            | Runs the daemon in the foreground until stopped. It expects the credentials in its environment.                                                     |
-| `mama replay`            | Runs the historical replay using the configured database and prepared import manifest, then stops.                                                  |
-| `mama backfill <file>`   | Checks a backfill file and writes the period it describes through the owner's actions, then stops.                                                  |
-| `mama status`            | Prints `running` or `stopped` from the PID record and process check.                                                                                |
-| `mama stop`              | Sends SIGTERM to the recorded daemon PID.                                                                                                           |
+| Command                             | What it does                                                                                                                                                |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mama init`                         | Prompts in a terminal and writes a new installation. No flags are supported.                                                                                |
+| `mama secret set <NAME>`            | Prompts with echo disabled and atomically updates one supported secret in `~/.mama/auth.env`. Restart the daemon afterward.                                 |
+| `mama secret list`                  | Prints configured secret names only. It does not print values.                                                                                              |
+| `mama register-owner <telegram id>` | Registers one active member with the owner role, leaving the common principal without a Telegram identity. Run with the daemon stopped; prints counts only. |
+| `mama daemon`                       | Runs the daemon in the foreground until stopped. It expects the credentials in its environment.                                                             |
+| `mama replay`                       | Runs the historical replay using the configured database and prepared import manifest, then stops.                                                          |
+| `mama backfill <file>`              | Checks a backfill file and writes the period it describes through the owner's actions, then stops.                                                          |
+| `mama status`                       | Prints `running` or `stopped` from the PID record and process check.                                                                                        |
+| `mama stop`                         | Sends SIGTERM to the recorded daemon PID.                                                                                                                   |
 
 ## Create an installation
 
 Run `mama init` yourself in a terminal. It asks for the backend (`claude` or `codex`), model,
-Telegram owner chat and user IDs, and optional connectors and viewer access settings. Enter tokens
+Telegram common chat ID, and optional connectors and viewer access settings. Set `member_root` outside HOME, then register each owner with `mama register-owner <telegram id>` while the daemon is stopped. Enter tokens
 only at the hidden prompts. Both `init` and `secret set` reject non-terminal input.
 
 `init` writes `config.yaml`, `connectors.json`, `auth.env`, `start.sh`, and the workspace beneath
@@ -35,6 +35,14 @@ log into a backend, start the daemon or prove that Telegram works.
 
 Allowed secret names are `MAMA_TELEGRAM_TOKEN`, `MAMA_SLACK_TOKEN`, `MAMA_CHATWORK_TOKEN`,
 `MAMA_TRELLO_KEY`, `MAMA_TRELLO_TOKEN`, and `MAMA_AUTH_TOKEN`.
+
+## Register owner people
+
+Remove the retired `telegram.owner_user_ids` key before running the command. Pass each owner's
+Telegram user ID explicitly; IDs are not inferred from `allowed_chats`. A pending, claimed or
+uncertain DM input prevents cutover. The command moves that DM's chat to the person and binds
+older unscoped common checkpoints to the first registered owner. Group chat stays common.
+A rerun for the same person changes nothing.
 
 ## Start and stop
 

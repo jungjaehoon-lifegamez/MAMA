@@ -156,6 +156,11 @@ their own. The member's Claude CLI reads the owner's credential store
 the owner's managed Codex home, copied again after each refresh. The owner still signs in to its
 managed Codex home directly; nothing is copied into it.
 
+Owner decision 2026-10-12 (P10): owners are members. Each person, owners included, has a member
+session in its own workspace under the member root, with the member tools above and no web tools;
+the `owner` role adds reads of common records through MAMA actions, not native reads. The common
+session (`owner:runtime`, deltas, reports and the common channel) keeps the owner runtime's tools.
+
 ## Owner credential boundary — 2026-09-27
 
 - Scope (owner decision 2026-09-27): the boundary covers MAMA's own credentials — auth.env,

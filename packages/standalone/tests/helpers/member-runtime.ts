@@ -13,7 +13,9 @@ import { OwnerMessageLedger } from '../../src/gateways/telegram-message-ledger.j
 import type { IModelRunner } from '@jungjaehoon/mama-core/runtime/drivers/types';
 import { SessionPool } from '@jungjaehoon/mama-core/runtime/session-pool';
 import { createOwnerRuntime } from '../../src/runtime/owner-runtime.js';
-import { createNativeSession } from '../../src/runtime/native-session.js';
+import { createNativeSession, type NativeDriverOptions } from '../../src/runtime/native-session.js';
+import type { SourceDelta } from '../../src/connectors/framework/polling-scheduler.js';
+import { sourceDeltaStimulusId } from '../../src/runtime/stimulus-delivery.js';
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
 
@@ -69,12 +71,14 @@ export async function fixture(
   await seed.close();
   const pool = new SessionPool();
   const natives = new Map<string, ReturnType<typeof createNativeSession>>();
+  const drivers = new Map<string, NativeDriverOptions>();
   const turns: Array<{
     principal: string;
     session: string;
     fresh: boolean;
     prompt: string;
     standing: string;
+    nativeTools?: string;
     access: JudgmentAccess;
   }> = [];
   const stopped: string[] = [];
@@ -90,6 +94,7 @@ export async function fixture(
   let readIds: string[] = [];
   const reads: ActionResult[][] = [];
   let sequence = 0;
+  let deltaResponse = false;
   const runtime = await createOwnerRuntime({
     backend,
     model: 'fixture',
@@ -116,7 +121,6 @@ export async function fixture(
       loaded: true,
     }),
     memberEnrollment: {
-      ownerUserIds: ['fixture-owner', 'fixture-co-owner'],
       requestSelection: async () => {},
     },
     createSession: (options) => {
@@ -150,6 +154,7 @@ export async function fixture(
             fresh,
             prompt: JSON.stringify(prepared ?? content),
             standing: opts?.systemPrompt ?? '',
+            nativeTools: typeof opts?.tools === 'string' ? opts.tools : undefined,
             access: (opts?.toolExecutionContext as { access: JudgmentAccess }).access,
           });
           fresh = false;
@@ -201,7 +206,7 @@ export async function fixture(
             throw new Error('fixture confirming turn failed');
           }
           return {
-            response: 'fixture answer',
+            response: principal === 'owner' && deltaResponse ? '[ack]' : 'fixture answer',
             session_id: session,
             usage: { input_tokens: 1, output_tokens: 1 },
           };
@@ -226,7 +231,10 @@ export async function fixture(
       const native = createNativeSession({
         ...options,
         sessionPool: pool,
-        createAgent: () => model,
+        createAgent: (driver) => {
+          drivers.set(principal, driver);
+          return model;
+        },
       });
       natives.set(principal, native);
       return native;
@@ -265,6 +273,21 @@ export async function fixture(
     memberDm: memberIdentity,
     ledger,
     natives,
+    drivers,
+    actDelta: async (action: string, input: unknown, delta: SourceDelta) => {
+      actionResult = undefined;
+      pendingAction = { action, input };
+      deltaResponse = true;
+      try {
+        runtime.acceptSourceDelta(delta);
+        await vi.waitFor(() => expect(actionResult).toBeDefined());
+        await settled(sourceDeltaStimulusId(delta));
+        expect(actionResult).toBeDefined();
+        return actionResult!;
+      } finally {
+        deltaResponse = false;
+      }
+    },
     holdMemberCompletion: (promise: Promise<void> | undefined) => {
       completionGate = promise;
     },
