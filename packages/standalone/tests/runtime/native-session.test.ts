@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -57,6 +66,195 @@ function runner(backend: 'codex' | 'claude'): IModelRunner {
     stop: vi.fn(),
   };
 }
+
+describe('personal Claude account email', () => {
+  const profile = {
+    numStartups: 7,
+    oauthAccount: {
+      accountUuid: 'fixture-account',
+      emailAddress: 'account@example.invalid',
+      displayName: 'Fixture account',
+      organizationUuid: 'fixture-organization',
+      extra: { enabled: false, values: [null, 0, 'fixture'] },
+    },
+    projects: { fixture: { allowedTools: [] } },
+  };
+  const stripped = {
+    numStartups: 7,
+    oauthAccount: {
+      accountUuid: 'fixture-account',
+      displayName: 'Fixture account',
+      organizationUuid: 'fixture-organization',
+      extra: { enabled: false, values: [null, 0, 'fixture'] },
+    },
+    projects: { fixture: { allowedTools: [] } },
+  };
+
+  function fixture(roles: string[] = []) {
+    const root = mkdtempSync(join(tmpdir(), 'personal-email-'));
+    const configDir = join(root, 'member', 'claude-config');
+    const configPath = join(configDir, '.claude.json');
+    mkdirSync(configDir, { recursive: true });
+    const actionSurface = surface();
+    const model = runner('claude');
+    const pool = new SessionPool({ cleanupInterval: 0 });
+    const session = createNativeSession({
+      backend: 'claude',
+      model: 'fixture',
+      workspaceDir: join(root, 'member', 'workspace'),
+      runtimeRoot: join(root, 'member'),
+      claudeConfigDir: configDir,
+      actionSurface,
+      sessionPool: pool,
+      agent: model,
+      timeout: 1_000,
+      maxTurns: 10,
+      principal: {
+        principalId: 'fixture-member',
+        agentId: 'member-agent:fixture-member',
+        sessionKey: 'member:fixture-member:runtime',
+        systemPrompt: 'Fixture personal session',
+        roles,
+        prepareAccess: () => ({
+          ...actionSurface.ownerAccess,
+          principalId: 'fixture-member',
+          agentId: 'member-agent:fixture-member',
+          scopes: [{ kind: 'user', id: 'fixture-member' }],
+        }),
+      },
+    });
+    return {
+      root,
+      configDir,
+      configPath,
+      model,
+      session,
+      turn: () => session.runTurn([{ type: 'text', text: 'Fixture request' }]),
+      close: async () => {
+        await session.stop();
+        pool.dispose();
+        rmSync(root, { recursive: true, force: true });
+      },
+    };
+  }
+
+  it.each([{ roles: [] }, { roles: ['owner'] }])(
+    'atomically removes only the account email before every personal turn with roles $roles',
+    async ({ roles }) => {
+      const f = fixture(roles);
+      const seen: unknown[] = [];
+      vi.mocked(f.model.prompt).mockImplementation(async () => {
+        seen.push(JSON.parse(readFileSync(f.configPath, 'utf8')));
+        // The CLI refreshes the profile while the process is running.
+        writeFileSync(f.configPath, JSON.stringify(profile));
+        return {
+          response: 'fixture answer',
+          session_id: 'fixture-session',
+          usage: { input_tokens: 1, output_tokens: 1 },
+        };
+      });
+      try {
+        writeFileSync(f.configPath, JSON.stringify(profile), { mode: 0o600 });
+        const before = statSync(f.configPath);
+        await f.turn();
+        expect(seen).toEqual([stripped]);
+        expect(statSync(f.configPath).ino).not.toBe(before.ino);
+        expect(statSync(f.configPath).mode & 0o777).toBe(0o600);
+        expect(JSON.parse(readFileSync(f.configPath, 'utf8'))).toEqual(profile);
+        await f.turn();
+        expect(seen).toEqual([stripped, stripped]);
+        expect(readdirSync(f.configDir)).toEqual(['.claude.json']);
+      } finally {
+        await f.close();
+      }
+    }
+  );
+
+  it.each(['missing', 'without-account', 'without-email'] as const)(
+    'leaves a %s config untouched before and after removing a refreshed email',
+    async (state) => {
+      const f = fixture();
+      const text =
+        state === 'without-account'
+          ? '{ "numStartups": 7, "projects": {} }\n'
+          : '{ "oauthAccount": { "accountUuid": "fixture-account" }, "numStartups": 7 }\n';
+      const prepare = () => {
+        rmSync(f.configPath, { force: true });
+        if (state !== 'missing') writeFileSync(f.configPath, text);
+      };
+      const unchangedTurn = async () => {
+        const before = existsSync(f.configPath) ? statSync(f.configPath) : null;
+        await f.turn();
+        if (before === null) {
+          expect(existsSync(f.configPath)).toBe(false);
+          expect(readdirSync(f.configDir)).toEqual([]);
+        } else {
+          expect(readFileSync(f.configPath, 'utf8')).toBe(text);
+          const after = statSync(f.configPath);
+          expect([after.ino, after.mtimeMs, after.mode]).toEqual([
+            before.ino,
+            before.mtimeMs,
+            before.mode,
+          ]);
+        }
+      };
+      try {
+        prepare();
+        await unchangedTurn();
+        writeFileSync(f.configPath, JSON.stringify(profile));
+        await f.turn();
+        expect(JSON.parse(readFileSync(f.configPath, 'utf8'))).toEqual(stripped);
+        prepare();
+        await unchangedTurn();
+      } finally {
+        await f.close();
+      }
+    }
+  );
+
+  it('removes the personal email while common turns leave both config files untouched', async () => {
+    const f = fixture(['owner']);
+    const commonConfigDir = join(f.root, 'common-claude-config');
+    const commonConfigPath = join(commonConfigDir, '.claude.json');
+    mkdirSync(commonConfigDir);
+    writeFileSync(commonConfigPath, JSON.stringify(profile));
+    vi.stubEnv('CLAUDE_CONFIG_DIR', commonConfigDir);
+    const commonPool = new SessionPool({ cleanupInterval: 0 });
+    const common = createNativeSession({
+      backend: 'claude',
+      model: 'fixture',
+      workspaceDir: join(f.root, 'common-workspace'),
+      runtimeRoot: join(f.root, 'common-runtime'),
+      actionSurface: surface(),
+      sessionPool: commonPool,
+      agent: runner('claude'),
+      timeout: 1_000,
+      maxTurns: 10,
+    });
+    try {
+      writeFileSync(f.configPath, JSON.stringify(profile));
+      await f.turn();
+      expect(JSON.parse(readFileSync(f.configPath, 'utf8'))).toEqual(stripped);
+      writeFileSync(f.configPath, JSON.stringify(profile));
+      const paths = [f.configPath, commonConfigPath];
+      const before = paths.map((path) => ({ bytes: readFileSync(path), stat: statSync(path) }));
+      await common.runTurn([{ type: 'text', text: 'Fixture common request' }]);
+      paths.forEach((path, index) => {
+        expect(readFileSync(path)).toEqual(before[index].bytes);
+        const after = statSync(path);
+        expect([after.ino, after.mtimeMs]).toEqual([
+          before[index].stat.ino,
+          before[index].stat.mtimeMs,
+        ]);
+      });
+    } finally {
+      await common.stop();
+      commonPool.dispose();
+      vi.unstubAllEnvs();
+      await f.close();
+    }
+  });
+});
 
 describe('one owner native session', () => {
   it("writes the host's sandbox proxy ports into the Claude workspace settings", async () => {

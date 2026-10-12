@@ -3,7 +3,8 @@ import { memberSystemLayers } from './member-system-prompt.js';
 import { backendEnvironment, credentialReadPaths, normalizeReadPaths } from './backend-security.js';
 import { memberClaudeTmpDir } from './member-paths.js';
 import { untrustedToolData } from '../utils/untrusted-content.js';
-import { mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type {
   ActionCall,
@@ -274,6 +275,32 @@ function claudeTmpDir(options: NativeSessionOptions): string {
   return options.principal === undefined
     ? join(options.workspaceDir, '.tmp')
     : memberClaudeTmpDir(options.principal.principalId);
+}
+
+/** The shared login is not the person in this session; the CLI reads this profile at startup. */
+function removePersonalClaudeEmail(configDir: string): void {
+  const configPath = join(configDir, '.claude.json');
+  let text: string;
+  try {
+    text = readFileSync(configPath, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+  const config = JSON.parse(text) as { oauthAccount?: Record<string, unknown> };
+  if (!config.oauthAccount || !Object.hasOwn(config.oauthAccount, 'emailAddress')) return;
+  delete config.oauthAccount.emailAddress;
+  const temporary = join(configDir, `.claude-${randomUUID()}.tmp`);
+  try {
+    writeFileSync(temporary, JSON.stringify(config, null, 2), {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    });
+    renameSync(temporary, configPath);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
 }
 
 function createDriver(
@@ -558,6 +585,15 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
       }),
     resetSession: (sessionKey) => runnerRef.current!.resetSession(sessionKey),
     runTurn: (content, request) => {
+      // Profile refresh can restore the email during a run. Strip it before every turn so any
+      // process started by the driver reads the personal profile without the login's email.
+      if (
+        options.principal !== undefined &&
+        options.backend === 'claude' &&
+        options.claudeConfigDir !== undefined
+      ) {
+        removePersonalClaudeEmail(options.claudeConfigDir);
+      }
       const nativeRequest = {
         ...(request ?? {}),
         sessionKey: request?.sessionKey ?? sessionKey,
