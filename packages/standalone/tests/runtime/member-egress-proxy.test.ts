@@ -30,6 +30,37 @@ function exchange(port: number, data: Buffer): Promise<Buffer> {
 }
 
 describe('member egress refusals (TCP binding)', () => {
+  it('tags an owner-role proxy refusal for its DM and redacts its host from the shared log', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'owner-role-proxy-'));
+    roots.push(root);
+    const personal = vi.fn(async (_principalId: string, _text: string, _key: string) => {});
+    const common = vi.fn(async () => {});
+    const recorder = createOutboundEventRecorder({
+      path: join(root, 'security.jsonl'),
+      timeZone: createTimeZoneSetting('UTC'),
+      sendToMember: personal,
+      sendToOwner: common,
+    });
+    const proxy = await startMemberEgressProxy('fixture-owner-member', true, recorder.record);
+    proxies.push(proxy);
+    const reply = await exchange(
+      proxy.httpProxyPort,
+      Buffer.from('CONNECT private.example:443 HTTP/1.1\r\n\r\n')
+    );
+    expect(reply.toString()).toMatch(/^HTTP\/1.1 403/);
+    await vi.waitFor(() => expect(personal).toHaveBeenCalledOnce());
+    expect(personal.mock.calls[0][0]).toBe('fixture-owner-member');
+    expect(personal.mock.calls[0][1]).toContain('CONNECT private.example:443');
+    expect(common).not.toHaveBeenCalled();
+    expect(JSON.parse(readFileSync(recorder.path, 'utf8'))).toEqual({
+      eventId: expect.any(String),
+      principalId: 'fixture-owner-member',
+      class: 'outbound_connect',
+      time: expect.any(String),
+      suppressedSinceLastAlert: 0,
+    });
+  });
+
   it.each(['http', 'socks'] as const)(
     'attributes two members and sends exactly one minimal event per %s refusal',
     async (protocol) => {
@@ -48,7 +79,7 @@ describe('member egress refusals (TCP binding)', () => {
         },
       });
       for (const principalId of ['fixture-member-a', 'fixture-member-b']) {
-        proxies.push(await startMemberEgressProxy(principalId, recorder.record));
+        proxies.push(await startMemberEgressProxy(principalId, false, recorder.record));
       }
       expect(proxies[0].httpProxyPort).not.toBe(proxies[1].httpProxyPort);
       expect(proxies[0].socksProxyPort).not.toBe(proxies[1].socksProxyPort);

@@ -313,4 +313,36 @@ describe('outbound event recorder', () => {
     expect(sent).toHaveLength(0);
     expect(readFileSync(join(dir, 'security-events.jsonl'), 'utf8')).toContain('replayed');
   });
+
+  it.each(['web_fetch', 'outbound_attempt', 'outbound_send', 'outbound_connect'] as const)(
+    'sends personal %s detail only to the DM and keeps only identity, class and time in shared storage',
+    async (eventClass) => {
+      const personal = vi.fn(async (_principalId: string, _text: string, _key: string) => {});
+      const common = vi.fn(async () => {});
+      const recorder = createOutboundEventRecorder({
+        path: join(dir, 'security-events.jsonl'),
+        timeZone: createTimeZoneSetting('UTC'),
+        sendToOwner: common,
+        sendToMember: personal,
+      });
+      const observed = {
+        ...event('https://private.example/PERSONAL_DETAIL', true),
+        principalId: 'fixture-owner-member',
+        class: eventClass,
+      };
+      recorder.record(observed);
+      await vi.waitFor(() => expect(personal).toHaveBeenCalledOnce());
+      expect(personal.mock.calls[0][1]).toContain('PERSONAL_DETAIL');
+      expect(common).not.toHaveBeenCalled();
+      const stored = JSON.parse(readFileSync(recorder.path, 'utf8'));
+      expect(stored).toEqual({
+        eventId: expect.any(String),
+        principalId: 'fixture-owner-member',
+        class: eventClass,
+        time: observed.time,
+        suppressedSinceLastAlert: 0,
+      });
+      expect(personal.mock.calls[0][2]).toBe(`agent-outbound:${stored.eventId}`);
+    }
+  );
 });

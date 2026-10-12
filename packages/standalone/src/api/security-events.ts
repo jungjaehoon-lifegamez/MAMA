@@ -120,6 +120,8 @@ export function createSecurityEventRecorder(options: SecurityEventOptions) {
  * fetch (owner, 2026-10-05).
  */
 export interface OutboundAttemptEvent {
+  /** Present for an owner-role person's native session; alerts stay in that person's DM. */
+  principalId?: string;
   time: string;
   /**
    * `outbound_send` when the command sends data, `outbound_attempt` for another command,
@@ -196,13 +198,26 @@ function fetchHost(summary: string | null): string {
   }
 }
 
-export function createOutboundEventRecorder(options: SecurityEventOptions) {
+export interface OutboundEventOptions extends SecurityEventOptions {
+  sendToMember?: (principalId: string, text: string, idempotencyKey: string) => Promise<void>;
+}
+
+export function createOutboundEventRecorder(options: OutboundEventOptions) {
   const path = options.path ?? join(homedir(), '.mama', 'logs', 'security-events.jsonl');
   const gate = createAlertGate<string>(OUTBOUND_ALERT_WINDOW_MS);
+  const send = async (principalId: string | undefined, text: string, key: string) => {
+    if (principalId !== undefined) {
+      if (!options.sendToMember) throw new Error('Personal alert delivery is unavailable');
+      await options.sendToMember(principalId, text, key);
+    } else {
+      if (!options.sendToOwner) throw new Error('Owner alert delivery is unavailable');
+      await options.sendToOwner(text, key);
+    }
+  };
   return {
     path,
     record(observed: OutboundAttemptEvent | MemberConnectionEvent): void {
-      if ('principalId' in observed) {
+      if ('host' in observed) {
         // Pick fields before append or delivery, even if a caller supplied additional detail.
         const event: MemberConnectionEvent = {
           principalId: observed.principalId,
@@ -211,8 +226,11 @@ export function createOutboundEventRecorder(options: SecurityEventOptions) {
         };
         if (!appendSecurityEvent(path, event)) console.error('[agent] security_event_write_failed');
         // Grouped per member and destination, as the owner's proxy connections are.
-        if (!gate(`member_connect ${event.principalId} ${event.host}`, !options.replay).alert)
-          return;
+        const { alert } = gate(
+          `member_connect ${event.principalId} ${event.host}`,
+          !options.replay
+        );
+        if (!alert) return;
         const timeZone = options.timeZone.get();
         const localTime = new Date(event.time).toLocaleString('ko-KR', { timeZone });
         const text = [
@@ -223,8 +241,7 @@ export function createOutboundEventRecorder(options: SecurityEventOptions) {
         ].join('\n');
         void (async () => {
           try {
-            if (!options.sendToOwner) throw new Error('Owner alert delivery is unavailable');
-            await options.sendToOwner(text, `agent-outbound:${randomUUID()}`);
+            await send(undefined, text, `agent-outbound:${randomUUID()}`);
           } catch {
             console.error('[agent] security_alert_failed');
           }
@@ -233,24 +250,35 @@ export function createOutboundEventRecorder(options: SecurityEventOptions) {
       }
       // A command that sends data always alerts. Proxy connections and web fetches are grouped per
       // destination, so one destination cannot hide another; other commands are grouped in a burst.
+      const destination = observed.principalId ?? 'common';
       const { alert, suppressed } =
         observed.class === 'outbound_send'
           ? { alert: !options.replay, suppressed: 0 }
           : observed.class === 'outbound_connect'
-            ? gate(`outbound_connect ${observed.summary ?? ''}`, !options.replay)
+            ? gate(`${destination} outbound_connect ${observed.summary ?? ''}`, !options.replay)
             : observed.class === 'web_fetch'
-              ? gate(`web_fetch ${fetchHost(observed.summary)}`, !options.replay)
-              : gate(observed.class, !options.replay);
+              ? gate(`${destination} web_fetch ${fetchHost(observed.summary)}`, !options.replay)
+              : gate(`${destination} ${observed.class}`, !options.replay);
       const event = { eventId: randomUUID(), ...observed, suppressedSinceLastAlert: suppressed };
-      if (!appendSecurityEvent(path, event)) console.error('[agent] security_event_write_failed');
-      if (!alert) return;
       const timeZone = options.timeZone.get();
       const localTime = new Date(event.time).toLocaleString('ko-KR', { timeZone });
       const text = outboundAlertText(event, suppressed, `${localTime} (${timeZone})`);
+      const sharedEvent =
+        event.principalId === undefined
+          ? event
+          : {
+              eventId: event.eventId,
+              principalId: event.principalId,
+              class: event.class,
+              time: event.time,
+              suppressedSinceLastAlert: suppressed,
+            };
+      if (!appendSecurityEvent(path, sharedEvent))
+        console.error('[agent] security_event_write_failed');
+      if (!alert) return;
       void (async () => {
         try {
-          if (!options.sendToOwner) throw new Error('Owner alert delivery is unavailable');
-          await options.sendToOwner(text, `agent-outbound:${event.eventId}`);
+          await send(event.principalId, text, `agent-outbound:${event.eventId}`);
         } catch {
           // Gateway errors can include credentials and destination identifiers.
           console.error('[agent] security_alert_failed');

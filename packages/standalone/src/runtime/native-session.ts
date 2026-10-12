@@ -103,6 +103,7 @@ export interface NativeSessionOptions {
     agentId: string;
     sessionKey: string;
     systemPrompt: string;
+    roles: readonly string[];
     prepareAccess: () => JudgmentAccess;
   };
   claudeConfigDir?: string;
@@ -207,7 +208,8 @@ function modelToolResult(
 function driverOptions(
   options: NativeSessionOptions,
   deniedReadPaths: string[],
-  bridge: NativeDriverOptions['createSubagentBridge']
+  bridge: NativeDriverOptions['createSubagentBridge'],
+  webTools: boolean
 ): NativeDriverOptions {
   const path = process.env.PATH;
   if (options.backend === 'codex' && !path?.trim()) {
@@ -240,7 +242,7 @@ function driverOptions(
     ...(options.backend === 'codex'
       ? {
           shellTool: true,
-          webSearch: options.principal === undefined,
+          webSearch: webTools,
           // macOS login shells run path_helper and put the system Python before Homebrew.
           // Keep the daemon's toolchain PATH and the driver's isolated HOME; no user profiles.
           shellEnvironment: {
@@ -277,7 +279,8 @@ function claudeTmpDir(options: NativeSessionOptions): string {
 function createDriver(
   options: NativeSessionOptions,
   nativeOptions: NativeDriverOptions,
-  bridge: NativeDriverOptions['createSubagentBridge']
+  bridge: NativeDriverOptions['createSubagentBridge'],
+  webTools: boolean
 ): IModelRunner {
   if (options.backend === 'codex') {
     return new CodexRuntimeProcess({
@@ -320,7 +323,7 @@ function createDriver(
     mcpConfigPath,
     permissionMode: nativeOptions.permissionMode,
     allowedTools: claudeOwnerAllowedTools(options.workspaceDir).filter(
-      (tool) => options.principal === undefined || !['WebFetch', 'WebSearch'].includes(tool)
+      (tool) => webTools || !['WebFetch', 'WebSearch'].includes(tool)
     ),
     disallowedTools: (options.principal === undefined
       ? claudeOwnerDisallowedTools
@@ -415,15 +418,16 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
       allowedActions: configuredMcpOptions.principal?.prepareAccess().actions,
     });
   }
-  const nativeOptions = driverOptions(configuredMcpOptions, deniedReadPaths, bridge);
+  // Snapshot the registry roles supplied when this session is built; a new session reads them again.
+  const webTools = options.principal === undefined || options.principal.roles.includes('owner');
+  const nativeOptions = driverOptions(configuredMcpOptions, deniedReadPaths, bridge, webTools);
   const agent =
     configuredMcpOptions.agent ??
     configuredMcpOptions.createAgent?.(nativeOptions) ??
-    createDriver(configuredMcpOptions, nativeOptions, bridge);
+    createDriver(configuredMcpOptions, nativeOptions, bridge, webTools);
   const sessionPool = options.sessionPool ?? getSessionPool();
   const standingPrompt = options.principal?.systemPrompt ?? options.ownerSystemPrompt ?? '';
-  const ownerPolicyProvider =
-    options.principal === undefined ? options.ownerPolicyProvider : undefined;
+  const ownerPolicyProvider = options.ownerPolicyProvider;
   const emptyOwnerPolicy: OwnerPolicySnapshot = {
     content: null,
     fingerprint: '',
@@ -445,18 +449,17 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
       const systemPrompt = current?.systemPrompt ?? standingPrompt;
       const ownerPolicy = ownerPolicyProvider?.() ?? emptyOwnerPolicy;
       const requestedRole = current?.nativeRole ?? defaultRole;
-      const role =
-        options.principal === undefined
-          ? requestedRole
-          : {
-              ...requestedRole,
-              blockedTools: [...(requestedRole.blockedTools ?? []), 'WebFetch', 'WebSearch'],
-            };
+      const role = webTools
+        ? requestedRole
+        : {
+            ...requestedRole,
+            blockedTools: [...(requestedRole.blockedTools ?? []), 'WebFetch', 'WebSearch'],
+          };
       const nativeTools = options.backend === 'claude' ? projectClaudeNativeTools(role) : undefined;
       const layers = (policy: string | null) =>
         options.principal === undefined
           ? ownerSystemLayers(systemPrompt, policy)
-          : memberSystemLayers(systemPrompt);
+          : [...memberSystemLayers(systemPrompt), ...ownerSystemLayers('', policy)];
       const systemLayers = layers(ownerPolicy.content);
       const buildSystemLayers = async () =>
         layers((ownerPolicyProvider?.() ?? emptyOwnerPolicy).content);

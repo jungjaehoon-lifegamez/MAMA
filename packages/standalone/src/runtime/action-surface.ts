@@ -496,6 +496,10 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
         : withOutboundAttempts(traces, modelRunId, options.outboundAttempts, {
             principalId: access.principalId,
             ownerPrincipalId: options.ownerPrincipalId,
+            ownerRole: holdsOwnerRole(
+              (principals ??= createPrincipalRepository(options.adapter)),
+              access.principalId
+            ),
           });
     },
     catalog,

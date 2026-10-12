@@ -18,6 +18,7 @@ import type { SourceDelta } from '../../src/connectors/framework/polling-schedul
 import { sourceDeltaStimulusId } from '../../src/runtime/stimulus-delivery.js';
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
+import type { OwnerPolicyProvider } from '../../src/runtime/owner-policy.js';
 
 const ipc = createRequire(import.meta.url)('@jungjaehoon/mama-core/client/ipc');
 const close: Array<() => Promise<void>> = [];
@@ -36,7 +37,12 @@ export async function fixture(
   suspendedWithoutRoot = false,
   timeZone = 'UTC',
   telegram?: import('../../src/api/member-records.js').MemberRecordsTelegram,
-  memberIdentity = 'fixture-member'
+  memberIdentity = 'fixture-member',
+  ownerPolicyProvider: OwnerPolicyProvider = () => ({
+    content: 'FIXTURE_OWNER_POLICY',
+    fingerprint: 'fixture',
+    loaded: true,
+  })
 ) {
   // Only the unavailable socket listener is replaced; dispatcher, sessions and stores are real.
   vi.spyOn(ipc, 'createActionIpcServer').mockImplementation(async (_: ActionIpcServerOptions) => ({
@@ -78,6 +84,7 @@ export async function fixture(
     fresh: boolean;
     prompt: string;
     standing: string;
+    policyFingerprint?: string;
     nativeTools?: string;
     access: JudgmentAccess;
   }> = [];
@@ -115,11 +122,7 @@ export async function fixture(
     timeout: 1_000,
     maxTurns: 10,
     embedder: { embed: async () => new Float32Array(1024).fill(0.25) },
-    ownerPolicyProvider: () => ({
-      content: 'FIXTURE_OWNER_POLICY',
-      fingerprint: 'fixture',
-      loaded: true,
-    }),
+    ownerPolicyProvider,
     memberEnrollment: {
       requestSelection: async () => {},
     },
@@ -127,11 +130,16 @@ export async function fixture(
       const principal = options.principal?.principalId ?? 'owner';
       let session: string | undefined;
       let fresh = true;
+      let activeFingerprint: string | undefined;
       const model: IModelRunner = {
         backendType: backend,
         reportsModelRuns: true,
         supportsNativeSubagents: true,
         prompt: async (content, callbacks, opts) => {
+          if (opts?.resumeSession === false) {
+            session = undefined;
+            fresh = true;
+          }
           session ??= `fixture-session-${++sequence}`;
           const failure = principal !== 'owner' ? finishFailure : undefined;
           if (failure) finishFailure = undefined;
@@ -154,10 +162,12 @@ export async function fixture(
             fresh,
             prompt: JSON.stringify(prepared ?? content),
             standing: opts?.systemPrompt ?? '',
+            policyFingerprint: opts?.sessionPolicyFingerprint,
             nativeTools: typeof opts?.tools === 'string' ? opts.tools : undefined,
             access: (opts?.toolExecutionContext as { access: JudgmentAccess }).access,
           });
           fresh = false;
+          activeFingerprint = opts?.sessionPolicyFingerprint;
           if (principal === 'owner' && gate) await gate;
           if (principal !== 'owner' && memberGate) await memberGate;
           const call = async (action: string, input: unknown): Promise<ActionResult> => {
@@ -211,6 +221,12 @@ export async function fixture(
             usage: { input_tokens: 1, output_tokens: 1 },
           };
         },
+        getSessionPolicyStatus: (opts) =>
+          session === undefined
+            ? 'missing'
+            : activeFingerprint === opts.sessionPolicyFingerprint
+              ? 'compatible'
+              : 'mismatch',
         resetSession: async () => {
           session = undefined;
           fresh = true;

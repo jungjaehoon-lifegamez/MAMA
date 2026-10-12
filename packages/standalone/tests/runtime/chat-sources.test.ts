@@ -368,7 +368,12 @@ describe('owner chat raw sources', () => {
       now,
     });
     expect(start.exchanges).toEqual([
-      { at: message.occurredAt, owner: message.text, answer: '<b>Recorded answer</b>' },
+      {
+        at: message.occurredAt,
+        owner: message.text,
+        answer: '<b>Recorded answer</b>',
+        senderPrincipalId: 'owner-test',
+      },
     ]);
   });
 

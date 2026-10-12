@@ -15,6 +15,7 @@ import { ChatSources } from '../../src/storage/chat-sources.js';
 import { RawStore } from '../../src/storage/source-archive.js';
 import { createStoredSourceReader } from '../../src/api/stored-source-reader.js';
 import { createReportStore } from '../../src/api/report-handler.js';
+import { fixture } from '../helpers/member-runtime.js';
 
 const COMMON = 'common-fixture';
 const OWN_DM = 'fixture-person-dm';
@@ -317,5 +318,266 @@ describe('P10.1 owner authority in a personal member DM', () => {
     expect(summary).toMatch(/button.*owner.*DM/);
     expect(summary).toMatch(/not available now/);
     expect(summary).not.toMatch(/P10\./);
+  });
+});
+
+describe('common session sender attribution', () => {
+  it.each(['codex', 'claude'] as const)(
+    '%s names the common-channel sender and the personal session principal and roles',
+    async (backend) => {
+      const f = await fixture(backend);
+      createPrincipalRepository(f.runtime.database.adapter).grantRole({
+        principalId: f.member,
+        role: 'owner',
+        now: 4,
+      });
+      const dm = 'telegram:fixture:sender-dm';
+      f.runtime.serveMember(f.member).acceptOwnerMessage({
+        id: dm,
+        channelKey: f.memberDm,
+        occurredAt: 1,
+        text: 'fixture personal request',
+        senderPrincipalId: 'fixture-different-sender',
+        payload: { displayName: 'fixture-user-set-name' },
+      });
+      await f.settled(dm, f.member);
+      const dmHeader = (JSON.parse(f.turns.at(-1)!.prompt) as string)
+        .split('\n')
+        .find((line) => line.startsWith('[member_message]'));
+      expect(dmHeader).toBe(
+        `[member_message] telegram · 1970-01-01 Thu 00:00 (UTC) · yours: ${f.member} (owner)`
+      );
+      expect(dmHeader).not.toContain('fixture-different-sender');
+      expect(dmHeader).not.toContain('fixture-user-set-name');
+
+      const common = 'telegram:fixture:sender-common';
+      f.runtime.intake.acceptOwnerMessage({
+        id: common,
+        channelKey: 'fixture-common-room',
+        occurredAt: 2,
+        text: 'fixture common request',
+        senderPrincipalId: f.member,
+        payload: { displayName: 'fixture-user-set-name' },
+      });
+      await f.settled(common);
+      const prompt = JSON.parse(f.turns.at(-1)!.prompt) as string;
+      const header = prompt.split('\n').find((line) => line.startsWith('[owner_message]'));
+      expect(header).toBe(
+        `[owner_message] telegram · 1970-01-01 Thu 00:00 (UTC) · from ${f.member} (owner)`
+      );
+      expect(prompt).not.toContain('fixture-user-set-name');
+      expect(prompt).not.toContain(f.memberDm);
+    }
+  );
+
+  it.each(['codex', 'claude'] as const)(
+    '%s keeps chat authors and their roles on common session-start exchanges',
+    async (backend) => {
+      const f = await fixture(backend);
+      const repo = createPrincipalRepository(f.runtime.database.adapter);
+      repo.grantRole({ principalId: f.member, role: 'owner', now: 4 });
+      const plain = repo.registerMember({
+        connector: 'telegram',
+        namespace: 'private',
+        externalId: 'fixture-history-member',
+        now: 5,
+      });
+      for (const [index, sender] of [f.member, plain, 'owner'].entries()) {
+        f.runtime.recordHostExchange({
+          message: {
+            id: `telegram:fixture:history-${index}`,
+            channelKey: 'fixture-common-room',
+            occurredAt: index + 1,
+            text: `fixture earlier request ${index}`,
+            senderPrincipalId: sender,
+          },
+          reply: {
+            text: `fixture earlier answer ${index}`,
+            occurredAt: index + 2,
+            deliveryVerified: true,
+          },
+        });
+      }
+      await f.settled(f.message('owner', 'fixture new common session'));
+      const prompt = f.turns.at(-1)!.prompt;
+      expect
+        .soft(prompt)
+        .toContain(
+          `· from ${f.member} (owner): fixture earlier request 0 → you: fixture earlier answer 0`
+        );
+      expect
+        .soft(prompt)
+        .toContain(`· from ${plain}: fixture earlier request 1 → you: fixture earlier answer 1`);
+      expect(prompt).not.toContain('fixture-history-member');
+      expect(prompt).not.toContain(f.memberDm);
+      expect(prompt).toContain('fixture earlier request 2 → you: fixture earlier answer 2');
+      expect(prompt).not.toContain('· from owner');
+    }
+  );
+});
+
+describe('owner rules reach the personal DM session', () => {
+  type Fixture = Awaited<ReturnType<typeof fixture>>;
+  const policyFingerprint = (turn: Fixture['turns'][number]): string =>
+    JSON.parse(turn.policyFingerprint!.split('::tools=')[0]).ownerPolicyFingerprint;
+  const save = async (
+    f: Fixture,
+    principalId: string,
+    input: typeof memoryInput & { appliesWhen?: string; steps?: string[] }
+  ) =>
+    completed<{ id: string }>(
+      await f.runtime.surface.dispatch(
+        { action: 'memory.save', input, operationId: `fixture-rule-${principalId}-${input.topic}` },
+        {
+          access: resolvePrincipalAccess(principalId, {
+            adapter: f.runtime.database.adapter,
+            ownerAccess: f.runtime.surface.ownerAccess,
+            agentId: `agent-${principalId}`,
+          }),
+          session: { sourceMessageRef: 'telegram:fixture:rule' },
+        }
+      )
+    );
+  const grantOwner = (f: Fixture) => {
+    const repo = createPrincipalRepository(f.runtime.database.adapter);
+    repo.grantRole({ principalId: f.member, role: 'owner', now: 4 });
+    return repo.registerMember({
+      connector: 'telegram',
+      namespace: 'private',
+      externalId: 'fixture-plain-member',
+      now: 5,
+    });
+  };
+
+  it.each(['codex', 'claude'] as const)(
+    '%s enables web tools and common policy for owner-role DMs while plain members have neither',
+    async (backend) => {
+      const f = await fixture(backend);
+      await f.settled(f.message('owner'));
+      await f.settled(f.message(f.member), f.member);
+      const member = f.turns.at(-1)!;
+      const repo = createPrincipalRepository(f.runtime.database.adapter);
+      repo.grantRole({ principalId: f.member, role: 'owner', now: 4 });
+      await f.settled(f.message(f.member), f.member);
+      const common = f.turns.find((turn) => turn.principal === 'owner')!;
+      const own = f.turns.at(-1)!;
+      expect(own.fresh).toBe(true);
+      expect(own.session).not.toBe(member.session);
+      expect(own.standing).toContain('FIXTURE_OWNER_POLICY');
+      expect(policyFingerprint(own)).toBe('fixture');
+      expect(policyFingerprint(own)).toBe(policyFingerprint(common));
+      expect(member.standing).not.toContain('FIXTURE_OWNER_POLICY');
+      expect(policyFingerprint(member)).toBe('');
+      if (backend === 'codex') {
+        expect(f.drivers.get(f.member)!.webSearch).toBe(true);
+        expect(f.drivers.get('owner')!.webSearch).toBe(true);
+      }
+      expect(f.drivers.get(f.member)!.deniedReadPaths).toContain(join(f.home, 'owner-policy.md'));
+      expect(
+        f.natives
+          .get(f.member)!
+          .hostToolDefinitions()
+          .map((tool) => tool.name)
+      ).not.toContain('manage.policy.update');
+      if (backend === 'claude') {
+        for (const tools of [own.nativeTools, common.nativeTools]) {
+          expect(tools).toContain('WebFetch');
+          expect(tools).toContain('WebSearch');
+        }
+        expect(member.nativeTools).not.toMatch(/WebFetch|WebSearch/);
+      }
+    }
+  );
+
+  it('rotates an owner DM session on a policy change while a plain member keeps its session', async () => {
+    let policy = { content: 'FIXTURE_POLICY_ONE', fingerprint: 'policy-one', loaded: true };
+    const f = await fixture('codex', true, false, 'UTC', undefined, 'fixture-member', () => policy);
+    const plain = grantOwner(f);
+    const turn = async (id: string) => {
+      await f.settled(f.message(id), id);
+      return f.turns.at(-1)!;
+    };
+    const own = await turn(f.member);
+    const member = await turn(plain);
+    expect((await turn(f.member)).session).toBe(own.session);
+    policy = { content: 'FIXTURE_POLICY_TWO', fingerprint: 'policy-two', loaded: true };
+    const changed = await turn(f.member);
+    expect(changed.session).not.toBe(own.session);
+    expect(changed.fresh).toBe(true);
+    expect(changed.standing).toContain('FIXTURE_POLICY_TWO');
+    expect(changed.standing).not.toContain('FIXTURE_POLICY_ONE');
+    expect(policyFingerprint(changed)).toBe('policy-two');
+    expect((await turn(plain)).session).toBe(member.session);
+  });
+
+  it('starts with personal records and common rule kinds, keeping other common and private records out', async () => {
+    const f = await fixture();
+    const plain = grantOwner(f);
+    await save(f, f.member, {
+      ...memoryInput,
+      topic: 'personal',
+      summary: 'PERSONAL_START_RECORD',
+    });
+    await save(f, plain, { ...memoryInput, topic: 'private', summary: 'OTHER_PRIVATE_RECORD' });
+    await save(f, 'owner', { ...memoryInput, topic: 'common-work', summary: 'COMMON_WORK_RECORD' });
+    for (const kind of ['lesson', 'preference', 'constraint', 'workflow'])
+      await save(f, 'owner', {
+        ...memoryInput,
+        topic: `common-${kind}`,
+        kind,
+        summary: `COMMON_START_${kind}`,
+        appliesWhen: 'Fixture start context.',
+        ...(kind === 'workflow' ? { steps: ['Read the fixture rule'] } : {}),
+      });
+    await f.settled(f.message(f.member, 'unrelated question'), f.member);
+    const own = f.turns.at(-1)!.prompt;
+    expect(own).toContain('PERSONAL_START_RECORD');
+    for (const kind of ['lesson', 'preference', 'constraint', 'workflow'])
+      expect(own).toContain(`COMMON_START_${kind}`);
+    expect(own).not.toContain('COMMON_WORK_RECORD');
+    expect(own).not.toContain('OTHER_PRIVATE_RECORD');
+    await f.settled(f.message(plain, 'unrelated question'), plain);
+    expect(f.turns.at(-1)!.prompt).toContain('OTHER_PRIVATE_RECORD');
+    expect(f.turns.at(-1)!.prompt).not.toContain('COMMON_START_');
+    expect(f.turns.at(-1)!.prompt).not.toContain('PERSONAL_START_RECORD');
+  });
+
+  it('recalls a common owner correction next to personal lessons without allowing its replacement in DM', async () => {
+    const f = await fixture();
+    const plain = grantOwner(f);
+    await f.settled(f.message(f.member, 'start session'), f.member);
+    await f.settled(f.message(plain, 'start session'), plain);
+    const common = await save(f, 'owner', {
+      ...memoryInput,
+      topic: 'fixture-recall-common',
+      kind: 'lesson',
+      summary: 'fixture recall correction COMMON_RECALL_RULE',
+      appliesWhen: 'Fixture recall question.',
+    });
+    await save(f, f.member, {
+      ...memoryInput,
+      topic: 'fixture-recall-personal',
+      kind: 'lesson',
+      summary: 'fixture recall correction PERSONAL_RECALL_RULE',
+      appliesWhen: 'Fixture recall question.',
+    });
+    await f.settled(f.message(f.member, 'fixture recall correction'), f.member);
+    const recalled = f.turns.at(-1)!;
+    expect(recalled.fresh).toBe(false);
+    expect(recalled.prompt).toContain('[owner rule] fixture-recall-common');
+    expect(recalled.prompt).toContain('[their rule] fixture-recall-personal');
+    expect(recalled.prompt).toContain('COMMON_RECALL_RULE');
+    expect(recalled.prompt).toContain('PERSONAL_RECALL_RULE');
+    await f.settled(f.message(plain, 'fixture recall correction'), plain);
+    expect(f.turns.at(-1)!.prompt).not.toContain('COMMON_RECALL_RULE');
+    expect(f.turns.at(-1)!.prompt).not.toContain('PERSONAL_RECALL_RULE');
+    const { result } = await f.act('memory.save', {
+      ...memoryInput,
+      replaces: [{ id: common.id, reason: 'Fixture correction' }],
+    });
+    expect(result).toMatchObject({
+      status: 'failed',
+      error: { message: expect.stringContaining('common channel') },
+    });
   });
 });

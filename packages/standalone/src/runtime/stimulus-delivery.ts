@@ -92,10 +92,13 @@ export interface RecordOrderPort {
 export interface StimulusDeliveryOptions {
   backend: OwnerRuntimeBackend;
   turnChain?: ReturnType<typeof createSerialTurnChain>;
-  member?: { sessionKey: string; voice: TurnVoice };
+  member?: { principalId: string; sessionKey: string; voice: TurnVoice };
   wikiEnabled?: boolean;
   formattingRoutes?: { reports: string; notifications: string };
   timeZone: TimeZoneSetting;
+  /** Resolve chat principal roles from the registry. */
+  principalRoles?: (principalId: string) => readonly string[];
+  commonPrincipalId?: string;
   /** Top lessons for a turn's text, most relevant first. */
   lessons?: (text: string) => Promise<readonly TurnLesson[]>;
   recordOrders?: RecordOrderPort;
@@ -521,7 +524,12 @@ function planTurn(row: MailboxRow, options: StimulusDeliveryOptions): TurnPlan {
             payload: row.payload,
           },
           lessons,
-          { timeZone: zone },
+          {
+            timeZone: zone,
+            principalRoles: options.principalRoles,
+            commonPrincipalId: options.commonPrincipalId,
+            sessionPrincipalId: options.member?.principalId,
+          },
           options.member?.voice
         ),
     };
@@ -643,7 +651,11 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
               ? sessionStartBlock(
                   (await options.sessionStart?.(row)) ?? { exchanges: [], decisions: [] },
                   new Date(),
-                  { timeZone: options.timeZone.get() },
+                  {
+                    timeZone: options.timeZone.get(),
+                    principalRoles: options.principalRoles,
+                    commonPrincipalId: options.commonPrincipalId,
+                  },
                   options.member?.voice
                 )
               : '';

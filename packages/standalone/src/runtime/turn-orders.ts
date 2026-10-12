@@ -25,6 +25,10 @@ export const REPORT_CHANNEL = 'schedule';
 export interface TurnOrderOptions {
   backend: OwnerRuntimeBackend;
   timeZone: string;
+  /** Registry roles for a chat sender principal, never a transport identity. */
+  principalRoles?: (principalId: string) => readonly string[];
+  /** The shared runtime's principal is a session, not a person to attribute. */
+  commonPrincipalId?: string;
 }
 
 export interface Lesson {
@@ -33,6 +37,8 @@ export interface Lesson {
   appliesWhen?: string;
   /** Written in an owner-chat turn (owner-authority.ts); otherwise learned from observed work. */
   ownerRule: boolean;
+  /** A rule from the shared owner scope, distinct from this person's own correction. */
+  commonOwnerRule?: boolean;
 }
 
 function currentTime(now: Date, timeZone: string): string {
@@ -81,19 +87,34 @@ export const MEMBER_VOICE: TurnVoice = {
     "Their rules are this person's own corrections and win a conflict; learned lessons are advice from earlier work. Neither is a fact; verify current state with tools.",
 };
 
+function senderAttribution(
+  principalId: string | undefined,
+  options: Pick<TurnOrderOptions, 'principalRoles' | 'commonPrincipalId'>,
+  voice: TurnVoice
+): string {
+  if (!principalId || principalId === options.commonPrincipalId || voice === MEMBER_VOICE)
+    return '';
+  const roles = options.principalRoles?.(principalId) ?? [];
+  return ` · from ${principalId}${roles.length > 0 ? ` (${roles.join(', ')})` : ''}`;
+}
+
 /**
  * Kagemusha's lesson block: bounded, never a fact or a tool-call instruction. Each line says whose
  * word it is: an owner rule is the owner's own correction and wins a conflict (owner, 2026-10-01).
  */
 export function lessonsBlock(lessons: readonly Lesson[], voice: TurnVoice = OWNER_VOICE): string {
   if (lessons.length === 0) return '';
-  const open = `<lessons>\n${voice.lessonsIntro}`;
+  const commonRulesIntro =
+    voice === MEMBER_VOICE && lessons.some((lesson) => lesson.commonOwnerRule)
+      ? "\nOwner rules are common owner corrections, separate from this person's own corrections; both win a conflict with learned advice."
+      : '';
+  const open = `<lessons>\n${voice.lessonsIntro}${commonRulesIntro}`;
   const close = '</lessons>';
   const lines: string[] = [];
   let size = open.length + close.length + 2;
   for (const lesson of lessons) {
     const line = escapeMarkup(
-      `- [${lesson.ownerRule ? voice.ruleLabel : 'learned'}] ${clip(lesson.topic, 80)}: ${clip(lesson.summary, 360)}${
+      `- [${lesson.commonOwnerRule ? OWNER_VOICE.ruleLabel : lesson.ownerRule ? voice.ruleLabel : 'learned'}] ${clip(lesson.topic, 80)}: ${clip(lesson.summary, 360)}${
         lesson.appliesWhen ? ` (applies when: ${clip(lesson.appliesWhen, 160)})` : ''
       }`
     );
@@ -110,6 +131,8 @@ export interface SessionStartExchange {
   at: number;
   owner: string;
   answer: string;
+  /** The stored chat author's principal, when present. */
+  senderPrincipalId?: string;
 }
 
 export interface SessionStartInput {
@@ -196,7 +219,7 @@ function leadingLines(lines: readonly string[], limit: number, seen: Set<string>
 export function sessionStartBlock(
   input: SessionStartInput,
   now: Date,
-  options: Pick<TurnOrderOptions, 'timeZone'>,
+  options: Pick<TurnOrderOptions, 'timeZone' | 'principalRoles' | 'commonPrincipalId'>,
   voice: TurnVoice = OWNER_VOICE
 ): string {
   const seen = new Set<string>();
@@ -216,7 +239,7 @@ export function sessionStartBlock(
   const exchanges = recentLines(
     input.exchanges.map((exchange) =>
       truncate(
-        `[${localStamp(new Date(exchange.at).toISOString(), options.timeZone)}] ${voice.speaker}: ${truncate(
+        `[${localStamp(new Date(exchange.at).toISOString(), options.timeZone)}] ${voice.speaker}${senderAttribution(exchange.senderPrincipalId, options, voice)}: ${truncate(
           oneLine(exchange.owner),
           EXCHANGE_OWNER_LIMIT
         )} → you: ${oneLine(exchange.answer)}`,
@@ -289,12 +312,21 @@ export function attachmentLines(payload: JsonValue | undefined): string[] {
 export function ownerMessageOrder(
   input: { messenger: string; occurredAt: number; payload: JsonValue | undefined },
   lessons: readonly Lesson[],
-  options: Pick<TurnOrderOptions, 'timeZone'>,
+  options: Pick<TurnOrderOptions, 'timeZone' | 'principalRoles' | 'commonPrincipalId'> & {
+    sessionPrincipalId?: string;
+  },
   voice: TurnVoice = OWNER_VOICE
 ): string {
-  const text = textField(payloadObject(input.payload)?.text);
+  const payload = payloadObject(input.payload);
+  const text = textField(payload?.text);
+  const sender = senderAttribution(textField(payload?.senderPrincipalId), options, voice);
+  const principalId = options.sessionPrincipalId;
+  const roles = principalId ? (options.principalRoles?.(principalId) ?? []) : [];
+  const yours = principalId
+    ? ` · yours: ${principalId}${roles.length > 0 ? ` (${roles.join(', ')})` : ''}`
+    : '';
   return [
-    `[${voice.messageTag}] ${input.messenger} · ${localNow(input.occurredAt, options.timeZone)} (${options.timeZone})`,
+    `[${voice.messageTag}] ${input.messenger} · ${localNow(input.occurredAt, options.timeZone)} (${options.timeZone})${sender}${yours}`,
     lessonsBlock(lessons, voice),
     text,
     ...attachmentLines(input.payload),

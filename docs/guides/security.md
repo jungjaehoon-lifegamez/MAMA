@@ -72,6 +72,15 @@ Read-deny rules and Bash sandbox denyRead paths exclude `auth.env`, `config.yaml
 workspace; Bash remains sandboxed without an unsandboxed retry. Native web tools
 remain available. Subagents inherit these settings.
 
+Each person's DM runs in its own member workspace. The `owner` registry role also enables web
+search and web fetch. The role list is checked before each turn, and a change rebuilds the session
+and its proxy; plain members have no web tools. Shell network stays closed through the deny-all
+proxy. An owner-role session's web fetches and shell connection attempts alert only that person's
+registry DM, using the existing text and one-minute grouping. The shared security log keeps only
+who, what kind and when, plus the event ID and suppression count; it retains no URL, command,
+summary or host from that personal session. Plain members' refusal alerts go to the common
+channel with principal, host and time only, and retain those same minimal fields in the log.
+
 The Codex owner uses a named workspace permission profile with those credential
 paths denied. Both thread start and resume select that profile. Workspace writes,
 native shell and web search remain available under the existing policy; shell

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
 import type { DatabaseInstance, Knowledge } from '@jungjaehoon/mama-core';
 import type {
   IModelRunner,
@@ -468,67 +469,136 @@ describe('one owner native session', () => {
     }
   });
 
-  it('reloads owner policy layers and rotates the native thread when its fingerprint changes', async () => {
-    const model = runner('codex');
-    let policy = {
-      content: 'policy one',
-      fingerprint: 'fingerprint-one',
-      loaded: true,
-    };
-    let activeFingerprint: string | undefined;
-    const getSessionPolicyStatus = vi.fn(
-      ({ sessionPolicyFingerprint }: { sessionPolicyFingerprint?: string }) => {
-        if (activeFingerprint === undefined) {
-          activeFingerprint = sessionPolicyFingerprint;
-          return 'missing' as const;
+  it.each(['common', 'owner DM'])(
+    '%s reloads owner policy layers and rotates the native thread when its fingerprint changes',
+    async (kind) => {
+      const model = runner('codex');
+      let policy = {
+        content: 'policy one',
+        fingerprint: 'fingerprint-one',
+        loaded: true,
+      };
+      let activeFingerprint: string | undefined;
+      const getSessionPolicyStatus = vi.fn(
+        ({ sessionPolicyFingerprint }: { sessionPolicyFingerprint?: string }) => {
+          if (activeFingerprint === undefined) {
+            activeFingerprint = sessionPolicyFingerprint;
+            return 'missing' as const;
+          }
+          if (activeFingerprint !== sessionPolicyFingerprint) {
+            activeFingerprint = sessionPolicyFingerprint;
+            return 'mismatch' as const;
+          }
+          return 'compatible' as const;
         }
-        if (activeFingerprint !== sessionPolicyFingerprint) {
-          activeFingerprint = sessionPolicyFingerprint;
-          return 'mismatch' as const;
-        }
-        return 'compatible' as const;
-      }
-    );
-    model.getSessionPolicyStatus = getSessionPolicyStatus;
-    model.resetSession = vi.fn();
-    const sessionPool = new SessionPool({ cleanupIntervalMs: 60_000 });
-    const session = createNativeSession({
-      backend: 'codex',
-      model: 'test-model',
-      workspaceDir: '/tmp/mama-native-workspace',
-      runtimeRoot: '/tmp/mama-native-runtime',
-      actionSurface: surface(),
-      agent: model,
-      ownerSystemPrompt: 'standing policy',
-      ownerPolicyProvider: () => policy,
-      sessionPool,
-      maxTurns: 20,
-      timeout: 1_000,
-    });
+      );
+      model.getSessionPolicyStatus = getSessionPolicyStatus;
+      model.resetSession = vi.fn();
+      const sessionPool = new SessionPool({ cleanupIntervalMs: 60_000 });
+      const session = createNativeSession({
+        backend: 'codex',
+        model: 'test-model',
+        workspaceDir: '/tmp/mama-native-workspace',
+        runtimeRoot: '/tmp/mama-native-runtime',
+        actionSurface: surface(),
+        ...(kind === 'owner DM'
+          ? {
+              principal: {
+                principalId: 'fixture-owner-member',
+                agentId: 'fixture-member-agent',
+                sessionKey: 'member:fixture-owner-member:runtime',
+                systemPrompt: 'member standing policy',
+                roles: [],
+                prepareAccess: () => ({
+                  principalId: 'fixture-owner-member',
+                  agentId: 'fixture-member-agent',
+                  scopes: [{ kind: 'user' as const, id: 'fixture-owner-member' }],
+                  actions: ['source.read'],
+                }),
+              },
+            }
+          : {}),
+        agent: model,
+        ownerSystemPrompt: 'standing policy',
+        ownerPolicyProvider: () => policy,
+        sessionPool,
+        maxTurns: 20,
+        timeout: 1_000,
+      });
 
-    await session.runTurn([{ type: 'text', text: 'first' }], { sessionKey: 'owner:policy-test' });
-    const firstCall = (model.prompt as ReturnType<typeof vi.fn>).mock.calls[0];
-    policy = { content: 'policy two', fingerprint: 'fingerprint-two', loaded: true };
-    await session.runTurn([{ type: 'text', text: 'second' }], { sessionKey: 'owner:policy-test' });
-    const secondCall = (model.prompt as ReturnType<typeof vi.fn>).mock.calls[1];
+      const sessionKey = session.sessionKey;
+      await session.runTurn([{ type: 'text', text: 'first' }], { sessionKey });
+      const firstCall = (model.prompt as ReturnType<typeof vi.fn>).mock.calls[0];
+      policy = { content: 'policy two', fingerprint: 'fingerprint-two', loaded: true };
+      await session.runTurn([{ type: 'text', text: 'second' }], { sessionKey });
+      const secondCall = (model.prompt as ReturnType<typeof vi.fn>).mock.calls[1];
 
-    expect(firstCall?.[2]).toMatchObject({
-      systemPrompt: expect.stringContaining('policy one'),
-      sessionPolicyFingerprint: expect.not.stringContaining('policy one'),
-    });
-    expect(secondCall?.[2]).toMatchObject({
-      systemPrompt: expect.stringContaining('policy two'),
-      sessionPolicyFingerprint: expect.not.stringContaining('policy two'),
-    });
-    expect(secondCall?.[2]?.sessionId).not.toBe(firstCall?.[2]?.sessionId);
-    expect(getSessionPolicyStatus).toHaveBeenCalledTimes(2);
+      expect(firstCall?.[2]).toMatchObject({
+        systemPrompt: expect.stringContaining('policy one'),
+        sessionPolicyFingerprint: expect.stringContaining('fingerprint-one'),
+      });
+      expect(secondCall?.[2]).toMatchObject({
+        systemPrompt: expect.stringContaining('policy two'),
+        sessionPolicyFingerprint: expect.stringContaining('fingerprint-two'),
+      });
+      expect(firstCall?.[2]?.sessionPolicyFingerprint).not.toContain('policy one');
+      expect(secondCall?.[2]?.sessionPolicyFingerprint).not.toContain('policy two');
+      expect(secondCall?.[2]?.sessionId).not.toBe(firstCall?.[2]?.sessionId);
+      expect(getSessionPolicyStatus).toHaveBeenCalledTimes(2);
 
-    await session.stop();
-    sessionPool.dispose();
-  });
+      await session.stop();
+      sessionPool.dispose();
+    }
+  );
 });
 
 describe('member native execution', () => {
+  it('builds Claude CLI web permissions from the roles of each new personal session', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'member-web-role-'));
+    const adapterModule = createRequire(import.meta.url)(
+      '@jungjaehoon/mama-core/runtime/drivers/persistent-cli-adapter'
+    );
+    const model = runner('claude');
+    const adapter = vi.spyOn(adapterModule, 'PersistentCLIAdapter').mockImplementation(() => model);
+    const pool = new SessionPool();
+    try {
+      for (const roles of [[], ['owner'], []]) {
+        const session = createNativeSession({
+          backend: 'claude',
+          model: 'fixture',
+          workspaceDir: join(root, 'workspace'),
+          runtimeRoot: root,
+          actionSurface: surface(),
+          sessionPool: pool,
+          timeout: 1_000,
+          maxTurns: 10,
+          principal: {
+            principalId: 'fixture-person',
+            agentId: 'fixture-agent',
+            sessionKey: 'member:fixture-person:runtime',
+            systemPrompt: 'fixture standing',
+            roles,
+            prepareAccess: () => ({
+              principalId: 'fixture-person',
+              agentId: 'fixture-agent',
+              scopes: [{ kind: 'user', id: 'fixture-person' }],
+              actions: ['source.read'],
+            }),
+          },
+        });
+        const cli = adapter.mock.calls.at(-1)![0] as { allowedTools: string[] };
+        for (const webTool of ['WebFetch', 'WebSearch'])
+          expect(cli.allowedTools.includes(webTool)).toBe(roles.includes('owner'));
+        expect(cli.allowedTools).toContain('Bash');
+        await session.stop();
+      }
+    } finally {
+      adapter.mockRestore();
+      pool.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it.each(['codex', 'claude'] as const)(
     'uses member authority and prompt for %s, including a child',
     async (backend) => {
@@ -613,6 +683,7 @@ describe('member native execution', () => {
           agentId: memberAccess.agentId,
           sessionKey: 'member:fixture-member:runtime',
           systemPrompt: 'MEMBER_PROMPT_SENTINEL',
+          roles: [],
           prepareAccess,
         },
         claudeConfigDir: join(root, 'claude-config'),

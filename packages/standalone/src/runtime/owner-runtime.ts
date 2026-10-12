@@ -538,6 +538,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       turnChain: sessions.turnChain,
       backend: options.backend,
       timeZone: options.timeZone,
+      principalRoles: (principalId) => principals.listRoles(principalId).map(({ role }) => role),
+      commonPrincipalId: options.ownerPrincipalId,
       wikiEnabled: options.wiki?.enabled ?? false,
       formattingRoutes: options.formattingRoutes ?? {
         reports: 'telegram',
@@ -641,6 +643,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         throw new Error(`serveMember requires an active member: ${principalId}`);
       const member = createMemberSession(principalId, memberRoot, {
         options,
+        ownerPolicyProvider,
         ownerDeniedPaths,
         registeredMemberIds: () => principals.listMembers().map((row) => row.principalId),
         database,

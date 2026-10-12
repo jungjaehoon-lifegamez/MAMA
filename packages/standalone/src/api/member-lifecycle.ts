@@ -66,7 +66,7 @@ export function memberLifecycleRegistrations(options: {
               'Resume a suspended member with retained grants. Move any remaining runtime and temp directories aside and serve a fresh environment.',
             offboard:
               'Permanently offboard an active or suspended member; revoke every grant atomically, end and unserve its session, move runtime/temp aside, and keep its identity binding.',
-            list: 'List member principal ids, statuses and unrevoked grants, including grants retained during suspension, and the latest enrollment receipts the owner received (created, exists or refused, with the reason). Receipts carry the owner-local time of each pick. Never returns transport identities or record content.',
+            list: 'List member principal ids, registry roles (including owner), statuses and unrevoked grants, including grants retained during suspension, and the latest enrollment receipts the owner received (created, exists or refused, with the reason). Receipts carry the owner-local time of each pick. Never returns transport identities or record content.',
           }[change]! +
           ' Only the owner own message turn is allowed; delta, scheduled/report, replay, member and subagent turns are denied. Changes apply after the running member turn on the shared serial chain and cancel queued inputs with a host reason.',
         inputSchema: {
@@ -124,6 +124,7 @@ export function memberLifecycleRegistrations(options: {
             })),
             members: repo.listMembers().map(({ principalId, status }) => ({
               principalId,
+              roles: repo.listRoles(principalId).map(({ role }) => role),
               status,
               grants: repo
                 .listRetainedGrants(principalId)

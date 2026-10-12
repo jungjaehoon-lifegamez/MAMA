@@ -1,17 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import {
-  readMemoryRecordsInScopes,
-  isErasedRecord,
-  type JudgmentAccess,
-  type MemoryRecord,
-} from '@jungjaehoon/mama-core';
+import { createPrincipalRepository, type JudgmentAccess } from '@jungjaehoon/mama-core';
 import { ChatSources } from '../storage/chat-sources.js';
 import type { RawStore } from '../storage/source-archive.js';
 import type { CoreDatabase } from './core-db.js';
 import type { ActionSurface } from './action-surface.js';
 import type { OwnerRuntimeOptions } from './owner-runtime.js';
-import { runtimeModelRun, guidanceInSearchOrder } from './owner-runtime.js';
+import { runtimeModelRun, guidanceInSearchOrder, readOwnerMemoryRecords } from './owner-runtime.js';
 import { createNativeSession, type NativeSession } from './native-session.js';
 import { normalizeReadPaths } from './backend-security.js';
 import { ensureMemberPaths, otherMemberReadPaths } from './member-paths.js';
@@ -20,7 +15,8 @@ import { MEMBER_VOICE } from './turn-orders.js';
 import { resolvePrincipalAccess } from './principal-access.js';
 import { readSessionStartInput } from './session-start-context.js';
 import { createStimulusDelivery, type StimulusDeliveryOptions } from './stimulus-delivery.js';
-import { ownerRuleIds, RULE_KINDS } from './owner-authority.js';
+import { holdsOwnerRole, ownerRuleIds, RULE_KINDS } from './owner-authority.js';
+import type { OwnerPolicyProvider } from './owner-policy.js';
 import { startMemberEgressProxy, type EgressProxy } from './egress-proxy.js';
 
 export function createMemberSession(
@@ -28,6 +24,7 @@ export function createMemberSession(
   root: string,
   ports: {
     options: OwnerRuntimeOptions;
+    ownerPolicyProvider: OwnerPolicyProvider;
     ownerDeniedPaths: readonly string[];
     registeredMemberIds: () => string[];
     database: CoreDatabase;
@@ -49,6 +46,19 @@ export function createMemberSession(
   const initialAccess = access(); // Unknown/inactive ids fail before creating their paths.
   const paths = ensureMemberPaths(root, principalId);
   const personalScopes = [{ kind: 'user' as const, id: principalId }];
+  const principals = createPrincipalRepository(database.adapter);
+  const readsOwnerRules = () => holdsOwnerRole(principals, principalId);
+  const readRecords = async (readOptions: Parameters<typeof readOwnerMemoryRecords>[2]) => {
+    const records = await readOwnerMemoryRecords(database.adapter, personalScopes, readOptions);
+    if (readsOwnerRules())
+      records.push(
+        ...(await readOwnerMemoryRecords(database.adapter, surface.ownerAccess.scopes, {
+          ...readOptions,
+          kind: [...RULE_KINDS],
+        }))
+      );
+    return records;
+  };
   const chat = new ChatSources(rawStore, database.adapter, principalId, agentId);
   const denyPaths = () =>
     normalizeReadPaths([
@@ -57,6 +67,12 @@ export function createMemberSession(
       ...otherMemberReadPaths(root, principalId, ports.registeredMemberIds()),
     ]).sort();
   let deniedReadPaths = denyPaths();
+  const roles = () =>
+    principals
+      .listRoles(principalId)
+      .map(({ role }) => role)
+      .sort();
+  let sessionRoles = roles();
   let proxy: EgressProxy | undefined;
   const create = () =>
     (options.createSession ?? createNativeSession)({
@@ -70,8 +86,14 @@ export function createMemberSession(
         agentId,
         sessionKey,
         systemPrompt: MEMBER_SYSTEM_PROMPT,
+        roles: sessionRoles,
         prepareAccess: access,
       },
+      // The host reads the common policy; the person's native tools still cannot read its file.
+      ownerPolicyProvider: () =>
+        readsOwnerRules()
+          ? ports.ownerPolicyProvider()
+          : { content: null, fingerprint: '', loaded: false },
       // Native session also denies this member's runtime and Codex credentials.
       deniedReadPaths,
       sandboxNetworkProxy: proxy,
@@ -108,6 +130,21 @@ export function createMemberSession(
       }
     },
     runTurn: async (content, request) => {
+      const next = denyPaths();
+      const nextRoles = roles();
+      const rolesChanged = JSON.stringify(nextRoles) !== JSON.stringify(sessionRoles);
+      if (rolesChanged || JSON.stringify(next) !== JSON.stringify(deniedReadPaths)) {
+        // Enrollment and role changes finish on the shared serial chain before this turn.
+        await current.resetSession(sessionKey);
+        await current.stop();
+        if (rolesChanged) {
+          await proxy?.close();
+          proxy = undefined;
+        }
+        deniedReadPaths = next;
+        sessionRoles = nextRoles;
+        current = create();
+      }
       // Bind only when the configured Claude sandbox starts executing this member. No member
       // receives the owner's endpoint; Codex's OS-level network deny has no proxy observation.
       if (
@@ -115,19 +152,10 @@ export function createMemberSession(
         options.sandboxNetworkProxy !== undefined &&
         proxy === undefined
       ) {
-        proxy = await startMemberEgressProxy(principalId, (event) =>
+        proxy = await startMemberEgressProxy(principalId, sessionRoles.includes('owner'), (event) =>
           options.outboundAttempts?.(event)
         );
         await current.stop();
-        current = create();
-      }
-      const next = denyPaths();
-      if (JSON.stringify(next) !== JSON.stringify(deniedReadPaths)) {
-        // Enrollment runs in the owner's turn on the shared serial chain. Here that turn has
-        // finished and no other principal is executing. Never resume a thread with stale policy.
-        await current.resetSession(sessionKey);
-        await current.stop();
-        deniedReadPaths = next;
         current = create();
       }
       return current.runTurn(content, request);
@@ -137,19 +165,14 @@ export function createMemberSession(
     backend: options.backend,
     timeZone: options.timeZone,
     turnChain: ports.turnChain,
-    member: { sessionKey, voice: MEMBER_VOICE },
+    member: { principalId, sessionKey, voice: MEMBER_VOICE },
+    principalRoles: (id) => principals.listRoles(id).map(({ role }) => role),
     readResult: ports.readResult,
     sessionStart: (row) => {
       access();
       return readSessionStartInput({
         exchanges: chat.recentExchanges(row.stimulusId),
-        records: async () =>
-          (
-            await readMemoryRecordsInScopes(database.adapter, personalScopes, {
-              status: 'active',
-              excludeAmendments: true,
-            })
-          ).filter((record): record is MemoryRecord => !isErasedRecord(record)),
+        records: () => readRecords({ status: 'active', excludeAmendments: true }),
         checkpoint: async () => {
           const result = await surface.hostToolCall(
             'memory.checkpoint.list',
@@ -176,28 +199,32 @@ export function createMemberSession(
       });
     },
     lessons: async (text) => {
+      const ownerRole = readsOwnerRules();
       const result = await surface.hostToolCall(
         'memory.search',
         { query: text.slice(0, 2_000), limit: 40, includeRelated: false },
         `member-lessons:${randomUUID()}`,
-        { access: { ...access(), readScopes: [] } }
+        {
+          access: {
+            ...access(),
+            readScopes: ownerRole ? surface.ownerAccess.scopes : [],
+          },
+        }
       );
       if (result.status !== 'completed')
         throw new Error(`memory.search ${result.status}: ${result.error.message}`);
       const hits = (result.data as { results?: Array<{ id: string }> }).results ?? [];
-      const records = (
-        await readMemoryRecordsInScopes(database.adapter, personalScopes, {
-          kind: [...RULE_KINDS],
-          status: 'active',
-        })
-      ).filter((record): record is MemoryRecord => !isErasedRecord(record));
+      const records = await readRecords({ kind: [...RULE_KINDS], status: 'active' });
       const hitIds = hits.map((hit) => hit.id);
-      return guidanceInSearchOrder(
-        hitIds,
-        records,
-        10,
-        ownerRuleIds(database.adapter, hitIds, principalId)
-      );
+      const ruleIds = ownerRuleIds(database.adapter, hitIds, principalId);
+      const commonRuleIds = ownerRole
+        ? ownerRuleIds(database.adapter, hitIds, surface.ownerAccess.principalId)
+        : new Set<string>();
+      for (const id of commonRuleIds) ruleIds.add(id);
+      return guidanceInSearchOrder(hitIds, records, 10, ruleIds).map((lesson) => ({
+        ...lesson,
+        commonOwnerRule: commonRuleIds.has(lesson.id),
+      }));
     },
     onOwnerResult: options.onMemberResult,
     onDelivered: options.onStimulusDelivered,

@@ -57,6 +57,7 @@ import {
 import { resolvePackageVersion } from '../../package-version.js';
 import { readViewerMemoryStats } from '../../api/viewer-data.js';
 import { ownerRuleIds } from '../../runtime/owner-authority.js';
+import { resolvePrincipalAccess } from '../../runtime/principal-access.js';
 import type { OwnerFileDeliveryResult } from '../../api/file-delivery.js';
 import { createReportScheduler, type ReportScheduler } from '../../runtime/report-scheduler.js';
 import { findDailyPages } from '../../wiki/wiki-read.js';
@@ -443,6 +444,18 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       replay: options.mode === 'replay',
       timeZone,
       sendToOwner: sendSecurityAlert,
+      sendToMember: async (principalId, text, key) => {
+        const telegram = gateways.get('telegram');
+        if (!telegram?.sendMemberText)
+          throw new Error('Personal security alert delivery is unavailable');
+        const access = resolvePrincipalAccess(principalId, {
+          adapter: owner!.database.adapter,
+          ownerAccess: owner!.surface.ownerAccess,
+          agentId: `member-agent:${principalId}`,
+        });
+        if (!(await telegram.sendMemberText(access, text, key)))
+          throw new Error('Personal security alert was not delivered');
+      },
     });
     // The Claude shell sandbox's network goes through this deny-all proxy, which reports each
     // connection the way it reports a command (W35.4); the ports reach the workspace settings.

@@ -148,7 +148,8 @@ Owner decision 2026-10-08 (4): member agents run in their own workspace under th
 member root outside the owner's home, with the same isolation settings as the owner: git boundary,
 empty plugins, project/local settings, persistent sessions, first-turn system prompt, required
 sandbox and deny-all proxy, workspace-only writes, credential denies, environment scrubbing and
-background tasks off. Members have no web tools (owner decision 7). Member runtime state, including
+background tasks off. Members have no web tools (owner decision 7; owner-role members since
+2026-10-12, below). Member runtime state, including
 each member's own Claude config directory and Codex home, stays under that member root; members never
 use the owner's `~/.claude`. Owner decision 2026-10-09: members sign in with the owner's logins, not
 their own. The member's Claude CLI reads the owner's credential store
@@ -157,9 +158,12 @@ the owner's managed Codex home, copied again after each refresh. The owner still
 managed Codex home directly; nothing is copied into it.
 
 Owner decision 2026-10-12 (P10): owners are members. Each person, owners included, has a member
-session in its own workspace under the member root, with the member tools above and no web tools;
-the `owner` role adds reads of common records through MAMA actions, not native reads. The common
-session (`owner:runtime`, deltas, reports and the common channel) keeps the owner runtime's tools.
+session in its own workspace under the member root, with the member tools above; the `owner` role
+adds reads of common records through MAMA actions (not native reads), the owner policy and owner
+rules read-only, and web search and web fetch. Alerts from an owner-role session (each WebFetch, a
+refused shell connection) go to that person's own DM, never the common channel. Members without the
+role keep no web tools. The common session (`owner:runtime`, deltas, reports and the common
+channel) keeps the owner runtime's tools.
 
 ## Owner credential boundary — 2026-09-27
 

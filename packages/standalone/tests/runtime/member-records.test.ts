@@ -281,8 +281,10 @@ it('exports an owner-role member own records and files without the common record
   await runExport(f);
   const zip = unzipSync(f.uploads[0].bytes);
   expect(f.uploads[0].principal).toBe(f.member);
-  expect(strFromU8(zip['core.json'])).toContain('PERSONAL_OWNER_ROLE_RECORD');
-  expect(strFromU8(zip['core.json'])).not.toContain('COMMON_OWNER_ROLE_RECORD');
+  // Personal tool traces retain authorised common reads; the exported records stay personal.
+  const exported = JSON.parse(strFromU8(zip['core.json']));
+  expect(JSON.stringify(exported.stores.decisions)).toContain('PERSONAL_OWNER_ROLE_RECORD');
+  expect(JSON.stringify(exported.stores.decisions)).not.toContain('COMMON_OWNER_ROLE_RECORD');
   expect(strFromU8(zip['product.json'])).not.toContain('owner chat');
   expect(Object.keys(zip).join('\n')).toContain('personal.txt');
   expect(Object.keys(zip).join('\n')).not.toContain('owner.txt');

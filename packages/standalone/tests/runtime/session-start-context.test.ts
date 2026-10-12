@@ -61,7 +61,7 @@ describe('session start context', () => {
       { at: 1, owner: 'request 1', reply: 'Recovered reply' },
     ]);
     expect(f.chat.recentExchanges('current')).toEqual([
-      { at: 1, owner: 'request 1', answer: 'Recovered reply' },
+      { at: 1, owner: 'request 1', answer: 'Recovered reply', senderPrincipalId: 'owner-test' },
     ]);
   });
 
@@ -94,7 +94,9 @@ describe('session start context', () => {
       now,
     });
     expect(f.chat.exchanges(2, 3)).toEqual([{ at: 2, owner: 'request 2', reply: null }]);
-    expect(input.exchanges).toEqual([{ at: 1, owner: 'request 1', answer: '<b>answer 1</b>' }]);
+    expect(input.exchanges).toEqual([
+      { at: 1, owner: 'request 1', answer: '<b>answer 1</b>', senderPrincipalId: 'owner-test' },
+    ]);
     expect(input.checkpoint).toEqual({
       summary: 'Mid full report',
       nextSteps: 'publish the board',

@@ -159,6 +159,7 @@ it('suspends and resumes with preserved grants in fresh directories, then offboa
     {
       principalId: f.member,
       status: 'suspended',
+      roles: [],
       grants: [{ kind: 'memory', scopeKind: 'project', scopeId: 'fixture-partition' }],
     },
   ]);
@@ -247,11 +248,11 @@ it.each(['codex', 'claude'] as const)(
     });
     expect(f.natives.get(f.member)!.sessionKey).toBe(`member:${f.member}:runtime`);
     expect(f.drivers.get(f.member)!.workspaceDir).toBe(memberPaths(f.root, f.member).workspaceDir);
-    if (backend === 'codex') expect(f.drivers.get(f.member)!.webSearch).toBe(false);
+    if (backend === 'codex') expect(f.drivers.get(f.member)!.webSearch).toBe(true);
     else {
       expect(f.turns.at(-1)!.nativeTools).toContain('Read');
-      expect(f.turns.at(-1)!.nativeTools).not.toContain('WebFetch');
-      expect(f.turns.at(-1)!.nativeTools).not.toContain('WebSearch');
+      expect(f.turns.at(-1)!.nativeTools).toContain('WebFetch');
+      expect(f.turns.at(-1)!.nativeTools).toContain('WebSearch');
     }
     expect((await f.manage('suspend')).status).toBe('failed');
     expect(repo.findById(f.member)?.status).toBe('active');
@@ -564,7 +565,21 @@ it('keeps resume suspended after a crash between runtime and temp moves, and ret
   expect(f.turns.at(-1)?.fresh).toBe(true);
 });
 
-it('lists only principal ids, statuses, grants and enrollment receipts, and leaves owner-only session/access input unchanged', async () => {
+it.each([true, false])(
+  'lists registry roles without transport identities (owner role: %s)',
+  async (ownerRole) => {
+    const f = await fixture();
+    const repo = createPrincipalRepository(f.runtime.database.adapter);
+    if (ownerRole) repo.grantRole({ principalId: f.member, role: 'owner', now: 4 });
+    const result = data(await f.manage('list', {}));
+    expect(result.members).toEqual([
+      { principalId: f.member, status: 'active', roles: ownerRole ? ['owner'] : [], grants: [] },
+    ]);
+    expect(JSON.stringify(result)).not.toContain(f.memberDm);
+  }
+);
+
+it('lists only principal ids, roles, statuses, grants and enrollment receipts, and leaves owner-only session/access input unchanged', async () => {
   const f = await fixture('codex', false);
   await f.settled(f.message('owner', 'fixture identical input'));
   const before = f.turns.at(-1)!;
@@ -611,7 +626,7 @@ it('lists enrollment pick times in the current owner timezone without member_roo
         receipt,
       },
     ],
-    members: [{ principalId: f.member, status: 'suspended', grants: [] }],
+    members: [{ principalId: f.member, status: 'suspended', roles: [], grants: [] }],
   });
   fs.writeFileSync(join(f.home, 'config.yaml'), 'version: 1\ntimezone: Asia/Seoul\n');
   const ref = f.message('owner', 'fixture timezone change');
@@ -648,7 +663,12 @@ it('lists retained source-channel grants without revealing their transport ident
   });
   const result = data(await f.manage('list', {}));
   expect(result.members).toEqual([
-    { principalId: f.member, status: 'active', grants: [{ kind: 'source', connector: 'chat' }] },
+    {
+      principalId: f.member,
+      status: 'active',
+      roles: [],
+      grants: [{ kind: 'source', connector: 'chat' }],
+    },
   ]);
   expect(JSON.stringify(result)).not.toContain('fixture-private-channel');
   expect(JSON.stringify(result)).not.toContain('fixture-member');

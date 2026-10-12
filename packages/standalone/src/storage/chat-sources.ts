@@ -99,7 +99,7 @@ export class ChatSources {
       'AND m.source_timestamp_ms >= ? AND m.source_timestamp_ms < ?',
       [since, before],
       'ASC'
-    );
+    ).map(({ at, owner, reply }) => ({ at, owner, reply }));
   }
 
   recentExchanges(currentMessageRef: string): SessionStartExchange[] {
@@ -110,10 +110,11 @@ export class ChatSources {
       10
     )
       .reverse()
-      .map(({ at, owner, reply }) => ({
+      .map(({ at, owner, reply, author }) => ({
         at,
         owner,
         answer: reply!,
+        ...(author ? { senderPrincipalId: author } : {}),
       }));
   }
 
@@ -122,11 +123,11 @@ export class ChatSources {
     params: unknown[],
     order: 'ASC' | 'DESC',
     limit?: number
-  ): OwnerExchange[] {
+  ): Array<OwnerExchange & { author: string | null }> {
     // Backfilled model output is not a delivery receipt.
     return this.adapter
       .prepare(
-        `SELECT m.source_timestamp_ms AS at, m.content AS owner, r.content AS reply
+        `SELECT m.source_timestamp_ms AS at, m.content AS owner, m.author, r.content AS reply
        FROM connector_event_index m
        LEFT JOIN connector_event_index r ON r.source_connector = 'chat'
          AND r.source_id = (
@@ -140,6 +141,8 @@ export class ChatSources {
          AND json_extract(m.metadata_json, '$.kind') = 'owner_message' ${filter}
        ORDER BY m.source_timestamp_ms ${order}, m.source_id ${order} ${limit === undefined ? '' : 'LIMIT ?'}`
       )
-      .all(this.principalId, ...params, ...(limit === undefined ? [] : [limit])) as OwnerExchange[];
+      .all(this.principalId, ...params, ...(limit === undefined ? [] : [limit])) as Array<
+      OwnerExchange & { author: string | null }
+    >;
   }
 }

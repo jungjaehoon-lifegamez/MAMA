@@ -6,7 +6,7 @@
  * directly is refused by the operating system sandbox instead and is not seen here.
  */
 import { createServer, type Server, type Socket } from 'node:net';
-import type { MemberConnectionEvent } from '../api/security-events.js';
+import type { MemberConnectionEvent, OutboundAttemptEvent } from '../api/security-events.js';
 
 export interface EgressAttempt {
   protocol: 'http' | 'socks';
@@ -22,13 +22,30 @@ export interface EgressProxy {
   close(): Promise<void>;
 }
 
-/** Each endpoint's callback is bound to its member, independently of executing turns. */
+/** Bind identity and the session's role before any socket handles a connection. */
 export function startMemberEgressProxy(
   principalId: string,
-  report: (event: MemberConnectionEvent) => void
+  ownerRole: boolean,
+  report: (event: MemberConnectionEvent | OutboundAttemptEvent) => void
 ): Promise<EgressProxy> {
   return startEgressProxy((attempt) =>
-    report({ principalId, host: attempt.target, time: new Date().toISOString() })
+    report(
+      ownerRole
+        ? {
+            principalId,
+            time: new Date().toISOString(),
+            class: 'outbound_connect',
+            tool: 'sandbox proxy',
+            summary: `${attempt.method} ${attempt.target} (${attempt.protocol} proxy)`,
+            sendsData:
+              attempt.method === 'CONNECT' || attempt.protocol === 'socks'
+                ? null
+                : !['GET', 'HEAD', 'OPTIONS'].includes(attempt.method),
+            modelRunId: null,
+            callId: null,
+          }
+        : { principalId, host: attempt.target, time: new Date().toISOString() }
+    )
   );
 }
 
