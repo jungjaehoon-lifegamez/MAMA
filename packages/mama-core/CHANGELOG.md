@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.6.0] - 2026-10-12
+
+### Added
+
+- Consumer-defined roles on member principals: migration 104 `principal_roles`, `grantRole`,
+  `listRoles` and `listActiveMembersWithRole` (#473).
+- `moveRecordsUserScope` moves named observations and checkpoints from one user scope to another
+  in one transaction (#473).
+
+### Changed
+
+- `ensureOwner` can create the owner principal without an external identity (#473).
+
 ## [8.5.0] - 2026-10-11
 
 ### Added

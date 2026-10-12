@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.75.0] - 2026-10-12
+
+### Changed
+
+- Owners are members. Telegram admits a private chat by the registry into that member's own
+  session, also when the chat is listed in `allowed_chats`; a group in `allowed_chats` admits only
+  active members with the `owner` role, into the common session, with the sender stored on the
+  input and the chat item. DM attachments go to the sender's downloads folder, and DM replies,
+  interruption notices and their recovery go to that person's DM and chat (#473).
+- An owner's DM session is a member session with no web tools; the `owner` role adds reads of the
+  common scopes, connectors and channels (never another person's DM), `drive.read`, all Trello
+  boards, `report.read` and the help topics. Common changes are refused there and made in the
+  common channel. `manage.member.*` refuses owner-role targets; enrollment is unavailable for now
+  (#473).
+- Breaking: `telegram.owner_user_ids` is refused and `telegram.owner_chat_id` must be a group or
+  supergroup id; `mama init` asks for the common group. `mama register-owner <telegram id>` (daemon
+  stopped) registers each owner as a member with the `owner` role, moves the first owner's DM chat
+  and checkpoints to that person and resets the common Codex thread (#473).
+
 ## [0.74.0] - 2026-10-11
 
 ### Added

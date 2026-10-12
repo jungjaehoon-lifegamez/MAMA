@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.75.0] / mama-core [8.6.0] - 2026-10-12
+
+Owners are members. Each person, owners included, answers in its own Telegram DM session with its
+own workspace and personal records; the common session keeps deltas, reports and the group room.
+The package changelogs list every change.
+
+### Changed
+
+- A Telegram DM is admitted by the member registry into that person's own session; the group in
+  `allowed_chats` admits members with the `owner` role into the common session. An owner's DM
+  session reads the common records but changes them only in the common channel, and has no web
+  tools (#473).
+- `telegram.owner_user_ids` is gone and `telegram.owner_chat_id` must be a group. Upgrade with the
+  daemon stopped: remove the key, then run `mama register-owner <telegram id>` for each owner (#473).
+
 ## mama-os [0.74.0] / mama-core [8.5.0] - 2026-10-11
 
 A member exports and erases its own personal records, still with no member admitted. The owner's
