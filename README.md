@@ -59,17 +59,23 @@ the rest are gathered into an hourly reminder between 09:00 and 21:00.
 
 ## Getting started
 
-You need Node.js 22.13+, a logged-in `claude` or `codex` CLI, and a Telegram bot for your owner
-chat (Discord and Slack work too).
+You need Node.js 22.13+, a logged-in `claude` or `codex` CLI, and a Telegram bot in a group
+for common changes (Discord and Slack work too). Create that group even for a solo owner;
+use its negative group or supergroup ID during setup. Private chats enter personal sessions.
 
 ```bash
 npm install -g @jungjaehoon/mama-os
 mama init          # asks for settings; tokens are typed at hidden prompts
+mama register-owner YOUR_TELEGRAM_USER_ID # after setting member_root outside HOME
 ~/.mama/start.sh   # or the launchctl command init prints
 ```
 
 To run from a checkout instead, run `pnpm install` and `pnpm build`, then use
 `node packages/standalone/dist/cli/index.js` wherever the guides say `mama`.
+
+Before registration, set `member_root` in `~/.mama/config.yaml` to an absolute directory
+outside HOME. Replace `YOUR_TELEGRAM_USER_ID` with each owner's positive user ID and register
+them before starting the daemon. See [owner setup](docs/start/owner-setup.md).
 
 Then send your bot a message. Setup is done when MAMA answers you, not when the process is
 running. The [first-day tutorial](docs/start/tutorial.md) walks through connecting a source,

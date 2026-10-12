@@ -249,9 +249,11 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
   const secrets: Partial<Record<SecretName, string>> = {
     MAMA_TELEGRAM_TOKEN: nonblankLine(await prompt.secret('Telegram bot token')),
   };
-  const chatId = await text(prompt, 'Telegram common chat id');
-  if (!/^-?[1-9]\d*$/.test(chatId)) {
-    throw new CliInputError('Enter a numeric Telegram chat id.');
+  const chatId = await text(prompt, 'Telegram common group/supergroup chat id (negative)');
+  if (!/^-[1-9]\d*$/.test(chatId)) {
+    throw new CliInputError(
+      'Enter a Telegram group or supergroup id (negative); private chats go to personal intake and cannot reach the common session.'
+    );
   }
   const connectors = await collectConnectors(prompt, secrets);
   const discordEnabled = await yes(prompt, 'Enable Discord owner messages');

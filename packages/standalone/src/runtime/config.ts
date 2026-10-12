@@ -465,6 +465,11 @@ function parseConfigValue(
   if (telegramEnabled && ownerChatId === undefined) {
     throw new ConfigError('telegram.owner_chat_id is required when telegram.enabled is true');
   }
+  if (ownerChatId !== undefined && !/^-[1-9]\d*$/.test(ownerChatId)) {
+    throw new ConfigError(
+      'telegram.owner_chat_id must be a group or supergroup id (negative); private chats go to personal intake and cannot reach the common session'
+    );
+  }
   if (ownerChatId !== undefined && !allowedChats.includes(ownerChatId)) {
     throw new ConfigError('telegram.owner_chat_id must be listed in telegram.allowed_chats');
   }

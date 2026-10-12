@@ -61,9 +61,9 @@ describe('W1 real owner configuration shape', () => {
         '  full_report_hours: 24',
         'telegram:',
         '  enabled: true',
-        '  owner_chat_id: "123456789"',
+        '  owner_chat_id: "-100123456789"',
         '  os_report_chat_id: 999999999',
-        '  allowed_chats: ["123456789"]',
+        '  allowed_chats: ["-100123456789"]',
         'wiki:',
         '  enabled: true',
         '  vaultPath: ~/wiki',
@@ -158,8 +158,8 @@ describe('W1 real owner configuration shape', () => {
       },
       telegram: {
         enabled: true,
-        owner_chat_id: '123456789',
-        allowed_chats: ['123456789'],
+        owner_chat_id: '-100123456789',
+        allowed_chats: ['-100123456789'],
       },
     });
     expect(connectors).toMatchObject({

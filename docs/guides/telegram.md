@@ -18,13 +18,18 @@ The daemon reads `MAMA_TELEGRAM_TOKEN` from the environment loaded by
 
 The `telegram` section of `~/.mama/config.yaml` contains:
 
-| Setting         | Meaning                                                        |
-| --------------- | -------------------------------------------------------------- |
-| `enabled`       | Start the Telegram gateway                                     |
-| `owner_chat_id` | Common destination for reports, notices, alerts and files      |
-| `allowed_chats` | Allowed common group channels; must include the common channel |
-| `polling`       | Receive messages; defaults to `true`                           |
-| `file_delivery` | Let MAMA send files; defaults to `true`                        |
+| Setting         | Meaning                                                                                    |
+| --------------- | ------------------------------------------------------------------------------------------ |
+| `enabled`       | Start the Telegram gateway                                                                 |
+| `owner_chat_id` | Negative group or supergroup ID for the common session, reports, notices, alerts and files |
+| `allowed_chats` | Allowed common group channels; must include the common channel                             |
+| `polling`       | Receive messages; defaults to `true`                                                       |
+| `file_delivery` | Let MAMA send files; defaults to `true`                                                    |
+
+Create a group with the bot for common changes, even for a solo owner. Set `owner_chat_id` to
+that group's negative ID and include it in `allowed_chats`. A supergroup also works. Positive
+private chat IDs are rejected: every private chat enters its person's intake, so it cannot
+reach the common session.
 
 Set `member_root` outside HOME and stop the daemon. Remove `telegram.owner_user_ids` if present,
 then run `mama register-owner <telegram id>` for each owner. Each person becomes a member with

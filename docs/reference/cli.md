@@ -24,7 +24,10 @@ Use `mama` from `@jungjaehoon/mama-os` to configure and run the owner agent. Sta
 ## Create an installation
 
 Run `mama init` yourself in a terminal. It asks for the backend (`claude` or `codex`), model,
-Telegram common chat ID, and optional connectors and viewer access settings. Set `member_root` outside HOME, then register each owner with `mama register-owner <telegram id>` while the daemon is stopped. Enter tokens
+negative Telegram common group or supergroup chat ID, and optional connectors and viewer access
+settings. A solo owner creates a group with the bot for common changes; a private chat cannot
+reach the common session. Set `member_root` outside HOME, then register each owner with
+`mama register-owner <telegram id>` while the daemon is stopped, before starting it. Enter tokens
 only at the hidden prompts. Both `init` and `secret set` reject non-terminal input.
 
 `init` writes `config.yaml`, `connectors.json`, `auth.env`, `start.sh`, and the workspace beneath

@@ -42,7 +42,7 @@ function validConfig(): W1Config {
     logging: { level: 'info', file: '/tmp/mama-test.log' },
     telegram: {
       enabled: false,
-      allowed_chats: ['chat-test'],
+      allowed_chats: ['-1001'],
       polling: false,
       file_delivery: true,
     },
@@ -241,7 +241,7 @@ describe('W1 runtime configuration', () => {
       allowed_channels: ['c'],
       owner_user_ids: ['u'],
     };
-    const telegram = { ...base.telegram, enabled: true, owner_chat_id: 'chat-test' };
+    const telegram = { ...base.telegram, enabled: true, owner_chat_id: '-1001' };
     expect(fileDeliveryMessengers(parseConfig(base))).toEqual([]);
     expect(fileDeliveryMessengers(parseConfig({ ...base, telegram, discord }))).toEqual([
       'telegram',
@@ -262,16 +262,50 @@ describe('W1 runtime configuration', () => {
     expect(() =>
       parseConfig({
         ...base,
-        telegram: { ...base.telegram, enabled: true, owner_chat_id: 'chat-other' },
+        telegram: { ...base.telegram, enabled: true, owner_chat_id: '-1002' },
       })
     ).toThrow(/telegram\.owner_chat_id must be listed in telegram\.allowed_chats/);
     expect(
       parseConfig({
         ...base,
-        telegram: { ...base.telegram, enabled: true, owner_chat_id: 'chat-test' },
+        telegram: { ...base.telegram, enabled: true, owner_chat_id: '-1001' },
       }).telegram.owner_chat_id
-    ).toBe('chat-test');
+    ).toBe('-1001');
   });
+
+  it.each(['100', '0', '-0', 'chat-test', '-100abc', '-01'])(
+    'refuses a non-group Telegram common destination through loadConfig: %s',
+    (ownerChatId) => {
+      for (const enabled of [true, false]) {
+        const path = join(testHome, 'config.yaml');
+        writeFileSync(
+          path,
+          JSON.stringify({
+            ...validConfig(),
+            telegram: { enabled, owner_chat_id: ownerChatId, allowed_chats: [ownerChatId] },
+          })
+        );
+        expect(() => loadConfig({ path, home: testHome })).toThrow(
+          /telegram\.owner_chat_id.*group or supergroup.*negative.*private chats.*personal intake/
+        );
+      }
+    }
+  );
+
+  it.each(['-100', '-100100'])(
+    'loads a group or supergroup Telegram common destination: %s',
+    (ownerChatId) => {
+      const path = join(testHome, 'config.yaml');
+      writeFileSync(
+        path,
+        JSON.stringify({
+          ...validConfig(),
+          telegram: { enabled: true, owner_chat_id: ownerChatId, allowed_chats: [ownerChatId] },
+        })
+      );
+      expect(loadConfig({ path, home: testHome }).telegram.owner_chat_id).toBe(ownerChatId);
+    }
+  );
 
   it('validates Discord and Slack owner destinations and delivery route names', () => {
     const base = validConfig();
@@ -335,7 +369,7 @@ describe('W1 runtime configuration', () => {
     expect(() => validateDeliveryRoutes(base)).toThrow(/delivery.reports targets telegram/);
     const telegram = {
       ...base,
-      telegram: { ...base.telegram, enabled: true, owner_chat_id: 'chat-test' },
+      telegram: { ...base.telegram, enabled: true, owner_chat_id: '-1001' },
     };
     expect(() => validateDeliveryRoutes(telegram)).not.toThrow();
     expect(() =>

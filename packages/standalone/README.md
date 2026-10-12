@@ -19,6 +19,11 @@ From a checkout, run `pnpm install` and `pnpm build`, then use
 with echo off. It writes configuration and optional launchd files; backend login and service
 startup are separate steps.
 
+For Telegram's common session, create a group with the bot, even for a solo owner, and enter
+its negative group or supergroup ID in `mama init`. Private chats always enter personal sessions.
+Before starting the daemon, set `member_root` outside HOME in `config.yaml` and run
+`mama register-owner <telegram id>` for each owner's positive user ID.
+
 | Command                                       | Purpose                                          |
 | --------------------------------------------- | ------------------------------------------------ |
 | `mama init`                                   | Set up the owner, backend and connectors         |

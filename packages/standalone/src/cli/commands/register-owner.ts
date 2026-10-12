@@ -48,7 +48,8 @@ export async function runRegisterOwner(
   const home = options.home ?? homedir();
   const configPath = options.configPath ?? defaultConfigPath(home);
   const config = loadConfig({ home, path: configPath });
-  if (!config.member_root) throw new CliInputError('Set member_root before mama register-owner');
+  const memberRoot = config.member_root;
+  if (!memberRoot) throw new CliInputError('Set member_root before mama register-owner');
   const root = dirname(configPath);
   const ledgerPath = join(root, 'runtime', 'owner-message-ledger.json');
   if (existsSync(ledgerPath)) {
@@ -88,7 +89,6 @@ export async function runRegisterOwner(
         !repo.listMembers().some((p) => holdsOwnerRole(repo, p.principalId));
       const now = Date.now();
       const channel = `telegram:${externalId}`;
-      let createdMember: string | undefined;
       counts = rawStore.withChatCutover(adapter, (moveRaw) => {
         const result = emptyCounts();
         const common = repo.ensureOwner({ principalId: OWNER_PRINCIPAL_ID, now });
@@ -121,7 +121,6 @@ export async function runRegisterOwner(
         } else {
           throw new CliInputError('Cutover refused: identity belongs to another common principal');
         }
-        if (result.membersCreated > 0) createdMember = person;
         result.rolesGranted =
           repo.grantRole({ principalId: person, role: 'owner', now }) === 'created' ? 1 : 0;
         Object.assign(
@@ -170,21 +169,22 @@ export async function runRegisterOwner(
             person,
             OWNER_PRINCIPAL_ID
           ).changes;
-        return result;
-      });
-      // Filesystem changes follow the committed cutover; active member state belongs to them.
-      if (createdMember !== undefined) clearMemberSmokeState(config.member_root, createdMember);
-      // First cutover discards the mixed DM/common history. Later registrations preserve it.
-      const threadRoot = join(root, 'codex-runtime', 'threads');
-      if (firstOwner && existsSync(threadRoot)) {
-        const threads = new CodexThreadRegistry({ rootDir: threadRoot });
-        for (const key of ['owner:runtime', 'owner:replay']) {
-          if (threads.load(key)) {
-            threads.remove(key);
-            counts.threadsCleared++;
+        // Run both idempotent filesystem cleanups before commit: cleanup errors roll back the
+        // database, and a commit failure after cleanup lets a rerun repeat the whole cutover.
+        if (result.membersCreated > 0) clearMemberSmokeState(memberRoot, person);
+        // First cutover discards the mixed DM/common history. Later registrations preserve it.
+        const threadRoot = join(root, 'codex-runtime', 'threads');
+        if (firstOwner && existsSync(threadRoot)) {
+          const threads = new CodexThreadRegistry({ rootDir: threadRoot });
+          for (const key of ['owner:runtime', 'owner:replay']) {
+            if (threads.load(key)) {
+              threads.remove(key);
+              result.threadsCleared++;
+            }
           }
         }
-      }
+        return result;
+      });
     }
   } finally {
     rawStore.close();

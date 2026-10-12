@@ -64,8 +64,8 @@ async function boot(
     logging: { level: 'info', file: join(root, 'daemon.log') },
     telegram: {
       enabled,
-      allowed_chats: ['7'],
-      owner_chat_id: '7',
+      allowed_chats: ['-7'],
+      owner_chat_id: '-7',
       polling: false,
     },
   });
@@ -225,7 +225,7 @@ describe('daemon scheduled reports', () => {
     const now = new Date('2026-01-01T04:00:00Z');
     ctx.scheduler!.tick(now);
     await vi.waitFor(() => expect(ctx.status(0)?.status).toBe('acked'));
-    expect(telegram.sendMessage).toHaveBeenCalledWith(7, 'Some work needs a check.');
+    expect(telegram.sendMessage).toHaveBeenCalledWith(-7, 'Some work needs a check.');
     const id = ctx.rows()[0]!.stimulus_id;
     expect(ctx.logs).toContain(
       `stimulus delivered kind=scheduled id=${id} model_run_id=run:scheduled:1`
@@ -250,7 +250,7 @@ describe('daemon scheduled reports', () => {
     await vi.waitFor(() => expect(ctx.status(0)?.nativeDelivery?.state).toBe('settled'));
     expect(ctx.prompts).toHaveLength(1);
     expect(telegram.sendMessage).toHaveBeenCalledTimes(2);
-    expect(telegram.sendMessage).toHaveBeenLastCalledWith(7, 'Some work needs a check.');
+    expect(telegram.sendMessage).toHaveBeenLastCalledWith(-7, 'Some work needs a check.');
     ctx.scheduler!.tick(new Date('2026-01-01T00:01:00Z'));
     expect(ctx.rows()).toHaveLength(1);
     expect(JSON.parse(readFileSync(ctx.statePath, 'utf8')).lastReminderKey).toBe('2026-01-01:09');

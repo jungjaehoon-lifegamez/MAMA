@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAdapter, createPrincipalRepository } from '@jungjaehoon/mama-core';
@@ -350,7 +350,7 @@ describe('owner person cutover', () => {
     await expect(register(secondId)).rejects.toThrow('suspended');
     expect(snapshot()).toEqual(before);
   });
-  it('leaves member files and common threads unchanged when the database commit fails', async () => {
+  it('preserves member files, rolls back a failed commit and retries after clearing common threads', async () => {
     const database = await open();
     const db = database.adapter;
     const person = createPrincipalRepository(db).registerMember({
@@ -390,15 +390,30 @@ describe('owner person cutover', () => {
       systemPromptFingerprint: 'p',
       mcpConfigFingerprint: 'm',
     });
-    const thread = threads.load('owner:runtime');
     const before = snapshot();
     await expect(register()).rejects.toThrow(/FOREIGN KEY/);
     expect(snapshot()).toEqual(before);
     expect(readFileSync(file, 'utf8')).toBe('personal');
-    expect(threads.load('owner:runtime')).toEqual(thread);
+    expect(threads.load('owner:runtime')).toBeUndefined();
     const after = new RawStore(rawPath);
     expect(after.exportScope('chat', 'user', OWNER_PRINCIPAL_ID)).toEqual(rawBefore);
     after.close();
+    const retryDatabase = await open();
+    retryDatabase.adapter.exec('DROP TRIGGER cutover_deferred_failure');
+    await retryDatabase.close();
+    expect(await register()).toMatchObject({
+      membersCreated: 0,
+      rolesGranted: 1,
+      rawItems: 1,
+      indexRows: 1,
+      observations: 1,
+      threadsCleared: 0,
+    });
+    expect(snapshot().principal_roles).toEqual([
+      expect.objectContaining({ principal_id: person, role: 'owner' }),
+    ]);
+    expect(readFileSync(file, 'utf8')).toBe('personal');
+    expect(threads.load('owner:runtime')).toBeUndefined();
   });
   it('rolls back raw snapshots, roles and scope copies when the product index move fails', async () => {
     const database = await open();
@@ -430,6 +445,87 @@ describe('owner person cutover', () => {
     const after = new RawStore(rawPath);
     expect(after.exportScope('chat', 'user', OWNER_PRINCIPAL_ID)).toEqual(rawBefore);
     after.close();
+  });
+  it('rolls back roles, records and identities when thread removal fails, then completes on rerun', async () => {
+    const database = await open();
+    const db = database.adapter;
+    createPrincipalRepository(db).ensureOwner({
+      principalId: OWNER_PRINCIPAL_ID,
+      connector: 'telegram',
+      namespace: 'private',
+      externalId: firstId,
+      now: 1,
+    });
+    const rawPath = join(home, '.mama', 'connectors');
+    const raw = new RawStore(rawPath);
+    new ChatSources(raw, db, OWNER_PRINCIPAL_ID, 'fixture-agent').saveOwnerMessage({
+      id: `telegram:${firstId}:1`,
+      channelKey: firstId,
+      text: 'personal',
+      occurredAt: 2,
+    });
+    db.prepare("INSERT INTO checkpoints(timestamp,summary) VALUES (1,'personal checkpoint')").run();
+    const rawBefore = raw.exportScope('chat', 'user', OWNER_PRINCIPAL_ID);
+    raw.close();
+    await database.close();
+    const before = snapshot();
+    const threadRoot = join(home, '.mama', 'codex-runtime', 'threads');
+    mkdirSync(join(home, '.mama', 'codex-runtime'), { recursive: true, mode: 0o700 });
+    const threads = new CodexThreadRegistry({ rootDir: threadRoot });
+    for (const key of ['owner:runtime', 'owner:replay'])
+      threads.save({
+        sessionKey: key,
+        threadId: 'fixture-thread',
+        model: 'fixture',
+        cwd: home,
+        systemPromptFingerprint: 'p',
+        mcpConfigFingerprint: 'm',
+      });
+    const originalRemove = CodexThreadRegistry.prototype.remove;
+    const removal = vi
+      .spyOn(CodexThreadRegistry.prototype, 'remove')
+      .mockImplementationOnce(function (this: CodexThreadRegistry, key) {
+        originalRemove.call(this, key);
+      })
+      .mockImplementationOnce(() => {
+        throw new Error('fixture thread removal failure');
+      });
+    await expect(register()).rejects.toThrow('fixture thread removal failure');
+    for (const person of readdirSync(members)) temps.push(memberClaudeTmpDir(person));
+    expect(snapshot()).toEqual(before);
+    const unchangedRaw = new RawStore(rawPath);
+    expect(unchangedRaw.exportScope('chat', 'user', OWNER_PRINCIPAL_ID)).toEqual(rawBefore);
+    unchangedRaw.close();
+    expect(threads.load('owner:runtime')).toBeUndefined();
+    expect(threads.load('owner:replay')).toBeDefined();
+    removal.mockRestore();
+
+    expect(await register()).toMatchObject({
+      identitiesMoved: 1,
+      rolesGranted: 1,
+      rawItems: 1,
+      indexRows: 1,
+      observations: 1,
+      checkpoints: 1,
+      threadsCleared: 1,
+    });
+    const after = snapshot();
+    const person = (after.external_identities[0] as { principal_id: string }).principal_id;
+    temps.push(memberClaudeTmpDir(person));
+    expect(person).not.toBe(OWNER_PRINCIPAL_ID);
+    expect(after.principal_roles).toEqual([
+      expect.objectContaining({ principal_id: person, role: 'owner' }),
+    ]);
+    for (const table of ['connector_event_index', 'observation_versions'])
+      expect(after[table]).toEqual([expect.objectContaining({ memory_scope_id: person })]);
+    const movedRaw = new RawStore(rawPath);
+    expect(movedRaw.exportScope('chat', 'user', OWNER_PRINCIPAL_ID).raw_items).toHaveLength(0);
+    expect(movedRaw.exportScope('chat', 'user', person).raw_items).toHaveLength(1);
+    movedRaw.close();
+    expect(threads.load('owner:runtime')).toBeUndefined();
+    expect(threads.load('owner:replay')).toBeUndefined();
+    expect(Object.values(await register()).every((count) => count === 0)).toBe(true);
+    expect(snapshot()).toEqual(after);
   });
   it('coalesces relocated queued snapshots for a reused member, keeping earliest sequence and distinct payloads', async () => {
     const database = await open(),

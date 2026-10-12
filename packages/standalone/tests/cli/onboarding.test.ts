@@ -62,7 +62,7 @@ function prompt(
 }
 
 function minimal(backend = 'codex', launch = 'n') {
-  return [backend, 'fixture-model', '100', '', 'n', 'n', 'n', launch];
+  return [backend, 'fixture-model', '-100', '', 'n', 'n', 'n', launch];
 }
 
 function options(adapter: PromptAdapter) {
@@ -87,6 +87,34 @@ afterEach(() => {
 });
 
 describe('owner-only onboarding', () => {
+  it.each(['100', '0', '-0', 'group', '-100abc', '-01'])(
+    'refuses a non-group Telegram common destination before writing setup: %s',
+    async (chatId) => {
+      const answers = minimal();
+      answers[2] = chatId;
+      const p = prompt(answers, [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+      await expect(runInit(options(p.adapter))).rejects.toThrow(
+        /group or supergroup.*negative.*private chats.*personal intake/
+      );
+      expect(existsSync(root)).toBe(false);
+    }
+  );
+
+  it.each(['-100', '-100100'])(
+    'asks for a common group and accepts its negative id: %s',
+    async (chatId) => {
+      const answers = minimal();
+      answers[2] = chatId;
+      const p = prompt(answers, [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+      const visiblePrompt = vi.spyOn(p.adapter, 'text');
+      await runInit(options(p.adapter));
+      expect(
+        visiblePrompt.mock.calls.some(([label]) => /Telegram.*group.*negative/.test(label))
+      ).toBe(true);
+      expect(loadConfig({ home }).telegram.owner_chat_id).toBe(chatId);
+    }
+  );
+
   it('writes the timezone selected during onboarding', async () => {
     const p = prompt(
       minimal(),
@@ -159,8 +187,8 @@ describe('owner-only onboarding', () => {
       expect(config.agent.model).toBe('fixture-model');
       expect(config.telegram).toMatchObject({
         enabled: true,
-        owner_chat_id: '100',
-        allowed_chats: ['100'],
+        owner_chat_id: '-100',
+        allowed_chats: ['-100'],
         polling: true,
       });
       expect(config.telegram).not.toHaveProperty('token');
@@ -190,7 +218,7 @@ describe('owner-only onboarding', () => {
 
   it('sets up a Discord owner gateway in init without enabling a source connector', async () => {
     const p = prompt(
-      ['codex', 'fixture-model', '100', '', 'y', 'channel_test', 'user_test', 'n', 'n', 'n'],
+      ['codex', 'fixture-model', '-100', '', 'y', 'channel_test', 'user_test', 'n', 'n', 'n'],
       [fixtureSecrets.MAMA_TELEGRAM_TOKEN, 'fixture-discord-owner']
     );
     await runInit(options(p.adapter));
@@ -209,7 +237,7 @@ describe('owner-only onboarding', () => {
 
   it('sets up Slack bot and Socket Mode credentials for an owner gateway', async () => {
     const p = prompt(
-      ['codex', 'fixture-model', '100', '', 'n', 'y', 'channel_test', 'user_test', 'n', 'n'],
+      ['codex', 'fixture-model', '-100', '', 'n', 'y', 'channel_test', 'user_test', 'n', 'n'],
       [fixtureSecrets.MAMA_TELEGRAM_TOKEN, 'fixture-slack-owner', 'fixture-slack-app-owner']
     );
     await runInit(options(p.adapter));
@@ -231,7 +259,7 @@ describe('owner-only onboarding', () => {
       [
         'claude',
         'fixture-model',
-        '100',
+        '-100',
         'slack,chatwork,trello,kagemusha,calendar,notion,discord,telegram',
         'channel-a,channel-b',
         'room-a',
@@ -327,7 +355,7 @@ describe('owner-only onboarding', () => {
       [
         'codex',
         'fixture-model',
-        '100',
+        '-100',
         'gmail,drive,sheets,notion,obsidian,claude-code,imessage',
         'folder-fixture',
         'spreadsheet-fixture',

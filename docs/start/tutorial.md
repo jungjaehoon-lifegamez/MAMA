@@ -34,15 +34,17 @@ build` again. For package-specific setup, see [Owner setup](owner-setup.md).
 
 ## 2. Create the local installation
 
-Create a Telegram bot and open a private chat with it. Have the numeric owner chat id and sender
-user id ready. In your terminal, type:
+Create a Telegram bot and a group with it for common changes, even if you are the only owner.
+Have the group's negative chat ID ready (a supergroup also works). Open a private chat with the
+bot for your personal session and have your positive Telegram user ID ready. In your terminal, type:
 
 ```bash
 mama init
 ```
 
 At the prompts, enter `claude` or `codex`, the model name, your timezone (press Enter to keep this
-machine's timezone), the Telegram bot token, chat id, and user id. Tokens are typed into hidden prompts. Do not paste them into chat or a configuration
+machine's timezone), the Telegram bot token, and negative common group chat ID. Positive private
+chat IDs are refused because private chats enter personal sessions. Tokens are typed into hidden prompts. Do not paste them into chat or a configuration
 file. When asked which connectors to enable, type `slack` (or `chatwork`) and enter its token
 and channel ids. To skip a source for now, leave the connector list blank. Enable the launch agent
 if you want macOS to manage the daemon.
@@ -60,7 +62,9 @@ reviewing its no-overwrite message.
 
 ## 3. Start MAMA
 
-First authenticate the model CLI if needed. Then use the start command printed by `init`. If you
+Before starting, set `member_root` to an absolute directory outside HOME in `config.yaml`, then
+run `mama register-owner <telegram id>` for each owner using their positive Telegram user ID.
+Authenticate the model CLI if needed. Then use the start command printed by `init`. If you
 chose a launch agent, type the printed `launchctl bootstrap` command. Otherwise start the generated
 script:
 
