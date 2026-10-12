@@ -292,7 +292,14 @@ function removePersonalClaudeEmail(configDir: string): void {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw error;
   }
-  const config = JSON.parse(text) as { oauthAccount?: Record<string, unknown> };
+  let config: { oauthAccount?: Record<string, unknown> };
+  try {
+    config = JSON.parse(text) as { oauthAccount?: Record<string, unknown> };
+  } catch (error) {
+    throw new Error(`Cannot remove the account email: ${configPath} is not valid JSON`, {
+      cause: error,
+    });
+  }
   if (!config.oauthAccount || !Object.hasOwn(config.oauthAccount, 'emailAddress')) return;
   delete config.oauthAccount.emailAddress;
   const temporary = join(configDir, `.claude-${randomUUID()}.tmp`);
