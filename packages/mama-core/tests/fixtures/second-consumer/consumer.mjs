@@ -31,6 +31,7 @@ try {
       now: 2,
     });
     principals.grantRole({ principalId: memberId, role: 'bench-reviewer', now: 3 });
+    principals.setDisplayName({ principalId: memberId, displayName: '  Bench reviewer  ', now: 4 });
     const checkpointId = db.adapter
       .prepare('INSERT INTO checkpoints (timestamp, summary) VALUES (?, ?)')
       .run(1, 'personal calibration checkpoint').lastInsertRowid;
@@ -147,6 +148,7 @@ try {
         role: principals.listRoles(memberId)[0]?.role,
         roleMember: principals.listActiveMembersWithRole('bench-reviewer')[0]?.principalId,
         memberId,
+        memberName: principals.findById(memberId)?.displayName,
         commonIdentityCount: db.adapter
           .prepare('SELECT COUNT(*) AS n FROM external_identities WHERE principal_id=?')
           .get('bench-common').n,

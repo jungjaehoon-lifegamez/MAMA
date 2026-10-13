@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   createPrincipalRepository,
+  PRINCIPAL_DISPLAY_NAME_MAX_LENGTH,
   type ActionContext,
   type ActionDispatcher,
   type ActionRegistration,
@@ -16,11 +17,13 @@ export interface MemberSelection {
   sourceMessageRef: string;
   ownerUserId: string;
   userId: string;
+  /** Optional name supplied by the acting owner in the enrollment action. */
+  name?: string;
 }
 
 export interface MemberEnrollmentPorts {
   memberRoot?: string;
-  requestSelection(sourceMessageRef: string, ownerUserId: string): Promise<void>;
+  requestSelection(sourceMessageRef: string, ownerUserId: string, name?: string): Promise<void>;
   cancelSelection?(principalId: string): void;
   serveMember?(principalId: string): void;
 }
@@ -38,11 +41,18 @@ export function createMemberEnrollment(options: {
     contract: {
       name: 'manage.member.enroll',
       summary:
-        "Enrollment runs in an active owner-role caller's own message turn (DM or the common channel), sending the Choose member button to the owner's own Telegram DM. Requires member_root and a daemon restart after configuring it. The host registers the selected identity; this action accepts no person, chat or grants. Returns pending; enrollment grants no shared access. Active members' own messages are admitted by the registry.",
-      inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+        "Enrollment runs in an active owner-role caller's own message turn (DM or the common channel), sending the Choose member button to the owner's own Telegram DM. Requires member_root and a daemon restart after configuring it. The host registers the selected identity; this action accepts an optional owner supplied name for the new member, but no identity, chat or grants. Telegram names are not used. Returns pending; enrollment grants no shared access. Active members' own messages are admitted by the registry.",
+      inputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          name: { type: 'string', pattern: '\\S', maxLength: PRINCIPAL_DISPLAY_NAME_MAX_LENGTH },
+        },
+      },
       examples: [{ title: 'Ask the owner to choose a member', input: {} }],
     },
-    exec: async (_input, context: ActionContext) => {
+    exec: async (input, context: ActionContext) => {
+      const name = (input as { name?: string }).name?.trim();
       const ref = context.session?.sourceMessageRef;
       const caller = activeOwnerMessageCaller(context, options);
       if (!caller) {
@@ -72,7 +82,7 @@ export function createMemberEnrollment(options: {
         const dm = callerAccess.destinations!.find(
           (destination) => destination.kind === 'telegram'
         )!;
-        await ports.requestSelection(ref!, dm.id);
+        await ports.requestSelection(ref!, dm.id, name);
         return { status: 'pending' };
       }
       const repo = createPrincipalRepository(options.adapter);
@@ -119,6 +129,8 @@ export function createMemberEnrollment(options: {
               expectedPrincipalId: options.ownerPrincipalId,
             })
           : repo.registerMember(identity);
+        if (name !== undefined)
+          repo.setDisplayName({ principalId: id, displayName: name, now: identity.now });
         resolvePrincipalAccess(id, {
           adapter: options.adapter,
           ownerAccess: options.ownerAccess(),
@@ -151,7 +163,11 @@ export function createMemberEnrollment(options: {
       completions.set(operationId, selection);
       try {
         return await dispatch(
-          { action: registration.contract.name, input: {}, operationId },
+          {
+            action: registration.contract.name,
+            input: selection.name === undefined ? {} : { name: selection.name },
+            operationId,
+          },
           {
             access,
             session: { sourceMessageRef: selection.sourceMessageRef },

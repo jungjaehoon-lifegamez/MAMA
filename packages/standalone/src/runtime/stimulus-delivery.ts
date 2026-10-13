@@ -98,6 +98,7 @@ export interface StimulusDeliveryOptions {
   timeZone: TimeZoneSetting;
   /** Resolve chat principal roles from the registry. */
   principalRoles?: (principalId: string) => readonly string[];
+  principalDisplayName?: (principalId: string) => string | undefined;
   commonPrincipalId?: string;
   /** Re-check a recorded common-message sender before building its turn. */
   ownerMessageSenderActive?: (principalId: string) => boolean;
@@ -535,6 +536,7 @@ function planTurn(row: MailboxRow, options: StimulusDeliveryOptions): TurnPlan {
           {
             timeZone: zone,
             principalRoles: options.principalRoles,
+            principalDisplayName: options.principalDisplayName,
             commonPrincipalId: options.commonPrincipalId,
             sessionPrincipalId: options.member?.principalId,
           },
@@ -662,6 +664,7 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
                   {
                     timeZone: options.timeZone.get(),
                     principalRoles: options.principalRoles,
+                    principalDisplayName: options.principalDisplayName,
                     commonPrincipalId: options.commonPrincipalId,
                   },
                   options.member?.voice

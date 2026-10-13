@@ -561,6 +561,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       backend: options.backend,
       timeZone: options.timeZone,
       principalRoles: (principalId) => principals.listRoles(principalId).map(({ role }) => role),
+      principalDisplayName: (principalId) => principals.findById(principalId)?.displayName,
       commonPrincipalId: options.ownerPrincipalId,
       ownerMessageSenderActive: (id) => {
         const person = principals.findById(id);

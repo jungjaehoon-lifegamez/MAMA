@@ -167,6 +167,8 @@ export function createMemberSession(
     turnChain: ports.turnChain,
     member: { principalId, sessionKey, voice: MEMBER_VOICE },
     principalRoles: (id) => principals.listRoles(id).map(({ role }) => role),
+    principalDisplayName: (id) => principals.findById(id)?.displayName,
+    commonPrincipalId: options.ownerPrincipalId,
     readResult: ports.readResult,
     sessionStart: (row) => {
       access();

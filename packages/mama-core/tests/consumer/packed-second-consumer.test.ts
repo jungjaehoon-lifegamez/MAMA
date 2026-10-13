@@ -108,6 +108,7 @@ describe('a second consumer of the packed core', () => {
         role: string;
         roleMember: string;
         memberId: string;
+        memberName: string;
         commonIdentityCount: number;
         scopeMove: { records: { checkpoints: number } };
         movedRecordVisible: boolean;
@@ -136,6 +137,7 @@ describe('a second consumer of the packed core', () => {
       expect(result.privatePath).toBe('ERR_PACKAGE_PATH_NOT_EXPORTED');
       expect(result.role).toBe('bench-reviewer');
       expect(result.roleMember).toBe(result.memberId);
+      expect(result.memberName).toBe('Bench reviewer');
       expect(result.commonIdentityCount).toBe(0);
       expect(result.scopeMove.records.checkpoints).toBe(1);
       expect(result.movedRecordVisible).toBe(true);

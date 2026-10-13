@@ -122,7 +122,8 @@ async function fixture() {
     isOwnerMessageTurn: (ref, principalId) => refs.get(ref) === principalId,
     memberEnrollment: {
       memberRoot: root,
-      requestSelection: (ref, callerDm) => gateway.requestMemberEnrollment(ref, callerDm),
+      requestSelection: (ref, callerDm, name) =>
+        gateway.requestMemberEnrollment(ref, callerDm, name),
     },
   });
   complete = surface.completeMemberEnrollment;
@@ -171,8 +172,8 @@ async function fixture() {
   const sourceRef = await message({ text: 'fixture enrollment request' });
   transport.send.mockClear();
   let operation = 0;
-  const request = (ref = sourceRef, actions = surface) =>
-    actions.hostToolCall('manage.member.enroll', {}, `fixture-request-${++operation}`, {
+  const request = (ref = sourceRef, actions = surface, input: { name?: string } = {}) =>
+    actions.hostToolCall('manage.member.enroll', input, `fixture-request-${++operation}`, {
       access: personalAccess(),
       session: { sourceMessageRef: ref },
     });
@@ -195,7 +196,8 @@ async function fixture() {
       credentialPath: join(home, 'runtime', 'credential'),
       memberRoot: root,
       memberEnrollment: {
-        requestSelection: (ref, callerDm) => gateway.requestMemberEnrollment(ref, callerDm),
+        requestSelection: (ref, callerDm, name) =>
+          gateway.requestMemberEnrollment(ref, callerDm, name),
         cancelSelection: (principalId) => gateway.cancelMemberEnrollment(principalId),
       },
       ownerPrincipalId: 'common',
@@ -245,6 +247,17 @@ async function fixture() {
 }
 
 describe('P10.3 enrollment from owner-role DMs', () => {
+  it('keeps the owner supplied name through Telegram selection and stores it for the new member', async () => {
+    const f = await fixture();
+    expect(
+      await f.request(f.sourceRef, f.surface, { name: '  Fixture selected member  ' })
+    ).toMatchObject({ data: { status: 'pending' } });
+    await f.share(f.requestId());
+    expect(f.completions.at(-1)).toMatchObject({ data: { status: 'created' } });
+    expect(f.repo.resolveByExternal('telegram', 'private', selectedId)).toMatchObject({
+      displayName: 'Fixture selected member',
+    });
+  });
   it('routes a common-channel owner request to its DM and completes in that requesting room authority', async () => {
     const f = await fixture();
     const runtime = await f.boot({ deliveryReady: () => false });

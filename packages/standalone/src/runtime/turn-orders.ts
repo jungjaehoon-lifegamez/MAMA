@@ -27,6 +27,8 @@ export interface TurnOrderOptions {
   timeZone: string;
   /** Registry roles for a chat sender principal, never a transport identity. */
   principalRoles?: (principalId: string) => readonly string[];
+  /** Names come only from the member registry, never from transport profile data. */
+  principalDisplayName?: (principalId: string) => string | undefined;
   /** The shared runtime's principal is a session, not a person to attribute. */
   commonPrincipalId?: string;
 }
@@ -87,15 +89,27 @@ export const MEMBER_VOICE: TurnVoice = {
     "Their rules are this person's own corrections and win a conflict; learned lessons are advice from earlier work. Neither is a fact; verify current state with tools.",
 };
 
+function principalLabel(
+  principalId: string,
+  options: Pick<TurnOrderOptions, 'principalRoles' | 'principalDisplayName' | 'commonPrincipalId'>
+): string {
+  if (principalId === options.commonPrincipalId) return principalId;
+  const roles = options.principalRoles?.(principalId) ?? [];
+  const name = options.principalDisplayName?.(principalId);
+  return name
+    ? `${escapeMarkup(oneLine(name))} (${[principalId, ...roles].join(', ')})`
+    : `${principalId}${roles.length > 0 ? ` (${roles.join(', ')})` : ''}`;
+}
+
 function senderAttribution(
   principalId: string | undefined,
-  options: Pick<TurnOrderOptions, 'principalRoles' | 'commonPrincipalId'>,
-  voice: TurnVoice
+  options: Pick<TurnOrderOptions, 'principalRoles' | 'principalDisplayName' | 'commonPrincipalId'>,
+  voice: TurnVoice = OWNER_VOICE
 ): string {
-  if (!principalId || principalId === options.commonPrincipalId || voice === MEMBER_VOICE)
-    return '';
-  const roles = options.principalRoles?.(principalId) ?? [];
-  return ` · from ${principalId}${roles.length > 0 ? ` (${roles.join(', ')})` : ''}`;
+  if (!principalId || principalId === options.commonPrincipalId) return '';
+  // Unnamed personal history keeps its compact author label and existing reply budget.
+  if (voice === MEMBER_VOICE && !options.principalDisplayName?.(principalId)) return '';
+  return ` · from ${principalLabel(principalId, options)}`;
 }
 
 /**
@@ -219,7 +233,10 @@ function leadingLines(lines: readonly string[], limit: number, seen: Set<string>
 export function sessionStartBlock(
   input: SessionStartInput,
   now: Date,
-  options: Pick<TurnOrderOptions, 'timeZone' | 'principalRoles' | 'commonPrincipalId'>,
+  options: Pick<
+    TurnOrderOptions,
+    'timeZone' | 'principalRoles' | 'principalDisplayName' | 'commonPrincipalId'
+  >,
   voice: TurnVoice = OWNER_VOICE
 ): string {
   const seen = new Set<string>();
@@ -312,19 +329,23 @@ export function attachmentLines(payload: JsonValue | undefined): string[] {
 export function ownerMessageOrder(
   input: { messenger: string; occurredAt: number; payload: JsonValue | undefined },
   lessons: readonly Lesson[],
-  options: Pick<TurnOrderOptions, 'timeZone' | 'principalRoles' | 'commonPrincipalId'> & {
+  options: Pick<
+    TurnOrderOptions,
+    'timeZone' | 'principalRoles' | 'principalDisplayName' | 'commonPrincipalId'
+  > & {
     sessionPrincipalId?: string;
   },
   voice: TurnVoice = OWNER_VOICE
 ): string {
   const payload = payloadObject(input.payload);
   const text = textField(payload?.text);
-  const sender = senderAttribution(textField(payload?.senderPrincipalId), options, voice);
+  const sender =
+    voice === MEMBER_VOICE ? '' : senderAttribution(textField(payload?.senderPrincipalId), options);
   const principalId = options.sessionPrincipalId;
-  const roles = principalId ? (options.principalRoles?.(principalId) ?? []) : [];
-  const yours = principalId
-    ? ` · yours: ${principalId}${roles.length > 0 ? ` (${roles.join(', ')})` : ''}`
-    : '';
+  const yours =
+    principalId && principalId !== options.commonPrincipalId
+      ? ` · yours: ${principalLabel(principalId, options)}`
+      : '';
   return [
     `[${voice.messageTag}] ${input.messenger} · ${localNow(input.occurredAt, options.timeZone)} (${options.timeZone})${sender}${yours}`,
     lessonsBlock(lessons, voice),

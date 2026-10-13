@@ -53,6 +53,7 @@ describe('Story TG-01/TG-04 / Phase 2b Task 1 AC: principal repository at migrat
       principalId,
       kind: 'member',
       status: 'active',
+      displayName: 'Primary member',
     });
     expect(repository.resolveByExternal('telegram', 'private', 'missing')).toBeNull();
   });
@@ -74,6 +75,63 @@ describe('Story TG-01/TG-04 / Phase 2b Task 1 AC: principal repository at migrat
     expect(adapter.prepare('SELECT COUNT(*) AS count FROM principals').get()).toEqual({ count: 1 });
     expect(adapter.prepare('SELECT COUNT(*) AS count FROM external_identities').get()).toEqual({
       count: 1,
+    });
+  });
+
+  it('sets, trims and replaces a member display name through the registry', () => {
+    const repo = createPrincipalRepository(adapter);
+    const principalId = repo.registerMember({
+      connector: 'fixture',
+      namespace: 'people',
+      externalId: 'named-member',
+      now: 1,
+    });
+    expect(repo.setDisplayName({ principalId, displayName: '  Fixture person  ', now: 2 })).toBe(
+      'Fixture person'
+    );
+    expect(repo.findById(principalId)).toMatchObject({ displayName: 'Fixture person' });
+    expect(repo.listMembers()).toContainEqual({
+      principalId,
+      displayName: 'Fixture person',
+      status: 'active',
+    });
+    repo.setDisplayName({ principalId, displayName: 'Renamed person', now: 3 });
+    expect(repo.resolveByExternal('fixture', 'people', 'named-member')).toMatchObject({
+      displayName: 'Renamed person',
+    });
+    expect(
+      adapter.prepare('SELECT updated_at FROM principals WHERE principal_id=?').get(principalId)
+    ).toEqual({ updated_at: 3 });
+  });
+
+  it.each(['', '   ', 'x'.repeat(121)])(
+    'rejects an invalid display name without changing the member: %j',
+    (displayName) => {
+      const repo = createPrincipalRepository(adapter);
+      const principalId = repo.registerMember({
+        connector: 'fixture',
+        namespace: 'people',
+        externalId: 'invalid-name',
+        now: 1,
+      });
+      repo.setDisplayName({ principalId, displayName: 'Kept name', now: 2 });
+      expect(() => repo.setDisplayName({ principalId, displayName, now: 3 })).toThrow(
+        'Display name'
+      );
+      expect(repo.findById(principalId)).toMatchObject({ displayName: 'Kept name' });
+    }
+  );
+
+  it.each(['common', 'missing'])('refuses to name a non-member principal: %s', (principalId) => {
+    const repo = createPrincipalRepository(adapter);
+    repo.ensureOwner({ principalId: 'common', now: 1 });
+    expect(() =>
+      repo.setDisplayName({ principalId, displayName: 'Fixture person', now: 2 })
+    ).toThrow('Only members');
+    expect(repo.findById('common')).toEqual({
+      principalId: 'common',
+      kind: 'owner',
+      status: 'active',
     });
   });
 

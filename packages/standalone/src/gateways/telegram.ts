@@ -167,7 +167,7 @@ export class TelegramGateway extends BaseGateway {
   private nextEnrollmentRequestId = randomInt(1, 0x7fffffff);
   private readonly pendingEnrollments = new Map<
     string,
-    { requestId: number; sourceMessageRef: string; ownerUserId: string }
+    { requestId: number; sourceMessageRef: string; ownerUserId: string; name?: string }
   >();
   private readonly onMemberSelection?: TelegramGatewayOptions['onMemberSelection'];
   private readonly recordMemberSelection?: TelegramGatewayOptions['recordMemberSelection'];
@@ -413,7 +413,11 @@ export class TelegramGateway extends BaseGateway {
   }
 
   /** The source ref was verified as an owner turn by the runtime; only an owner DM can select. */
-  async requestMemberEnrollment(sourceRef: string, requestingOwnerUserId: string): Promise<void> {
+  async requestMemberEnrollment(
+    sourceRef: string,
+    requestingOwnerUserId: string,
+    name?: string
+  ): Promise<void> {
     if (!sourceRef.startsWith('telegram:'))
       throw Object.assign(new Error("Enrollment requires the owner's own Telegram DM"), {
         name: 'denied',
@@ -431,6 +435,7 @@ export class TelegramGateway extends BaseGateway {
       requestId,
       sourceMessageRef: sourceRef,
       ownerUserId,
+      ...(name === undefined ? {} : { name }),
     });
     // Telegram shows a request_users button only on the reply keyboard, under the message box.
     const prompt =
@@ -521,6 +526,7 @@ export class TelegramGateway extends BaseGateway {
           sourceMessageRef: pending.sourceMessageRef,
           ownerUserId,
           userId: String(shared.users[0]!.user_id),
+          ...(pending.name === undefined ? {} : { name: pending.name }),
         });
       } catch (error) {
         // The request is already consumed; the owner must still learn the outcome.

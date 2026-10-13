@@ -6,7 +6,10 @@ export interface PrincipalRow {
   principalId: string;
   kind: 'owner' | 'member';
   status: 'active' | 'suspended' | 'offboarded';
+  displayName?: string;
 }
+
+export const PRINCIPAL_DISPLAY_NAME_MAX_LENGTH = 120;
 
 export const SHARED_MEMORY_SCOPE_KINDS = ['project', 'channel', 'global'] as const;
 
@@ -89,6 +92,8 @@ export interface PrincipalRepository {
    */
   ensureOwner(input: EnsureOwnerInput): 'created' | 'exists' | 'conflict';
   findById(principalId: string): PrincipalRow | null;
+  /** Set a member's nonblank, trimmed display name; the common principal is not a person. */
+  setDisplayName(input: { principalId: string; displayName: string; now: number }): string;
   listMembers(): Array<{ principalId: string; displayName?: string; status: string }>;
   grantRole(input: { principalId: string; role: string; now?: number }): 'created' | 'exists';
   /** Role assignments remain visible while a member is suspended or offboarded. */
@@ -159,6 +164,7 @@ interface PrincipalDatabaseRow {
   principal_id: string;
   kind: PrincipalKind;
   status: PrincipalStatus;
+  display_name: string | null;
 }
 
 interface MemberDatabaseRow {
@@ -285,6 +291,9 @@ function mapPrincipal(row: PrincipalDatabaseRow): PrincipalRow {
     principalId: row.principal_id,
     kind: row.kind,
     status: row.status,
+    ...(row.kind === 'member' && row.display_name !== null
+      ? { displayName: row.display_name }
+      : {}),
   };
 }
 
@@ -292,7 +301,7 @@ export function createPrincipalRepository(
   adapter: Pick<DatabaseAdapter, 'prepare' | 'transaction'>
 ): PrincipalRepository {
   const resolveByExternalStatement = adapter.prepare(
-    `SELECT p.principal_id, p.kind, p.status
+    `SELECT p.principal_id, p.kind, p.status, p.display_name
      FROM external_identities AS e
      JOIN principals AS p ON p.principal_id = e.principal_id
      WHERE e.connector = ? AND e.namespace = ? AND e.external_id = ?`
@@ -308,7 +317,10 @@ export function createPrincipalRepository(
      ) VALUES (?, ?, ?, ?, ?)`
   );
   const selectPrincipalStatement = adapter.prepare(
-    'SELECT principal_id, kind, status FROM principals WHERE principal_id = ?'
+    'SELECT principal_id, kind, status, display_name FROM principals WHERE principal_id = ?'
+  );
+  const setDisplayNameStatement = adapter.prepare(
+    "UPDATE principals SET display_name = ?, updated_at = ? WHERE principal_id = ? AND kind = 'member'"
   );
   const updatePrincipalStatusStatement = adapter.prepare(
     'UPDATE principals SET status = ?, updated_at = ? WHERE principal_id = ?'
@@ -687,7 +699,18 @@ export function createPrincipalRepository(
     ensureOwner,
     findById: (principalId) => {
       const row = selectPrincipalStatement.get(principalId) as PrincipalDatabaseRow | undefined;
-      return row ? { principalId: row.principal_id, kind: row.kind, status: row.status } : null;
+      return row ? mapPrincipal(row) : null;
+    },
+    setDisplayName: ({ principalId, displayName, now }) => {
+      if (typeof displayName !== 'string') throw new TypeError('Display name must be text');
+      const name = displayName.trim();
+      if (name.length === 0 || name.length > PRINCIPAL_DISPLAY_NAME_MAX_LENGTH)
+        throw new Error(
+          `Display name must contain 1 to ${PRINCIPAL_DISPLAY_NAME_MAX_LENGTH} characters after trimming`
+        );
+      if (setDisplayNameStatement.run(name, now, principalId).changes !== 1)
+        throw new Error('Only members can have a display name');
+      return name;
     },
     listMembers,
     grantRole: ({ principalId, role, now = Date.now() }) => {
@@ -719,7 +742,7 @@ export function createPrincipalRepository(
       (
         adapter
           .prepare(
-            `SELECT p.principal_id, p.kind, p.status FROM principals p
+            `SELECT p.principal_id, p.kind, p.status, p.display_name FROM principals p
        JOIN principal_roles r ON r.principal_id=p.principal_id
        WHERE r.role=? AND p.kind='member' AND p.status='active'
        ORDER BY p.created_at, p.principal_id`

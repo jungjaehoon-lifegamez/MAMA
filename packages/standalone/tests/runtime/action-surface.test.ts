@@ -82,6 +82,7 @@ describe('W1 action surface', () => {
       'manage.member.enroll',
       'manage.member.grant',
       'manage.member.list',
+      'manage.member.name',
       'manage.member.offboard',
       'manage.member.resume',
       'manage.member.revoke',

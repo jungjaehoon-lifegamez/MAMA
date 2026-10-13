@@ -1,5 +1,6 @@
 import {
   createPrincipalRepository,
+  PRINCIPAL_DISPLAY_NAME_MAX_LENGTH,
   type ActionRegistration,
   type ActionContract,
   type JudgmentAccess,
@@ -16,6 +17,7 @@ export const MEMBER_MANAGEMENT_ACTIONS = [
   'manage.member.resume',
   'manage.member.offboard',
   'manage.member.list',
+  'manage.member.name',
 ] as const;
 
 export interface MemberLifecyclePorts {
@@ -41,6 +43,13 @@ export function memberLifecycleRegistrations(options: {
       pattern: '\\S',
       description: 'Registry member principal id, never a transport identity.',
     },
+    name: {
+      type: 'string',
+      pattern: '\\S',
+      maxLength: PRINCIPAL_DISPLAY_NAME_MAX_LENGTH,
+      description:
+        'Owner supplied member display name, trimmed before storage. Telegram names are not used.',
+    },
     scopeKind: { type: 'string', enum: ['project'] },
     scopeId: {
       type: 'string',
@@ -48,7 +57,7 @@ export function memberLifecycleRegistrations(options: {
       description: 'Project partition id. Owner default partitions cannot be granted.',
     },
   };
-  return MEMBER_MANAGEMENT_ACTIONS.map((name) => {
+  return MEMBER_MANAGEMENT_ACTIONS.map((name): ActionRegistration => {
     const change = name.slice('manage.member.'.length);
     const scopeChange = change === 'grant' || change === 'revoke';
     return {
@@ -66,24 +75,36 @@ export function memberLifecycleRegistrations(options: {
               'Resume a suspended member with retained grants. Move any remaining runtime and temp directories aside and serve a fresh environment.',
             offboard:
               'Permanently offboard an active or suspended member; revoke every grant atomically, end and unserve its session, move runtime/temp aside, and keep its identity binding.',
-            list: 'List member principal ids, registry roles (including owner), statuses and unrevoked grants, including grants retained during suspension, and the latest enrollment receipts from the common record (created, exists or refused, with the reason), in either room. Receipts carry the owner-local time of each pick. Never returns transport identities or record content.',
+            list: 'List member display names when set, principal ids, registry roles (including owner), statuses and unrevoked grants, including grants retained during suspension, and the latest enrollment receipts from the common record (created, exists or refused, with the reason), in either room. Receipts carry the owner-local time of each pick. Never returns transport identities or record content.',
+            name: 'Set a member display name, including your own or another owner-role member. Only people in the member registry can be named; the common session cannot. Use the name the owner supplies, never a Telegram name.',
           }[change]! +
-          ' Only an active owner-role caller in its own DM or recorded common-channel message turn is allowed; delta, scheduled/report, replay, plain-member and subagent turns are denied. Changes apply after the running member turn on the shared serial chain and cancel queued inputs with a host reason.',
+          ' Only an active owner-role caller in its own DM or recorded common-channel message turn is allowed; delta, scheduled/report, replay, plain-member and subagent turns are denied.' +
+          (change === 'name'
+            ? ''
+            : ' Changes apply after the running member turn on the shared serial chain and cancel queued inputs with a host reason.'),
         inputSchema: {
           type: 'object',
           additionalProperties: false,
           properties:
             change === 'list'
               ? {}
-              : scopeChange
-                ? properties
-                : { principalId: properties.principalId },
+              : change === 'name'
+                ? { principalId: properties.principalId, name: properties.name }
+                : scopeChange
+                  ? {
+                      principalId: properties.principalId,
+                      scopeKind: properties.scopeKind,
+                      scopeId: properties.scopeId,
+                    }
+                  : { principalId: properties.principalId },
           required:
             change === 'list'
               ? []
-              : scopeChange
-                ? ['principalId', 'scopeKind', 'scopeId']
-                : ['principalId'],
+              : change === 'name'
+                ? ['principalId', 'name']
+                : scopeChange
+                  ? ['principalId', 'scopeKind', 'scopeId']
+                  : ['principalId'],
         },
       },
       exec: async (input, context) => {
@@ -119,8 +140,9 @@ export function memberLifecycleRegistrations(options: {
               at: `${new Date(at).toLocaleString('ko-KR', { timeZone })} (${timeZone})`,
               receipt,
             })),
-            members: repo.listMembers().map(({ principalId, status }) => ({
+            members: repo.listMembers().map(({ principalId, displayName, status }) => ({
               principalId,
+              ...(displayName === undefined ? {} : { displayName }),
               roles: repo.listRoles(principalId).map(({ role }) => role),
               status,
               grants: repo
@@ -143,6 +165,14 @@ export function memberLifecycleRegistrations(options: {
         };
         if (principal.kind !== 'member')
           refuse('The common principal cannot be a member-management target');
+        if (change === 'name') {
+          const displayName = repo.setDisplayName({
+            principalId,
+            displayName: (input as { name: string }).name,
+            now: Date.now(),
+          });
+          return { principalId, change, displayName };
+        }
         if (change === 'suspend' && principalId === caller) refuse('You cannot suspend yourself');
         if (holdsOwnerRole(repo, principalId) && change !== 'suspend' && change !== 'resume')
           refuse(
