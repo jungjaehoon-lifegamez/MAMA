@@ -127,7 +127,8 @@ export function createPrincipalSessions(
   };
   const forKey = (key: string) => {
     if (key === 'owner:runtime' || key === 'owner:replay') return get(ownerPrincipalId);
-    for (const [id, entry] of entries) if (key === `member:${id}:runtime`) return entry;
+    for (const [id, entry] of entries)
+      if (key === `member:${id}:runtime` || key.startsWith(`member:${id}:job:`)) return entry;
     throw new Error(`Principal session key is not served: ${key}`);
   };
   const native: NativeSessionHandle = {

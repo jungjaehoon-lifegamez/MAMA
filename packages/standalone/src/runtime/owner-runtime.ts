@@ -1,3 +1,4 @@
+import { createPersonalJobScheduler } from './personal-jobs.js';
 import type { MemberEnrollmentPorts, MemberSelection } from '../api/member-enrollment.js';
 import type { ActionResult } from '@jungjaehoon/mama-core';
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
@@ -68,6 +69,7 @@ import {
 } from './stimulus-delivery.js';
 
 export interface OwnerRuntimeOptions {
+  onPersonalJobError?: (error: unknown) => void;
   messageLedger?: () => OwnerMessageLedger | undefined;
   memberRecordsTelegram?: () => MemberRecordsTelegram | undefined;
   /** Native shell commands that open a network connection, reported as they start (W35). */
@@ -145,6 +147,7 @@ export interface OwnerRuntimeOptions {
 }
 
 export interface OwnerRuntime {
+  personalJobs: ReturnType<typeof createPersonalJobScheduler>;
   readonly runtime: RuntimeHandle;
   readonly database: CoreDatabase;
   readonly knowledge: Knowledge;
@@ -689,6 +692,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         throw new Error(`serveMember requires an active member: ${principalId}`);
       const member = createMemberSession(principalId, memberRoot, {
         options,
+        personalJobs: surface.personalJobs,
         ownerPolicyProvider,
         ownerDeniedPaths,
         registeredMemberIds: () => principals.listMembers().map((row) => row.principalId),
@@ -845,7 +849,28 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       memberIntakes.set(principalId, memberIntake);
       return memberIntake;
     };
+    // Gateway DMs and personal jobs serve active unserved members through the directory lane. A
+    // served intake needs no directory work; P9 restores its own known paths on the member chain.
+    const serveMemberOnLane = (id: string): Promise<StimulusIntake> => {
+      executionAccess(id);
+      if (stopped) return Promise.reject(new Error('Cannot serve a member after runtime stop'));
+      if (intakeRuntime.servesPrincipal(id)) return Promise.resolve(memberIntakes.get(id)!);
+      return sessions.exclusive(async () => {
+        if (surface.memberRecords.isBlocked(id) && !intakeRuntime.servesPrincipal(id))
+          throw new Error(`Member session is not served: ${id}`);
+        return serveMember(id);
+      });
+    };
+    const personalJobs = createPersonalJobScheduler({
+      adapter: database.adapter,
+      store: surface.personalJobs,
+      mailbox: intakeRuntime.mailbox!,
+      intake: serveMemberOnLane,
+      blocked: surface.memberRecords.isBlocked,
+      onError: (error) => options.onPersonalJobError?.(error),
+    });
     return {
+      personalJobs,
       runtime: intakeRuntime,
       database,
       knowledge,
@@ -855,18 +880,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       wikiRoot,
       intake,
       acceptSourceDelta: intake.acceptSourceDelta,
-      // Gateway DMs retry active unserved members through the directory lane. A served
-      // intake needs no directory work; P9 restores its own known paths on the member chain.
-      serveMember: (id) => {
-        executionAccess(id);
-        if (stopped) return Promise.reject(new Error('Cannot serve a member after runtime stop'));
-        if (intakeRuntime.servesPrincipal(id)) return Promise.resolve(memberIntakes.get(id)!);
-        return sessions.exclusive(async () => {
-          if (surface.memberRecords.isBlocked(id) && !intakeRuntime.servesPrincipal(id))
-            throw new Error(`Member session is not served: ${id}`);
-          return serveMember(id);
-        });
-      },
+      serveMember: serveMemberOnLane,
       memberIntake: (id) => {
         // Erasure owns restoration once it unserves the member. Intake callers must not
         // recreate a writer while the host takes and delivers that member's snapshot.
@@ -928,6 +942,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       stop: () => {
         if (stopPromise) return stopPromise;
         stopping = true;
+        personalJobs.stop();
         stopPromise = (async () => {
           await surface.memberRecords.idle();
           stopped = true;

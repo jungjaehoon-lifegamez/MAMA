@@ -12,7 +12,7 @@ import type { ActionIpcServerOptions } from '@jungjaehoon/mama-core/client/ipc';
 import { OwnerMessageLedger } from '../../src/gateways/telegram-message-ledger.js';
 import type { IModelRunner } from '@jungjaehoon/mama-core/runtime/drivers/types';
 import { SessionPool } from '@jungjaehoon/mama-core/runtime/session-pool';
-import { createOwnerRuntime } from '../../src/runtime/owner-runtime.js';
+import { createOwnerRuntime, type OwnerRuntimeOptions } from '../../src/runtime/owner-runtime.js';
 import { createNativeSession, type NativeDriverOptions } from '../../src/runtime/native-session.js';
 import type { SourceDelta } from '../../src/connectors/framework/polling-scheduler.js';
 import { sourceDeltaStimulusId } from '../../src/runtime/stimulus-delivery.js';
@@ -106,7 +106,7 @@ export async function fixture(
   const memberActions = new Map<string, { action: string; input: unknown }>();
   const memberResults = new Map<string, ActionResult>();
   let finishFailure: 'before_acceptance' | 'after_acceptance' | undefined;
-  const ledger = new OwnerMessageLedger(join(home, 'ledger.json'));
+  let ledger = new OwnerMessageLedger(join(home, 'ledger.json'));
   let gate: Promise<void> | undefined;
   let memberGate: Promise<void> | undefined;
   let completionGate: Promise<void> | undefined;
@@ -118,7 +118,8 @@ export async function fixture(
   let sequence = 0;
   let deltaResponse = false;
   let runtime: Awaited<ReturnType<typeof createOwnerRuntime>>;
-  const runtimeOptions: Parameters<typeof createOwnerRuntime>[0] = {
+  let memberResponse = 'fixture answer';
+  const runtimeOptions: OwnerRuntimeOptions = {
     backend,
     model: 'fixture',
     databasePath: join(home, 'state.db'),
@@ -148,15 +149,16 @@ export async function fixture(
       let session: string | undefined;
       let fresh = true;
       let activeFingerprint: string | undefined;
+      const contexts = new Map<string, { session: string; fingerprint?: string }>();
       const model: IModelRunner = {
         backendType: backend,
         reportsModelRuns: true,
         supportsNativeSubagents: true,
         prompt: async (content, callbacks, opts) => {
-          if (opts?.resumeSession === false) {
-            session = undefined;
-            fresh = true;
-          }
+          const key = opts?.sessionKey ?? principal;
+          const saved = opts?.resumeSession === false ? undefined : contexts.get(key);
+          session = saved?.session;
+          fresh = saved === undefined;
           session ??= `fixture-session-${++sequence}`;
           const failure = principal !== 'owner' ? finishFailure : undefined;
           if (failure) finishFailure = undefined;
@@ -185,6 +187,7 @@ export async function fixture(
           });
           fresh = false;
           activeFingerprint = opts?.sessionPolicyFingerprint;
+          contexts.set(key, { session, fingerprint: activeFingerprint });
           const nativeTool = nativeTools.get(principal);
           if (nativeTool) callbacks?.onToolUse?.(nativeTool.name, nativeTool.input);
           if (principal === 'owner' && gate) await gate;
@@ -241,18 +244,22 @@ export async function fixture(
             throw new Error('fixture confirming turn failed');
           }
           return {
-            response: principal === 'owner' && deltaResponse ? '[ack]' : 'fixture answer',
+            response:
+              principal === 'owner' ? (deltaResponse ? '[ack]' : 'fixture answer') : memberResponse,
             session_id: session,
             usage: { input_tokens: 1, output_tokens: 1 },
           };
         },
         getSessionPolicyStatus: (opts) =>
-          session === undefined
+          !contexts.has(opts.sessionKey ?? principal)
             ? 'missing'
-            : activeFingerprint === opts.sessionPolicyFingerprint
+            : contexts.get(opts.sessionKey ?? principal)!.fingerprint ===
+                opts.sessionPolicyFingerprint
               ? 'compatible'
               : 'mismatch',
-        resetSession: async () => {
+        resetSession: async (_session, key) => {
+          if (key) contexts.delete(key);
+          else contexts.clear();
           session = undefined;
           fresh = true;
         },
@@ -350,13 +357,19 @@ export async function fixture(
     },
     restart: async () => {
       await runtime.stop();
+      ledger = new OwnerMessageLedger(join(home, 'ledger.json'));
       runtime = await createOwnerRuntime(runtimeOptions);
+    },
+    memberResponse: (text: string) => {
+      memberResponse = text;
     },
     managingOwner,
     actAs,
     member,
     memberDm: memberIdentity,
-    ledger,
+    get ledger() {
+      return ledger;
+    },
     natives,
     drivers,
     actDelta: async (action: string, input: unknown, delta: SourceDelta) => {

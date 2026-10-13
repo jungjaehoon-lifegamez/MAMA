@@ -1,3 +1,8 @@
+import {
+  personalJobPayload,
+  personalJobSessionKey,
+  type PersonalJobStore,
+} from './personal-jobs.js';
 import { createSerialTurnChain } from './principal-sessions.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import { createHash } from 'node:crypto';
@@ -26,6 +31,7 @@ import {
   ownerMessageOrder,
   parseRecordOrder,
   scheduledReportOrder,
+  personalJobOrder,
   sessionStartBlock,
   type Lesson,
   type SessionStartInput,
@@ -93,6 +99,7 @@ export interface RecordOrderPort {
 export interface StimulusDeliveryOptions {
   backend: OwnerRuntimeBackend;
   turnChain?: ReturnType<typeof createSerialTurnChain>;
+  personalJobs?: PersonalJobStore;
   member?: { principalId: string; sessionKey: string; voice: TurnVoice };
   wikiEnabled?: boolean;
   formattingRoutes?: { reports: string; notifications: string };
@@ -549,6 +556,18 @@ function planTurn(row: MailboxRow, options: StimulusDeliveryOptions): TurnPlan {
         ),
     };
   }
+  const jobPayload = personalJobPayload(row);
+  if (options.member && jobPayload) {
+    const job = options.personalJobs?.find(row.principalId, jobPayload.jobId);
+    if (!job || !job.enabled || job.version !== jobPayload.version)
+      return { kind: 'skip', reason: 'personal job changed or deleted' };
+    return {
+      kind: 'turn',
+      lessonQuery: jobPayload.instruction,
+      render: (lessons) =>
+        personalJobOrder(jobPayload, row.occurredAt, job.lastCompletedAt ?? job.createdAt, lessons),
+    };
+  }
   if (options.member) throw new Error(`Member turn does not support stimulus kind ${row.kind}`);
   if (row.kind === 'source_delta') {
     if (replaySourceCeiling(row) !== undefined)
@@ -608,7 +627,16 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
   let shownLessons = new Set<string>();
   let shownDay = '';
 
-  const pickLessons = async (query: string | null, newSession: boolean): Promise<Lesson[]> => {
+  const pickLessons = async (
+    query: string | null,
+    newSession: boolean,
+    stateless: boolean
+  ): Promise<Lesson[]> => {
+    // A job's fresh context must not consume guidance for the person's continuing DM context.
+    if (stateless)
+      return query?.trim() && options.lessons
+        ? [...(await options.lessons(query))].slice(0, 3)
+        : [];
     const day = localDateKey(Date.now(), options.timeZone.get());
     if (newSession || day !== shownDay) {
       shownLessons = new Set();
@@ -661,7 +689,11 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
             modelRunId = id;
           },
           prepareSessionContent: async ({ isNewSession }) => {
-            const lessons = await pickLessons(plan.lessonQuery, isNewSession);
+            const lessons = await pickLessons(
+              plan.lessonQuery,
+              isNewSession,
+              options.member !== undefined && personalJobPayload(row) !== null
+            );
             const start = isNewSession
               ? sessionStartBlock(
                   (await options.sessionStart?.(row)) ?? { exchanges: [], decisions: [] },
@@ -678,6 +710,9 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
             return text([start, plan.render(lessons, new Date())]);
           },
           sessionKey:
+            (personalJobPayload(row) && options.member
+              ? personalJobSessionKey(row.principalId, personalJobPayload(row)!.jobId)
+              : undefined) ??
             options.member?.sessionKey ??
             (replaySourceEndMs === undefined
               ? OWNER_RUNTIME_SESSION_KEY
@@ -721,6 +756,7 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
       await options.recordOrders.onLost(row, 'record order parked uncertain');
       return 'record check';
     }
+    if (personalJobPayload(row)) return 'the next personal job occurrence';
     if (row.kind === 'scheduled') return 'the next report tick';
     // Other kinds (native_event) have no producer left and owe nothing further.
     return 'nothing further';

@@ -1,5 +1,7 @@
 import type { MailboxRow } from '@jungjaehoon/mama-core/runtime/mailbox';
 import { StimulusQuarantine } from '@jungjaehoon/mama-core/runtime/runtime';
+import { createPersonalJobStore, type PersonalJobStore } from './personal-jobs.js';
+import { personalJobRegistrations, PERSONAL_JOB_ACTIONS } from '../api/personal-job-actions.js';
 import {
   createMemberEnrollment,
   type MemberEnrollmentPorts,
@@ -78,6 +80,7 @@ import {
 } from '../api/member-share-actions.js';
 
 const OWNER_ACTIONS = [
+  ...PERSONAL_JOB_ACTIONS,
   'code_act',
   'graph.query',
   'source.search',
@@ -125,6 +128,7 @@ const OWNER_ACTIONS = [
 
 /** The member role: Telegram file delivery honours the caller's DM. Exact catalog names only. */
 export const MEMBER_ACTIONS = [
+  ...PERSONAL_JOB_ACTIONS,
   'graph.query',
   'work.list',
   'work.show',
@@ -198,6 +202,7 @@ export interface ActionSurfaceOptions {
 }
 
 export interface ActionSurface {
+  personalJobs: PersonalJobStore;
   memberRecords: ReturnType<typeof createMemberRecords>;
   releasePrincipal(principalId: string): void;
   deliverManagement(row: MailboxRow): Promise<'handled' | 'deferred' | 'unhandled'>;
@@ -425,7 +430,9 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     },
   });
   const codeAct = codeActRegistration(() => dispatch);
+  const personalJobs = createPersonalJobStore(options.adapter, options.timeZone);
   const registrations = [
+    ...personalJobRegistrations(personalJobs, options),
     ...core,
     ...lifecycle,
     ...memberRecords.registrations,
@@ -622,6 +629,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
   };
 
   return {
+    personalJobs,
     memberRecords,
     releasePrincipal: codeAct.releasePrincipal,
     onManagementDead: (row, reason) => {

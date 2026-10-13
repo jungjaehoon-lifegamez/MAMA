@@ -664,3 +664,24 @@ export function scheduledReportOrder(
     `Messenger: ${options.messenger}`,
   ].join('\n');
 }
+
+/** The host names an autonomous order separately from a person's message. */
+export function personalJobOrder(
+  job: { instruction: string; timeZone: string },
+  at: number,
+  lastCompletedAt: number,
+  lessons: readonly Lesson[]
+): string {
+  return [
+    `<personal_job>`,
+    `Occurrence: ${localNow(at, job.timeZone)} ${job.timeZone}`,
+    `Time of last completed occurrence (creation time for the first check): ${localNow(lastCompletedAt, job.timeZone)} ${job.timeZone}`,
+    `Instruction: ${escapeMarkup(job.instruction)}`,
+    `Run this person's job with their current access, personal rules and lessons. This is a fresh context, not a message they sent.`,
+    `Reply [ack] when there is nothing to tell; otherwise your result is sent to this person's own Telegram DM.`,
+    `</personal_job>`,
+    lessonsBlock(lessons, MEMBER_VOICE),
+  ]
+    .filter(Boolean)
+    .join('\n');
+}

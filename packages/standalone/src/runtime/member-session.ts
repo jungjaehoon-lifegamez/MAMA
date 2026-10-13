@@ -1,3 +1,4 @@
+import { deliverPersonalJobResult, type PersonalJobStore } from './personal-jobs.js';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { createPrincipalRepository, type JudgmentAccess } from '@jungjaehoon/mama-core';
@@ -28,6 +29,7 @@ export function createMemberSession(
     ownerDeniedPaths: readonly string[];
     registeredMemberIds: () => string[];
     database: CoreDatabase;
+    personalJobs: PersonalJobStore;
     rawStore: RawStore;
     surface: ActionSurface;
     turnChain: NonNullable<StimulusDeliveryOptions['turnChain']>;
@@ -159,7 +161,14 @@ export function createMemberSession(
         await current.stop();
         current = create();
       }
-      return current.runTurn(content, request);
+      const key = request?.sessionKey ?? sessionKey;
+      const job = key !== sessionKey;
+      if (job) await current.resetSession(key); // Includes an orphan context left by a process crash.
+      try {
+        return await current.runTurn(content, request);
+      } finally {
+        if (job) await current.resetSession(key);
+      }
     },
   };
   const delivery = createStimulusDelivery({
@@ -167,6 +176,18 @@ export function createMemberSession(
     timeZone: options.timeZone,
     turnChain: ports.turnChain,
     member: { principalId, sessionKey, voice: MEMBER_VOICE },
+    personalJobs: ports.personalJobs,
+    onScheduledResult: (row, result) =>
+      deliverPersonalJobResult(row, result, {
+        store: ports.personalJobs,
+        access,
+        chat,
+        send: (resolved, text, key) => {
+          const telegram = options.memberRecordsTelegram?.();
+          if (!telegram) throw new Error('Personal job Telegram delivery is unavailable');
+          return telegram.sendMemberText(resolved, text, key);
+        },
+      }),
     principalRoles: (id) => principals.listRoles(id).map(({ role }) => role),
     principalDisplayName: (id) => principals.findById(id)?.displayName,
     commonPrincipalId: options.ownerPrincipalId,

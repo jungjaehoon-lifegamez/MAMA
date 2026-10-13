@@ -572,6 +572,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       },
       ownerPolicyProvider,
       deliveryReady: () => deliveryReady,
+      onPersonalJobError: (error) =>
+        logger.error(`personal job scheduler failed reason=${stimulusFailureReason(error)}`),
       ...(options.mode === 'replay'
         ? {}
         : {
@@ -871,6 +873,11 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       reportScheduler.start();
       stage(logger, 'report_scheduler');
     } else stage(logger, 'report_scheduler:route_unavailable');
+    if (gateway?.sendMemberText) {
+      owner.personalJobs.start();
+      await owner.personalJobs.tick();
+      stage(logger, 'personal_job_scheduler');
+    }
     deliveryReady = true;
 
     return {

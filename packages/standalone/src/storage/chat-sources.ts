@@ -81,6 +81,43 @@ export class ChatSources {
     );
   }
 
+  /** Autonomous job orders are host-authored, never messages this person sent. */
+  saveJobExchange(input: {
+    jobId: string;
+    occurrenceAt: number;
+    instruction: string;
+    text: string;
+    timeZone: string;
+  }): void {
+    const ref = `job:${input.jobId}:${input.occurrenceAt}`;
+    const identity = this.adapter
+      .prepare(
+        "SELECT external_id FROM external_identities WHERE principal_id=? AND connector='telegram' AND namespace='private'"
+      )
+      .get(this.principalId) as { external_id: string } | undefined;
+    if (!identity) throw new Error('Job chat requires the person’s registry DM');
+    for (const reply of [false, true])
+      this.save({
+        source: 'chat',
+        sourceId: reply ? `${ref}:reply` : ref,
+        channel: `telegram:${identity.external_id}`,
+        author: reply ? this.agentId : 'host',
+        content: reply ? input.text : input.instruction,
+        timestamp: new Date(input.occurrenceAt),
+        type: 'message',
+        memoryScopeKind: 'user',
+        memoryScopeId: this.principalId,
+        metadata: {
+          kind: reply ? 'job_reply' : 'job_instruction',
+          jobId: input.jobId,
+          occurrenceAt: input.occurrenceAt,
+          timeZone: input.timeZone,
+          messageRef: ref,
+          ...(reply ? { deliveryVerified: true } : {}),
+        },
+      });
+  }
+
   private save(item: NormalizedItem): string {
     const [saved] = this.rawStore.save('chat', [item], { collectOnly: true });
     // Intake cannot proceed without exactly one raw item and its projection.
