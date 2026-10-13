@@ -398,7 +398,13 @@ export async function deliverPersonalJobResult(
   }
 ) {
   const payload = personalJobPayload(row)!;
-  if (ports.store.isClosed(row) || ports.chat.hasJobExchange(payload.jobId, row.occurredAt)) return;
+  if (ports.store.isClosed(row)) return;
+  // The archived exchange proves delivery; a stop before the close revision still owes the close.
+  if (ports.chat.hasJobExchange(payload.jobId, row.occurredAt)) {
+    if (!ports.store.isSuperseded(row) && ports.store.isActive(row.principalId))
+      await ports.store.complete(row, ports.access());
+    return;
+  }
   const job = ports.store.find(row.principalId, payload.jobId);
   if (!ports.store.isActive(row.principalId))
     throw new PersonalJobFinalFailure('Personal job person is no longer active');

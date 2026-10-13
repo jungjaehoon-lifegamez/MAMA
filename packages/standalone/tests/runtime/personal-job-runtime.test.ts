@@ -568,6 +568,22 @@ describe('personal scheduled turns and P10.2 recovery', () => {
       ).toEqual({ n: 0 });
     }
   );
+  it('closes an archived occurrence whose close revision was lost, without sending again', async () => {
+    const { f, create, due, tick, jobRows } = await setup();
+    const id = await create();
+    f.memberResponse('A readable change matters.');
+    const complete = vi
+      .spyOn(f.runtime.surface.personalJobs, 'complete')
+      .mockRejectedValueOnce(new Error('fixture stop before the close revision'));
+    await tick();
+    // Reconciliation finds the archived exchange and still owes the close.
+    await f.settled(jobRows()[0]!.stimulus_id, f.member);
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(transport.sent).toHaveLength(1);
+    const job = f.runtime.surface.personalJobs.find(f.member, id)!;
+    expect(job.lastCompletedAt).toBe(due);
+    expect(job.lastClosedAt).toBe(due);
+  });
   it.each(['suspend', 'offboard'])(
     '%s cancels a queued scheduled input using the existing principal cancellation',
     async (action) => {
