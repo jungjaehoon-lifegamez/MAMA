@@ -9,6 +9,15 @@ import { validateMemberMemoryGrant, resolvePrincipalAccess } from '../runtime/pr
 import type { TimeZoneSetting } from '../runtime/timezone.js';
 import { activeOwnerMessageCaller, holdsOwnerRole } from '../runtime/owner-authority.js';
 
+/**
+ * A display name reaches other sessions' turn headers as host text, so it carries letters, digits,
+ * spaces and name punctuation only: no ':' '/' '@' or other characters that could make it read as
+ * an instruction or an address (Codex security review on #479).
+ */
+export function memberNameAllowed(name: string): boolean {
+  return /^[\p{L}\p{M}\p{N} .'\-·]+$/u.test(name.trim());
+}
+
 export const MEMBER_MANAGEMENT_ACTIONS = [
   'manage.member.grant',
   'manage.member.revoke',
@@ -74,7 +83,7 @@ export function memberLifecycleRegistrations(options: {
             offboard:
               'Permanently offboard an active or suspended member; revoke every grant atomically, end and unserve its session, move runtime/temp aside, and keep its identity binding.',
             list: 'List member display names when set, principal ids, registry roles (including owner), statuses and unrevoked grants, including grants retained during suspension, and the latest enrollment receipts from the common record (created, exists or refused, with the reason), in either room. Receipts carry the owner-local time of each pick. Never returns transport identities or record content.',
-            name: 'Set a member display name, including your own or another owner-role member. Only people in the member registry can be named; the common session cannot. Use the name the owner supplies, never a Telegram name.',
+            name: "Set a member display name: your own, or a member without the owner role (an owner-role member names itself). Letters, digits, spaces and . - ' · only. Only people in the member registry can be named; the common session cannot. Use the name the owner supplies, never a Telegram name.",
           }[change]! +
           ' Only an active owner-role caller in its own DM or recorded common-channel message turn is allowed; delta, scheduled/report, replay, plain-member and subagent turns are denied.' +
           (change === 'name'
@@ -164,9 +173,15 @@ export function memberLifecycleRegistrations(options: {
         if (principal.kind !== 'member')
           refuse('The common principal cannot be a member-management target');
         if (change === 'name') {
+          const requested = (input as { name: string }).name;
+          if (!memberNameAllowed(requested))
+            refuse("A name may use letters, digits, spaces and . - ' · only");
+          // An owner's name sits in that owner's own privileged turns; only that owner sets it.
+          if (holdsOwnerRole(repo, principalId) && principalId !== caller)
+            refuse("Only that owner can set an owner-role member's name");
           const displayName = repo.setDisplayName({
             principalId,
-            displayName: (input as { name: string }).name,
+            displayName: requested,
             now: Date.now(),
           });
           return { principalId, change, displayName };

@@ -8,6 +8,7 @@ import {
 } from '@jungjaehoon/mama-core';
 import type { DatabaseInstance } from '@jungjaehoon/mama-core/db-manager';
 import { clearMemberSmokeState } from './member-smoke-state.js';
+import { memberNameAllowed } from './member-lifecycle.js';
 import { activeOwnerMessageCaller } from '../runtime/owner-authority.js';
 import { resolvePrincipalAccess } from '../runtime/principal-access.js';
 
@@ -56,6 +57,10 @@ export function createMemberEnrollment(options: {
     },
     exec: async (input, context: ActionContext) => {
       const name = (input as { name?: string }).name?.trim();
+      if (name !== undefined && !memberNameAllowed(name))
+        throw Object.assign(new Error("A name may use letters, digits, spaces and . - ' · only"), {
+          name: 'denied',
+        });
       const ref = context.session?.sourceMessageRef;
       const caller = activeOwnerMessageCaller(context, options);
       if (!caller) {
