@@ -93,6 +93,8 @@ describe('W1 action surface', () => {
       'manage.wiki.publish',
       'manage.wiki.read',
       'manage.wiki.update',
+      'member.directory',
+      'member.notice',
       'memory.checkpoint.list',
       'memory.checkpoint.save',
       'memory.read:provenance',

@@ -573,7 +573,8 @@ export function deltaRecordOrder(
     // Kagemusha's reconcile order makes the write mandatory and checks it; an agent that did not
     // know the check ended a turn with two refused writes and [ack].
     "5. Step 3 or 4 is required: the order is checked when it ends and counts as done only when these observations are cited by a revision's derived_from links or by work.no_update. Correct a refused write (help gives its contract) and write it again.",
-    '6. Reply exactly [ack].',
+    '6. When the facts concern a person (an assignee, someone mentioned, a member of the partition), read member.directory and call member.notice once for each candidate with the observations below and the work record ids you wrote (memory_id). Supply only refs, never a reason or preview. Their private turn decides whether to tell them. Replay queues no notices.',
+    '7. Reply exactly [ack].',
     `observations: ${observationRefs.join(', ')}`,
   ].join('\n');
 }
@@ -684,4 +685,18 @@ export function personalJobOrder(
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+export function personalNoticeOrder(
+  notice: import('./personal-notices.js').PersonalNoticePayload,
+  at: number
+): string {
+  return [
+    '<personal_notice>',
+    `Time: ${localNow(at, notice.timeZone)} ${notice.timeZone}`,
+    `Refs: ${escapeMarkup(JSON.stringify(notice.refs))}`,
+    'Read these refs using source.read for observationRef and memory.read:record for memory_id, under your current access. Decide with your own records and interests whether there is something to tell you. This is a fresh autonomous context, not a message you sent.',
+    'Reply [ack] when there is nothing to tell; otherwise your result is sent to your own Telegram DM. Your decision and result stay personal.',
+    '</personal_notice>',
+  ].join('\n');
 }

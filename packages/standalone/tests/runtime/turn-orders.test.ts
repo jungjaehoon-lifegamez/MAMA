@@ -310,7 +310,9 @@ describe('turn orders', () => {
       // Kagemusha's order makes the write mandatory and says it is checked (2026-09-29).
       '5. Step 3 or 4 is required: the order is checked when it ends and counts as done only when these observations are cited',
       'Correct a refused write',
-      '6. Reply exactly [ack].',
+      '6. When the facts concern a person (an assignee, someone mentioned, a member of the partition), read member.directory',
+      'call member.notice once for each candidate with the observations below and the work record ids you wrote',
+      '7. Reply exactly [ack].',
       'observations: obs-1, obs-2',
       '[09-29 01:40] sender: files sent',
       'reading its contract with help first in a session',

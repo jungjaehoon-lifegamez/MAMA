@@ -83,15 +83,24 @@ export class ChatSources {
 
   /** An occurrence is archived only when both personal chat items are indexed. */
   hasJobExchange(jobId: string, occurrenceAt: number): boolean {
-    const ref = `job:${jobId}:${occurrenceAt}`;
+    return this.hasPersonalExchange('job', `job:${jobId}:${occurrenceAt}`);
+  }
+
+  hasPersonalExchange(kind: 'job' | 'notice', ref: string): boolean {
     const row = this.adapter
       .prepare(
         `SELECT COUNT(*) AS n FROM connector_event_index
          WHERE source_connector='chat' AND memory_scope_kind='user' AND memory_scope_id=?
-           AND ((source_id=? AND json_extract(metadata_json, '$.kind')='job_instruction')
-             OR (source_id=? AND json_extract(metadata_json, '$.kind')='job_reply'))`
+           AND ((source_id=? AND json_extract(metadata_json, '$.kind')=?)
+             OR (source_id=? AND json_extract(metadata_json, '$.kind')=?))`
       )
-      .get(this.principalId, ref, `${ref}:reply`) as { n: number };
+      .get(
+        this.principalId,
+        ref,
+        kind === 'job' ? 'job_instruction' : 'notice_refs',
+        `${ref}:reply`,
+        `${kind}_reply`
+      ) as { n: number };
     return row.n === 2;
   }
 
@@ -103,29 +112,51 @@ export class ChatSources {
     text: string;
     timeZone: string;
   }): void {
-    const ref = `job:${input.jobId}:${input.occurrenceAt}`;
+    this.savePersonalExchange({
+      kind: 'job',
+      ref: `job:${input.jobId}:${input.occurrenceAt}`,
+      occurrenceAt: input.occurrenceAt,
+      hostText: input.instruction,
+      text: input.text,
+      metadata: { jobId: input.jobId, timeZone: input.timeZone },
+    });
+  }
+
+  /** Autonomous inputs are host-authored; the person's message views do not select them. */
+  savePersonalExchange(input: {
+    kind: 'job' | 'notice';
+    ref: string;
+    occurrenceAt: number;
+    hostText: string;
+    text: string;
+    metadata: Record<string, unknown>;
+  }): void {
+    const ref = input.ref;
     const identity = this.adapter
       .prepare(
         "SELECT external_id FROM external_identities WHERE principal_id=? AND connector='telegram' AND namespace='private'"
       )
       .get(this.principalId) as { external_id: string } | undefined;
-    if (!identity) throw new Error('Job chat requires the person’s registry DM');
+    if (!identity) throw new Error('Personal turn chat requires the person’s registry DM');
     for (const reply of [false, true])
       this.save({
         source: 'chat',
         sourceId: reply ? `${ref}:reply` : ref,
         channel: `telegram:${identity.external_id}`,
         author: reply ? this.agentId : 'host',
-        content: reply ? input.text : input.instruction,
+        content: reply ? input.text : input.hostText,
         timestamp: new Date(input.occurrenceAt),
         type: 'message',
         memoryScopeKind: 'user',
         memoryScopeId: this.principalId,
         metadata: {
-          kind: reply ? 'job_reply' : 'job_instruction',
-          jobId: input.jobId,
+          ...input.metadata,
+          kind: reply
+            ? `${input.kind}_reply`
+            : input.kind === 'job'
+              ? 'job_instruction'
+              : 'notice_refs',
           occurrenceAt: input.occurrenceAt,
-          timeZone: input.timeZone,
           messageRef: ref,
           ...(reply ? { deliveryVerified: true } : {}),
         },

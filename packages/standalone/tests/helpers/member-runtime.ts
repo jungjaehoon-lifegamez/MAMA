@@ -43,7 +43,8 @@ export async function fixture(
     fingerprint: 'fixture',
     loaded: true,
   }),
-  onStimulusFailed?: OwnerRuntimeOptions['onStimulusFailed']
+  onStimulusFailed?: OwnerRuntimeOptions['onStimulusFailed'],
+  connectors: string[] = []
 ) {
   // Only the unavailable socket listener is replaced; dispatcher, sessions and stores are real.
   vi.spyOn(ipc, 'createActionIpcServer').mockImplementation(async (_: ActionIpcServerOptions) => ({
@@ -133,7 +134,7 @@ export async function fixture(
     ownerPrincipalId: 'owner',
     agentId: 'owner-agent',
     scopes: [],
-    connectors: [],
+    connectors,
     timeZone: createTimeZoneSetting(timeZone),
     messageLedger: () => ledger,
     memberRecordsTelegram: () => telegram,
@@ -388,12 +389,31 @@ export async function fixture(
         deltaResponse = false;
       }
     },
+    actRecordDelta: async (action: string, input: unknown, delta: SourceDelta) => {
+      const sourceId = sourceDeltaStimulusId(delta);
+      const orderId = `record:${sourceId}:1`;
+      commonActions.set(orderId, { action, input });
+      deltaResponse = true;
+      try {
+        runtime.acceptSourceDelta(delta);
+        await vi.waitFor(() => expect(commonResults.has(orderId)).toBe(true));
+        await settled(sourceId);
+        return commonResults.get(orderId)!;
+      } finally {
+        deltaResponse = false;
+      }
+    },
     holdMemberCompletion: (promise: Promise<void> | undefined) => {
       completionGate = promise;
     },
     finishMemberTurn: (failure: 'before_acceptance' | 'after_acceptance') => {
       finishFailure = failure;
     },
+    onMemberAction: (action: string, input: unknown) => {
+      memberResults.delete(member);
+      memberActions.set(member, { action, input });
+    },
+    memberActionResult: () => memberResults.get(member),
     act: (action: string, input: unknown = {}) => actAs(member, action, input),
     home,
     root,
@@ -404,6 +424,16 @@ export async function fixture(
     settled,
     manage,
     resultFor: (ref: string) => commonResults.get(ref),
+    actScheduled: async (
+      input: import('../../src/runtime/stimulus-delivery.js').ScheduledInput,
+      action: string,
+      body: unknown
+    ) => {
+      commonActions.set(input.id, { action, input: body });
+      runtime.intake.acceptScheduled(input);
+      await vi.waitFor(() => expect(commonResults.has(input.id)).toBe(true));
+      return commonResults.get(input.id)!;
+    },
     outbound,
     observeNative: (id: string, name: string, input: Record<string, unknown>) => {
       nativeTools.set(id, { name, input });

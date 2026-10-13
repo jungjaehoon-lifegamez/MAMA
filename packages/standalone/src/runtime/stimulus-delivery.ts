@@ -2,10 +2,16 @@ import {
   personalJobPayload,
   personalJobSessionKey,
   personalJobOccurrenceId,
-  PersonalJobFinalFailure,
   type PersonalJobStore,
 } from './personal-jobs.js';
+import { PersonalTurnFinalFailure } from './personal-turns.js';
 import { latestCronOccurrence } from './personal-job-cron.js';
+import {
+  personalNoticePayload,
+  personalNoticeSessionKey,
+  type NoticeRef,
+  type PersonalNoticeStore,
+} from './personal-notices.js';
 import { createSerialTurnChain } from './principal-sessions.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import { createHash } from 'node:crypto';
@@ -35,6 +41,7 @@ import {
   parseRecordOrder,
   scheduledReportOrder,
   personalJobOrder,
+  personalNoticeOrder,
   sessionStartBlock,
   type Lesson,
   type SessionStartInput,
@@ -103,6 +110,9 @@ export interface StimulusDeliveryOptions {
   backend: OwnerRuntimeBackend;
   turnChain?: ReturnType<typeof createSerialTurnChain>;
   personalJobs?: PersonalJobStore;
+  personalNotices?: PersonalNoticeStore;
+  /** Re-read each candidate under current access, on the recipient's turn chain only. */
+  readNoticeRef?: (ref: NoticeRef) => Promise<boolean>;
   retirePersonalJobText?: (operationId: string) => void;
   member?: { principalId: string; sessionKey: string; voice: TurnVoice };
   wikiEnabled?: boolean;
@@ -529,7 +539,7 @@ type TurnPlan =
     };
 
 /** What a row's turn says, by kind; a live delta with only history lines has no turn. */
-function planTurn(row: MailboxRow, options: StimulusDeliveryOptions): TurnPlan {
+async function planTurn(row: MailboxRow, options: StimulusDeliveryOptions): Promise<TurnPlan> {
   const zone = options.timeZone.get();
   if (row.kind === 'owner_message') {
     const sender =
@@ -583,6 +593,21 @@ function planTurn(row: MailboxRow, options: StimulusDeliveryOptions): TurnPlan {
       lessonQuery: jobPayload.instruction,
       render: (lessons) =>
         personalJobOrder(jobPayload, row.occurredAt, job.lastCompletedAt ?? job.createdAt, lessons),
+    };
+  }
+  const notice = personalNoticePayload(row);
+  if (options.member && notice) {
+    if (!options.personalNotices?.isActive(row.principalId))
+      return { kind: 'skip', reason: 'personal notice person is no longer active' };
+    if (options.personalNotices.isClosed(row))
+      return { kind: 'skip', reason: 'personal notice already closed' };
+    const refs: NoticeRef[] = [];
+    for (const ref of notice.refs) if (await options.readNoticeRef!(ref)) refs.push(ref);
+    if (refs.length === 0) return { kind: 'skip', reason: 'personal notice has no readable refs' };
+    return {
+      kind: 'turn',
+      lessonQuery: null,
+      render: () => personalNoticeOrder({ ...notice, refs }, row.occurredAt),
     };
   }
   if (options.member) throw new Error(`Member turn does not support stimulus kind ${row.kind}`);
@@ -667,7 +692,12 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
     return fresh;
   };
 
-  const closePersonalJob = async (row: MailboxRow): Promise<void> => {
+  const closePersonalInput = async (row: MailboxRow): Promise<void> => {
+    if (personalNoticePayload(row)) {
+      await options.personalNotices?.close(row);
+      options.retirePersonalJobText?.(row.stimulusId);
+      return;
+    }
     const payload = personalJobPayload(row);
     if (!payload) return;
     await options.personalJobs?.close(row);
@@ -688,15 +718,19 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
     if (row.kind === 'scheduled') {
       if (isRecordOrderRow(row)) await options.recordOrders?.onResult(row, modelRunId ?? null);
       else {
-        if (personalJobPayload(row) && options.personalJobs?.isClosed(row)) {
-          await closePersonalJob(row);
+        if (
+          (personalJobPayload(row) && options.personalJobs?.isClosed(row)) ||
+          (personalNoticePayload(row) && options.personalNotices?.isClosed(row))
+        ) {
+          await closePersonalInput(row);
           return;
         }
         try {
           await options.onScheduledResult?.(row, result);
+          if (personalNoticePayload(row)) await closePersonalInput(row);
         } catch (error) {
-          if (!(error instanceof PersonalJobFinalFailure)) throw error;
-          await closePersonalJob(row);
+          if (!(error instanceof PersonalTurnFinalFailure)) throw error;
+          await closePersonalInput(row);
           await options.onFailed?.(row, stimulusFailureReason(error), modelRunId ?? null);
           return;
         }
@@ -711,9 +745,9 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
       try {
         const replaySourceEndMs = replaySourceCeiling(row);
         activeReplaySourceEndMs = replaySourceEndMs;
-        const plan = planTurn(row, options);
+        const plan = await planTurn(row, options);
         if (plan.kind === 'skip') {
-          await closePersonalJob(row);
+          await closePersonalInput(row);
           // Kagemusha's backfill guard: only history lines, so no live turn and no record order.
           await options.onSkipped?.(row, plan.reason);
           await options.onDelivered?.(row, null);
@@ -730,7 +764,8 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
             const lessons = await pickLessons(
               plan.lessonQuery,
               isNewSession,
-              options.member !== undefined && personalJobPayload(row) !== null
+              options.member !== undefined &&
+                (personalJobPayload(row) !== null || personalNoticePayload(row) !== null)
             );
             const start = isNewSession
               ? sessionStartBlock(
@@ -748,6 +783,9 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
             return text([start, plan.render(lessons, new Date())]);
           },
           sessionKey:
+            (personalNoticePayload(row) && options.member
+              ? personalNoticeSessionKey(row)
+              : undefined) ??
             (personalJobPayload(row) && options.member
               ? personalJobSessionKey(row.principalId, personalJobPayload(row)!.jobId)
               : undefined) ??
@@ -794,6 +832,7 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
       await options.recordOrders.onLost(row, 'record order parked uncertain');
       return 'record check';
     }
+    if (personalNoticePayload(row)) return 'nothing further for this personal notice';
     if (personalJobPayload(row)) return 'the next personal job occurrence';
     if (row.kind === 'scheduled') return 'the next report tick';
     // Other kinds (native_event) have no producer left and owe nothing further.
@@ -808,7 +847,7 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
       await options.onUncertain?.(row, reason);
     },
     onDead: async (row, reason) => {
-      await closePersonalJob(row);
+      await closePersonalInput(row);
       await lost(row, reason);
       await options.onDead?.(row, reason);
     },
@@ -820,7 +859,7 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
       }
       if (personalJobPayload(row) && options.personalJobs) {
         const closed = options.personalJobs.isClosed(row);
-        await closePersonalJob(row);
+        await closePersonalInput(row);
         if (!closed) {
           await options.onFailed?.(
             row,
@@ -830,6 +869,13 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
             null
           );
         }
+        return 'settled';
+      }
+      if (personalNoticePayload(row) && options.personalNotices) {
+        const closed = options.personalNotices.isClosed(row);
+        await closePersonalInput(row);
+        if (!closed)
+          await options.onFailed?.(row, 'Personal notice interrupted before completion', null);
         return 'settled';
       }
       // Core invokes reconciliation only when no delivery in this process owns

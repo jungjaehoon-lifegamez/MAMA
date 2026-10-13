@@ -1,4 +1,10 @@
 import type { MailboxRow } from '@jungjaehoon/mama-core/runtime/mailbox';
+import { memberNoticeRegistrations, type MemberNoticePorts } from '../api/member-notice-actions.js';
+import {
+  createPersonalNoticeStore,
+  type NoticeRef,
+  type PersonalNoticeStore,
+} from './personal-notices.js';
 import { StimulusQuarantine } from '@jungjaehoon/mama-core/runtime/runtime';
 import { createPersonalJobStore, type PersonalJobStore } from './personal-jobs.js';
 import { personalJobRegistrations, PERSONAL_JOB_ACTIONS } from '../api/personal-job-actions.js';
@@ -25,6 +31,7 @@ import {
   createCatalog,
   createDispatcher,
   createPrincipalRepository,
+  isErasedRecord,
   type ActionContext,
   type ActionContract,
   type ActionDispatcher,
@@ -80,6 +87,8 @@ import {
 } from '../api/member-share-actions.js';
 
 const OWNER_ACTIONS = [
+  'member.directory',
+  'member.notice',
   'code_act',
   'graph.query',
   'source.search',
@@ -190,6 +199,7 @@ export interface ActionSurfaceOptions {
   memberRecords?: MemberRecordsPorts;
   memberEnrollment?: MemberEnrollmentPorts;
   memberLifecycle?: MemberLifecyclePorts;
+  memberNotices?: MemberNoticePorts;
   memberDirectoryChange?: <T>(work: () => Promise<T>) => Promise<T>;
   recordManagementReceipt?(receipt: {
     callerPrincipalId?: string;
@@ -201,6 +211,8 @@ export interface ActionSurfaceOptions {
 }
 
 export interface ActionSurface {
+  personalNotices: PersonalNoticeStore;
+  readNoticeRef(ref: NoticeRef, access: JudgmentAccess): Promise<boolean>;
   personalJobs: PersonalJobStore;
   memberRecords: ReturnType<typeof createMemberRecords>;
   releasePrincipal(principalId: string): void;
@@ -430,7 +442,26 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
   });
   const codeAct = codeActRegistration(() => dispatch);
   const personalJobs = createPersonalJobStore(options.adapter, options.timeZone);
+  const personalNotices = createPersonalNoticeStore(options.adapter);
+  const readNoticeRef = async (ref: NoticeRef, access: JudgmentAccess): Promise<boolean> => {
+    const result = await dispatch(
+      { action: 'observationRef' in ref ? 'source.read' : 'memory.read:record', input: ref },
+      { access }
+    );
+    if (result.status !== 'completed') return false;
+    if ('observationRef' in ref) return true;
+    const record = (result.data as { record: object | null }).record;
+    return record !== null && !isErasedRecord(record);
+  };
   const registrations = [
+    ...memberNoticeRegistrations({
+      adapter: options.adapter,
+      ownerPrincipalId: options.ownerPrincipalId,
+      ownerAccess: () => ownerAccess,
+      timeZone: options.timeZone,
+      notices: options.memberNotices,
+      read: readNoticeRef,
+    }),
     ...personalJobRegistrations(personalJobs, options),
     ...core,
     ...lifecycle,
@@ -628,6 +659,8 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
   };
 
   return {
+    personalNotices,
+    readNoticeRef,
     personalJobs,
     memberRecords,
     releasePrincipal: codeAct.releasePrincipal,

@@ -17,10 +17,7 @@ import type { ChatSources } from '../storage/chat-sources.js';
 import { cronOccurrences, latestCronOccurrence, validateJobCron } from './personal-job-cron.js';
 import { localNow, validateTimeZone, type TimeZoneSetting } from './timezone.js';
 import { invalidInput } from '../utils/invalid-input.js';
-import {
-  isDefinitiveTelegramRejection,
-  TelegramJobDeliveryRejected,
-} from '../gateways/telegram-errors.js';
+import { deliverPersonalTurnResult, PersonalTurnFinalFailure } from './personal-turns.js';
 
 export interface PersonalJob {
   jobId: string;
@@ -389,7 +386,7 @@ export function createPersonalJobScheduler(ports: {
   };
 }
 /** Final product failures settle the occurrence without claiming a successful completion. */
-export class PersonalJobFinalFailure extends Error {}
+export { PersonalTurnFinalFailure as PersonalJobFinalFailure };
 /** Durable native result + outbound receipt recover delivery and chat independently of model context. */
 export async function deliverPersonalJobResult(
   row: MailboxRow,
@@ -414,55 +411,32 @@ export async function deliverPersonalJobResult(
     )
       await ports.store.complete(row, ports.access());
   };
-  // The archived exchange proves delivery; a stop before the close revision still owes the close.
-  if (ports.chat.hasJobExchange(payload.jobId, row.occurredAt)) {
-    await completeIfCurrent();
-    return;
-  }
-  if (ports.store.isOffboarded(row.principalId))
-    throw new PersonalJobFinalFailure('Personal job person is no longer active');
-  const text = result.response.trim();
-  const key = personalJobOccurrenceId(payload.jobId, row.occurredAt);
-  const archive = () =>
-    ports.chat.saveJobExchange({
-      jobId: payload.jobId,
-      occurrenceAt: row.occurredAt,
-      instruction: payload.instruction,
-      text,
-      timeZone: payload.timeZone,
-    });
-  // A confirmed send owes chat storage even after job edits or suspension. This host receipt
-  // read grants no new turn access; offboarding above still prevents any new personal storage.
-  if (text !== '[ack]' && ports.delivered(key)) {
-    archive();
-    await completeIfCurrent();
-    return;
-  }
-  const job = ports.store.find(row.principalId, payload.jobId);
-  if (!ports.store.isActive(row.principalId))
-    throw new PersonalJobFinalFailure('Personal job person is no longer active');
-  if (!job || !job.enabled || job.version !== payload.version)
-    throw new PersonalJobFinalFailure('Personal job changed or deleted');
-  const access = ports.access();
-  if (!text)
-    throw new PersonalJobFinalFailure(
-      'Personal job returned no result; use [ack] when there is nothing to tell'
-    );
-  if (text !== '[ack]') {
-    const superseded = ports.store.isSuperseded(row);
-    if (superseded)
-      throw new PersonalJobFinalFailure('Personal job occurrence superseded by a later occurrence');
-    try {
-      if (!(await ports.send(access, text, key)))
-        throw new Error('Personal job DM delivery was not confirmed');
-    } catch (error) {
-      if (error instanceof TelegramJobDeliveryRejected || isDefinitiveTelegramRejection(error))
-        throw new PersonalJobFinalFailure('Personal job DM delivery was rejected', {
-          cause: error,
-        });
-      throw error;
-    }
-    archive();
-  }
-  await ports.store.complete(row, access);
+  await deliverPersonalTurnResult(result, {
+    ...ports,
+    label: 'Personal job',
+    key: personalJobOccurrenceId(payload.jobId, row.occurredAt),
+    isClosed: () => ports.store.isClosed(row),
+    isActive: () => ports.store.isActive(row.principalId),
+    isOffboarded: () => ports.store.isOffboarded(row.principalId),
+    hasExchange: () => ports.chat.hasJobExchange(payload.jobId, row.occurredAt),
+    archive: (text) =>
+      ports.chat.saveJobExchange({
+        jobId: payload.jobId,
+        occurrenceAt: row.occurredAt,
+        instruction: payload.instruction,
+        text,
+        timeZone: payload.timeZone,
+      }),
+    completeIfCurrent,
+    complete: (access) => ports.store.complete(row, access),
+    assertCurrent: () => {
+      const job = ports.store.find(row.principalId, payload.jobId);
+      if (!job || !job.enabled || job.version !== payload.version)
+        throw new PersonalTurnFinalFailure('Personal job changed or deleted');
+      if (result.response.trim() !== '[ack]' && ports.store.isSuperseded(row))
+        throw new PersonalTurnFinalFailure(
+          'Personal job occurrence superseded by a later occurrence'
+        );
+    },
+  });
 }

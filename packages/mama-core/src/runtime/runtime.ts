@@ -188,6 +188,9 @@ export interface StimulusDelivery {
    * A ready consumer that defers would immediately reclaim the same input.
    */
   deliverHost?(row: MailboxRow): Promise<'handled' | 'deferred' | 'unhandled'>;
+  /** Consumer preparation before native admission, e.g. serving this input's principal.
+   * Runs in the input's delivery, outside its producer; must not invoke a model. */
+  prepareNative?(row: MailboxRow): void | Promise<void>;
   /** Host inputs may run while native producers are still opening; defaults to ready(). */
   hostReady?(): boolean;
   /** Reuse recorded results only. Never submit the input to a model again. */
@@ -582,6 +585,7 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
       }
       if (row.kind === 'host_job')
         throw new StimulusQuarantine('Host input has no host delivery port');
+      await delivery!.prepareNative?.(row);
       if (!servedPrincipals.has(row.principalId))
         throw new StimulusQuarantine('Input principal is no longer served');
       const nativeDelivery = mailbox!.nativeInputs.prepare(row.id);

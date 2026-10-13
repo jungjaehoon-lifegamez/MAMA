@@ -2,6 +2,8 @@ import { createPersonalJobScheduler } from './personal-jobs.js';
 import type { MemberEnrollmentPorts, MemberSelection } from '../api/member-enrollment.js';
 import type { ActionResult } from '@jungjaehoon/mama-core';
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
+import { personalNoticePayload } from './personal-notices.js';
+import { StimulusQuarantine } from '@jungjaehoon/mama-core/runtime/runtime';
 import { createPrincipalSessions } from './principal-sessions.js';
 import type { MemberRecordsTelegram } from '../api/member-records.js';
 import type { OwnerMessageLedger } from '../gateways/telegram-message-ledger.js';
@@ -285,7 +287,13 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
     options.ownerPrincipalId,
     {
       onUncertain: options.onStimulusUncertain,
-      onDead: options.onStimulusDead,
+      onDead: async (row, reason) => {
+        if (personalNoticePayload(row)) {
+          await actionSurface?.personalNotices.close(row);
+          options.memberRecordsTelegram?.()?.retireMemberJobText(row.stimulusId);
+        }
+        await options.onStimulusDead?.(row, reason);
+      },
     },
     (id) => {
       if (stopping) throw new Error('Runtime is stopping');
@@ -396,6 +404,15 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       ...(memberRoot === undefined
         ? {}
         : {
+            memberNotices: {
+              mailbox: () => ownerMailbox!,
+              wake: () => {
+                // The recipient delivery prepares service outside the common turn.
+                void intakeRuntime
+                  .drainOnce()
+                  .catch((error: unknown) => options.onPersonalJobError?.(error));
+              },
+            },
             memberRecords: {
               root: memberRoot,
               isStopping: () => stopping,
@@ -767,6 +784,25 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       delivery: {
         ...sessions.delivery,
         deliverHost: surface.deliverManagement,
+        prepareNative: async (row) => {
+          if (personalNoticePayload(row)) {
+            if (principals.findById(row.principalId)?.status !== 'active')
+              throw new StimulusQuarantine('Personal notice person is no longer active');
+            // Core calls this port before native admission, including scheduled inputs.
+            // Serve-on-demand may wait here, in this recipient's delivery, never in the common
+            // action. The one durable notice remains claimed without a native dispatch meanwhile.
+            try {
+              if (!intakeRuntime.servesPrincipal(row.principalId))
+                await serveMemberOnLane(row.principalId);
+            } catch (error) {
+              // Suspend/offboard can finish while service waits for the directory lane.
+              // That lifecycle cancellation is final; an active person's preparation error retries.
+              if (principals.findById(row.principalId)?.status !== 'active')
+                throw new StimulusQuarantine('Personal notice person is no longer active');
+              throw error;
+            }
+          }
+        },
         hostReady: () => !stopping && !surface.memberRecords.isBusy(),
         onSettled: surface.memberRecords.onSettled,
         onDead: (row, reason) => {
