@@ -390,7 +390,7 @@ describe('personal scheduled turns and P10.2 recovery', () => {
           ? vi
               .spyOn(f.runtime.surface.personalJobs, 'close')
               .mockRejectedValue(new Error('fixture stop before close'))
-          : vi.spyOn(gateway!, 'retireMemberJobText').mockImplementation(() => {
+          : vi.spyOn(f.ledger, 'retireUndelivered').mockImplementation(() => {
               throw new Error('fixture stop before retirement');
             });
       await tick();

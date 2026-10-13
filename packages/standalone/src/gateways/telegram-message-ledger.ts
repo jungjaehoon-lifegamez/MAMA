@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -66,6 +66,17 @@ const DEFAULT_TTL_MS = 7 * 24 * 60 * 60_000;
 const DEFAULT_MAX_ENTRIES = 10_000;
 const MAX_RESPONSE_CHARS = 1_000_000;
 const MAX_LEDGER_FILE_BYTES = 8 * 1024 * 1024;
+
+export function outboundLedgerKey(idempotencyKey: string): string {
+  return `outbound:${createHash('sha256').update(`text\0${idempotencyKey}`).digest('hex')}`;
+}
+
+/** A closed personal job or notice occurrence retires its undelivered DM receipt. */
+export function retirePersonalTurnReceipt(ledger: OwnerMessageLedger, operationId: string): void {
+  if (!/^(?:job:[^:]+:\d+|notice:[^:]+:[a-f0-9]{64})$/.test(operationId))
+    throw new Error('Only personal job or notice receipts can be retired');
+  ledger.retireUndelivered(outboundLedgerKey(operationId));
+}
 
 export class OwnerMessageLedger {
   private readonly entries = new Map<string, OwnerMessageLedgerEntry>();

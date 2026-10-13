@@ -26,6 +26,8 @@ import {
   type OwnerMessageLedger,
   type TelegramMessageLedgerEntry,
   DEFAULT_INTERRUPTED_NOTICE,
+  outboundLedgerKey,
+  retirePersonalTurnReceipt,
 } from './telegram-message-ledger.js';
 import { TelegramResponsePresenter } from './telegram-response-presenter.js';
 import {
@@ -140,10 +142,6 @@ function chatIdFromSourceMessageRef(value: string): string {
     throw new Error('Telegram source message reference is invalid');
   }
   return rest.slice(0, separator);
-}
-
-function outboundLedgerKey(idempotencyKey: string): string {
-  return `outbound:${createHash('sha256').update(`text\0${idempotencyKey}`).digest('hex')}`;
 }
 
 /** Telegram personal/common ingress and its durable response transport. */
@@ -334,9 +332,7 @@ export class TelegramGateway extends BaseGateway {
 
   /** Host-only retirement after the mailbox occurrence closes, including inactive recipients. */
   retireMemberJobText(operationId: string): void {
-    if (!/^(?:job:[^:]+:\d+|notice:[^:]+:[a-f0-9]{64})$/.test(operationId))
-      throw new Error('Only personal job or notice receipts can be retired');
-    this.messageLedger.retireUndelivered(outboundLedgerKey(operationId));
+    retirePersonalTurnReceipt(this.messageLedger, operationId);
   }
 
   async sendMemberText(

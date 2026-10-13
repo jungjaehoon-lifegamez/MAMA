@@ -20,6 +20,7 @@ import { createStimulusDelivery, type StimulusDeliveryOptions } from './stimulus
 import { holdsOwnerRole, ownerRuleIds, RULE_KINDS } from './owner-authority.js';
 import type { OwnerPolicyProvider } from './owner-policy.js';
 import { startMemberEgressProxy, type EgressProxy } from './egress-proxy.js';
+import { retirePersonalTurnReceipt } from '../gateways/telegram-message-ledger.js';
 
 export function createMemberSession(
   principalId: string,
@@ -181,9 +182,10 @@ export function createMemberSession(
     personalNotices: surface.personalNotices,
     readNoticeRef: (ref) => surface.readNoticeRef(ref, access()),
     retirePersonalJobText: (key) => {
-      const telegram = options.memberRecordsTelegram?.();
-      if (!telegram) throw new Error('Personal turn Telegram delivery is unavailable');
-      telegram.retireMemberJobText(key);
+      // Receipts live in the shared ledger the gateway writes; it exists without Telegram.
+      const ledger = options.messageLedger?.();
+      if (!ledger) throw new Error('Personal turn receipt ledger is unavailable');
+      retirePersonalTurnReceipt(ledger, key);
     },
     onScheduledResult: (row, result) => {
       const deliveryPorts = {

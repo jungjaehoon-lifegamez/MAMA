@@ -6,7 +6,10 @@ import { personalNoticePayload } from './personal-notices.js';
 import { StimulusQuarantine } from '@jungjaehoon/mama-core/runtime/runtime';
 import { createPrincipalSessions } from './principal-sessions.js';
 import type { MemberRecordsTelegram } from '../api/member-records.js';
-import type { OwnerMessageLedger } from '../gateways/telegram-message-ledger.js';
+import {
+  retirePersonalTurnReceipt,
+  type OwnerMessageLedger,
+} from '../gateways/telegram-message-ledger.js';
 import { createMemberSession } from './member-session.js';
 import { ownerDataReadPaths, ownerNativeDataReadPaths } from './backend-security.js';
 import { validateMemberRoot, setAsideMemberPaths } from './member-paths.js';
@@ -290,7 +293,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       onDead: async (row, reason) => {
         if (personalNoticePayload(row)) {
           await actionSurface?.personalNotices.close(row);
-          options.memberRecordsTelegram?.()?.retireMemberJobText(row.stimulusId);
+          const ledger = options.messageLedger?.();
+          if (ledger) retirePersonalTurnReceipt(ledger, row.stimulusId);
         }
         await options.onStimulusDead?.(row, reason);
       },

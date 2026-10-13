@@ -578,6 +578,19 @@ describe('personal event notices', () => {
     ).toBeUndefined();
   });
 
+  it('[ack] closes and settles without a Telegram gateway; receipts retire through the ledger', async () => {
+    const { f, notice, rows } = await setup();
+    await gateway!.stop();
+    gateway = undefined; // Telegram off: any call through the gateway port would throw here.
+    f.memberResponse('[ack]');
+    expect(await notice()).toMatchObject({ status: 'completed', data: { queued: true } });
+    await f.settled(rows()[0]!.stimulus_id, f.member);
+    expect(f.runtime.runtime.mailbox!.readInput(rows()[0]!.stimulus_id, f.member)?.status).toBe(
+      'acked'
+    );
+    expect(transport.sent).toEqual([]);
+  });
+
   it('plain members get only granted partition refs; all unreadable refs queue nothing', async () => {
     const { f, grant, fact, call, rows, observationRef, archive } = await setup(false);
     grant('fixture-readable');
