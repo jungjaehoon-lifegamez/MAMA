@@ -317,6 +317,7 @@ function loggedOwnerIntake(intake: StimulusIntake, logger: DaemonLogger): TurnIn
     },
     recordOwnerReply: (input) => intake.recordOwnerReply(input),
     ...(intake.isPending === undefined ? {} : { isPending: intake.isPending }),
+    ...(intake.hasOwnerMessage === undefined ? {} : { hasOwnerMessage: intake.hasOwnerMessage }),
   };
 }
 

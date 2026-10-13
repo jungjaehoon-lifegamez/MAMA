@@ -9,6 +9,7 @@ import { bootDaemon, type DaemonHandle } from '../../src/cli/commands/daemon.js'
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
 import { createOwnerRuntime, type OwnerRuntimeOptions } from '../../src/runtime/owner-runtime.js';
 import { createNativeSession } from '../../src/runtime/native-session.js';
+import { TelegramGateway, type TelegramGatewayOptions } from '../../src/gateways/telegram.js';
 import type { MemberConnectionEvent, OutboundAttemptEvent } from '../../src/api/security-events.js';
 
 const transport = vi.hoisted(() => ({
@@ -99,6 +100,7 @@ async function boot() {
   let report!: NonNullable<OwnerRuntimeOptions['outboundAttempts']>;
   let fetchUrl: string | undefined;
   let call = 0;
+  let gatewayOptions: TelegramGatewayOptions | undefined;
   const daemon = await bootDaemon({
     home,
     configPath: join(home, 'config.yaml'),
@@ -119,6 +121,10 @@ async function boot() {
     logger: { info: () => {}, error: () => {} },
     dependencies: {
       createViewerServer: () => ({ start: async () => {}, stop: async () => {}, port: 0 }) as never,
+      createTelegramGateway: (options) => {
+        gatewayOptions = options;
+        return new TelegramGateway(options);
+      },
       createOwnerRuntime: async (options) => {
         report = options.outboundAttempts!;
         runtime = await createOwnerRuntime({
@@ -199,7 +205,7 @@ async function boot() {
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line));
-  return { people, runtime, report, run, alerts, events };
+  return { people, runtime, report, run, alerts, events, gateway: () => gatewayOptions! };
 }
 
 describe('owner-role personal web and connection alerts', () => {
@@ -306,6 +312,20 @@ describe('owner-role personal web and connection alerts', () => {
     );
     expect(f.events().map((event) => event.principalId)).toEqual([person, person, plain, plain]);
   });
+});
+
+it('hands Telegram delivery the storage probe of each intake it logs', async () => {
+  const f = await boot();
+  const principalId = f.people[0]!;
+  const ref = 'telegram:20001:900';
+  const { intake, memberIntake } = f.gateway();
+  const member = await memberIntake(principalId);
+  // Recovery attaches a host notice only to a stored DM; an interrupted one has none.
+  expect(intake.hasOwnerMessage?.(ref)).toBe(false);
+  expect(member.hasOwnerMessage?.(ref)).toBe(false);
+  member.acceptOwnerMessage({ id: ref, channelKey: '20001', occurredAt: 1, text: 'stored' });
+  await vi.waitFor(() => expect(member.hasOwnerMessage?.(ref)).toBe(true));
+  expect(intake.hasOwnerMessage?.(ref)).toBe(false);
 });
 
 it('retries serving an active registered member when its next Telegram DM arrives', async () => {
