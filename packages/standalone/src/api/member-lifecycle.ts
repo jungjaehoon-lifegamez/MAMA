@@ -31,12 +31,17 @@ export const MEMBER_MANAGEMENT_ACTIONS = [
   'manage.member.name',
 ] as const;
 
-export type MemberManagementContext = ActionContext & { memberManagementQueued?: boolean };
+export type MemberManagementContext = ActionContext & {
+  memberManagementQueued?: boolean;
+  /** Authenticated at enqueue; status and role are rechecked when the host job executes. */
+  memberManagementCaller?: string;
+};
 
 export interface MemberLifecyclePorts {
   mailbox(): Mailbox;
   resumeQueued(): void;
   isStopping(): boolean;
+  isServed(principalId: string): boolean;
   turnChain(principalId: string): ReturnType<typeof createSerialTurnChain>;
   resetSession(principalId: string): Promise<void>;
   retire(principalId: string): Promise<void>;
@@ -125,7 +130,16 @@ export function memberLifecycleRegistrations(options: {
         },
       },
       exec: async (input, context: MemberManagementContext) => {
-        const caller = activeOwnerMessageCaller(context, options);
+        const repo = (principals ??= createPrincipalRepository(options.adapter));
+        const queuedCaller = context.memberManagementQueued && context.memberManagementCaller;
+        const callerPrincipal = queuedCaller ? repo.findById(queuedCaller) : undefined;
+        const caller = queuedCaller
+          ? callerPrincipal?.kind === 'member' &&
+            callerPrincipal.status === 'active' &&
+            holdsOwnerRole(repo, queuedCaller)
+            ? queuedCaller
+            : undefined
+          : activeOwnerMessageCaller(context, options);
         if (!caller) {
           throw Object.assign(
             new Error(
@@ -134,7 +148,6 @@ export function memberLifecycleRegistrations(options: {
             { name: 'denied' }
           );
         }
-        const repo = (principals ??= createPrincipalRepository(options.adapter));
         if (change === 'list') {
           const timeZone = options.timeZone.get();
           // Each users_shared pick ends in a host receipt in the common conversation record; a
@@ -246,6 +259,16 @@ export function memberLifecycleRegistrations(options: {
           return { principalId, change, scope, ...result, sessionReset: served, setAside: false };
         }
         if (change === 'resume') {
+          // A durable command can replay after activation but before its common receipt.
+          if (principal.status === 'active' && ports.isServed(principalId))
+            return {
+              principalId,
+              change,
+              status: 'active',
+              sessionReset: true,
+              freshEnvironment: true,
+              cancelledInputs: 0,
+            };
           if (principal.status !== 'suspended')
             throw new Error(`Cannot resume a ${principal.status} member`);
           // Cancel before serving: once served, a queued input is a fresh one the member just sent.

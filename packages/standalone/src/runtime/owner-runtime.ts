@@ -376,7 +376,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         chat.saveOwnerMessage({
           id: ref,
           channelKey: 'management',
-          senderPrincipalId: callerPrincipalId,
+          ...(callerPrincipalId === undefined ? {} : { senderPrincipalId: callerPrincipalId }),
           occurredAt: at,
           text: action,
           payload: { managementAction: action },
@@ -439,6 +439,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
             memberLifecycle: {
               mailbox: () => ownerMailbox!,
               isStopping: () => stopping,
+              isServed: (id) => members.has(id),
               resumeQueued: () => {
                 void intakeRuntime
                   .drainOnce()
@@ -763,6 +764,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         hostReady: () => !stopping && !surface.memberRecords.isBusy(),
         onSettled: surface.memberRecords.onSettled,
         onDead: (row, reason) => {
+          surface.onManagementDead(row, reason);
           surface.memberRecords.onDead(row, reason);
           return sessions.delivery.onDead?.(row, reason);
         },

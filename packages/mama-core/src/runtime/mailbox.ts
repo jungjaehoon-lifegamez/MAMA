@@ -713,13 +713,6 @@ export class Mailbox {
     });
   }
 
-  /**
-   * The loop took this stimulus.
-   *
-   * That is all this says. It is not a claim that anything was read, decided
-   * or done — §4.4 is explicit that a delivery ACK is not a work receipt, and
-   * there is deliberately no field here to record one in.
-   */
   /** Return an unexecuted host claim without spending a retry (for example, at shutdown). */
   deferClaim(id: number): void {
     this.db
@@ -729,6 +722,13 @@ export class Mailbox {
       .run(id);
   }
 
+  /**
+   * The loop took this stimulus.
+   *
+   * That is all this says. It is not a claim that anything was read, decided
+   * or done — §4.4 is explicit that a delivery ACK is not a work receipt, and
+   * there is deliberately no field here to record one in.
+   */
   ack(id: number): void {
     this.stmtAck.run(this.now(), id);
   }

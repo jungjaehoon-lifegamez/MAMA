@@ -308,7 +308,9 @@ function snapshot(adapter: DatabaseInstance, principalId: string): PrincipalReco
     'checkpoint_id,scope_id'
   );
   stores.mailbox_inputs = adapter
-    .prepare('SELECT * FROM mailbox_inputs WHERE principal_id=? ORDER BY id')
+    .prepare(
+      "SELECT * FROM mailbox_inputs WHERE principal_id=? AND (kind IS NULL OR kind<>'host_job') ORDER BY id"
+    )
     .all(principalId) as Row[];
   const inputIds = stores.mailbox_inputs.map((r) => r.id);
   stores.mailbox_input_refs = selectByIds(
@@ -329,7 +331,7 @@ function snapshot(adapter: DatabaseInstance, principalId: string): PrincipalReco
     .prepare(
       `SELECT * FROM mailbox_seen s WHERE (s.principal_id=? OR EXISTS (
     SELECT 1 FROM mailbox_input_refs r JOIN mailbox_inputs i ON i.id=r.input_id WHERE r.ref_id=s.ref_id AND i.principal_id=?))
-    AND NOT EXISTS (SELECT 1 FROM mailbox_input_refs r JOIN mailbox_inputs i ON i.id=r.input_id WHERE r.ref_id=s.ref_id AND i.principal_id<>?) ORDER BY s.ref_id`
+    AND NOT EXISTS (SELECT 1 FROM mailbox_input_refs r JOIN mailbox_inputs i ON i.id=r.input_id WHERE r.ref_id=s.ref_id AND (i.principal_id<>? OR i.kind='host_job')) ORDER BY s.ref_id`
     )
     .all(principalId, principalId, principalId) as Row[];
   stores.native_turn_results = adapter

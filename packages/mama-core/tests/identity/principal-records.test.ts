@@ -413,6 +413,37 @@ describe('principal record export and erasure', () => {
     expect(receipt.counts.model_runs.in_flight).toBe(0);
   });
 
+  it.each(['pending', 'claimed', 'acked', 'dead'])(
+    'excludes %s host jobs and their dedupe refs from personal export and erasure',
+    (status) => {
+      const mailbox = new Mailbox(db);
+      const job = {
+        id: `shared-host-${status}`,
+        kind: 'host_job' as const,
+        principalId: member,
+        channelKey: 'fixture-host',
+        occurredAt: 1,
+        payload: { command: 'shared change', callerPrincipalId: owner },
+      };
+      const id = mailbox.enqueue(job)!;
+      db.prepare('UPDATE mailbox_inputs SET status=? WHERE id=?').run(status, id);
+      const before = {
+        input: rows('mailbox_inputs').find((r) => r.id === id),
+        refs: rows('mailbox_input_refs').filter((r) => r.input_id === id),
+        seen: rows('mailbox_seen').find((r) => r.ref_id === job.id),
+      };
+      const exported = exportRecords();
+      expect(exported.stores.mailbox_inputs.some((r) => r.id === id)).toBe(false);
+      expect(exported.stores.mailbox_input_refs.some((r) => r.input_id === id)).toBe(false);
+      expect(exported.stores.mailbox_seen.some((r) => r.ref_id === job.id)).toBe(false);
+      erase();
+      expect(rows('mailbox_inputs').find((r) => r.id === id)).toEqual(before.input);
+      expect(rows('mailbox_input_refs').filter((r) => r.input_id === id)).toEqual(before.refs);
+      expect(rows('mailbox_seen').find((r) => r.ref_id === job.id)).toEqual(before.seen);
+      expect(mailbox.enqueue(job)).toBeNull();
+    }
+  );
+
   it('exports exactly exclusively personal rows in every store, stable ordering and counts', () => {
     const exported = exportRecords();
     expect(exported).toEqual(exportRecords());

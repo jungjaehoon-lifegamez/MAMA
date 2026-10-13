@@ -162,6 +162,7 @@ export class TelegramGateway extends BaseGateway {
   private readonly messageLedger: TelegramMessageLedger;
   private readonly chatTails = new Map<string, Promise<void>>();
   private readonly pendingMemberIntakes = new Map<string, number>();
+  private readonly enrollmentCompletions = new Set<Promise<void>>();
   private readonly activePresenters = new Map<string, TelegramResponsePresenter>();
   private readonly recentMessageIds = new Map<string, number>();
   private readonly activeChat = new AsyncLocalStorage<{ chatId: string; active: boolean }>();
@@ -259,8 +260,9 @@ export class TelegramGateway extends BaseGateway {
   }
 
   async stop(): Promise<void> {
-    this.pendingEnrollments.clear();
     if (this.bot) await this.bot.stop().catch(() => {});
+    await Promise.all([...this.enrollmentCompletions]);
+    this.pendingEnrollments.clear();
     this.bot = null;
     this.connected = false;
     this.recentMessageIds.clear();
@@ -644,17 +646,30 @@ export class TelegramGateway extends BaseGateway {
     if (message.users_shared) {
       // Enrollment can wait for running member turns. Let polling admit other updates while
       // the host completion sends and records its own final receipt.
-      void this.completeMemberSelection(message, principal!.principalId).catch((error) =>
-        this.log(`telegram enrollment completion failed error=${telegramErrorMessage(error)}`)
+      const completion = this.completeMemberSelection(message, principal!.principalId).catch(
+        (error) =>
+          this.log(`telegram enrollment completion failed error=${telegramErrorMessage(error)}`)
       );
+      this.enrollmentCompletions.add(completion);
+      void completion.finally(() => this.enrollmentCompletions.delete(completion));
       return;
     }
 
     const principalId = principal!.principalId;
     const queued = (intake?: TurnIntake | Promise<TurnIntake>) => {
+      const selected = selectTelegramTextEntities(message);
+      const files = telegramFiles(message);
+      if (!selected.text.trim() && files.length === 0) return;
+      const ref = sourceMessageRef(chatId, message.message_id);
+      const claim = this.claimMessage(message);
       this.pendingMemberIntakes.set(chatId, (this.pendingMemberIntakes.get(chatId) ?? 0) + 1);
       void this.runInChatQueue(chatId, async () =>
-        this.acceptMessage(message, principalId, await (intake ?? this.memberIntake(principalId)))
+        this.acceptMessage(
+          message,
+          principalId,
+          await (intake ?? this.memberIntake(principalId)),
+          claim.claimed ? ref : undefined
+        )
       )
         .catch((error) => {
           this.lastError = telegramErrorMessage(error);
@@ -681,7 +696,8 @@ export class TelegramGateway extends BaseGateway {
   private async acceptMessage(
     message: TelegramMessage,
     principalId: string,
-    intake: TurnIntake
+    intake: TurnIntake,
+    queuedClaim?: string
   ): Promise<void> {
     const chatId = String(message.chat.id);
     const privateChat = message.chat.type === 'private';
@@ -690,7 +706,14 @@ export class TelegramGateway extends BaseGateway {
       'private',
       String(message.from!.id)
     );
-    if (principal?.principalId !== principalId || principal.status !== 'active') return;
+    if (principal?.principalId !== principalId || principal.status !== 'active') {
+      const chatHash = createHash('sha256').update(`chat\0${chatId}`).digest('hex');
+      const senderHash = createHash('sha256').update(`sender\0${message.from!.id}`).digest('hex');
+      console.warn(
+        `telegram message dropped reason=principal_inactive chat_hash=${chatHash} sender_hash=${senderHash}`
+      );
+      return;
+    }
     const ref = sourceMessageRef(chatId, message.message_id);
     const now = Date.now();
     const previous = this.recentMessageIds.get(ref);
@@ -708,7 +731,7 @@ export class TelegramGateway extends BaseGateway {
     }
     if (durable?.state === 'processing' && this.activePresenters.has(ref)) return;
     if (durable?.state === 'processing' && intake.isPending?.(ref)) return;
-    if (durable?.state === 'processing') {
+    if (durable?.state === 'processing' && queuedClaim !== ref) {
       await this.interruptResponse(ref);
       return;
     }
@@ -721,13 +744,7 @@ export class TelegramGateway extends BaseGateway {
       selected.text,
       selected.entities
     );
-    const inputIdentity = createHash('sha256')
-      .update(`${selected.text}\0${files.map(({ file }) => file.file_unique_id).join(',')}`)
-      .digest('hex');
-    const ledgerEntry = this.messageLedger.claim(ref, {
-      deliveryTarget: `telegram:${chatId}`,
-      payloadIdentity: inputIdentity,
-    }).entry;
+    const ledgerEntry = this.claimMessage(message).entry;
     const presenter = this.createResponsePresenter(ref, Number(message.chat.id));
     this.activePresenters.set(ref, presenter);
     try {
@@ -768,6 +785,19 @@ export class TelegramGateway extends BaseGateway {
       this.activePresenters.delete(ref);
       throw error;
     }
+  }
+
+  private claimMessage(message: TelegramMessage) {
+    const selected = selectTelegramTextEntities(message);
+    const files = telegramFiles(message);
+    const inputIdentity = createHash('sha256')
+      .update(`${selected.text}\0${files.map(({ file }) => file.file_unique_id).join(',')}`)
+      .digest('hex');
+    const chatId = String(message.chat.id);
+    return this.messageLedger.claim(sourceMessageRef(chatId, message.message_id), {
+      deliveryTarget: `telegram:${chatId}`,
+      payloadIdentity: inputIdentity,
+    });
   }
 
   private createResponsePresenter(sourceRef: string, chatId: number): TelegramResponsePresenter {
@@ -824,6 +854,12 @@ export class TelegramGateway extends BaseGateway {
           this.log(
             `telegram reply archive skipped key=${sourceRef} reason=missing_response_author`
           );
+        } else if (
+          current.responseAuthor === 'host' &&
+          intake.hasOwnerMessage?.(sourceRef) === false
+        ) {
+          // An intake interrupted before storage has no original to attach its notice to.
+          this.log(`telegram reply archive skipped key=${sourceRef} reason=missing_owner_message`);
         } else {
           intake.recordOwnerReply({
             messageRef: sourceRef,
@@ -953,10 +989,12 @@ export class TelegramGateway extends BaseGateway {
     });
     const current = (previous ?? Promise.resolve()).catch(() => {}).then(() => gate);
     this.chatTails.set(chatId, current);
+    const context = { chatId, active: true };
     try {
       if (previous) await previous.catch(() => {});
-      return await this.activeChat.run({ chatId, active: true }, work);
+      return await this.activeChat.run(context, work);
     } finally {
+      context.active = false;
       release();
       if (this.chatTails.get(chatId) === current) this.chatTails.delete(chatId);
     }

@@ -160,6 +160,84 @@ afterEach(async () => {
 });
 
 describe('P10.1 Telegram person routing', () => {
+  it('recovers every DM acknowledged while its personal intake was still opening', async () => {
+    await gateway.stop();
+    gateway = createGateway(() => new Promise(() => {}));
+    await gateway.start();
+    await send({ message_id: 21, text: 'first waiting message' });
+    await send({ message_id: 22, text: 'second waiting message' });
+    expect(mailbox.readInput('telegram:20001:21', member)).toBeNull();
+    expect(mailbox.readInput('telegram:20001:22', member)).toBeNull();
+    expect(ledger.get('telegram:20001:21')?.state).toBe('processing');
+    expect(ledger.get('telegram:20001:22')?.state).toBe('processing');
+    await restartGateway();
+    expect(ledger.get('telegram:20001:21')?.state).toBe('delivered');
+    expect(ledger.get('telegram:20001:22')?.state).toBe('delivered');
+    expect(transport.sent.filter((m) => m.text.includes('interrupted'))).toHaveLength(2);
+  });
+
+  it('makes a reply from a finished intake task wait for the current chat queue holder', async () => {
+    await gateway.stop();
+    let open!: (intake: ReturnType<typeof createStimulusIntake>) => void;
+    const opening = new Promise<ReturnType<typeof createStimulusIntake>>((r) => (open = r));
+    let reply!: () => void;
+    const ready = new Promise<void>((r) => (reply = r));
+    let answering: Promise<void> | undefined;
+    const intake = intakes.get(member)!;
+    let served = false;
+    const responding = {
+      ...intake,
+      acceptOwnerMessage: (input: Parameters<typeof intake.acceptOwnerMessage>[0]) => {
+        answering = ready.then(() => gateway.deliverResponse(input.id, 'queued final reply'));
+        return intake.acceptOwnerMessage(input);
+      },
+    };
+    gateway = createGateway(() => (served ? responding : opening));
+    await gateway.start();
+    await send();
+    served = true;
+    open(responding);
+    await vi.waitFor(() => expect(mailbox.readInput('telegram:20001:11', member)).not.toBeNull());
+    // Finish the task that scheduled the reply, then occupy the same chat with another send.
+    await new Promise<void>((r) => setImmediate(r));
+    let release!: () => void;
+    const hold = new Promise<void>((r) => (release = r));
+    transport.api.sendMessage.mockImplementationOnce(async (chatId, text) => {
+      await hold;
+      transport.sent.push({ chatId, text });
+      return { message_id: 999 };
+    });
+    const sending = gateway.sendMessage('20001', 'queue holder');
+    try {
+      await new Promise<void>((r) => setImmediate(r));
+      reply();
+      await new Promise<void>((r) => setImmediate(r));
+      expect(transport.edits.some((m) => m.text === 'queued final reply')).toBe(false);
+      expect(ledger.get('telegram:20001:11')?.state).toBe('ready');
+    } finally {
+      release();
+      await sending;
+      await answering;
+    }
+    expect(ledger.get('telegram:20001:11')?.state).toBe('delivered');
+  });
+
+  it('logs a status recheck drop without exposing the transport identity', async () => {
+    await gateway.stop();
+    let open!: (intake: ReturnType<typeof createStimulusIntake>) => void;
+    gateway = createGateway(() => new Promise((r) => (open = r)));
+    await gateway.start();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await send();
+    repository.suspend(member, 4);
+    open(intakes.get(member)!);
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(warn.mock.calls[0][0]).toMatch(/reason=principal_inactive.*chat_hash=.*sender_hash=/);
+    expect(warn.mock.calls[0][0]).not.toContain('20001');
+    expect(mailbox.readInput('telegram:20001:11', member)).toBeNull();
+    warn.mockRestore();
+  });
+
   it('returns during serve-on-demand and accepts other chats while preserving the waiting DM order', async () => {
     await gateway.stop();
     let served!: () => void;
@@ -183,6 +261,7 @@ describe('P10.1 Telegram person routing', () => {
     try {
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(returned).toBe(true);
+      await send({ message_id: 21, text: 'first waiting message' });
       await send({ message_id: 22, text: 'second waiting message' });
       await send({
         message_id: 23,

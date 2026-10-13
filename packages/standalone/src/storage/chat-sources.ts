@@ -71,6 +71,16 @@ export class ChatSources {
     this.save(ownerReplyItem(input, this.principalId, this.agentId, message.channel));
   }
 
+  hasOwnerMessage(messageRef: string): boolean {
+    return (
+      this.adapter
+        .prepare(
+          "SELECT 1 FROM connector_event_index WHERE source_connector='chat' AND source_id=? AND memory_scope_kind='user' AND memory_scope_id=? AND json_extract(metadata_json, '$.kind')='owner_message'"
+        )
+        .get(messageRef, this.principalId) !== undefined
+    );
+  }
+
   private save(item: NormalizedItem): string {
     const [saved] = this.rawStore.save('chat', [item], { collectOnly: true });
     // Intake cannot proceed without exactly one raw item and its projection.

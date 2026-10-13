@@ -1,4 +1,5 @@
 import type { MailboxRow } from '@jungjaehoon/mama-core/runtime/mailbox';
+import { StimulusQuarantine } from '@jungjaehoon/mama-core/runtime/runtime';
 import {
   createMemberEnrollment,
   type MemberEnrollmentPorts,
@@ -188,7 +189,7 @@ export interface ActionSurfaceOptions {
   memberLifecycle?: MemberLifecyclePorts;
   memberDirectoryChange?: <T>(work: () => Promise<T>) => Promise<T>;
   recordManagementReceipt?(receipt: {
-    callerPrincipalId: string;
+    callerPrincipalId?: string;
     operationId: string;
     action: string;
     input: unknown;
@@ -200,6 +201,7 @@ export interface ActionSurface {
   memberRecords: ReturnType<typeof createMemberRecords>;
   releasePrincipal(principalId: string): void;
   deliverManagement(row: MailboxRow): Promise<'handled' | 'deferred' | 'unhandled'>;
+  onManagementDead(row: MailboxRow, reason: string): void;
   completeMemberEnrollment(selection: MemberSelection): ReturnType<ActionDispatcher>;
   createNativeEffectObserver(
     modelRunId: string,
@@ -357,13 +359,40 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
           status: 'scheduled',
           commandId: earlier.stimulusId,
         };
+      // ACKed rows age out before their accepted identities. Do not turn their replay into
+      // an immediate change, or reject a resume whose activation already succeeded.
+      if (
+        context.operationId &&
+        options.adapter
+          .prepare('SELECT 1 FROM mailbox_seen WHERE ref_id=?')
+          .get(`member-management:${context.operationId}`)
+      )
+        return {
+          principalId,
+          change: name.slice('manage.member.'.length),
+          status: 'duplicate',
+          commandId: `member-management:${context.operationId}`,
+        };
       const chain = ports.turnChain(principalId);
+      const pendingHost =
+        options.adapter
+          .prepare(
+            "SELECT 1 FROM mailbox_inputs WHERE principal_id=? AND kind='host_job' AND status IN ('pending','claimed') LIMIT 1"
+          )
+          .get(principalId) !== undefined;
+      // A new resume needs a suspended target, unless an earlier queued change still owns it.
+      // Executing the retained command later may instead find the target already activated.
+      if (name === 'manage.member.resume' && !pendingHost) {
+        const principal = createPrincipalRepository(options.adapter).findById(principalId);
+        if (principal?.status !== 'suspended')
+          throw new Error(`Cannot resume a ${principal?.status} member`);
+      }
       const changesDirectory = [
         'manage.member.suspend',
         'manage.member.resume',
         'manage.member.offboard',
       ].includes(name);
-      if (!changesDirectory && !chain.isBusy())
+      if (!changesDirectory && !chain.isBusy() && !pendingHost)
         return chain.afterCurrent(async () =>
           lifecycle
             .find((registration) => registration.contract.name === name)!
@@ -372,7 +401,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
 
       if (!context.operationId) throw new Error('Member management requires an operation id');
       const commandId = `member-management:${context.operationId}`;
-      ports.mailbox().enqueue({
+      const rowId = ports.mailbox().enqueue({
         id: commandId,
         kind: 'host_job',
         principalId,
@@ -383,28 +412,19 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
             action: name,
             input,
             callerPrincipalId: activeOwnerMessageCaller(context, options),
-            requestPrincipalId: context.access.principalId,
-            sourceMessageRef: context.session?.sourceMessageRef,
           })
         ),
       });
-      ports.resumeQueued();
+      if (rowId !== null) ports.resumeQueued();
       return {
         principalId,
         change: name.slice('manage.member.'.length),
-        status: 'scheduled',
+        status: rowId === null ? 'duplicate' : 'scheduled',
         commandId,
       };
     },
   });
-  const codeAct = codeActRegistration(() => dispatch, {
-    isRunActive: (_principalId, runId) =>
-      (
-        options.adapter.prepare('SELECT status FROM model_runs WHERE model_run_id=?').get(runId) as
-          | { status: string }
-          | undefined
-      )?.status === 'running',
-  });
+  const codeAct = codeActRegistration(() => dispatch);
   const registrations = [
     ...core,
     ...lifecycle,
@@ -516,7 +536,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
         activeOwnerMessageCaller(context, options) === caller) &&
       !(
         result.status === 'completed' &&
-        (result.data as { status?: string })?.status === 'scheduled'
+        ['scheduled', 'duplicate'].includes((result.data as { status?: string })?.status ?? '')
       )
     ) {
       options.recordManagementReceipt?.({
@@ -604,19 +624,48 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
   return {
     memberRecords,
     releasePrincipal: codeAct.releasePrincipal,
+    onManagementDead: (row, reason) => {
+      if (row.kind !== 'host_job' || row.channelKey !== 'member-management') return;
+      if (
+        options.adapter
+          .prepare('SELECT 1 FROM connector_event_index WHERE source_entity_id=?')
+          .get(`host:management:${row.stimulusId}:reply`)
+      )
+        return;
+      const payload = row.payload as {
+        callerPrincipalId?: unknown;
+        action?: unknown;
+        input?: unknown;
+      } | null;
+      options.recordManagementReceipt?.({
+        ...(typeof payload?.callerPrincipalId === 'string'
+          ? { callerPrincipalId: payload.callerPrincipalId }
+          : {}),
+        operationId: row.stimulusId,
+        action: typeof payload?.action === 'string' ? payload.action : 'member-management',
+        input: payload?.input ?? null,
+        result: {
+          status: 'failed',
+          error: { kind: 'internal', code: 'member_management_failed', message: reason },
+        },
+      });
+    },
     deliverManagement: async (row) => {
       if (row.kind !== 'host_job' || row.channelKey !== 'member-management') return 'unhandled';
       const ports = options.memberLifecycle;
-      if (!ports) throw new Error('Member management job requires lifecycle ports');
+      if (!ports) throw new StimulusQuarantine('Member management job requires lifecycle ports');
       const job = row.payload as unknown as {
         action: string;
         input: unknown;
         callerPrincipalId: string;
-        requestPrincipalId: string;
-        sourceMessageRef: string;
       };
-      if (!lifecycle.some((r) => r.contract.name === job.action))
-        throw new Error('Invalid member management job');
+      if (
+        !job ||
+        !lifecycle.some((r) => r.contract.name === job.action) ||
+        typeof job.callerPrincipalId !== 'string' ||
+        !job.callerPrincipalId.trim()
+      )
+        throw new StimulusQuarantine('Invalid member management job');
       const execute = async (): Promise<'handled' | 'deferred'> => {
         if (ports.isStopping()) return 'deferred';
         // The common receipt is also the command's durable completion marker. A replay after
@@ -629,14 +678,14 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
             { action: job.action, input: job.input, operationId: row.stimulusId },
             {
               access: {
-                principalId: job.requestPrincipalId,
+                principalId: job.callerPrincipalId,
                 agentId: 'member-management-host',
                 scopes: [],
                 actions: [job.action],
               },
-              session: { sourceMessageRef: job.sourceMessageRef },
               operationId: row.stimulusId,
               memberManagementQueued: true,
+              memberManagementCaller: job.callerPrincipalId,
             } as MemberManagementContext
           );
           // The authenticated caller id survives even if that caller erased the requesting

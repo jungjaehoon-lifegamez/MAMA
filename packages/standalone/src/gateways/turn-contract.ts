@@ -19,6 +19,8 @@ export interface OwnerMessageInput {
 export interface TurnIntake {
   acceptOwnerMessage(input: OwnerMessageInput): StimulusReceipt;
   recordOwnerReply(input: OwnerReplyInput): void;
+  /** A slow intake may have a delivery claim but no stored original after a restart. */
+  hasOwnerMessage?(sourceMessageRef: string): boolean;
   isPending?(sourceMessageRef: string): boolean;
 }
 

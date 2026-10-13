@@ -61,6 +61,7 @@ export interface StimulusIntake {
   isPending?(sourceMessageRef: string): boolean;
   acceptOwnerMessage(input: OwnerMessageInput): StimulusReceipt;
   recordOwnerReply(input: OwnerReplyInput): void;
+  hasOwnerMessage?(sourceMessageRef: string): boolean;
   acceptSourceDelta(delta: SourceDelta): StimulusReceipt;
   acceptScheduled(input: ScheduledInput): StimulusReceipt;
 }
@@ -204,7 +205,8 @@ function sourcePayload(delta: SourceDelta): JsonValue {
 export function createStimulusIntake(
   runtime: Pick<RuntimeHandle, 'accept' | 'mailbox'>,
   principalId: string,
-  chat: Pick<ChatSources, 'saveOwnerMessage' | 'saveReply'>
+  chat: Pick<ChatSources, 'saveOwnerMessage' | 'saveReply'> &
+    Partial<Pick<ChatSources, 'hasOwnerMessage'>>
 ): StimulusIntake {
   const ownerPayload = (input: OwnerMessageInput): JsonValue => ({
     text: input.text,
@@ -228,6 +230,9 @@ export function createStimulusIntake(
       return row?.status === 'pending';
     },
     recordOwnerReply: (input) => chat.saveReply(input),
+    ...(chat.hasOwnerMessage === undefined
+      ? {}
+      : { hasOwnerMessage: (ref: string) => chat.hasOwnerMessage!(ref) }),
     acceptOwnerMessage: (input) => {
       const observationRef = chat.saveOwnerMessage(input);
       return runtime.accept({

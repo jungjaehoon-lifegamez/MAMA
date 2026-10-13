@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
-import { createPrincipalRepository } from '@jungjaehoon/mama-core';
-import { existsSync, readdirSync } from 'node:fs';
+import { createPrincipalRepository, exportPrincipalRecords } from '@jungjaehoon/mama-core';
+import { existsSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fixture } from '../helpers/member-runtime.js';
 
@@ -478,6 +478,17 @@ it('keeps a busy-target management job through restart and records its receipt e
     const row = f.runtime.runtime.mailbox!.readInput(commandId, f.member);
     expect(row).not.toBeNull();
     expect(row!.channelKey).toBe('member-management');
+    expect(row!.payload).toEqual({
+      action: 'manage.member.grant',
+      input: { principalId: f.member, scopeKind: 'project', scopeId: 'fixture-durable-partition' },
+      callerPrincipalId: f.managingOwner,
+    });
+    expect(
+      exportPrincipalRecords(f.runtime.database.adapter, f.member).stores.mailbox_inputs.some(
+        (input) => input.id === row!.id
+      )
+    ).toBe(false);
+    expect(f.runtime.runtime.mailbox!.readInput(commandId, f.member)).not.toBeNull();
     const restarting = f.restart();
     held.release();
     await restarting;
@@ -547,6 +558,206 @@ it('keeps a busy-target management job through restart and records its receipt e
   } finally {
     held.release();
   }
+});
+
+it('replays a resume after activation but before its receipt without resetting the fresh session', async () => {
+  const f = await fixture();
+  await f.manage('suspend');
+  const adapter = f.runtime.database.adapter;
+  const job = { stimulus_id: 'member-management:fixture-resume-before-receipt', id: 0 };
+  job.id = f.runtime.runtime.mailbox!.enqueue({
+    id: job.stimulus_id,
+    kind: 'host_job',
+    principalId: f.member,
+    channelKey: 'member-management',
+    occurredAt: Date.now(),
+    payload: {
+      action: 'manage.member.resume',
+      input: { principalId: f.member },
+      callerPrincipalId: f.managingOwner,
+    },
+  })!;
+  adapter
+    .prepare("UPDATE mailbox_inputs SET status='claimed', claimed_at=0, acked_at=NULL WHERE id=?")
+    .run(job.id);
+  // Persist the real resume effects, then crash before the job stores a receipt or ACK.
+  createPrincipalRepository(adapter).resume(f.member, Date.now());
+  await f.runtime.serveMember(f.member);
+  const marker = join(f.root, f.member, 'workspace', 'resumed.txt');
+  writeFileSync(marker, 'fresh environment');
+  expect(
+    adapter
+      .prepare('SELECT 1 FROM connector_event_index WHERE source_entity_id=?')
+      .get(`host:management:${job.stimulus_id}:reply`)
+  ).toBeUndefined();
+  await f.restart();
+  const stop = vi.spyOn(f.natives.get(f.member)!, 'stop');
+  await vi.waitFor(() =>
+    expect(
+      f.runtime.runtime.mailbox!.inputStatus(job.id),
+      JSON.stringify(
+        f.runtime.database.adapter
+          .prepare('SELECT last_error FROM mailbox_inputs WHERE id=?')
+          .get(job.id)
+      )
+    ).toBe('acked')
+  );
+  const receipt = f.runtime.database.adapter
+    .prepare('SELECT content FROM connector_event_index WHERE source_entity_id=?')
+    .get(`host:management:${job.stimulus_id}:reply`) as { content: string };
+  expect(JSON.parse(receipt.content).result).toMatchObject({
+    status: 'completed',
+    data: { change: 'resume', status: 'active' },
+  });
+  expect(stop).not.toHaveBeenCalled();
+  expect(existsSync(marker)).toBe(true);
+});
+
+it.each(['pending', 'claimed'] as const)(
+  'keeps a later grant behind an earlier %s host job on an idle target',
+  async (status) => {
+    const f = await fixture();
+    const request = f.message(f.managingOwner);
+    await f.settled(request, f.managingOwner);
+    const mailbox = f.runtime.runtime.mailbox!;
+    const id = mailbox.enqueue({
+      id: 'fixture-earlier-host',
+      kind: 'host_job',
+      principalId: f.member,
+      channelKey: 'member-management',
+      occurredAt: Date.now(),
+      payload: {
+        action: 'manage.member.grant',
+        input: { principalId: f.member, scopeKind: 'project', scopeId: 'fixture-ordered' },
+        callerPrincipalId: f.managingOwner,
+      },
+    })!;
+    // The producer has persisted a job; delivery has not reserved its target chain yet.
+    f.runtime.database.adapter
+      .prepare('UPDATE mailbox_inputs SET status=? WHERE id=?')
+      .run(status, id);
+    const result = await f.runtime.surface.hostToolCall(
+      'manage.member.revoke',
+      {
+        principalId: f.member,
+        scopeKind: 'project',
+        scopeId: 'fixture-ordered',
+      },
+      'fixture-later-host',
+      {
+        access: { ...f.runtime.surface.ownerAccess, principalId: f.managingOwner },
+        session: { sourceMessageRef: request },
+      }
+    );
+    expect(result).toMatchObject({ status: 'completed', data: { status: 'scheduled' } });
+    if (status === 'claimed') mailbox.ack(id);
+    await f.runtime.runtime.drainOnce();
+    await vi.waitFor(() =>
+      expect(mailbox.readInput('member-management:fixture-later-host', f.member)?.status).toBe(
+        'acked'
+      )
+    );
+    expect(
+      createPrincipalRepository(f.runtime.database.adapter).listActiveGrants(f.member)
+    ).toEqual([]);
+  }
+);
+
+it.each(['suspend', 'resume', 'grant'] as const)(
+  'returns duplicate for %s when only the accepted management identity remains',
+  async (change) => {
+    const f = await fixture();
+    const request = f.message(f.managingOwner);
+    await f.settled(request, f.managingOwner);
+    const mailbox = f.runtime.runtime.mailbox!;
+    const commandId = 'member-management:fixture-deduped';
+    const input =
+      change === 'grant'
+        ? { principalId: f.member, scopeKind: 'project', scopeId: 'fixture-duplicate' }
+        : { principalId: f.member };
+    const id = mailbox.enqueue({
+      id: commandId,
+      kind: 'host_job',
+      principalId: f.member,
+      channelKey: 'member-management',
+      occurredAt: 1,
+      payload: {
+        action: `manage.member.${change}`,
+        input,
+        callerPrincipalId: f.managingOwner,
+      },
+    })!;
+    f.runtime.database.adapter.prepare('DELETE FROM mailbox_inputs WHERE id=?').run(id);
+    const result = await f.runtime.surface.hostToolCall(
+      `manage.member.${change}`,
+      input,
+      'fixture-deduped',
+      {
+        access: { ...f.runtime.surface.ownerAccess, principalId: f.managingOwner },
+        session: { sourceMessageRef: request },
+      }
+    );
+    expect(result).toMatchObject({ status: 'completed', data: { status: 'duplicate', commandId } });
+    expect(createPrincipalRepository(f.runtime.database.adapter).findById(f.member)?.status).toBe(
+      'active'
+    );
+  }
+);
+
+it('quarantines an invalid management job and records a common failure receipt once', async () => {
+  const f = await fixture();
+  const mailbox = f.runtime.runtime.mailbox!;
+  const id = mailbox.enqueue({
+    id: 'fixture-invalid-host',
+    kind: 'host_job',
+    principalId: f.member,
+    channelKey: 'member-management',
+    occurredAt: Date.now(),
+    payload: {
+      action: 'manage.member.unknown',
+      input: { principalId: f.member },
+      callerPrincipalId: f.managingOwner,
+    },
+  })!;
+  await f.runtime.runtime.drainOnce();
+  expect(mailbox.inputStatus(id)).toBe('dead');
+  const receipts = () =>
+    f.runtime.database.adapter
+      .prepare('SELECT content FROM connector_event_index WHERE source_entity_id=?')
+      .all('host:management:fixture-invalid-host:reply') as Array<{ content: string }>;
+  expect(receipts()).toHaveLength(1);
+  expect(JSON.parse(receipts()[0].content).result).toMatchObject({
+    status: 'failed',
+    error: { message: 'Invalid member management job' },
+  });
+  await f.runtime.runtime.drainOnce();
+  expect(receipts()).toHaveLength(1);
+});
+
+it('quarantines a management job without lifecycle ports and records its common failure', async () => {
+  const f = await fixture('codex', true, true);
+  const mailbox = f.runtime.runtime.mailbox!;
+  const id = mailbox.enqueue({
+    id: 'fixture-unavailable-host',
+    kind: 'host_job',
+    principalId: f.member,
+    channelKey: 'member-management',
+    occurredAt: Date.now(),
+    payload: {
+      action: 'manage.member.resume',
+      input: { principalId: f.member },
+      callerPrincipalId: f.managingOwner,
+    },
+  })!;
+  await f.runtime.runtime.drainOnce();
+  expect(mailbox.inputStatus(id)).toBe('dead');
+  const receipt = f.runtime.database.adapter
+    .prepare('SELECT content FROM connector_event_index WHERE source_entity_id=?')
+    .get('host:management:fixture-unavailable-host:reply') as { content: string };
+  expect(JSON.parse(receipt.content).result).toMatchObject({
+    status: 'failed',
+    error: { message: 'Member management job requires lifecycle ports' },
+  });
 });
 
 it('recovers reciprocal owner suspension jobs after restart with one active owner and both receipts', async () => {

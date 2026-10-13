@@ -182,7 +182,11 @@ export interface NativeDeliveryContext {
 
 export interface StimulusDelivery {
   deliver(row: MailboxRow, context: NativeDeliveryContext): Promise<void>;
-  /** Consumer-owned durable host inputs, including unserved principals; never invoke a model. */
+  /**
+   * Consumer-owned durable host inputs, including unserved principals; never invoke a model.
+   * Return deferred only while hostReady() (or ready()) is false, and resume draining when ready.
+   * A ready consumer that defers would immediately reclaim the same input.
+   */
   deliverHost?(row: MailboxRow): Promise<'handled' | 'deferred' | 'unhandled'>;
   /** Host inputs may run while native producers are still opening; defaults to ready(). */
   hostReady?(): boolean;

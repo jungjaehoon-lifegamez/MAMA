@@ -264,6 +264,45 @@ async function fixture() {
 }
 
 describe('P10.3 enrollment from owner-role DMs', () => {
+  it('joins detached enrollment and its final receipt before gateway shutdown returns', async () => {
+    const f = await fixture();
+    await f.request();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    f.completeWith(async () => {
+      await gate;
+      return {
+        status: 'completed',
+        data: {
+          status: 'exists',
+          principalId: f.owner,
+          connector: 'telegram',
+          namespace: 'private',
+        },
+      };
+    });
+    const selection = f.message({
+      users_shared: { request_id: f.requestId(), users: [{ user_id: Number(selectedId) }] },
+    });
+    await selection;
+    await vi.waitFor(() => expect(f.selected).toHaveBeenCalled());
+    let stopped = false;
+    const stopping = f.gateway.stop().then(() => {
+      stopped = true;
+    });
+    try {
+      await new Promise<void>((r) => setImmediate(r));
+      expect(stopped).toBe(false);
+    } finally {
+      release();
+      await stopping;
+    }
+    const receipt = f.database.adapter
+      .prepare("SELECT content FROM connector_event_index WHERE author='host'")
+      .all() as Array<{ content: string }>;
+    expect(receipt.some((r) => r.content.includes('Enrollment exists:'))).toBe(true);
+  });
+
   it('keeps the owner supplied name through Telegram selection and stores it for the new member', async () => {
     const f = await fixture();
     expect(
