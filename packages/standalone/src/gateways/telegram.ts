@@ -291,6 +291,17 @@ export class TelegramGateway extends BaseGateway {
     await this.deliverReadyEntry(sourceRef);
   }
 
+  /** Close one accepted input with the configured host notice, preserving any ready reply. */
+  async interruptResponse(sourceRef: string): Promise<void> {
+    const entry = this.messageLedger.get(sourceRef);
+    if (!entry) throw new Error(`Telegram interruption has no accepted message ${sourceRef}`);
+    if (entry.state === 'delivered') return;
+    this.responseIntake(sourceRef);
+    if (entry.state === 'processing')
+      this.messageLedger.markInterrupted(sourceRef, this.interruptedNotice, 'html-v1');
+    await this.deliverReadyEntry(sourceRef);
+  }
+
   async sendMessage(chatId: string, text: string, idempotencyKey?: string): Promise<void> {
     if (!this.bot || !this.connected) throw new Error('Telegram gateway not connected');
     this.requireAllowedChat(chatId);
@@ -647,8 +658,7 @@ export class TelegramGateway extends BaseGateway {
     if (durable?.state === 'processing' && this.activePresenters.has(ref)) return;
     if (durable?.state === 'processing' && intake.isPending?.(ref)) return;
     if (durable?.state === 'processing') {
-      this.messageLedger.markInterrupted(ref, this.interruptedNotice, 'html-v1');
-      await this.deliverReadyEntry(ref);
+      await this.interruptResponse(ref);
       return;
     }
 
@@ -807,8 +817,7 @@ export class TelegramGateway extends BaseGateway {
           continue;
         }
         if (entry.state === 'processing' && !intake.isPending?.(entry.key)) {
-          this.messageLedger.markInterrupted(entry.key, this.interruptedNotice, 'html-v1');
-          await this.deliverReadyEntry(entry.key);
+          await this.interruptResponse(entry.key);
         }
       } catch (error) {
         // Delivery already recorded its progress; one entry must not keep polling from starting.

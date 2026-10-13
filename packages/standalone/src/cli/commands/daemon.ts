@@ -80,6 +80,7 @@ export interface DaemonGateway {
   answered(sourceRef: string): boolean;
   requestMemberEnrollment?(sourceRef: string, ownerUserId: string): Promise<void>;
   cancelMemberEnrollment?(principalId: string): void;
+  interruptResponse?(sourceRef: string): Promise<void>;
   recoverPendingResponses(): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -605,10 +606,21 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
           `stimulus parked dead kind=${row.kind ?? 'unknown'} mailbox_id=${row.id} reason=${stimulusFailureReason(reason)}`
         ),
       onLessonSearchFailed: (reason) => logger.error(`lesson recall failed reason=${reason}`),
-      onStimulusSkipped: (row, reason) =>
+      onStimulusSkipped: async (row, reason) => {
         logger.info(
           `stimulus skipped kind=${row.kind ?? 'unknown'} mailbox_id=${row.id} reason=${reason}`
-        ),
+        );
+        if (
+          options.mode === 'replay' ||
+          row.kind !== 'owner_message' ||
+          reason !== 'inactive_owner_sender'
+        )
+          return;
+        const selected = gateways.get(sourceForRef(row.stimulusId));
+        if (!selected?.interruptResponse)
+          throw new Error('Owner messenger is not available for an interrupted response');
+        await selected.interruptResponse(row.stimulusId);
+      },
       onRecordOrderEvent: (event) => {
         const line = `record order ${event.type} delta=${event.deltaStimulusId} attempt=${event.attempt}${
           'order' in event ? ` order=${event.order}` : ''

@@ -42,7 +42,12 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 
-async function boot(suspendDuringTurn = false, ownerRole = true, submit = true) {
+async function boot(
+  suspendDuringTurn = false,
+  ownerRole = true,
+  submit = true,
+  interruptedNotice?: string
+) {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'member-interrupt-home-')));
   const memberRoot = realpathSync(mkdtempSync(join(tmpdir(), 'member-interrupt-root-')));
   roots.push(home, memberRoot);
@@ -90,6 +95,9 @@ async function boot(suspendDuringTurn = false, ownerRole = true, submit = true) 
     logging: { level: 'info', file: join(home, 'daemon.log') },
     member_root: memberRoot,
     telegram: { enabled: true, allowed_chats: ['-100'], owner_chat_id: '-100', polling: false },
+    ...(interruptedNotice === undefined
+      ? {}
+      : { delivery: { interrupted_notice: interruptedNotice } }),
   };
   const options: Parameters<typeof bootDaemon>[0] = {
     home,
@@ -151,13 +159,13 @@ async function boot(suspendDuringTurn = false, ownerRole = true, submit = true) 
   let daemon = await bootDaemon(options);
   daemons.push(daemon);
   const ref = 'telegram:20001:11';
-  const send = async (messageId = 11, group = false) =>
+  const send = async (messageId = 11, group = false, senderId = group ? 20002 : 20001) =>
     transport.handler!({
       message: {
         message_id: messageId,
         date: 1_700_000_000,
         chat: { id: group ? -100 : 20001, type: group ? 'supergroup' : 'private' },
-        from: { id: group ? 20002 : 20001, is_bot: false },
+        from: { id: senderId, is_bot: false },
         text: 'Personal question',
       },
     });
@@ -175,10 +183,11 @@ async function boot(suspendDuringTurn = false, ownerRole = true, submit = true) 
   const chatRows = (sourceRef = ref) =>
     runtime.database.adapter
       .prepare(
-        "SELECT content, memory_scope_id, metadata_json FROM connector_event_index WHERE source_connector='chat' AND source_entity_id=?"
+        "SELECT content, author, memory_scope_id, metadata_json FROM connector_event_index WHERE source_connector='chat' AND source_entity_id=?"
       )
       .all(`${sourceRef}:reply`) as Array<{
       content: string;
+      author: string;
       memory_scope_id: string;
       metadata_json: string;
     }>;
@@ -190,6 +199,7 @@ async function boot(suspendDuringTurn = false, ownerRole = true, submit = true) 
       return runtime;
     },
     person,
+    groupSender,
     ref,
     ledger,
     chatRows,
@@ -245,6 +255,63 @@ describe('P10.1 same-process personal DM interruption', () => {
     expect(f.ledger()?.state).toBe('processing');
     expect(transport.editMessageText).not.toHaveBeenCalled();
     expect(f.chatRows()).toEqual([]);
+  });
+});
+
+describe('P10.3 suspended common-channel sender', () => {
+  it('closes the skipped progress message once with a host interruption while another owner still runs', async () => {
+    const notice = 'Queued request interrupted. Please send a new message.';
+    const f = await boot(false, true, false, notice);
+    transport.sendMessage
+      .mockResolvedValueOnce({ message_id: 201 })
+      .mockResolvedValueOnce({ message_id: 202 });
+    const skippedRef = 'telegram:-100:21';
+    const activeRef = 'telegram:-100:22';
+    await f.send(21, true);
+    await f.send(22, true, 20001);
+    expect(f.ledger(skippedRef)?.state).toBe('processing');
+    expect(f.ledger(activeRef)?.state).toBe('processing');
+    expect(f.runtime.runtime.mailbox!.readInput(skippedRef, 'owner')?.status).toBe('pending');
+    expect(transport.sendMessage.mock.calls).toEqual([
+      [-100, '⏳'],
+      [-100, '⏳'],
+    ]);
+    createPrincipalRepository(f.runtime.database.adapter).suspend(f.groupSender, 4);
+
+    await f.drain();
+    await vi.waitFor(() =>
+      expect(
+        f.runtime.database.adapter
+          .prepare('SELECT last_error FROM mailbox_inputs WHERE stimulus_id=?')
+          .get(skippedRef)
+      ).toEqual({ last_error: 'inactive_owner_sender' })
+    );
+    expect(f.ledger(skippedRef)?.state).toBe('delivered');
+    expect(f.chatRows(skippedRef)).toEqual([
+      expect.objectContaining({ content: notice, author: 'host', memory_scope_id: 'owner' }),
+    ]);
+    expect(JSON.parse(f.chatRows(skippedRef)[0]!.metadata_json).deliveryVerified).toBe(true);
+    await f.drain();
+    await vi.waitFor(() => expect(f.ledger(activeRef)?.state).toBe('delivered'));
+    expect(f.modelCalls()).toBe(1);
+    expect(f.chatRows(activeRef)).toEqual([
+      expect.objectContaining({
+        content: 'Next personal answer',
+        author: 'owner-agent',
+        memory_scope_id: 'owner',
+      }),
+    ]);
+    expect(transport.editMessageText.mock.calls).toEqual([
+      [-100, 201, notice],
+      [-100, 202, 'Next personal answer'],
+    ]);
+
+    await f.daemon.gateway!.recoverPendingResponses();
+    await f.drain();
+    expect(transport.editMessageText).toHaveBeenCalledTimes(2);
+    expect(transport.sendMessage).toHaveBeenCalledTimes(2);
+    expect(f.chatRows(skippedRef)).toHaveLength(1);
+    expect(f.modelCalls()).toBe(1);
   });
 });
 
