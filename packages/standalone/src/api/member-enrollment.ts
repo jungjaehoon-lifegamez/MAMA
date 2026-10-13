@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import {
   createPrincipalRepository,
-  PRINCIPAL_DISPLAY_NAME_MAX_LENGTH,
   type ActionContext,
   type ActionDispatcher,
   type ActionRegistration,
@@ -46,7 +45,11 @@ export function createMemberEnrollment(options: {
         type: 'object',
         additionalProperties: false,
         properties: {
-          name: { type: 'string', pattern: '\\S', maxLength: PRINCIPAL_DISPLAY_NAME_MAX_LENGTH },
+          name: {
+            type: 'string',
+            pattern: '\\S',
+            description: 'Optional member display name: 1 to 120 characters after trimming.',
+          },
         },
       },
       examples: [{ title: 'Ask the owner to choose a member', input: {} }],

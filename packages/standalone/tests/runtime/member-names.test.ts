@@ -112,6 +112,11 @@ it('refuses naming the common principal and unknown principals, and rejects inva
   expect(createPrincipalRepository(f.runtime.database.adapter).findById(f.member)).toMatchObject({
     displayName: 'Kept name',
   });
+  // The limit counts the trimmed name, not the padding around it.
+  completed(await f.manage('name', { principalId: f.member, name: `  ${'y'.repeat(120)}  ` }));
+  expect(createPrincipalRepository(f.runtime.database.adapter).findById(f.member)).toMatchObject({
+    displayName: 'y'.repeat(120),
+  });
 });
 
 it.each(['codex', 'claude'] as const)(

@@ -1,6 +1,5 @@
 import {
   createPrincipalRepository,
-  PRINCIPAL_DISPLAY_NAME_MAX_LENGTH,
   type ActionRegistration,
   type ActionContract,
   type JudgmentAccess,
@@ -46,9 +45,8 @@ export function memberLifecycleRegistrations(options: {
     name: {
       type: 'string',
       pattern: '\\S',
-      maxLength: PRINCIPAL_DISPLAY_NAME_MAX_LENGTH,
       description:
-        'Owner supplied member display name, trimmed before storage. Telegram names are not used.',
+        'Owner supplied member display name: 1 to 120 characters after trimming. Telegram names are not used.',
     },
     scopeKind: { type: 'string', enum: ['project'] },
     scopeId: {
