@@ -16,6 +16,7 @@ import { RawStore } from '../../src/storage/source-archive.js';
 import { createStoredSourceReader } from '../../src/api/stored-source-reader.js';
 import { createReportStore } from '../../src/api/report-handler.js';
 import { fixture } from '../helpers/member-runtime.js';
+import { createPrincipalSessions } from '../../src/runtime/principal-sessions.js';
 
 const COMMON = 'common-fixture';
 const OWN_DM = 'fixture-person-dm';
@@ -83,11 +84,13 @@ describe('P10.1 owner authority in a personal member DM', () => {
       helpTopics: { sources: 'Fixture source procedure.' },
       attachmentPorts: { telegram: () => null, discord: () => null, slack: () => null },
       memberLifecycle: {
+        turnChain: createPrincipalSessions(COMMON).turnChain,
         resetSession: async () => {},
         retire: async () => {},
         resume: async () => {},
         cancelQueued: () => 0,
       },
+      memberDirectoryChange: createPrincipalSessions(COMMON).exclusive,
     });
     const chats = [
       [person, OWN_DM],
@@ -326,7 +329,7 @@ describe('common session sender attribution', () => {
         now: 4,
       });
       const dm = 'telegram:fixture:sender-dm';
-      f.runtime.serveMember(f.member).acceptOwnerMessage({
+      f.runtime.memberIntake(f.member).acceptOwnerMessage({
         id: dm,
         channelKey: f.memberDm,
         occurredAt: 1,
@@ -432,15 +435,17 @@ describe('owner rules reach the personal DM session', () => {
         }
       )
     );
-  const grantOwner = (f: Fixture) => {
+  const grantOwner = async (f: Fixture) => {
     const repo = createPrincipalRepository(f.runtime.database.adapter);
     repo.grantRole({ principalId: f.member, role: 'owner', now: 4 });
-    return repo.registerMember({
+    const plain = repo.registerMember({
       connector: 'telegram',
       namespace: 'private',
       externalId: 'fixture-plain-member',
       now: 5,
     });
+    await f.runtime.serveMember(plain);
+    return plain;
   };
 
   it.each(['codex', 'claude'] as const)(
@@ -486,7 +491,7 @@ describe('owner rules reach the personal DM session', () => {
   it('rotates an owner DM session on a policy change while a plain member keeps its session', async () => {
     let policy = { content: 'FIXTURE_POLICY_ONE', fingerprint: 'policy-one', loaded: true };
     const f = await fixture('codex', true, false, 'UTC', undefined, 'fixture-member', () => policy);
-    const plain = grantOwner(f);
+    const plain = await grantOwner(f);
     const turn = async (id: string) => {
       await f.settled(f.message(id), id);
       return f.turns.at(-1)!;
@@ -506,7 +511,7 @@ describe('owner rules reach the personal DM session', () => {
 
   it('starts with personal records and common rule kinds, keeping other common and private records out', async () => {
     const f = await fixture();
-    const plain = grantOwner(f);
+    const plain = await grantOwner(f);
     await save(f, f.member, {
       ...memoryInput,
       topic: 'personal',
@@ -538,7 +543,7 @@ describe('owner rules reach the personal DM session', () => {
 
   it('recalls a common owner correction next to personal lessons without allowing its replacement in DM', async () => {
     const f = await fixture();
-    const plain = grantOwner(f);
+    const plain = await grantOwner(f);
     await f.settled(f.message(f.member, 'start session'), f.member);
     await f.settled(f.message(plain, 'start session'), plain);
     const common = await save(f, 'owner', {

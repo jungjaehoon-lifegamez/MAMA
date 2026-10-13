@@ -58,7 +58,7 @@ export function messageTurnCaller(
   return row?.sender ?? undefined;
 }
 
-/** Re-read status and role at execution, inside the shared serial turn slot. */
+/** Re-read status and role when the action executes, including after a target-chain wait. */
 export function activeOwnerMessageCaller(
   context: ActionContext,
   ports: OwnerMessageAuthority

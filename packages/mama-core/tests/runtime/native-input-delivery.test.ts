@@ -315,6 +315,73 @@ describe('v7 R2: native acceptance is durable and separate from adapter completi
     expect(h.read()?.nativeDelivery?.state).toBe('settled');
   });
 
+  it('claims up to maxPendingInputs for each principal while another waits for native ACK', async () => {
+    // This test exercises the claim window, not socket binding. Keep the runtime and mailbox real.
+    const listener = vi
+      .spyOn(await import('../../src/client/ipc.js'), 'createActionIpcServer')
+      .mockResolvedValue({ close: async () => {} } as never);
+    cleanup.push(() => {
+      listener.mockRestore();
+    });
+    let finish!: () => void;
+    const held = new Promise<void>((resolve) => (finish = resolve));
+    const started: string[] = [];
+    const h = await boot({
+      maxPendingInputs: 2,
+      maxPerTick: 8,
+      deliver: async (row, context) => {
+        started.push(row.stimulusId);
+        await held;
+        context.onInputDispatch({
+          backend: 'codex',
+          sessionId: row.principalId,
+          inputId: context.nativeInputId,
+        });
+        context.onAccepted({
+          backend: 'codex',
+          sessionId: row.principalId,
+          turnId: row.stimulusId,
+        });
+      },
+    });
+    h.runtime.servePrincipal({
+      access: { principalId: 'other', agentId: 'other-agent', scopes: [], actions: [] },
+      credentialPath: join(h.dir, 'other-credential'),
+    });
+    try {
+      for (const principalId of ['owner', 'other'])
+        for (let n = 1; n <= 3; n++)
+          h.runtime.accept({
+            id: `${principalId}-${n}`,
+            kind: 'owner_message',
+            principalId,
+            channelKey: 'fixture',
+            occurredAt: n,
+            payload: { text: 'fixture input' },
+          });
+      await vi.waitFor(() => expect(started).toHaveLength(4));
+      expect(started).toEqual(['owner-1', 'owner-2', 'other-1', 'other-2']);
+      for (const principalId of ['owner', 'other']) {
+        expect(h.runtime.mailbox!.readInput(`${principalId}-2`, principalId)?.status).toBe(
+          'claimed'
+        );
+        expect(h.runtime.mailbox!.readInput(`${principalId}-3`, principalId)?.status).toBe(
+          'pending'
+        );
+      }
+      finish();
+      await vi.waitFor(() => expect(started).toHaveLength(6));
+      for (const principalId of ['owner', 'other'])
+        await vi.waitFor(() =>
+          expect(h.runtime.mailbox!.readInput(`${principalId}-3`, principalId)?.status).toBe(
+            'acked'
+          )
+        );
+    } finally {
+      finish();
+    }
+  });
+
   it('journals a second input steered into the same native turn under its own mailbox row', async () => {
     let finishFirst!: () => void;
     const firstResult = new Promise<void>((resolve) => {

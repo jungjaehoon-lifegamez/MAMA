@@ -208,7 +208,10 @@ export interface StimulusDelivery {
   leaseMs?: number;
   /** How many rows one tick delivers before yielding. */
   maxPerTick?: number;
-  /** Bound inputs waiting for native ACK; accepted model results do not consume this window. */
+  /**
+   * Per-principal bound waiting for native ACK. Across served principals the claim window
+   * is principals × maxPendingInputs; accepted results do not consume this window.
+   */
   maxPendingInputs?: number;
   /**
    * How often to look when nothing has been accepted. `0` means only on accept.
@@ -495,7 +498,14 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
   };
   let reconciliationCursor = 0;
   type DrainResult = { delivered: number; failed: number; dead: number };
-  const activeDeliveries = new Map<number, { accepted: boolean; result: Promise<DrainResult> }>();
+  const activeDeliveries = new Map<
+    number,
+    {
+      principalId: string;
+      accepted: boolean;
+      result: Promise<DrainResult>;
+    }
+  >();
   const reportedUncertain = new Set<number>();
   let drainScheduled = false;
   const scheduleDrain = (): void => {
@@ -770,9 +780,17 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
         }
       }
       for (let count = 0; count < maxPerTick && !stopped && delivery.ready?.() !== false; count++) {
-        const waiting = [...activeDeliveries.values()].filter((active) => !active.accepted).length;
-        if (waiting >= maxPendingInputs) break;
-        const row = mailbox.claimNext(delivery.prefer ? { prefer: delivery.prefer } : {});
+        const waiting = new Map<string, number>();
+        for (const active of activeDeliveries.values()) {
+          if (!active.accepted)
+            waiting.set(active.principalId, (waiting.get(active.principalId) ?? 0) + 1);
+        }
+        const row = mailbox.claimNext({
+          prefer: delivery.prefer,
+          excludePrincipals: [...waiting]
+            .filter(([, count]) => count >= maxPendingInputs)
+            .map(([id]) => id),
+        });
         if (!row) break;
         const completion = Promise.resolve()
           .then(() => deliverClaim(row))
@@ -780,7 +798,11 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
             activeDeliveries.delete(row.id);
             scheduleDrain();
           });
-        activeDeliveries.set(row.id, { accepted: false, result: completion });
+        activeDeliveries.set(row.id, {
+          principalId: row.principalId,
+          accepted: false,
+          result: completion,
+        });
         started.push(completion);
       }
     } finally {

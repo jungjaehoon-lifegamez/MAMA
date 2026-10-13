@@ -369,7 +369,7 @@ async function run(args) {
       throw new Error('Fixture principal does not match enrollment identity');
     }
     // One bounded turn. No gateway is constructed and no owner model turn is submitted.
-    runtime.serveMember(state.memberId).acceptOwnerMessage({
+    runtime.memberIntake(state.memberId).acceptOwnerMessage({
       id: `p4:${args.backend}`,
       channelKey: 'fixture:member',
       occurredAt: Date.now(),

@@ -34,6 +34,7 @@ export function createMemberEnrollment(options: {
   isOwnerMessageTurn(sourceMessageRef: string, principalId: string): boolean;
   ownerAccess(): JudgmentAccess;
   ports?: MemberEnrollmentPorts;
+  directoryChange?: <T>(work: () => Promise<T>) => Promise<T>;
 }) {
   // A completion exists only while a host-issued dispatcher operation is executing.
   const completions = new Map<string, MemberSelection>();
@@ -55,7 +56,7 @@ export function createMemberEnrollment(options: {
       },
       examples: [{ title: 'Ask the owner to choose a member', input: {} }],
     },
-    exec: async (input, context: ActionContext) => {
+    exec: async (input, context: ActionContext & { memberEnrollmentQueued?: boolean }) => {
       const name = (input as { name?: string }).name?.trim();
       if (name !== undefined && !memberNameAllowed(name))
         throw Object.assign(new Error("A name may use letters, digits, spaces and . - ' · only"), {
@@ -93,6 +94,10 @@ export function createMemberEnrollment(options: {
         await ports.requestSelection(ref!, dm.id, name);
         return { status: 'pending' };
       }
+      if (!context.memberEnrollmentQueued)
+        return options.directoryChange!(async () =>
+          registration.exec(input, { ...context, memberEnrollmentQueued: true } as ActionContext)
+        );
       const repo = createPrincipalRepository(options.adapter);
       const current = repo.resolveByExternal('telegram', 'private', selection.userId);
       const receipt = (

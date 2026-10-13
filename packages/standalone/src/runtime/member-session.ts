@@ -134,7 +134,8 @@ export function createMemberSession(
       const nextRoles = roles();
       const rolesChanged = JSON.stringify(nextRoles) !== JSON.stringify(sessionRoles);
       if (rolesChanged || JSON.stringify(next) !== JSON.stringify(deniedReadPaths)) {
-        // Enrollment and role changes finish on the shared serial chain before this turn.
+        // New member paths and archives finish exclusively between member turns. Refresh
+        // this session's read denies before its next process runs.
         await current.resetSession(sessionKey);
         await current.stop();
         if (rolesChanged) {

@@ -49,12 +49,35 @@ describe('persistent CLI request timeout', () => {
 
   it('reports a compact boundary observed before a request times out', async () => {
     vi.useFakeTimers();
-    const { proc, emit } = readyProcess({ requestTimeout: 1_000 });
+    const { proc, child, emit } = readyProcess({ requestTimeout: 1_000 });
     const pending = proc.sendMessage('fixture');
     emit({ type: 'system', subtype: 'compact_boundary' });
     const rejected = expect(pending).rejects.toMatchObject({ usage: { compaction_count: 1 } });
     vi.advanceTimersByTime(1_001);
+    child.emit('exit', null, 'SIGTERM');
     await rejected;
+  });
+
+  it('keeps the timed-out request pending until the child exits', async () => {
+    vi.useFakeTimers();
+    const { proc, child } = readyProcess({ requestTimeout: 1_000 });
+    const pending = proc.sendMessage('fixture');
+    let ended = false;
+    const rejection = expect(pending).rejects.toThrow('Request timeout: no output for 1000 ms');
+    void pending.catch(() => {
+      ended = true;
+    });
+    await vi.advanceTimersByTimeAsync(1_001);
+    await Promise.resolve();
+    expect(child.signals).toEqual(['SIGTERM']);
+    expect(ended).toBe(false);
+    await vi.advanceTimersByTimeAsync(3_000);
+    await Promise.resolve();
+    expect(child.signals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(ended).toBe(false);
+    child.emit('exit', null, 'SIGKILL');
+    await rejection;
+    expect(ended).toBe(true);
   });
 
   it('escalates to SIGKILL when the child ignores SIGTERM', () => {
@@ -89,6 +112,7 @@ describe('persistent CLI request timeout', () => {
     expect(settled).not.toHaveBeenCalled();
     expect(child.signals).toEqual([]);
     vi.advanceTimersByTime(1_000);
+    child.emit('exit', null, 'SIGTERM');
     await expect(result).rejects.toThrow('Request timeout: no output for 1000 ms');
     expect(child.signals).toEqual(['SIGTERM']);
   });
@@ -106,6 +130,7 @@ describe('persistent CLI request timeout', () => {
     await Promise.resolve();
     expect(settled).not.toHaveBeenCalled();
     vi.advanceTimersByTime(400);
+    child.emit('exit', null, 'SIGTERM');
     await expect(result).rejects.toThrow('Request timeout: running longer than 3000 ms');
     expect(child.signals).toEqual(['SIGTERM']);
   });

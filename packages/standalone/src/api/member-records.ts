@@ -32,7 +32,7 @@ export interface MemberRecordsPorts {
   ledger(): OwnerMessageLedger | undefined;
   telegram(): MemberRecordsTelegram | undefined;
   access(id: string): JudgmentAccess;
-  turnChain: ReturnType<typeof createSerialTurnChain>;
+  turnChain(id: string): ReturnType<typeof createSerialTurnChain>;
   retire(id: string): Promise<void>;
   serve(id: string): void;
   isStopping(): boolean;
@@ -169,7 +169,8 @@ export function createMemberRecords(options: {
   };
   // Members whose erasure is scheduled or running. Only these pause claims for everyone: the
   // member must stay unserved with its queue untouched until the export is delivered. An export
-  // deletes nothing, so it holds the chain only while its archive is built.
+  // deletes nothing; its member snapshot slot ends before the upload, once the archive
+  // directory (workspace/files) and snapshot are complete.
   const erasing = new Set<string>();
   // Members with an export still uploading: their turns run, but no second export or erasure
   // starts until this one is delivered, so archives and uploads never pile up.
@@ -180,20 +181,19 @@ export function createMemberRecords(options: {
       .catch((error) => console.error('[Member records] scheduled work failed', error))
       .finally(() => jobs.delete(work));
   };
-  const enqueue = (work: (leaveChain: () => void) => Promise<void>) => {
-    track(
-      ports().turnChain.next(async () => {
-        let leaveChain!: () => void;
-        const left = new Promise<void>((resolve) => (leaveChain = resolve));
-        const run = work(leaveChain);
-        track(run);
-        try {
-          await Promise.race([left, run]);
-        } finally {
-          if (!ports().isStopping()) ports().resumeQueued();
-        }
-      })
-    );
+  const enqueue = (id: string, work: (leaveChain: () => void) => Promise<void>) => {
+    const runSlot = async () => {
+      let leaveChain!: () => void;
+      const left = new Promise<void>((resolve) => (leaveChain = resolve));
+      const run = work(leaveChain);
+      track(run);
+      try {
+        await Promise.race([left, run]);
+      } finally {
+        if (!ports().isStopping()) ports().resumeQueued();
+      }
+    };
+    track(ports().turnChain(id).next(runSlot));
   };
   const take = (row: MailboxRow) => {
     const job = scheduled.get(row.id);
@@ -208,7 +208,7 @@ export function createMemberRecords(options: {
     erasing.delete(job.principalId);
     if (!ports().isStopping()) {
       const label = job.kind === 'erase' ? 'Erasure' : 'Export';
-      enqueue(() =>
+      enqueue(job.principalId, () =>
         sendReceipt(
           job,
           `${label} did not run because the ${job.kind === 'erase' ? 'confirming' : 'requesting'} turn did not complete (${outcome}: ${reason}).\nYour personal records and files were kept. Make a new request in a later member message.\nYour enrollment and grants are kept.`
@@ -222,7 +222,7 @@ export function createMemberRecords(options: {
       id = job.principalId;
     let left = false;
     // An export's archive is a consistent snapshot once built: the member may run turns again
-    // and the upload continues outside the shared chain.
+    // and the upload continues outside that member's chain.
     const leave = () => {
       if (left || job.kind !== 'export') return;
       left = true;
@@ -312,7 +312,9 @@ export function createMemberRecords(options: {
     }
     try {
       try {
-        p.serve(id);
+        // Only erasure retired the session. Export uploads may outlive later lifecycle work;
+        // they never create or restore a session after leaving the member snapshot slot.
+        if (job.kind === 'erase') p.serve(id);
       } catch (error) {
         // Keep the step that stopped the job: it decides what was erased and what remains.
         if (failure === undefined) {
@@ -360,7 +362,7 @@ export function createMemberRecords(options: {
       inputId: row.id,
       commandId,
       kind,
-      release: ports().turnChain.hold(),
+      release: ports().turnChain(row.principalId).hold(),
     });
     blocked.add(row.principalId);
     if (kind === 'erase') erasing.add(row.principalId);
@@ -454,7 +456,11 @@ export function createMemberRecords(options: {
       if (ports().isStopping()) {
         blocked.delete(job.principalId);
         erasing.delete(job.principalId);
-      } else enqueue((leaveChain) => runJob(job, leaveChain));
+      } else {
+        // Export writes workspace/files; erasure recreates this member's runtime/temp paths.
+        // Other members already deny those paths, so both use only this member's chain.
+        enqueue(job.principalId, (leaveChain) => runJob(job, leaveChain));
+      }
       job.release();
     },
     onDead: (row: MailboxRow, reason: string) => cancelConfirmation(row, 'dead', reason),

@@ -130,7 +130,7 @@ async function fixture(recordFails = false) {
         },
       }) as never,
     onMemberResult: (row, result) =>
-      runtime.serveMember(row.principalId).recordOwnerReply({
+      runtime.memberIntake(row.principalId).recordOwnerReply({
         messageRef: row.stimulusId,
         text: result.response,
         occurredAt: Date.now(),
@@ -143,16 +143,23 @@ async function fixture(recordFails = false) {
     await runtime.stop();
   });
   const repo = createPrincipalRepository(runtime.database.adapter);
+  const selectionsFinished = new Set<string>();
+  const completionErrors: string[] = [];
   const gateway = new TelegramGateway({
     token: 'fixture-token',
+    log: (line) => completionErrors.push(line),
     registry: repo,
     intake: runtime.intake,
     memberIntake: (principalId) => runtime.serveMember(principalId),
     principalPaths: (principalId) => runtime.principalPaths(principalId),
     onMemberSelection: (selection) => runtime.completeMemberEnrollment(selection),
     recordMemberSelection: (exchange) => {
-      if (recordFails) throw new Error('fixture record failure');
-      runtime.recordHostExchange(exchange);
+      try {
+        if (recordFails) throw new Error('fixture record failure');
+        runtime.recordHostExchange(exchange);
+      } finally {
+        selectionsFinished.add(exchange.message.id);
+      }
     },
     messageLedgerPath: join(home, 'ledger.json'),
     config: { allowedChats: [String(commonRoom)], ownerChatId: String(commonRoom), polling: false },
@@ -178,11 +185,23 @@ async function fixture(recordFails = false) {
   const ref = await message({ text: 'fixture first personal question' });
   await settled(ref);
   transport.send.mockClear();
-  const select = (requestId = 1, users = [{ user_id: selectedId }]) =>
-    message({
-      users_shared: { request_id: requestId, users },
-    });
-  return { home, runtime, gateway, repo, person, turns, message, settled, select };
+  const select = async (requestId = 1, users = [{ user_id: selectedId }]) => {
+    const ref = await message({ users_shared: { request_id: requestId, users } });
+    await vi.waitFor(() => expect(selectionsFinished.has(ref)).toBe(true));
+    return ref;
+  };
+  return {
+    home,
+    runtime,
+    gateway,
+    repo,
+    person,
+    turns,
+    message,
+    settled,
+    select,
+    completionErrors,
+  };
 }
 
 describe('enrollment host receipts remain in the requesting DM and the common record', () => {
@@ -310,7 +329,12 @@ describe('enrollment host receipts remain in the requesting DM and the common re
   it('stores an undelivered refusal without presenting it in the next personal session context', async () => {
     const f = await fixture();
     transport.send.mockRejectedValueOnce(new Error('fixture send failure'));
-    await expect(f.select()).rejects.toThrow('fixture send failure');
+    await f.select();
+    await vi.waitFor(() =>
+      expect(f.completionErrors).toContain(
+        'telegram enrollment completion failed error=fixture send failure'
+      )
+    );
     const row = f.runtime.database.adapter
       .prepare(
         `SELECT metadata_json FROM connector_event_index
@@ -332,6 +356,11 @@ describe('enrollment host receipts remain in the requesting DM and the common re
       expect.stringContaining('enrollment receipt record failed: fixture record failure')
     );
     transport.send.mockRejectedValueOnce(new Error('fixture send failure'));
-    await expect(f.select()).rejects.toThrow('fixture send failure');
+    await f.select();
+    await vi.waitFor(() =>
+      expect(f.completionErrors).toContain(
+        'telegram enrollment completion failed error=fixture send failure'
+      )
+    );
   });
 });

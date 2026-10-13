@@ -1489,36 +1489,39 @@ export class PersistentClaudeProcess extends EventEmitter {
       `[PersistentCLI] Request timeout (${reason}) — killing process to prevent zombie`
     );
 
-    if (this.currentReject) {
-      this.currentReject(this.withPromptUsage(new Error(`Request timeout: ${reason}`)));
-      this.resetRequestState();
-    }
-
-    // ⚠️ Timed-out processes MUST be killed.
-    // Setting state to 'idle' without killing leaves zombie processes consuming memory.
-    // When SessionPool creates new sessions without cleaning up old processes,
-    // Claude processes accumulate and exhaust system memory.
-    if (this.process && !this.process.killed) {
-      // `killed` turns true as soon as SIGTERM is sent, so escalation must watch the exit itself.
-      const child = this.process;
-      let exited = false;
-      const markExited = () => {
-        exited = true;
-      };
-      if (typeof child.once === 'function') {
-        child.once('exit', markExited);
-        child.once('close', markExited);
-      }
-      child.kill('SIGTERM');
-      const forceKillTimer = setTimeout(() => {
-        if (!exited) child.kill('SIGKILL');
-      }, 3000);
-      forceKillTimer.unref?.();
-    }
+    const reject = this.currentReject;
+    const error = this.withPromptUsage(new Error(`Request timeout: ${reason}`));
+    this.resetRequestState();
     this.state = 'dead';
     this.awaitingToolResults = false;
     this.pendingToolUseStartedAt = null;
-    this.emit('idle'); // F7: Trigger message queue drain (after cleanup)
+    const child = this.process;
+    const ended = () => {
+      reject?.(error);
+      this.emit('idle');
+    };
+    if (!child || (child.exitCode !== null && child.exitCode !== undefined) || child.signalCode) {
+      ended();
+      return;
+    }
+    // A timeout does not release the principal's turn until the process has exited. `killed`
+    // only means a signal was sent; directory changes must also wait through escalation.
+    let exited = false;
+    const forceKillTimer = setTimeout(() => {
+      if (!exited) child.kill('SIGKILL');
+    }, 3000);
+    forceKillTimer.unref?.();
+    const markExited = () => {
+      if (exited) return;
+      exited = true;
+      clearTimeout(forceKillTimer);
+      child.removeListener('exit', markExited);
+      child.removeListener('close', markExited);
+      ended();
+    };
+    child.once('exit', markExited);
+    child.once('close', markExited);
+    child.kill('SIGTERM');
   }
 
   /** A request stops after `requestTimeout` without output, or after `requestMaxMs` in all. */

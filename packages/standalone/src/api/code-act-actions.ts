@@ -122,7 +122,7 @@ export interface CodeActResult {
 type CarriedValues = Record<string, unknown>;
 
 const DEFAULT_TIMEOUT_MS = 300_000;
-const CARRIED_RUNS = 4;
+const CARRIED_RUNS_PER_PRINCIPAL = 4;
 
 /**
  * Run the code in a fresh worker process; host calls are answered by `host.call`. `carried` is
@@ -268,10 +268,9 @@ export const CODE_ACT_CONTRACT: ActionContract = {
  * caller is granted, and each call is dispatched with the caller's own context.
  */
 export function codeActRegistration(dispatcher: () => ActionDispatcher): ActionRegistration {
-  // What each run's scripts left on globalThis. Runs are serial in one owner runtime, so the
-  // latest run is the one that continues; the daemon is long-lived and a script can hold a whole
-  // ledger, so only the latest few runs keep theirs.
-  const carriedByRun = new Map<string, CarriedValues>();
+  // Principals run concurrently; activity in one must not evict another's carried values.
+  // Retain the latest four runs per principal; scripts can carry entire ledgers.
+  const carriedByPrincipal = new Map<string, Map<string, CarriedValues>>();
   return {
     contract: CODE_ACT_CONTRACT,
     exec: async (input, context: ActionContext) => {
@@ -288,6 +287,9 @@ export function codeActRegistration(dispatcher: () => ActionDispatcher): ActionR
       const callable = new Set(functions.map((fn) => fn.name));
       let calls = 0;
       const runId = context.session?.modelRunId;
+      const principalId = context.access.principalId;
+      let carriedByRun = carriedByPrincipal.get(principalId);
+      if (!carriedByRun) carriedByPrincipal.set(principalId, (carriedByRun = new Map()));
       const before = runId === undefined ? {} : (carriedByRun.get(runId) ?? {});
       const { carried: after, ...result } = await runCodeAct(
         (input as { code: string }).code,
@@ -322,7 +324,7 @@ export function codeActRegistration(dispatcher: () => ActionDispatcher): ActionR
       carriedByRun.delete(runId);
       carriedByRun.set(runId, current);
       for (const oldest of carriedByRun.keys()) {
-        if (carriedByRun.size <= CARRIED_RUNS) break;
+        if (carriedByRun.size <= CARRIED_RUNS_PER_PRINCIPAL) break;
         carriedByRun.delete(oldest);
       }
       const { kept: _ownView, ...rest } = result;

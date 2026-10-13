@@ -57,7 +57,7 @@ export interface TelegramGatewayOptions {
   token: string;
   intake: TurnIntake;
   registry: Pick<PrincipalRepository, 'resolveByExternal' | 'listRoles'>;
-  memberIntake: (principalId: string) => TurnIntake;
+  memberIntake: (principalId: string) => TurnIntake | Promise<TurnIntake>;
   principalPaths: (principalId: string) => { downloadsDir: string };
   config?: Partial<TelegramGatewayConfig>;
   messageLedgerPath?: string;
@@ -281,7 +281,7 @@ export class TelegramGateway extends BaseGateway {
       throw new Error('Telegram response destination conflicts with its accepted message');
     }
     if (existing.state === 'delivered') return;
-    this.responseIntake(sourceRef);
+    await this.responseIntake(sourceRef);
     if (existing.state === 'ready' && existing.response !== response) {
       throw new Error('Telegram response conflicts with its durable ledger entry');
     }
@@ -296,7 +296,7 @@ export class TelegramGateway extends BaseGateway {
     const entry = this.messageLedger.get(sourceRef);
     if (!entry) throw new Error(`Telegram interruption has no accepted message ${sourceRef}`);
     if (entry.state === 'delivered') return;
-    this.responseIntake(sourceRef);
+    await this.responseIntake(sourceRef);
     if (entry.state === 'processing')
       this.messageLedger.markInterrupted(sourceRef, this.interruptedNotice, 'html-v1');
     await this.deliverReadyEntry(sourceRef);
@@ -601,7 +601,7 @@ export class TelegramGateway extends BaseGateway {
     );
   }
 
-  private responseIntake(sourceRef: string): TurnIntake {
+  private async responseIntake(sourceRef: string): Promise<TurnIntake> {
     const chatId = chatIdFromSourceMessageRef(sourceRef);
     const recipient = this.registry.resolveByExternal('telegram', 'private', chatId);
     if (recipient) {
@@ -641,12 +641,16 @@ export class TelegramGateway extends BaseGateway {
     }
 
     if (message.users_shared) {
-      await this.completeMemberSelection(message, principal!.principalId);
+      // Enrollment can wait for running member turns. Let polling admit other updates while
+      // the host completion sends and records its own final receipt.
+      void this.completeMemberSelection(message, principal!.principalId).catch((error) =>
+        this.log(`telegram enrollment completion failed error=${telegramErrorMessage(error)}`)
+      );
       return;
     }
 
     const ref = sourceMessageRef(chatId, message.message_id);
-    const intake = privateChat ? this.memberIntake(principal!.principalId) : this.intake;
+    const intake = privateChat ? await this.memberIntake(principal!.principalId) : this.intake;
     const now = Date.now();
     const previous = this.recentMessageIds.get(ref);
     if (previous !== undefined && now - previous <= MESSAGE_DEDUP_TTL_MS) return;
@@ -763,7 +767,7 @@ export class TelegramGateway extends BaseGateway {
       const current = this.messageLedger.get(sourceRef);
       if (!current || current.state === 'delivered') return;
       if (current.deliveryUncertain) throw new Error('Telegram response delivery is uncertain');
-      const intake = this.responseIntake(sourceRef);
+      const intake = await this.responseIntake(sourceRef);
       const presenter =
         this.activePresenters.get(sourceRef) ?? this.createResponsePresenter(sourceRef, chatId);
       try {
@@ -817,7 +821,7 @@ export class TelegramGateway extends BaseGateway {
           continue;
         }
         if (!entry.key.startsWith('telegram:')) continue;
-        const intake = this.responseIntake(entry.key);
+        const intake = await this.responseIntake(entry.key);
         if (entry.state === 'ready' && entry.response !== undefined) {
           await this.deliverReadyEntry(entry.key);
           continue;

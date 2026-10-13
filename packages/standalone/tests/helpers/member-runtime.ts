@@ -110,6 +110,9 @@ export async function fixture(
   let gate: Promise<void> | undefined;
   let memberGate: Promise<void> | undefined;
   let completionGate: Promise<void> | undefined;
+  const principalGates = new Map<string, Promise<void>>();
+  const nativeTools = new Map<string, { name: string; input: Record<string, unknown> }>();
+  const outbound: import('../../src/api/security-events.js').OutboundAttemptEvent[] = [];
   let readIds: string[] = [];
   const reads: ActionResult[][] = [];
   let sequence = 0;
@@ -135,6 +138,7 @@ export async function fixture(
     maxTurns: 10,
     embedder: { embed: async () => new Float32Array(1024).fill(0.25) },
     ownerPolicyProvider,
+    outboundAttempts: (event) => outbound.push(event),
     memberEnrollment: {
       requestSelection: async () => {},
     },
@@ -180,8 +184,11 @@ export async function fixture(
           });
           fresh = false;
           activeFingerprint = opts?.sessionPolicyFingerprint;
+          const nativeTool = nativeTools.get(principal);
+          if (nativeTool) callbacks?.onToolUse?.(nativeTool.name, nativeTool.input);
           if (principal === 'owner' && gate) await gate;
           if (principal !== 'owner' && memberGate) await memberGate;
+          await principalGates.get(principal);
           const call = async (action: string, input: unknown): Promise<ActionResult> => {
             const operationId = `fixture-call-${++sequence}`;
             if (backend === 'codex') {
@@ -202,7 +209,7 @@ export async function fixture(
           };
           const ref = (opts?.toolExecutionContext as { sourceMessageRef: string }).sourceMessageRef;
           const commonAction = commonActions.get(ref);
-          if (principal === 'owner' && commonAction) {
+          if (commonAction) {
             commonActions.delete(ref);
             commonResults.set(ref, await call(commonAction.action, commonAction.input));
           } else if (principal === 'owner' && pendingAction) {
@@ -287,7 +294,7 @@ export async function fixture(
   ) => {
     const id = `telegram:fixture:message-${++sequence}`;
     if (action) commonActions.set(id, action);
-    (principal === 'owner' ? runtime.intake : runtime.serveMember(principal)).acceptOwnerMessage({
+    (principal === 'owner' ? runtime.intake : runtime.memberIntake(principal)).acceptOwnerMessage({
       id,
       channelKey: 'fixture',
       occurredAt: sequence,
@@ -312,7 +319,21 @@ export async function fixture(
     });
     await settled(id);
     expect(commonResults.has(id)).toBe(true);
-    return commonResults.get(id)!;
+    const result = commonResults.get(id)!;
+    const queued =
+      result.status === 'completed'
+        ? (result.data as { status?: string; commandId?: string })
+        : undefined;
+    if (queued?.status !== 'scheduled') return result;
+    let final: ActionResult | undefined;
+    await vi.waitFor(() => {
+      const row = runtime.database.adapter
+        .prepare('SELECT content FROM connector_event_index WHERE source_entity_id=?')
+        .get(`host:management:${queued.commandId}:reply`) as { content: string } | undefined;
+      expect(row).toBeDefined();
+      final = JSON.parse(row!.content).result;
+    });
+    return final!;
   };
   const actAs = async (principal: string, action: string, input: unknown = {}) => {
     memberResults.delete(principal);
@@ -359,7 +380,16 @@ export async function fixture(
     message,
     settled,
     manage,
+    resultFor: (ref: string) => commonResults.get(ref),
+    outbound,
+    observeNative: (id: string, name: string, input: Record<string, unknown>) => {
+      nativeTools.set(id, { name, input });
+    },
     pool,
+    blockPrincipal: (id: string, promise: Promise<void> | undefined) => {
+      if (promise) principalGates.set(id, promise);
+      else principalGates.delete(id);
+    },
     blockOwner: (promise: Promise<void> | undefined) => {
       gate = promise;
     },

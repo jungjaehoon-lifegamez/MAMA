@@ -71,6 +71,22 @@ const stimulus = (over: Partial<Stimulus> = {}): Stimulus => ({
 });
 
 describe('the mailbox carries no consumer vocabulary', () => {
+  it('excludes saturated principals before preferred-kind selection without cancelling their pending rows', () => {
+    const mailbox = new Mailbox(freshDb('principal-window'));
+    mailbox.enqueue(
+      stimulus({ id: 'fixture-saturated', principalId: 'fixture-first', kind: 'owner_message' })
+    );
+    mailbox.enqueue(stimulus({ id: 'fixture-independent', principalId: 'fixture-second' }));
+    const row = mailbox.claimNext({
+      prefer: ['owner_message'],
+      excludePrincipals: ['fixture-first'],
+    });
+    expect(row?.principalId).toBe('fixture-second');
+    expect(mailbox.readInput('fixture-saturated', 'fixture-first')?.status).toBe('pending');
+    expect(mailbox.claimNext({ excludePrincipals: ['fixture-first'] })).toBeNull();
+    expect(mailbox.claimNext()?.principalId).toBe('fixture-first');
+  });
+
   it('upgrades a consumer-created pre-103 seen table without core migrations', () => {
     const path = join(os.tmpdir(), `mailbox-consumer-${randomUUID()}.db`);
     tempPaths.add(path);

@@ -360,6 +360,7 @@ it('binds and replaces tokens and refuses issuing, pre-issued, foreign and used 
     externalId: 'fixture-other',
     now: 4,
   });
+  await f.runtime.serveMember(other);
   const otherRef = f.message(other);
   await f.settled(otherRef, other);
   expect(
@@ -385,7 +386,7 @@ it('keeps common management receipts visible to another owner after the acting o
     externalId: 'fixture-managed-member',
     now: 5,
   });
-  f.runtime.serveMember(target);
+  await f.runtime.serveMember(target);
   for (const change of ['grant', 'revoke', 'suspend', 'resume', 'offboard']) {
     data(
       (
@@ -887,7 +888,7 @@ it.each(['created', 'rewritten', 'omitted_rewritten'] as const)(
 
 it('retires before snapshot and export, includes retirement writes, and refuses unserved intake', async () => {
   const f = await setup();
-  const intake = f.runtime.serveMember(f.member);
+  const intake = f.runtime.memberIntake(f.member);
   const native = f.natives.get(f.member)!;
   const reset = native.resetSession.bind(native);
   const stop = native.stop.bind(native);
@@ -907,7 +908,7 @@ it('retires before snapshot and export, includes retirement writes, and refuses 
     order.push('export');
     expect(order).toEqual(['reset', 'stop', 'export']);
     expect(f.runtime.runtime.servesPrincipal(f.member)).toBe(false);
-    expect(() => f.runtime.serveMember(f.member)).toThrow('Member session is not served');
+    expect(() => f.runtime.memberIntake(f.member)).toThrow('Member session is not served');
     expect(() =>
       intake.acceptOwnerMessage({
         id: refused,
@@ -944,6 +945,63 @@ it('retires before snapshot and export, includes retirement writes, and refuses 
   await f.confirm(preview.confirmationToken);
   expect((await f.finish()).status).toBe('erased');
   expect(order).toEqual(['reset', 'stop', 'export']);
+});
+
+it('retires P9 on its member chain while another DM runs and pauses new claims through re-serve', async () => {
+  const f = await setup();
+  const preview = await f.preview();
+  let finishTurn!: () => void;
+  let finishUpload!: () => void;
+  let uploading!: () => void;
+  const turnGate = new Promise<void>((resolve) => {
+    finishTurn = resolve;
+  });
+  const uploadGate = new Promise<void>((resolve) => {
+    finishUpload = resolve;
+  });
+  const uploadStarted = new Promise<void>((resolve) => {
+    uploading = resolve;
+  });
+  const send = f.telegram.sendFile.getMockImplementation()!;
+  f.telegram.sendFile.mockImplementationOnce(async (...args) => {
+    uploading();
+    await uploadGate;
+    return send(...args);
+  });
+  f.blockPrincipal(f.managingOwner, turnGate);
+  const running = f.message(f.managingOwner);
+  try {
+    await vi.waitFor(() => expect(f.turns.some((t) => t.principal === f.managingOwner)).toBe(true));
+    const confirmation = await f.confirm(preview.confirmationToken);
+    const inputId = Number(confirmation.commandId.split(':').at(-1));
+    await vi.waitFor(() =>
+      expect(
+        f.runtime.database.adapter
+          .prepare('SELECT status FROM mailbox_inputs WHERE id=?')
+          .get(inputId)
+      ).toEqual({ status: 'acked' })
+    );
+    await uploadStarted;
+    expect(f.runtime.runtime.mailbox!.readInput(running, f.managingOwner)?.status).toBe('claimed');
+    expect(f.uploads).toHaveLength(0);
+    expect(fs.existsSync(join(f.paths.workspaceDir, 'files', 'personal.txt'))).toBe(true);
+    finishTurn();
+    await f.settled(running, f.managingOwner);
+    expect(f.runtime.runtime.servesPrincipal(f.member)).toBe(false);
+    const before = f.turns.filter((t) => t.principal === f.managingOwner).length;
+    const queued = f.message(f.managingOwner);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(f.turns.filter((t) => t.principal === f.managingOwner)).toHaveLength(before);
+    finishUpload();
+    expect((await f.finish()).status).toBe('erased');
+    await f.settled(queued, f.managingOwner);
+    expect(f.runtime.runtime.servesPrincipal(f.member)).toBe(true);
+    expect(fs.existsSync(join(f.paths.workspaceDir, 'files', 'personal.txt'))).toBe(false);
+    expect(f.drivers.get(f.managingOwner)?.deniedReadPaths).toContain(f.paths.runtimeRoot);
+  } finally {
+    finishTurn();
+    finishUpload();
+  }
 });
 
 it('checks the delivered inventory and deletes member trees without yielding between them', async () => {
@@ -1326,6 +1384,49 @@ it('lets owner turns run while an export uploads; only an erasure pauses claims'
   expect(f.runtime.surface.memberRecords.isBusy()).toBe(false);
 });
 
+it('holds erasure on the confirming member chain while existing common work finishes and global new claims stay paused', async () => {
+  const f = await setup();
+  const p = await f.preview();
+  let releaseCommon!: () => void;
+  let releaseConfirmation!: () => void;
+  f.blockOwner(new Promise<void>((resolve) => (releaseCommon = resolve)));
+  f.holdMemberCompletion(new Promise<void>((resolve) => (releaseConfirmation = resolve)));
+  const common = f.message('owner');
+  try {
+    await vi.waitFor(() => expect(f.turns.at(-1)?.principal).toBe('owner'));
+    await f.confirm(p.confirmationToken);
+    expect(f.runtime.surface.memberRecords.isBusy()).toBe(true);
+    expect(f.runtime.surface.memberRecords.isBlocked(f.member)).toBe(true);
+    expect(f.runtime.surface.memberRecords.isBlocked(f.managingOwner)).toBe(false);
+    expect(f.uploads).toEqual([]);
+    const memberQueued = f.message(f.member);
+    const otherQueued = f.message(f.managingOwner);
+    releaseCommon();
+    f.blockOwner(undefined);
+    await f.settled(common);
+    const commonQueued = f.message('owner');
+    await f.runtime.runtime.drainOnce();
+    for (const [id, ref] of [
+      [f.member, memberQueued],
+      [f.managingOwner, otherQueued],
+      ['owner', commonQueued],
+    ])
+      expect(f.runtime.runtime.mailbox!.readInput(ref, id)?.status).toBe('pending');
+    expect(f.uploads).toEqual([]);
+    releaseConfirmation();
+    f.holdMemberCompletion(undefined);
+    await f.finish();
+    expect(f.runtime.surface.memberRecords.isBusy()).toBe(false);
+    expect(f.runtime.runtime.mailbox!.readInput(memberQueued, f.member)).toBeNull();
+    await f.settled(otherQueued, f.managingOwner);
+    await f.settled(commonQueued);
+  } finally {
+    releaseCommon();
+    releaseConfirmation();
+    f.holdMemberCompletion(undefined);
+  }
+});
+
 async function runExport(f: Awaited<ReturnType<typeof setup>>) {
   const request = await f.act('records.export');
   if (request.result.status === 'completed' && data(request.result).status === 'scheduled') {
@@ -1669,50 +1770,52 @@ it('keeps the step that stopped an erasure when serving the member again also fa
   );
 });
 
-it.each(['export', 'erase'] as const)(
-  'still records a serve failure receipt in the %s job',
-  async (kind) => {
-    const f = await setup();
-    const prepare = f.runtime.database.adapter.prepare.bind(f.runtime.database.adapter);
-    let fail = false;
-    const inject = () => {
-      fail = true;
-      vi.spyOn(f.runtime.database.adapter, 'prepare').mockImplementation((sql) => {
-        if (fail && /SELECT kind, status FROM principals/.test(sql)) {
-          fail = false;
-          throw new Error('fixture serve failed');
-        }
-        return prepare(sql);
-      });
-    };
-    if (kind === 'export') {
-      f.telegram.sendFile.mockImplementationOnce(async () => {
-        inject();
-        return { sentAs: 'document', size: 1, messageId: 'fixture-accepted' };
-      });
-      const result = await runExport(f);
-      expect(result.text).toContain('serve');
-      expect(result.text).toContain('fixture serve failed');
-    } else {
-      const p = await f.preview();
-      const rm = fs.rmSync;
-      vi.spyOn(fs, 'rmSync').mockImplementation((path, opts) => {
-        rm(path, opts);
-        if (path === f.paths.runtimeRoot) inject();
-      });
-      syncBuiltinESMExports();
-      await f.confirm(p.confirmationToken);
-      await vi.waitFor(() => expect(f.receipts).toHaveLength(1));
-      expect(f.receipts[0].text).toContain('serve');
-      expect(f.receipts[0].text).toContain('fixture serve failed');
-    }
-    expect(
-      f.runtime.database.adapter
-        .prepare('SELECT content FROM connector_event_index WHERE memory_scope_id=? AND content=?')
-        .all(f.member, f.receipts[0].text)
-    ).toHaveLength(1);
-  }
-);
+it('still records a serve failure receipt in the erasure job', async () => {
+  const f = await setup();
+  const prepare = f.runtime.database.adapter.prepare.bind(f.runtime.database.adapter);
+  let fail = false;
+  const inject = () => {
+    fail = true;
+    vi.spyOn(f.runtime.database.adapter, 'prepare').mockImplementation((sql) => {
+      if (fail && /SELECT kind, status FROM principals/.test(sql)) {
+        fail = false;
+        throw new Error('fixture serve failed');
+      }
+      return prepare(sql);
+    });
+  };
+  const p = await f.preview();
+  const rm = fs.rmSync;
+  vi.spyOn(fs, 'rmSync').mockImplementation((path, opts) => {
+    rm(path, opts);
+    if (path === f.paths.runtimeRoot) inject();
+  });
+  syncBuiltinESMExports();
+  await f.confirm(p.confirmationToken);
+  await vi.waitFor(() => expect(f.receipts).toHaveLength(1));
+  expect(f.receipts[0].text).toContain('serve');
+  expect(f.receipts[0].text).toContain('fixture serve failed');
+  expect(
+    f.runtime.database.adapter
+      .prepare('SELECT content FROM connector_event_index WHERE memory_scope_id=? AND content=?')
+      .all(f.member, f.receipts[0].text)
+  ).toHaveLength(1);
+});
+
+it('does not re-serve a member from an export upload outside the exclusive lane', async () => {
+  const f = await setup();
+  const send = f.telegram.sendFile.getMockImplementation()!;
+  f.telegram.sendFile.mockImplementationOnce(async (...args) => {
+    f.runtime.runtime.unservePrincipal(f.member);
+    return send(...args);
+  });
+  const result = await runExport(f);
+  expect(result.text).toContain('Export sent:');
+  expect(f.runtime.runtime.servesPrincipal(f.member)).toBe(false);
+  expect(() => f.runtime.memberIntake(f.member)).toThrow('Member session is not served');
+  await f.runtime.serveMember(f.member);
+  expect(f.runtime.runtime.servesPrincipal(f.member)).toBe(true);
+});
 
 it('drops a confirmation that settles during stop without starting a job or cancelling messages', async () => {
   const f = await setup();
@@ -1790,5 +1893,38 @@ it.each(['dead', 'uncertain'] as const)(
         .prepare('SELECT content FROM connector_event_index WHERE memory_scope_id=? AND content=?')
         .all(f.member, f.receipts[0].text)
     ).toHaveLength(1);
+  }
+);
+
+it.each(['export', 'erase'] as const)(
+  'finishes %s on its own chain while other member and common turns run',
+  async (kind) => {
+    const f = await setup();
+    let release!: () => void;
+    const running = new Promise<void>((resolve) => (release = resolve));
+    f.blockOwner(running);
+    f.blockPrincipal(f.managingOwner, running);
+    const common = f.message('owner');
+    const other = f.message(f.managingOwner);
+    try {
+      await vi.waitFor(() =>
+        expect(f.turns.map((t) => t.principal)).toEqual(
+          expect.arrayContaining(['owner', f.managingOwner])
+        )
+      );
+      if (kind === 'export') await runExport(f);
+      else {
+        const preview = await f.preview();
+        await f.confirm(preview.confirmationToken);
+        await f.finish();
+      }
+      expect(f.uploads).toHaveLength(1);
+      expect(f.runtime.runtime.mailbox!.readInput(common, 'owner')?.status).toBe('claimed');
+      expect(f.runtime.runtime.mailbox!.readInput(other, f.managingOwner)?.status).toBe('claimed');
+    } finally {
+      release();
+      await f.settled(common);
+      await f.settled(other, f.managingOwner);
+    }
   }
 );

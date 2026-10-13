@@ -7,6 +7,7 @@ import {
   memberLifecycleRegistrations,
   MEMBER_MANAGEMENT_ACTIONS,
   type MemberLifecyclePorts,
+  type MemberManagementContext,
 } from '../api/member-lifecycle.js';
 import { createMemberRecords, type MemberRecordsPorts } from '../api/member-records.js';
 import { traceSummary } from '@jungjaehoon/mama-core/runtime/trace-summary';
@@ -23,6 +24,7 @@ import {
   type ActionContext,
   type ActionContract,
   type ActionDispatcher,
+  type DispatcherOptions,
 } from '@jungjaehoon/mama-core';
 import type { ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
@@ -183,6 +185,7 @@ export interface ActionSurfaceOptions {
   memberRecords?: MemberRecordsPorts;
   memberEnrollment?: MemberEnrollmentPorts;
   memberLifecycle?: MemberLifecyclePorts;
+  memberDirectoryChange?: <T>(work: () => Promise<T>) => Promise<T>;
   recordManagementReceipt?(receipt: {
     callerPrincipalId: string;
     operationId: string;
@@ -228,6 +231,7 @@ export function ownerMemoryScopes(
 
 export function createActionSurface(options: ActionSurfaceOptions): ActionSurface {
   let principals: ReturnType<typeof createPrincipalRepository> | undefined;
+  const memberDirectoryChange = options.memberDirectoryChange;
   const memberRecords = createMemberRecords({
     adapter: options.adapter,
     isMessageTurn: options.isOwnerMessageTurn,
@@ -239,6 +243,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     isOwnerMessageTurn: options.isOwnerMessageTurn,
     ownerAccess: () => ownerAccess,
     ports: options.memberEnrollment,
+    directoryChange: memberDirectoryChange,
   });
   const defaultScopes = ownerMemoryScopes(
     options.ownerPrincipalId,
@@ -329,16 +334,63 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
           },
         }),
   };
+  const lifecycle = memberLifecycleRegistrations({
+    adapter: options.adapter,
+    ownerPrincipalId: options.ownerPrincipalId,
+    ownerAccess: () => ownerAccess,
+    isOwnerMessageTurn: options.isOwnerMessageTurn,
+    timeZone: options.timeZone,
+    ports: options.memberLifecycle,
+    scheduleChange: async (name, input, context) => {
+      const ports = options.memberLifecycle!;
+      const { principalId } = input as { principalId: string };
+      const chain = ports.turnChain(principalId);
+      const changesDirectory = [
+        'manage.member.suspend',
+        'manage.member.resume',
+        'manage.member.offboard',
+      ].includes(name);
+      if (!changesDirectory && !chain.isBusy())
+        return chain.afterCurrent(async () =>
+          lifecycle
+            .find((registration) => registration.contract.name === name)!
+            .exec(input, { ...context, memberManagementQueued: true } as MemberManagementContext)
+        );
+
+      // Reserve on the target chain in request order. A directory reservation starts the
+      // lane without awaiting it inside that chain: the lane drains current member work,
+      // including this short reservation. Awaiting it here would wait for itself.
+      const commandId = `member-management:${randomUUID()}`;
+      const execute = () =>
+        dispatch({ action: name, input, operationId: commandId }, {
+          ...context,
+          memberManagementQueued: true,
+          operationId: commandId,
+          session: { ...context.session, modelRunId: undefined, gatewayCallId: undefined },
+        } as MemberManagementContext);
+      const work = chain.afterCurrent(async () => {
+        if (!changesDirectory) {
+          await execute();
+          return;
+        }
+        void memberDirectoryChange!(execute).catch((error) =>
+          console.error('[Member management] scheduled directory change failed', error)
+        );
+      });
+      void work.catch((error) =>
+        console.error('[Member management] scheduled change failed', error)
+      );
+      return {
+        principalId,
+        change: name.slice('manage.member.'.length),
+        status: 'scheduled',
+        commandId,
+      };
+    },
+  });
   const registrations = [
     ...core,
-    ...memberLifecycleRegistrations({
-      adapter: options.adapter,
-      ownerPrincipalId: options.ownerPrincipalId,
-      ownerAccess: () => ownerAccess,
-      isOwnerMessageTurn: options.isOwnerMessageTurn,
-      timeZone: options.timeZone,
-      ports: options.memberLifecycle,
-    }),
+    ...lifecycle,
     ...memberRecords.registrations,
     ...memberShareActionRegistrations({
       adapter: options.adapter,
@@ -428,49 +480,62 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     codeActRegistration(() => dispatch),
   ];
   const catalog = createCatalog(registrations);
-  const dispatch = createDispatcher(catalog, {
-    observeCall: async ({ action, operationId, input, result, durationMs, context }) => {
-      const session = context.session;
-      const caller = action.startsWith('manage.member.')
-        ? messageTurnCaller(context, options)
-        : undefined;
-      if (
-        action !== 'manage.member.list' &&
-        caller &&
-        activeOwnerMessageCaller(context, options) === caller
-      ) {
-        options.recordManagementReceipt?.({
-          callerPrincipalId: caller,
-          operationId: operationId ?? randomUUID(),
-          action,
-          input,
-          result,
-        });
-      }
-      const common = {
-        tool_name: action,
-        gateway_call_id: session?.gatewayCallId ?? null,
-        input_summary: traceSummary(caller ? { callerPrincipalId: caller, input } : input),
-        output_summary: traceSummary(result),
-        execution_status: result.status,
-        duration_ms: durationMs,
-        ...(result.status === 'failed' ? { failure_code: result.error.code } : {}),
-      };
-      if (session?.modelRunId) {
-        const trace = await appendToolTrace(options.adapter, {
-          ...common,
-          model_run_id: session.modelRunId,
-        });
-        return trace.trace_id;
-      }
-      if (!operationId) return undefined;
-      const trace = appendOperationToolTrace(options.adapter, {
+  const observeCall: NonNullable<DispatcherOptions['observeCall']> = async ({
+    action,
+    operationId,
+    input,
+    result,
+    durationMs,
+    context,
+  }) => {
+    const session = context.session;
+    const caller = action.startsWith('manage.member.')
+      ? messageTurnCaller(context, options)
+      : undefined;
+    if (
+      action !== 'manage.member.list' &&
+      caller &&
+      ((context as MemberManagementContext).memberManagementQueued ||
+        activeOwnerMessageCaller(context, options) === caller) &&
+      !(
+        result.status === 'completed' &&
+        (result.data as { status?: string })?.status === 'scheduled'
+      )
+    ) {
+      options.recordManagementReceipt?.({
+        callerPrincipalId: caller,
+        operationId: operationId ?? randomUUID(),
+        action,
+        input,
+        result,
+      });
+    }
+    const common = {
+      tool_name: action,
+      gateway_call_id: session?.gatewayCallId ?? null,
+      input_summary: traceSummary(caller ? { callerPrincipalId: caller, input } : input),
+      output_summary: traceSummary(result),
+      execution_status: result.status,
+      duration_ms: durationMs,
+      ...(result.status === 'failed' ? { failure_code: result.error.code } : {}),
+    };
+    if (session?.modelRunId) {
+      const trace = await appendToolTrace(options.adapter, {
         ...common,
-        operation_id: operationId,
-        actor_principal_id: caller ?? context.access.principalId,
+        model_run_id: session.modelRunId,
       });
       return trace.trace_id;
-    },
+    }
+    if (!operationId) return undefined;
+    const trace = appendOperationToolTrace(options.adapter, {
+      ...common,
+      operation_id: operationId,
+      actor_principal_id: caller ?? context.access.principalId,
+    });
+    return trace.trace_id;
+  };
+  const dispatch = createDispatcher(catalog, {
+    observeCall,
   });
   // Built on the first scopes read, so constructing a surface touches no table.
   const ownerAccess: JudgmentAccess = {

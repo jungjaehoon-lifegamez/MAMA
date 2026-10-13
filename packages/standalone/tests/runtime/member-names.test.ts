@@ -150,7 +150,7 @@ it.each(['codex', 'claude'] as const)(
     await f.settled(dm, f.member);
     const dmPrompt = JSON.parse(f.turns.at(-1)!.prompt) as string;
     expect(dmPrompt).toContain(`yours: Fixture second owner (${f.member}, owner)`);
-    f.runtime.serveMember(f.member).recordOwnerReply({
+    (await f.runtime.serveMember(f.member)).recordOwnerReply({
       messageRef: dm,
       text: 'fixture delivered answer',
       occurredAt: 10,

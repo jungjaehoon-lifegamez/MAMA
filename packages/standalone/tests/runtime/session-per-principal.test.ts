@@ -247,7 +247,7 @@ it.each(['codex', 'claude'] as const)(
       await vi.waitFor(() => expect(sent).toHaveLength(1));
       const ownerLog = readFileSync(path, 'utf8');
       const ownerAlerts = [...sent];
-      const intake = runtime.serveMember(f.member);
+      const intake = runtime.memberIntake(f.member);
       intake.acceptOwnerMessage({
         text: 'member request',
         id: 'fixture:member-network',
@@ -307,7 +307,7 @@ it('binds a separate proxy at each Claude member session start and closes it on 
       now: 4,
     });
     for (const principalId of [f.member, second]) {
-      const intake = runtime.serveMember(principalId);
+      const intake = await runtime.serveMember(principalId);
       const id = `fixture:proxy:${principalId}`;
       intake.acceptOwnerMessage({
         id,
@@ -452,7 +452,7 @@ it.each(['codex', 'claude'] as const)(
         }
       };
       check();
-      const intake = runtime.serveMember(f.member);
+      const intake = runtime.memberIntake(f.member);
       intake.acceptOwnerMessage({
         id: 'fixture:first',
         channelKey: 'fixture',
@@ -471,7 +471,7 @@ it.each(['codex', 'claude'] as const)(
         externalId: 'fixture-later',
         now: 4,
       });
-      runtime.serveMember(later);
+      await runtime.serveMember(later);
       const debris = join(f.root, 'fixture-after-start');
       mkdirSync(debris);
       expected.push(memberPaths(f.root, later).runtimeRoot, debris);
@@ -528,7 +528,7 @@ it('writes member denies and workspace TMPDIR into the existing Codex named prof
     },
   });
   try {
-    runtime.serveMember(f.member).acceptOwnerMessage({
+    runtime.memberIntake(f.member).acceptOwnerMessage({
       id: 'fixture:profile',
       channelKey: 'fixture',
       occurredAt: 1,
@@ -562,7 +562,7 @@ it.each(['codex', 'claude'] as const)(
     const runtime = await createOwnerRuntime(f.options);
     let release!: () => void;
     try {
-      const intake = runtime.serveMember(f.member);
+      const intake = runtime.memberIntake(f.member);
       intake.acceptOwnerMessage({
         id: 'fixture:before-enroll',
         channelKey: 'fixture',
@@ -589,14 +589,14 @@ it.each(['codex', 'claude'] as const)(
       await vi.waitFor(() =>
         expect(f.turns.filter((turn) => turn.principal === 'owner')).toHaveLength(1)
       );
-      // Enrollment host work while the owner's model turn holds the shared chain.
+      // Explicit host service creation reserves the directory lane while the owner runs.
       const later = createPrincipalRepository(runtime.database.adapter).registerMember({
         connector: 'telegram',
         namespace: 'private',
         externalId: 'fixture-later-on-chain',
         now: 3,
       });
-      runtime.serveMember(later);
+      const serving = runtime.serveMember(later);
       intake.acceptOwnerMessage({
         id: 'fixture:after-enroll',
         channelKey: 'fixture',
@@ -606,6 +606,7 @@ it.each(['codex', 'claude'] as const)(
       expect(f.turns.filter((turn) => turn.principal === f.member)).toHaveLength(1);
       expect(f.natives.get(f.member)).toBe(previous);
       release();
+      await serving;
       await vi.waitFor(
         () => expect(f.turns.filter((turn) => turn.principal === f.member)).toHaveLength(2),
         { timeout: 5_000 }
@@ -631,8 +632,8 @@ it.each(['codex', 'claude'] as const)(
     try {
       expect(runtime.runtime.servesPrincipal(f.member)).toBe(true);
       expect(runtime.runtime.servesPrincipal(f.inactive)).toBe(false);
-      expect(() => runtime.serveMember(f.inactive)).toThrow(/active|suspended/);
-      const memberIntake = runtime.serveMember(f.member);
+      expect(() => runtime.memberIntake(f.inactive)).toThrow(/active|suspended/);
+      const memberIntake = runtime.memberIntake(f.member);
       const memberAccess = () =>
         socket.resolveAccess(
           readFileSync(memberPaths(f.root, f.member).credentialPath, 'utf8').trim()
@@ -810,7 +811,7 @@ it('fails an unauthenticated member turn loudly without constructing an owner-pa
   });
   try {
     f.fail();
-    runtime.serveMember(f.member).acceptOwnerMessage({
+    runtime.memberIntake(f.member).acceptOwnerMessage({
       id: 'telegram:fixture:login',
       channelKey: 'fixture',
       occurredAt: 1,
@@ -853,9 +854,9 @@ it('requires no root with no active members and serves a newly enrolled member o
       now: 5,
     });
     expect(runtime.runtime.servesPrincipal(id)).toBe(false);
-    const intake = runtime.serveMember(id);
+    const intake = await runtime.serveMember(id);
     expect(runtime.runtime.servesPrincipal(id)).toBe(true);
-    expect(runtime.serveMember(id)).toBe(intake);
+    expect(runtime.memberIntake(id)).toBe(intake);
     expect(f.drivers.get(id)?.cwd).toBe(memberPaths(f.root, id).workspaceDir);
   } finally {
     await runtime.stop();
@@ -876,10 +877,10 @@ it('lets serveMember try again after the member credential could not be written'
     });
     const { credentialPath } = memberPaths(f.root, id);
     mkdirSync(credentialPath, { recursive: true });
-    expect(() => runtime.serveMember(id)).toThrow();
+    await expect(runtime.serveMember(id)).rejects.toThrow();
     expect(runtime.runtime.servesPrincipal(id)).toBe(false);
     rmSync(credentialPath, { recursive: true });
-    runtime.serveMember(id);
+    await runtime.serveMember(id);
     expect(runtime.runtime.servesPrincipal(id)).toBe(true);
   } finally {
     await runtime.stop();
@@ -960,7 +961,7 @@ it('resolves grants after waiting on the shared owner chain and rejects member r
       text: 'fixture owner wait',
     });
     await vi.waitFor(() => expect(f.turns).toHaveLength(1));
-    runtime.serveMember(f.member).acceptOwnerMessage({
+    runtime.memberIntake(f.member).acceptOwnerMessage({
       id: 'telegram:fixture:queue-member',
       channelKey: 'fixture',
       occurredAt: 2,
@@ -972,7 +973,7 @@ it('resolves grants after waiting on the shared owner chain and rejects member r
     expect((f.turns[1].context as { access: JudgmentAccess }).access.readScopes).toEqual([]);
     const errors: string[] = [];
     // Member producer kinds are bounded by its own role; a replay must not acquire owner instructions.
-    runtime.serveMember(f.member).accept({
+    runtime.memberIntake(f.member).accept({
       id: 'fixture-member-replay',
       kind: 'source_delta',
       principalId: f.member,

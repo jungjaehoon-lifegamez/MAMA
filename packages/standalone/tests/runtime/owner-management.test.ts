@@ -143,7 +143,7 @@ it('suspends another owner, denies its next DM, and resumes it with roles, grant
   const prior = f.message(f.member);
   await f.settled(prior, f.member);
   const oldSession = f.turns.at(-1)!.session;
-  const intake = f.runtime.serveMember(f.member);
+  const intake = f.runtime.memberIntake(f.member);
   const path = join(memberPaths(f.root, f.member).workspaceDir, 'old.txt');
   fs.writeFileSync(path, 'fixture old file');
   completed(

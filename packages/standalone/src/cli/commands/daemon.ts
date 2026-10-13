@@ -744,7 +744,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         token,
         intake,
         registry: createPrincipalRepository(owner.database.adapter),
-        memberIntake: (principalId) => loggedOwnerIntake(owner!.serveMember(principalId), logger),
+        memberIntake: async (principalId) =>
+          loggedOwnerIntake(await owner!.serveMember(principalId), logger),
         principalPaths: (principalId) => owner!.principalPaths(principalId),
         onMemberSelection: (selection) => owner!.completeMemberEnrollment(selection),
         recordMemberSelection: (exchange) => owner!.recordHostExchange(exchange),

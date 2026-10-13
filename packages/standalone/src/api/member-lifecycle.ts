@@ -1,6 +1,7 @@
 import {
   createPrincipalRepository,
   type ActionRegistration,
+  type ActionContext,
   type ActionContract,
   type JudgmentAccess,
 } from '@jungjaehoon/mama-core';
@@ -8,6 +9,7 @@ import type { DatabaseInstance } from '@jungjaehoon/mama-core/db-manager';
 import { validateMemberMemoryGrant, resolvePrincipalAccess } from '../runtime/principal-access.js';
 import type { TimeZoneSetting } from '../runtime/timezone.js';
 import { activeOwnerMessageCaller, holdsOwnerRole } from '../runtime/owner-authority.js';
+import type { createSerialTurnChain } from '../runtime/principal-sessions.js';
 
 /**
  * A display name reaches other sessions' turn headers as host text, so it carries letters, digits,
@@ -28,14 +30,17 @@ export const MEMBER_MANAGEMENT_ACTIONS = [
   'manage.member.name',
 ] as const;
 
+export type MemberManagementContext = ActionContext & { memberManagementQueued?: boolean };
+
 export interface MemberLifecyclePorts {
+  turnChain(principalId: string): ReturnType<typeof createSerialTurnChain>;
   resetSession(principalId: string): Promise<void>;
   retire(principalId: string): Promise<void>;
   resume(principalId: string): Promise<void>;
   cancelQueued(principalId: string, reason: string): number;
 }
 
-/** Host lifecycle effects execute inside the owner's already-held shared serial turn slot. */
+/** The surface queues all changes on the target chain, then uses the member directory lane. */
 export function memberLifecycleRegistrations(options: {
   adapter: DatabaseInstance;
   ownerPrincipalId: string;
@@ -43,6 +48,7 @@ export function memberLifecycleRegistrations(options: {
   isOwnerMessageTurn(sourceMessageRef: string, principalId: string): boolean;
   timeZone: TimeZoneSetting;
   ports?: MemberLifecyclePorts;
+  scheduleChange(name: string, input: unknown, context: MemberManagementContext): Promise<unknown>;
 }): ActionRegistration[] {
   let principals: ReturnType<typeof createPrincipalRepository> | undefined;
   const properties: NonNullable<ActionContract['inputSchema']['properties']> = {
@@ -88,7 +94,7 @@ export function memberLifecycleRegistrations(options: {
           ' Only an active owner-role caller in its own DM or recorded common-channel message turn is allowed; delta, scheduled/report, replay, plain-member and subagent turns are denied.' +
           (change === 'name'
             ? ''
-            : ' Changes apply after the running member turn on the shared serial chain and cancel queued inputs with a host reason.'),
+            : ' Grants/revocations run on the target chain. Suspend, resume and offboard wait for running member turns and hold new member turns while changing directories. The common session continues. Changes cancel queued target inputs with a host reason. A waiting change returns scheduled with a commandId; the final result is stored in the common management receipt. Caller authority is checked again when the change runs.'),
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -114,7 +120,7 @@ export function memberLifecycleRegistrations(options: {
                   : ['principalId'],
         },
       },
-      exec: async (input, context) => {
+      exec: async (input, context: MemberManagementContext) => {
         const caller = activeOwnerMessageCaller(context, options);
         if (!caller) {
           throw Object.assign(
@@ -196,6 +202,7 @@ export function memberLifecycleRegistrations(options: {
         const ports = options.ports;
         if (!ports)
           throw new Error('Member management requires member_root and a running member runtime');
+        if (!context.memberManagementQueued) return options.scheduleChange(name, input, context);
         if (scopeChange) {
           const scope = { kind: 'memory' as const, scopeKind, scopeId: scopeId.trim() };
           const ownerAccess = options.ownerAccess();

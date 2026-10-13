@@ -294,6 +294,7 @@ export class Mailbox {
               coalesce_key, occurred_at, created_at, attempts
          FROM mailbox_inputs
         WHERE status = 'pending' AND COALESCE(retry_after, 0) <= ?
+          AND principal_id NOT IN (SELECT value FROM json_each(?))
           AND NOT EXISTS (SELECT 1 FROM native_input_deliveries n WHERE n.input_id=mailbox_inputs.id AND n.state!='prepared')
         ORDER BY id ASC LIMIT 1`
     );
@@ -302,6 +303,7 @@ export class Mailbox {
               coalesce_key, occurred_at, created_at, attempts
          FROM mailbox_inputs
         WHERE status = 'pending' AND COALESCE(retry_after, 0) <= ? AND kind = ?
+          AND principal_id NOT IN (SELECT value FROM json_each(?))
           AND NOT EXISTS (SELECT 1 FROM native_input_deliveries n WHERE n.input_id=mailbox_inputs.id AND n.state!='prepared')
         ORDER BY id ASC LIMIT 1`
     );
@@ -492,15 +494,24 @@ export class Mailbox {
    * current request waits behind a mass replay, and the kind a producer stated
    * is the only thing that can say which is which without reading content.
    */
-  claimNext(options: { prefer?: readonly StimulusKind[] } = {}): MailboxRow | null {
+  claimNext(
+    options: {
+      prefer?: readonly StimulusKind[];
+      /** Principals whose host delivery window is full; their rows remain pending. */
+      excludePrincipals?: readonly string[];
+    } = {}
+  ): MailboxRow | null {
     const prefer = options.prefer ?? [];
+    const excluded = JSON.stringify(options.excludePrincipals ?? []);
     const select = (): StoredRow | undefined => {
       const now = this.now();
       for (const kind of prefer) {
-        const preferred = this.stmtClaimSelectKind.get(now, kind) as StoredRow | undefined;
+        const preferred = this.stmtClaimSelectKind.get(now, kind, excluded) as
+          | StoredRow
+          | undefined;
         if (preferred) return preferred;
       }
-      return this.stmtClaimSelect.get(now) as StoredRow | undefined;
+      return this.stmtClaimSelect.get(now, excluded) as StoredRow | undefined;
     };
     let row = select();
     while (row) {

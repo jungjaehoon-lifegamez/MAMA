@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createPrincipalSessions } from '../../src/runtime/principal-sessions.js';
 import {
   createCatalog,
   createDispatcher,
@@ -125,6 +126,7 @@ async function fixture() {
       requestSelection: (ref, callerDm, name) =>
         gateway.requestMemberEnrollment(ref, callerDm, name),
     },
+    memberDirectoryChange: createPrincipalSessions('common').exclusive,
   });
   complete = surface.completeMemberEnrollment;
   let memberIntake = (principalId: string) => ({
@@ -136,12 +138,19 @@ async function fixture() {
       return intake.acceptOwnerMessage();
     },
   });
+  const selectionsFinished = new Set<string>();
   const gateway = new TelegramGateway({
     token: 'fixture-token',
     registry: repo,
     intake,
     memberIntake: (principalId) => memberIntake(principalId),
-    recordMemberSelection: (exchange) => record(exchange),
+    recordMemberSelection: (exchange) => {
+      try {
+        record(exchange);
+      } finally {
+        selectionsFinished.add(exchange.message.id);
+      }
+    },
     principalPaths: (principalId) => memberPaths(root, principalId),
     messageLedgerPath: join(home, 'ledger.json'),
     config: { allowedChats: [commonRoom], ownerChatId: commonRoom, polling: false },
@@ -180,8 +189,16 @@ async function fixture() {
   const requestId = () =>
     transport.send.mock.calls.at(-1)![2].reply_markup.keyboard[0][0].request_users
       .request_id as number;
-  const share = (requestId: number, userId = selectedId) =>
-    message({ users_shared: { request_id: requestId, users: [{ user_id: Number(userId) }] } });
+  const share = async (requestId: number, userId = selectedId, sender = ownerId) => {
+    const ref = await message(
+      {
+        users_shared: { request_id: requestId, users: [{ user_id: Number(userId) }] },
+      },
+      sender
+    );
+    await vi.waitFor(() => expect(selectionsFinished.has(ref)).toBe(true));
+    return ref;
+  };
   const boot = async (extra: Partial<OwnerRuntimeOptions> = {}) => {
     const ipc = createRequire(import.meta.url)('@jungjaehoon/mama-core/client/ipc');
     vi.spyOn(ipc, 'createActionIpcServer').mockResolvedValue({ close: async () => {} });
@@ -219,7 +236,7 @@ async function fixture() {
     cleanup.push(() => runtime.stop());
     complete = runtime.completeMemberEnrollment;
     record = runtime.recordHostExchange;
-    memberIntake = (principalId) => runtime.serveMember(principalId) as never;
+    memberIntake = (principalId) => runtime.memberIntake(principalId) as never;
     return runtime;
   };
   return {
@@ -326,10 +343,7 @@ describe('P10.3 enrollment from owner-role DMs', () => {
     const second = f.requestId();
     await f.share(first);
     expect(f.completions.at(-1)).toMatchObject({ data: { status: 'created' } });
-    await f.message(
-      { users_shared: { request_id: second, users: [{ user_id: Number(ownerId) }] } },
-      otherDm
-    );
+    await f.share(second, ownerId, otherDm);
     expect(f.completions.at(-1)).toMatchObject({
       data: { status: 'exists', principalId: f.owner },
     });
@@ -382,6 +396,7 @@ describe('P10.3 enrollment from owner-role DMs', () => {
       now: 4,
     });
     f.repo.grantRole({ principalId: other, role: 'owner', now: 4 });
+    await runtime.serveMember(other);
     const otherRef = await f.message({ text: 'fixture other owner' }, id('fixture-other-owner'));
     const otherAccess = resolvePrincipalAccess(other, {
       adapter: f.database.adapter,
@@ -464,19 +479,31 @@ describe('P10.3 enrollment from owner-role DMs', () => {
       now: 4,
     });
     f.repo.grantRole({ principalId: other, role: 'owner', now: 4 });
+    await runtime.serveMember(other);
     const otherRef = await f.message({ text: 'fixture management' }, otherDm);
     const access = resolvePrincipalAccess(other, {
       adapter: runtime.database.adapter,
       ownerAccess: runtime.surface.ownerAccess,
       agentId: 'fixture-manager',
     });
-    const manage = (change: string) =>
-      runtime.surface.hostToolCall(
+    const manage = async (change: string) => {
+      const result = await runtime.surface.hostToolCall(
         `manage.member.${change}`,
         { principalId: f.owner },
         `fixture-${change}`,
         { access, session: { sourceMessageRef: otherRef } }
       );
+      expect(result).toMatchObject({ status: 'completed', data: { status: 'scheduled' } });
+      const { commandId } = (result as { data: { commandId: string } }).data;
+      await vi.waitFor(() => {
+        const receipt = runtime.database.adapter
+          .prepare('SELECT content FROM connector_event_index WHERE source_entity_id=?')
+          .get(`host:management:${commandId}:reply`) as { content: string } | undefined;
+        expect(receipt).toBeDefined();
+        expect(JSON.parse(receipt!.content).result.status).toBe('completed');
+      });
+      return result;
+    };
     const ownerRef = await f.message({ text: 'fixture enrollment request' });
     await f.request(ownerRef, runtime.surface);
     const oldRequest = f.requestId();
@@ -645,6 +672,7 @@ describe('host enrollment factory kept for owner DM administration', () => {
       ownerAccess: () => ownerAccess,
       isOwnerMessageTurn: () => true,
       ports: { memberRoot: f.root, requestSelection: async () => {} },
+      directoryChange: createPrincipalSessions('common').exclusive,
     });
     const dispatch = createDispatcher(createCatalog([enrollment.registration]));
     return () =>
@@ -712,4 +740,39 @@ describe('host enrollment factory kept for owner DM administration', () => {
     expect(f.repo.resolveByExternal('telegram', 'private', selectedId)).toBeNull();
     expect(f.repo.listMembers()).toHaveLength(1);
   });
+});
+
+it('returns from a selection update while enrollment waits and admits another update', async () => {
+  const f = await fixture();
+  await f.request();
+  const requestId = f.requestId();
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => (release = resolve));
+  f.completeWith(async (selection) => {
+    await blocked;
+    return f.surface.completeMemberEnrollment(selection);
+  });
+  try {
+    let returned = false;
+    const pending = f.message({
+      users_shared: { request_id: requestId, users: [{ user_id: Number(selectedId) }] },
+    });
+    void pending.then(() => {
+      returned = true;
+    });
+    await vi.waitFor(() => expect(returned).toBe(true));
+    expect(f.completions).toHaveLength(0);
+    const before = f.intake.acceptOwnerMessage.mock.calls.length;
+    await f.message({ text: 'fixture next message' });
+    expect(f.intake.acceptOwnerMessage.mock.calls.length).toBe(before + 1);
+    release();
+    await vi.waitFor(() =>
+      expect(f.completions.at(-1)).toMatchObject({
+        status: 'completed',
+        data: { status: 'created' },
+      })
+    );
+  } finally {
+    release();
+  }
 });

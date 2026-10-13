@@ -32,10 +32,13 @@ function surface(actions: string[]) {
     scopes: [],
     actions,
   };
-  return (code: string, modelRunId?: string) =>
+  return (code: string, modelRunId?: string, principalId = 'owner') =>
     dispatch(
       { action: 'code_act', input: { code }, operationId: 'op-1' },
-      { access, ...(modelRunId === undefined ? {} : { session: { modelRunId } }) }
+      {
+        access: { ...access, principalId },
+        ...(modelRunId === undefined ? {} : { session: { modelRunId } }),
+      }
     );
 }
 
@@ -167,6 +170,15 @@ describe('code_act', () => {
     for (const other of ['run-2', undefined]) {
       const fresh = await run('return typeof slots;', other);
       expect((fresh as { data: { value: unknown } }).data.value).toBe('undefined');
+    }
+  });
+
+  it('keeps carried values independently across concurrent principals', async () => {
+    const run = surface(['code_act']);
+    for (let n = 0; n < 6; n++) await run(`globalThis.saved = ${n};`, `run-${n}`, `principal-${n}`);
+    for (let n = 0; n < 6; n++) {
+      const result = await run('return saved;', `run-${n}`, `principal-${n}`);
+      expect((result as { data: { value: number } }).data.value).toBe(n);
     }
   });
 

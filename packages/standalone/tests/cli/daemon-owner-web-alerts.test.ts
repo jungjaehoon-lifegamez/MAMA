@@ -188,7 +188,7 @@ async function boot() {
       },
     });
     await runtime.runtime.drainOnce();
-    await vi.waitFor(() => expect(runtime.serveMember(principalId).isPending!(id)).toBe(false));
+    await vi.waitFor(() => expect(runtime.memberIntake(principalId).isPending!(id)).toBe(false));
   };
   const alerts = () =>
     transport.sendMessage.mock.calls.filter((args) =>
@@ -306,4 +306,38 @@ describe('owner-role personal web and connection alerts', () => {
     );
     expect(f.events().map((event) => event.principalId)).toEqual([person, person, plain, plain]);
   });
+});
+
+it('retries serving an active registered member when its next Telegram DM arrives', async () => {
+  const f = await boot();
+  const repo = createPrincipalRepository(f.runtime.database.adapter);
+  const id = repo.registerMember({
+    connector: 'telegram',
+    namespace: 'private',
+    externalId: '20004',
+    now: 5,
+  });
+  vi.spyOn(f.runtime.runtime, 'servePrincipal').mockImplementationOnce(() => {
+    throw new Error('fixture serve failure');
+  });
+  await expect(f.runtime.serveMember(id)).rejects.toThrow('fixture serve failure');
+  expect(f.runtime.runtime.servesPrincipal(id)).toBe(false);
+  await transport.handler!({
+    message: {
+      message_id: 101,
+      date: 5,
+      chat: { id: 20004, type: 'private' },
+      from: { id: 20004, is_bot: false },
+      text: 'fixture recovery request',
+    },
+  });
+  await vi.waitFor(() =>
+    expect(f.runtime.runtime.mailbox!.readInput('telegram:20004:101', id)?.status).toBe('acked')
+  );
+  expect(f.runtime.runtime.servesPrincipal(id)).toBe(true);
+  expect(
+    transport.sendMessage.mock.calls.some(
+      ([chat, text]) => chat === 20004 && typeof text === 'string'
+    )
+  ).toBe(true);
 });

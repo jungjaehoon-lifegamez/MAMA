@@ -11,22 +11,27 @@ interface SessionEntry {
   delivery: ReplayClockDelivery;
 }
 
-/** One serial chain for complete owner/member turns; session state stays in each delivery. */
+/** A serial chain for one principal's complete deliveries and host changes. */
 export function createSerialTurnChain() {
-  const queue: Array<() => Promise<void>> = [];
+  const queue: Array<{ work: () => Promise<void>; priority: boolean }> = [];
+  const pending = new Set<Promise<unknown>>();
   let running = false;
   let holds = 0;
+  let current: Promise<void> = Promise.resolve();
   const pump = () => {
     if (running || holds || !queue.length) return;
     running = true;
-    const work = queue.shift()!;
-    void work().finally(() => {
+    const { work } = queue.shift()!;
+    current = work().finally(() => {
       running = false;
       pump();
     });
   };
-  const add = <T>(execute: () => Promise<T>, next: boolean): Promise<T> =>
-    new Promise<T>((resolve, reject) => {
+  const add = <T>(
+    execute: () => Promise<T>,
+    position: 'tail' | 'next' | 'afterCurrent'
+  ): Promise<T> => {
+    const result = new Promise<T>((resolve, reject) => {
       const work = async () => {
         try {
           resolve(await execute());
@@ -34,12 +39,31 @@ export function createSerialTurnChain() {
           reject(error);
         }
       };
-      if (next) queue.unshift(work);
-      else queue.push(work);
+      const entry = { work, priority: position !== 'tail' };
+      if (position === 'next') queue.unshift(entry);
+      else if (position === 'afterCurrent') {
+        const firstTurn = queue.findIndex((item) => !item.priority);
+        queue.splice(firstTurn === -1 ? queue.length : firstTurn, 0, entry);
+      } else queue.push(entry);
       pump();
     });
-  return Object.assign(<T>(execute: () => Promise<T>) => add(execute, false), {
-    next: <T>(execute: () => Promise<T>) => add(execute, true),
+    pending.add(result);
+    void result.then(
+      () => pending.delete(result),
+      () => pending.delete(result)
+    );
+    return result;
+  };
+  return Object.assign(<T>(execute: () => Promise<T>) => add(execute, 'tail'), {
+    // P9 settlement jobs take the next member slot once the confirming turn releases its hold.
+    next: <T>(execute: () => Promise<T>) => add(execute, 'next'),
+    // Host changes retain arrival order but run before native turns waiting for this principal.
+    afterCurrent: <T>(execute: () => Promise<T>) => add(execute, 'afterCurrent'),
+    isBusy: () => running || holds > 0 || queue.length > 0,
+    current: () => current,
+    idle: async () => {
+      while (pending.size) await Promise.allSettled([...pending]);
+    },
     hold: () => {
       holds++;
       let released = false;
@@ -59,7 +83,43 @@ export function createPrincipalSessions(
   canRun: (principalId: string) => boolean = () => true
 ) {
   const entries = new Map<string, SessionEntry>();
-  const turnChain = createSerialTurnChain();
+  // Keep the chain when a session is retired/recreated: its cancelled waiters and host jobs
+  // must finish before the replacement session accepts a turn for the same principal.
+  const chains = new Map<string, ReturnType<typeof createSerialTurnChain>>();
+  const directoryChanges = createSerialTurnChain();
+  const releases = new Map<string, () => void>();
+  let exclusiveCount = 0;
+  const turnChain = (id: string) => {
+    let chain = chains.get(id);
+    if (!chain) {
+      chains.set(id, (chain = createSerialTurnChain()));
+      if (exclusiveCount && id !== ownerPrincipalId) releases.set(id, chain.hold());
+    }
+    return chain;
+  };
+  // Enrollment and serving create new member paths; suspend/offboard set paths aside in
+  // .retired- archives; resume sets residual paths aside before creating a fresh environment.
+  // Hold member chains and drain their current work, including newly seen members. The common
+  // session denies both member roots wholesale, so it keeps running through these changes.
+  const exclusive = <T>(execute: () => Promise<T>): Promise<T> => {
+    if (exclusiveCount++ === 0)
+      for (const [id, chain] of chains) if (id !== ownerPrincipalId) releases.set(id, chain.hold());
+    const running = [...chains]
+      .filter(([id]) => id !== ownerPrincipalId)
+      .map(([, chain]) => chain.current());
+    return directoryChanges(async () => {
+      try {
+        await Promise.all(running);
+        return await execute();
+      } finally {
+        if (--exclusiveCount === 0) {
+          const held = [...releases.values()];
+          releases.clear();
+          held.forEach((release) => release());
+        }
+      }
+    });
+  };
   const get = (id: string): SessionEntry => {
     const entry = entries.get(id);
     if (!entry) throw new Error(`Principal session is not served: ${id}`);
@@ -124,6 +184,13 @@ export function createPrincipalSessions(
     native,
     delivery,
     turnChain,
+    exclusive,
+    idle: async () => {
+      await Promise.all([
+        directoryChanges.idle(),
+        ...[...chains.values()].map((chain) => chain.idle()),
+      ]);
+    },
     get,
     add: (id: string, entry: SessionEntry) => {
       if (entries.has(id)) throw new Error(`Principal session already served: ${id}`);
