@@ -50,6 +50,7 @@ let member: string;
 let second: string;
 let gateway: TelegramGateway;
 let ledger: TelegramMessageLedger;
+const allowedChats = ['-100', '20001'];
 const common = 'common-test';
 const channels = new Map<string, ChatSources>();
 const intakes = new Map<string, ReturnType<typeof createStimulusIntake>>();
@@ -75,6 +76,26 @@ async function send(overrides: Record<string, unknown> = {}) {
       ...overrides,
     },
   });
+}
+
+function createGateway() {
+  return new TelegramGateway({
+    token: 'fixture-token',
+    messageLedger: ledger,
+    intake: intakes.get(common)!,
+    registry: repository,
+    memberIntake: (id) => intakes.get(id)!,
+    principalPaths: (id) => memberPaths(join(root, 'members'), id),
+    downloadsDir: join(root, 'common-downloads'),
+    config: { allowedChats, ownerChatId: '-100', polling: false },
+  });
+}
+
+async function restartGateway() {
+  await gateway.stop();
+  ledger = new TelegramMessageLedger(join(root, 'ledger.json'));
+  gateway = createGateway();
+  await gateway.start();
 }
 
 beforeEach(async () => {
@@ -115,16 +136,7 @@ beforeEach(async () => {
     );
   }
   ledger = new TelegramMessageLedger(join(root, 'ledger.json'));
-  gateway = new TelegramGateway({
-    token: 'fixture-token',
-    messageLedger: ledger,
-    intake: intakes.get(common)!,
-    registry: repository,
-    memberIntake: (id) => intakes.get(id)!,
-    principalPaths: (id) => memberPaths(join(root, 'members'), id),
-    downloadsDir: join(root, 'common-downloads'),
-    config: { allowedChats: ['-100', '20001'], ownerChatId: '-100', polling: false },
-  });
+  gateway = createGateway();
   transport.sent.length = 0;
   transport.edits.length = 0;
   await gateway.start();
@@ -308,8 +320,12 @@ describe('P10.1 Telegram person routing', () => {
     ]);
   });
 
-  it.each(['20001', '20002'])('recovers ready DM %s under its registered person', async (dm) => {
+  it.each([
+    ['20001', true],
+    ['20002', false],
+  ])('recovers ready DM %s under its registered person', async (dm, ownerRole) => {
     const person = dm === '20001' ? member : second;
+    if (ownerRole) repository.grantRole({ principalId: person, role: 'owner', now: 3 });
     const ref = `telegram:${dm}:22`;
     chat(person).saveOwnerMessage({
       id: ref,
@@ -319,6 +335,7 @@ describe('P10.1 Telegram person routing', () => {
     });
     ledger.claim(ref);
     ledger.markReady(ref, 'Personal answer before restart');
+    await restartGateway();
     await gateway.recoverPendingResponses();
     expect(ledger.get(ref)?.state).toBe('delivered');
     expect(transport.sent).toEqual([
@@ -337,6 +354,77 @@ describe('P10.1 Telegram person routing', () => {
       expect.objectContaining({ author: `agent:${person}`, memory_scope_id: person }),
     ]);
   });
+
+  it.each([true, false])(
+    'recovers a ready non-allowlisted member receipt once (owner role: %s), retaining other destination rules',
+    async (ownerRole) => {
+      if (ownerRole) repository.grantRole({ principalId: second, role: 'owner', now: 3 });
+      const access = {
+        principalId: second,
+        agentId: `agent:${second}`,
+        scopes: [{ kind: 'user' as const, id: second }],
+        destinations: [{ kind: 'telegram' as const, id: '20002' }],
+      };
+      transport.api.sendMessage.mockRejectedValueOnce(
+        Object.assign(new Error('fixture rate limit'), { error_code: 429 })
+      );
+      await expect(
+        gateway.sendMemberText(access, 'Personal receipt', 'member-receipt')
+      ).rejects.toThrow('fixture rate limit');
+      const receipt = ledger
+        .listUndelivered()
+        .find((entry) => entry.idempotencyKey === 'member-receipt')!;
+      expect(receipt).toMatchObject({
+        state: 'ready',
+        deliveryTarget: 'telegram:20002',
+        deliveryUncertain: false,
+      });
+      const suspended = repository.registerMember({
+        connector: 'telegram',
+        namespace: 'private',
+        externalId: '20003',
+        now: 4,
+      });
+      repository.suspend(suspended, 5);
+      const offboarded = repository.registerMember({
+        connector: 'telegram',
+        namespace: 'private',
+        externalId: '20004',
+        now: 4,
+      });
+      repository.offboard(offboarded, 5);
+      repository.ensureOwner({
+        principalId: common,
+        connector: 'telegram',
+        namespace: 'private',
+        externalId: '20005',
+        now: 4,
+      });
+      for (const dm of ['-100', '-101', '29999', '20003', '20004', '20005']) {
+        ledger.claim(`outbound:${dm}`, {
+          deliveryTarget: `telegram:${dm}`,
+          payloadIdentity: 'a'.repeat(64),
+        });
+        ledger.markReady(`outbound:${dm}`, `Receipt for ${dm}`, 'html-v1');
+      }
+      await restartGateway();
+      await gateway.recoverPendingResponses();
+      await restartGateway();
+      expect(transport.sent).toEqual([
+        { chatId: 20002, text: 'Personal receipt' },
+        { chatId: -100, text: 'Receipt for -100' },
+      ]);
+      expect(ledger.get(receipt.key)?.state).toBe('delivered');
+      expect(ledger.get('outbound:-100')?.state).toBe('delivered');
+      for (const dm of ['-101', '29999', '20003', '20004', '20005'])
+        expect(ledger.get(`outbound:${dm}`)?.state).toBe('ready');
+      expect(allowedChats).toEqual(['-100', '20001']);
+      await expect(gateway.sendMessage('20002', 'Not a host receipt')).rejects.toThrow(
+        /allowlisted/
+      );
+      expect(rows()).toEqual([]);
+    }
+  );
 
   it('refuses a DM response after its recipient is suspended', async () => {
     await send({ chat: { id: 20002, type: 'private' }, from: { id: 20002, is_bot: false } });

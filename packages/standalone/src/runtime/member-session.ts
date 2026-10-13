@@ -231,6 +231,7 @@ export function createMemberSession(
     onFailed: options.onStimulusFailed,
     onUncertain: options.onStimulusUncertain,
     onDead: options.onStimulusDead,
+    closeUncertain: options.closeUncertain,
   });
   return { native, delivery, chat, paths, access, initialAccess };
 }

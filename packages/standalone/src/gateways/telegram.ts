@@ -769,7 +769,10 @@ export class TelegramGateway extends BaseGateway {
           if (!entry.deliveryTarget?.startsWith('telegram:') || !chatId) {
             throw new Error('Telegram outbound entry has no valid destination');
           }
-          if (!this.config.allowedChats?.includes(chatId)) continue;
+          if (!this.config.allowedChats?.includes(chatId)) {
+            const recipient = this.registry.resolveByExternal('telegram', 'private', chatId);
+            if (recipient?.kind !== 'member' || recipient.status !== 'active') continue;
+          }
           await this.runInChatQueue(chatId, () => this.deliverOutboundEntry(entry.key, chatId));
           continue;
         }
