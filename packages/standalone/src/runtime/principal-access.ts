@@ -3,6 +3,7 @@ import type { DatabaseInstance } from '@jungjaehoon/mama-core/db-manager';
 import type { JudgmentAccess } from '@jungjaehoon/mama-core/knowledge';
 import type { MemoryScopeRef } from '@jungjaehoon/mama-core/memory/types';
 import { MEMBER_ACTIONS } from './action-surface.js';
+import { MEMBER_MANAGEMENT_ACTIONS } from '../api/member-lifecycle.js';
 import { holdsOwnerRole } from './owner-authority.js';
 
 /** A member grant must not expose the owner's default records or make boot/turn access fail. */
@@ -115,6 +116,14 @@ export function resolvePrincipalAccess(
           ),
         }
       : {}),
-    actions: ownerRole ? [...MEMBER_ACTIONS, 'drive.read', 'report.read'] : MEMBER_ACTIONS,
+    actions: ownerRole
+      ? [
+          ...MEMBER_ACTIONS,
+          'drive.read',
+          'report.read',
+          ...MEMBER_MANAGEMENT_ACTIONS,
+          'manage.member.enroll',
+        ]
+      : MEMBER_ACTIONS,
   };
 }

@@ -78,7 +78,8 @@ export interface DaemonGateway {
   sendMemberText?: import('../../api/member-records.js').MemberRecordsTelegram['sendMemberText'];
   /** This owner message has a delivered answer, an interruption notice included. */
   answered(sourceRef: string): boolean;
-  requestMemberEnrollment?(sourceRef: string): Promise<void>;
+  requestMemberEnrollment?(sourceRef: string, ownerUserId: string): Promise<void>;
+  cancelMemberEnrollment?(principalId: string): void;
   recoverPendingResponses(): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -497,14 +498,16 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       ...(config.telegram.enabled && options.mode !== 'replay'
         ? {
             memberEnrollment: {
-              requestSelection: async (sourceRef: string) => {
+              cancelSelection: (principalId: string) =>
+                gateways.get('telegram')?.cancelMemberEnrollment?.(principalId),
+              requestSelection: async (sourceRef: string, ownerUserId: string) => {
                 const telegram = gateways.get('telegram');
                 if (!telegram?.requestMemberEnrollment)
                   throw Object.assign(
                     new Error("Enrollment requires Telegram as the owner's messenger"),
                     { name: 'denied' }
                   );
-                await telegram.requestMemberEnrollment(sourceRef);
+                await telegram.requestMemberEnrollment(sourceRef, ownerUserId);
               },
             },
           }

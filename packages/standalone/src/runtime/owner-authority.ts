@@ -10,7 +10,7 @@
  * subagent's calls carry `subagent:<thread>`: the agent that heard the owner records the correction.
  */
 import type { ActionContext, ActionRegistration, DatabaseInstance } from '@jungjaehoon/mama-core';
-import type { PrincipalRepository } from '@jungjaehoon/mama-core';
+import { createPrincipalRepository, type PrincipalRepository } from '@jungjaehoon/mama-core';
 
 export function holdsOwnerRole(
   repository: Pick<PrincipalRepository, 'listRoles'>,
@@ -26,6 +26,52 @@ const OWNER_CHAT_REF = /^(?:telegram|discord|slack):[^:]+:[^:]+$/;
 
 export function isOwnerChatRef(ref: unknown): boolean {
   return typeof ref === 'string' && OWNER_CHAT_REF.test(ref);
+}
+
+export interface OwnerMessageAuthority {
+  adapter: DatabaseInstance;
+  ownerPrincipalId: string;
+  isOwnerMessageTurn(sourceMessageRef: string, principalId: string): boolean;
+}
+
+/** The host's message binding names the person; the common session itself is no person. */
+export function messageTurnCaller(
+  context: ActionContext,
+  ports: OwnerMessageAuthority
+): string | undefined {
+  const ref = context.session?.sourceMessageRef;
+  const principalId = context.access.principalId;
+  if (
+    context.session?.replaySourceEndMs !== undefined ||
+    !isOwnerChatRef(ref) ||
+    !ports.isOwnerMessageTurn(ref!, principalId)
+  )
+    return undefined;
+  if (principalId !== ports.ownerPrincipalId) return principalId;
+  const row = ports.adapter
+    .prepare(
+      `SELECT json_extract(payload_json, '$.senderPrincipalId') AS sender
+     FROM mailbox_inputs WHERE stimulus_id=? AND principal_id=? AND kind='owner_message'
+     ORDER BY id DESC LIMIT 1`
+    )
+    .get(ref, principalId) as { sender: string | null } | undefined;
+  return row?.sender ?? undefined;
+}
+
+/** Re-read status and role at execution, inside the shared serial turn slot. */
+export function activeOwnerMessageCaller(
+  context: ActionContext,
+  ports: OwnerMessageAuthority
+): string | undefined {
+  const caller = messageTurnCaller(context, ports);
+  if (!caller) return undefined;
+  const repository = createPrincipalRepository(ports.adapter);
+  const principal = repository.findById(caller);
+  return principal?.kind === 'member' &&
+    principal.status === 'active' &&
+    holdsOwnerRole(repository, caller)
+    ? caller
+    : undefined;
 }
 
 /**

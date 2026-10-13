@@ -65,6 +65,13 @@ export async function fixture(
     now: 1,
   });
   repo.bindIdentity('owner', 'telegram', 'private', 'fixture-co-owner', 2);
+  const managingOwner = repo.registerMember({
+    connector: 'telegram',
+    namespace: 'private',
+    externalId: 'fixture-manager',
+    now: 2,
+  });
+  repo.grantRole({ principalId: managingOwner, role: 'owner', now: 2 });
   const member = withMembers
     ? repo.registerMember({
         connector: 'telegram',
@@ -73,7 +80,10 @@ export async function fixture(
         now: 3,
       })
     : 'unused-member';
-  if (suspendedWithoutRoot) repo.suspend(member, 4);
+  if (suspendedWithoutRoot) {
+    repo.suspend(member, 4);
+    repo.suspend(managingOwner, 4);
+  }
   await seed.close();
   const pool = new SessionPool();
   const natives = new Map<string, ReturnType<typeof createNativeSession>>();
@@ -91,8 +101,10 @@ export async function fixture(
   const stopped: string[] = [];
   let pendingAction: { action: string; input: unknown } | undefined;
   let actionResult: ActionResult | undefined;
-  let memberAction: { action: string; input: unknown } | undefined;
-  let memberResult: ActionResult | undefined;
+  const commonActions = new Map<string, { action: string; input: unknown }>();
+  const commonResults = new Map<string, ActionResult>();
+  const memberActions = new Map<string, { action: string; input: unknown }>();
+  const memberResults = new Map<string, ActionResult>();
   let finishFailure: 'before_acceptance' | 'after_acceptance' | undefined;
   const ledger = new OwnerMessageLedger(join(home, 'ledger.json'));
   let gate: Promise<void> | undefined;
@@ -188,15 +200,20 @@ export async function fixture(
                 { session_id: session!, tool_use_id: operationId }
               );
           };
-          if (principal === 'owner' && pendingAction) {
+          const ref = (opts?.toolExecutionContext as { sourceMessageRef: string }).sourceMessageRef;
+          const commonAction = commonActions.get(ref);
+          if (principal === 'owner' && commonAction) {
+            commonActions.delete(ref);
+            commonResults.set(ref, await call(commonAction.action, commonAction.input));
+          } else if (principal === 'owner' && pendingAction) {
             const action = pendingAction;
             pendingAction = undefined;
             actionResult = await call(action.action, action.input);
           } else if (principal !== 'owner') {
-            if (memberAction) {
-              const action = memberAction;
-              memberAction = undefined;
-              memberResult = await call(action.action, action.input);
+            const action = memberActions.get(principal);
+            if (action) {
+              memberActions.delete(principal);
+              memberResults.set(principal, await call(action.action, action.input));
             }
             reads.push(
               await Promise.all(readIds.map((id) => call('memory.read:record', { memory_id: id })))
@@ -256,17 +273,26 @@ export async function fixture(
       return native;
     },
   });
+  if (suspendedWithoutRoot)
+    createPrincipalRepository(runtime.database.adapter).resume(managingOwner, 5);
   close.push(async () => {
     await runtime.stop();
     pool.dispose();
   });
-  const message = (principal: string, text = 'fixture input') => {
+  const message = (
+    principal: string,
+    text = 'fixture input',
+    senderPrincipalId = managingOwner,
+    action?: { action: string; input: unknown }
+  ) => {
     const id = `telegram:fixture:message-${++sequence}`;
+    if (action) commonActions.set(id, action);
     (principal === 'owner' ? runtime.intake : runtime.serveMember(principal)).acceptOwnerMessage({
       id,
       channelKey: 'fixture',
       occurredAt: sequence,
       text,
+      ...(principal === 'owner' ? { senderPrincipalId } : {}),
     });
     return id;
   };
@@ -275,16 +301,30 @@ export async function fixture(
       expect(runtime.runtime.mailbox!.readInput(id, principal)?.status).toBe('acked')
     );
   };
-  const manage = async (change: string, input: unknown = { principalId: member }) => {
-    actionResult = undefined;
-    pendingAction = { action: `manage.member.${change}`, input };
-    const id = message('owner');
+  const manage = async (
+    change: string,
+    input: unknown = { principalId: member },
+    sender = managingOwner
+  ) => {
+    const id = message('owner', 'fixture management', sender, {
+      action: `manage.member.${change}`,
+      input,
+    });
     await settled(id);
-    expect(actionResult).toBeDefined();
-    return actionResult!;
+    expect(commonResults.has(id)).toBe(true);
+    return commonResults.get(id)!;
+  };
+  const actAs = async (principal: string, action: string, input: unknown = {}) => {
+    memberResults.delete(principal);
+    memberActions.set(principal, { action, input });
+    const ref = message(principal);
+    await vi.waitFor(() => expect(memberResults.has(principal)).toBe(true));
+    return { result: memberResults.get(principal)!, ref };
   };
   return {
     runtime,
+    managingOwner,
+    actAs,
     member,
     memberDm: memberIdentity,
     ledger,
@@ -310,13 +350,7 @@ export async function fixture(
     finishMemberTurn: (failure: 'before_acceptance' | 'after_acceptance') => {
       finishFailure = failure;
     },
-    act: async (action: string, input: unknown = {}) => {
-      memberResult = undefined;
-      memberAction = { action, input };
-      const ref = message(member);
-      await vi.waitFor(() => expect(memberResult).toBeDefined());
-      return { result: memberResult!, ref };
-    },
+    act: (action: string, input: unknown = {}) => actAs(member, action, input),
     home,
     root,
     turns,

@@ -99,6 +99,8 @@ export interface StimulusDeliveryOptions {
   /** Resolve chat principal roles from the registry. */
   principalRoles?: (principalId: string) => readonly string[];
   commonPrincipalId?: string;
+  /** Re-check a recorded common-message sender before building its turn. */
+  ownerMessageSenderActive?: (principalId: string) => boolean;
   /** Top lessons for a turn's text, most relevant first. */
   lessons?: (text: string) => Promise<readonly TurnLesson[]>;
   recordOrders?: RecordOrderPort;
@@ -513,6 +515,12 @@ type TurnPlan =
 function planTurn(row: MailboxRow, options: StimulusDeliveryOptions): TurnPlan {
   const zone = options.timeZone.get();
   if (row.kind === 'owner_message') {
+    const sender =
+      row.payload && typeof row.payload === 'object' && !Array.isArray(row.payload)
+        ? row.payload.senderPrincipalId
+        : undefined;
+    if (typeof sender === 'string' && options.ownerMessageSenderActive?.(sender) === false)
+      return { kind: 'skip', reason: 'inactive_owner_sender' };
     return {
       kind: 'turn',
       lessonQuery: ownerText(row),

@@ -8,6 +8,7 @@ import {
 } from '@jungjaehoon/mama-core';
 import type { DatabaseInstance } from '@jungjaehoon/mama-core/db-manager';
 import { clearMemberSmokeState } from './member-smoke-state.js';
+import { activeOwnerMessageCaller } from '../runtime/owner-authority.js';
 import { resolvePrincipalAccess } from '../runtime/principal-access.js';
 
 /** Transport facts supplied by the gateway only, never by action arguments. */
@@ -19,14 +20,15 @@ export interface MemberSelection {
 
 export interface MemberEnrollmentPorts {
   memberRoot?: string;
-  requestSelection(sourceMessageRef: string): Promise<void>;
+  requestSelection(sourceMessageRef: string, ownerUserId: string): Promise<void>;
+  cancelSelection?(principalId: string): void;
   serveMember?(principalId: string): void;
 }
 
 export function createMemberEnrollment(options: {
   adapter: DatabaseInstance;
   ownerPrincipalId: string;
-  isOwnerMessageTurn(sourceMessageRef: string): boolean;
+  isOwnerMessageTurn(sourceMessageRef: string, principalId: string): boolean;
   ownerAccess(): JudgmentAccess;
   ports?: MemberEnrollmentPorts;
 }) {
@@ -36,21 +38,17 @@ export function createMemberEnrollment(options: {
     contract: {
       name: 'manage.member.enroll',
       summary:
-        "Enrollment requires the Choose member button in an owner's Telegram DM and is not available now. Requires member_root and a daemon restart after configuring it. The host registers the selected identity; this action accepts no person, chat or grants. Returns pending; enrollment grants no shared access. Active members' own messages are admitted by the registry.",
+        "Enrollment runs in an active owner-role caller's own message turn (DM or the common channel), sending the Choose member button to the owner's own Telegram DM. Requires member_root and a daemon restart after configuring it. The host registers the selected identity; this action accepts no person, chat or grants. Returns pending; enrollment grants no shared access. Active members' own messages are admitted by the registry.",
       inputSchema: { type: 'object', additionalProperties: false, properties: {} },
       examples: [{ title: 'Ask the owner to choose a member', input: {} }],
     },
     exec: async (_input, context: ActionContext) => {
       const ref = context.session?.sourceMessageRef;
-      if (
-        context.access.principalId !== options.ownerPrincipalId ||
-        context.session?.replaySourceEndMs !== undefined ||
-        !ref ||
-        !options.isOwnerMessageTurn(ref)
-      ) {
+      const caller = activeOwnerMessageCaller(context, options);
+      if (!caller) {
         throw Object.assign(
           new Error(
-            "Enrollment requires the Choose member button in an owner's Telegram DM and is not available now."
+            "Enrollment requires a registered person's message turn from an active owner-role member. Discord and Slack common turns have no registered sender; use Telegram."
           ),
           { name: 'denied' }
         );
@@ -66,7 +64,15 @@ export function createMemberEnrollment(options: {
         });
       const selection = context.operationId ? completions.get(context.operationId) : undefined;
       if (!selection) {
-        await ports.requestSelection(ref);
+        const callerAccess = resolvePrincipalAccess(caller, {
+          adapter: options.adapter,
+          ownerAccess: options.ownerAccess(),
+          agentId: `member-agent:${caller}`,
+        });
+        const dm = callerAccess.destinations!.find(
+          (destination) => destination.kind === 'telegram'
+        )!;
+        await ports.requestSelection(ref!, dm.id);
         return { status: 'pending' };
       }
       const repo = createPrincipalRepository(options.adapter);
@@ -83,11 +89,7 @@ export function createMemberEnrollment(options: {
         ...(message ? { message } : {}),
       });
       if (selection.userId === selection.ownerUserId)
-        return receipt(
-          'refused',
-          options.ownerPrincipalId,
-          "The owner's own identity cannot be enrolled"
-        );
+        return receipt('refused', caller, "The owner's own identity cannot be enrolled");
       if (current && current.status !== 'active')
         return receipt(
           'refused',
@@ -132,13 +134,26 @@ export function createMemberEnrollment(options: {
   return {
     registration,
     complete: async (selection: MemberSelection, dispatch: ActionDispatcher) => {
+      const repository = createPrincipalRepository(options.adapter);
+      const person = repository.resolveByExternal('telegram', 'private', selection.ownerUserId);
+      if (person?.kind !== 'member')
+        throw new Error('Enrollment caller must be a registered member');
+      const personalAccess = resolvePrincipalAccess(person.principalId, {
+        adapter: options.adapter,
+        ownerAccess: options.ownerAccess(),
+        agentId: `member-agent:${person.principalId}`,
+      });
+      // The original request may be a common-channel turn; retain that room's host binding.
+      const access = options.isOwnerMessageTurn(selection.sourceMessageRef, person.principalId)
+        ? personalAccess
+        : options.ownerAccess();
       const operationId = `member-enrollment:${randomUUID()}`;
       completions.set(operationId, selection);
       try {
         return await dispatch(
           { action: registration.contract.name, input: {}, operationId },
           {
-            access: options.ownerAccess(),
+            access,
             session: { sourceMessageRef: selection.sourceMessageRef },
           }
         );

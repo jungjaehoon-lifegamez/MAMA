@@ -165,7 +165,10 @@ export class TelegramGateway extends BaseGateway {
   private readonly recentMessageIds = new Map<string, number>();
   private readonly activeChat = new AsyncLocalStorage<{ chatId: string; active: boolean }>();
   private nextEnrollmentRequestId = randomInt(1, 0x7fffffff);
-  private pendingEnrollment?: { requestId: number; sourceMessageRef: string; ownerUserId: string };
+  private readonly pendingEnrollments = new Map<
+    string,
+    { requestId: number; sourceMessageRef: string; ownerUserId: string }
+  >();
   private readonly onMemberSelection?: TelegramGatewayOptions['onMemberSelection'];
   private readonly recordMemberSelection?: TelegramGatewayOptions['recordMemberSelection'];
   private bot: Bot | null = null;
@@ -255,7 +258,7 @@ export class TelegramGateway extends BaseGateway {
   }
 
   async stop(): Promise<void> {
-    this.pendingEnrollment = undefined;
+    this.pendingEnrollments.clear();
     if (this.bot) await this.bot.stop().catch(() => {});
     this.bot = null;
     this.connected = false;
@@ -399,12 +402,12 @@ export class TelegramGateway extends BaseGateway {
   }
 
   /** The source ref was verified as an owner turn by the runtime; only an owner DM can select. */
-  async requestMemberEnrollment(sourceRef: string): Promise<void> {
+  async requestMemberEnrollment(sourceRef: string, requestingOwnerUserId: string): Promise<void> {
     if (!sourceRef.startsWith('telegram:'))
       throw Object.assign(new Error("Enrollment requires the owner's own Telegram DM"), {
         name: 'denied',
       });
-    const ownerUserId = chatIdFromSourceMessageRef(sourceRef);
+    const ownerUserId = requestingOwnerUserId;
     const chatId = Number(ownerUserId);
     if (!this.bot || !this.onMemberSelection || !this.ownerAllowed(ownerUserId)) {
       throw Object.assign(new Error("Enrollment requires the owner's own Telegram DM"), {
@@ -413,7 +416,11 @@ export class TelegramGateway extends BaseGateway {
     }
     const requestId = this.nextEnrollmentRequestId;
     this.nextEnrollmentRequestId = requestId === 0x7fffffff ? 1 : requestId + 1;
-    this.pendingEnrollment = { requestId, sourceMessageRef: sourceRef, ownerUserId };
+    this.pendingEnrollments.set(ownerUserId, {
+      requestId,
+      sourceMessageRef: sourceRef,
+      ownerUserId,
+    });
     // Telegram shows a request_users button only on the reply keyboard, under the message box.
     const prompt =
       'Choose one member to enroll with the Choose member button under the message box, not in the chat. If it is hidden, open it with the keyboard icon in the message box.';
@@ -433,8 +440,19 @@ export class TelegramGateway extends BaseGateway {
         },
       });
     } catch (error) {
-      if (this.pendingEnrollment?.requestId === requestId) this.pendingEnrollment = undefined;
+      if (this.pendingEnrollments.get(ownerUserId)?.requestId === requestId)
+        this.pendingEnrollments.delete(ownerUserId);
       throw error;
+    }
+  }
+
+  cancelMemberEnrollment(principalId: string): void {
+    for (const ownerUserId of this.pendingEnrollments.keys()) {
+      if (
+        this.registry.resolveByExternal('telegram', 'private', ownerUserId)?.principalId ===
+        principalId
+      )
+        this.pendingEnrollments.delete(ownerUserId);
     }
   }
 
@@ -444,7 +462,12 @@ export class TelegramGateway extends BaseGateway {
   ): Promise<void> {
     const chatId = String(message.chat.id);
     const ownerUserId = String(message.from!.id);
-    if (message.chat.type !== 'private' || chatId !== ownerUserId) return;
+    if (
+      message.chat.type !== 'private' ||
+      chatId !== ownerUserId ||
+      !this.ownerAllowed(ownerUserId)
+    )
+      return;
     let receiptText = 'Enrollment selection received.';
     let deliveryVerified = false;
     const sendReceipt = async (text: string): Promise<void> => {
@@ -456,7 +479,7 @@ export class TelegramGateway extends BaseGateway {
       deliveryVerified = true;
     };
     try {
-      const pending = this.pendingEnrollment;
+      const pending = this.pendingEnrollments.get(ownerUserId);
       const shared = message.users_shared!;
       if (
         !pending ||
@@ -469,7 +492,7 @@ export class TelegramGateway extends BaseGateway {
         return;
       }
       // Consume before awaiting the serial host chain, so concurrent duplicate updates cannot enroll.
-      this.pendingEnrollment = undefined;
+      this.pendingEnrollments.delete(ownerUserId);
       if (
         shared.users.length !== 1 ||
         !Number.isSafeInteger(shared.users[0]!.user_id) ||
@@ -591,6 +614,7 @@ export class TelegramGateway extends BaseGateway {
       principal.status === 'active' &&
       (privateChat || (this.config.allowedChats?.includes(chatId) && this.ownerAllowed(userId)));
     if (message.from.is_bot || !admitted) {
+      if (principal?.status === 'suspended') this.cancelMemberEnrollment(principal.principalId);
       const chatHash = createHash('sha256').update(`chat\0${chatId}`).digest('hex');
       const senderHash = createHash('sha256').update(`sender\0${userId}`).digest('hex');
       console.warn(

@@ -25,6 +25,7 @@ import {
   type ActionDispatcher,
 } from '@jungjaehoon/mama-core';
 import type { ServerResponse } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import type { DatabaseInstance } from '@jungjaehoon/mama-core/db-manager';
 import type { JudgmentAccess, Knowledge } from '@jungjaehoon/mama-core/knowledge';
 import type { MemoryScopeRef } from '@jungjaehoon/mama-core/memory/types';
@@ -39,7 +40,12 @@ import { ownerTimeZoneActionRegistrations } from '../api/owner-timezone-actions.
 import { ownerPolicyActionRegistrations } from '../api/owner-policy-actions.js';
 import { actionCatalogLine, helpActionRegistrations } from '../api/help-actions.js';
 import { CODE_ACT_CONTRACT, codeActRegistration } from '../api/code-act-actions.js';
-import { guardOwnerRules, holdsOwnerRole } from './owner-authority.js';
+import {
+  activeOwnerMessageCaller,
+  guardOwnerRules,
+  holdsOwnerRole,
+  messageTurnCaller,
+} from './owner-authority.js';
 import { workNoUpdateActionRegistrations } from '../api/record-actions.js';
 import { judgeActionRegistrations, type JudgePorts } from '../api/judge-actions.js';
 import {
@@ -80,6 +86,7 @@ const OWNER_ACTIONS = [
   'judge',
   'owner.timezone.set',
   ...MEMBER_MANAGEMENT_ACTIONS,
+  'manage.member.enroll',
   'owner.messages',
   'memory.checkpoint.list',
   'memory.checkpoint.save',
@@ -172,10 +179,17 @@ export interface ActionSurfaceOptions {
   helpTopics?: Readonly<Record<string, string>>;
   timeZone: TimeZoneSetting;
   configPath: string;
-  isOwnerMessageTurn: (sourceMessageRef: string, principalId?: string) => boolean;
+  isOwnerMessageTurn: (sourceMessageRef: string, principalId: string) => boolean;
   memberRecords?: MemberRecordsPorts;
   memberEnrollment?: MemberEnrollmentPorts;
   memberLifecycle?: MemberLifecyclePorts;
+  recordManagementReceipt?(receipt: {
+    callerPrincipalId: string;
+    operationId: string;
+    action: string;
+    input: unknown;
+    result: Awaited<ReturnType<ActionDispatcher>>;
+  }): void;
 }
 
 export interface ActionSurface {
@@ -330,6 +344,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       adapter: options.adapter,
       ownerPrincipalId: options.ownerPrincipalId,
       ownerDefaultScopes: defaultScopes,
+      isOwnerMessageTurn: options.isOwnerMessageTurn,
     }),
     ...sourceActionRegistrations({
       stored: options.storedSourceReader,
@@ -344,6 +359,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       configPath: options.configPath,
       ownerPrincipalId: options.ownerPrincipalId,
       setting: options.timeZone,
+      adapter: options.adapter,
       isOwnerMessageTurn: options.isOwnerMessageTurn,
     }),
     ...ownerPolicyActionRegistrations({
@@ -415,10 +431,26 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
   const dispatch = createDispatcher(catalog, {
     observeCall: async ({ action, operationId, input, result, durationMs, context }) => {
       const session = context.session;
+      const caller = action.startsWith('manage.member.')
+        ? messageTurnCaller(context, options)
+        : undefined;
+      if (
+        action !== 'manage.member.list' &&
+        caller &&
+        activeOwnerMessageCaller(context, options) === caller
+      ) {
+        options.recordManagementReceipt?.({
+          callerPrincipalId: caller,
+          operationId: operationId ?? randomUUID(),
+          action,
+          input,
+          result,
+        });
+      }
       const common = {
         tool_name: action,
         gateway_call_id: session?.gatewayCallId ?? null,
-        input_summary: traceSummary(input),
+        input_summary: traceSummary(caller ? { callerPrincipalId: caller, input } : input),
         output_summary: traceSummary(result),
         execution_status: result.status,
         duration_ms: durationMs,
@@ -435,7 +467,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       const trace = appendOperationToolTrace(options.adapter, {
         ...common,
         operation_id: operationId,
-        actor_principal_id: context.access.principalId,
+        actor_principal_id: caller ?? context.access.principalId,
       });
       return trace.trace_id;
     },

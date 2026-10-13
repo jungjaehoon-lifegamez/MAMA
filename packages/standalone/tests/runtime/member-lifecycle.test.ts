@@ -156,6 +156,7 @@ it('suspends and resumes with preserved grants in fresh directories, then offboa
     f.runtime.database.adapter.prepare('SELECT count(*) AS n FROM connector_event_index').get()
   ).toEqual(count);
   expect(data(await f.manage('list', {})).members).toEqual([
+    { principalId: f.managingOwner, status: 'active', roles: ['owner'], grants: [] },
     {
       principalId: f.member,
       status: 'suspended',
@@ -194,14 +195,15 @@ it('suspends and resumes with preserved grants in fresh directories, then offboa
   await f.settled(ref);
   const enrollment = await f.runtime.completeMemberEnrollment({
     sourceMessageRef: ref,
-    ownerUserId: 'fixture-owner',
+    ownerUserId: 'fixture-manager',
     userId: 'fixture-member',
   });
   expect(enrollment).toMatchObject({
-    status: 'failed',
-    error: {
-      code: 'action_not_granted',
-      message: 'principal owner may not call manage.member.enroll',
+    status: 'completed',
+    data: {
+      status: 'refused',
+      principalId: f.member,
+      message: 'The selected principal is offboarded',
     },
   });
 });
@@ -254,8 +256,8 @@ it.each(['codex', 'claude'] as const)(
       expect(f.turns.at(-1)!.nativeTools).toContain('WebFetch');
       expect(f.turns.at(-1)!.nativeTools).toContain('WebSearch');
     }
-    expect((await f.manage('suspend')).status).toBe('failed');
-    expect(repo.findById(f.member)?.status).toBe('active');
+    expect((await f.manage('suspend')).status).toBe('completed');
+    expect(repo.findById(f.member)?.status).toBe('suspended');
     expect(repo.listRoles(f.member)).toEqual([
       { principalId: f.member, role: 'owner', createdAt: 5 },
     ]);
@@ -573,6 +575,7 @@ it.each([true, false])(
     if (ownerRole) repo.grantRole({ principalId: f.member, role: 'owner', now: 4 });
     const result = data(await f.manage('list', {}));
     expect(result.members).toEqual([
+      { principalId: f.managingOwner, status: 'active', roles: ['owner'], grants: [] },
       { principalId: f.member, status: 'active', roles: ownerRole ? ['owner'] : [], grants: [] },
     ]);
     expect(JSON.stringify(result)).not.toContain(f.memberDm);
@@ -585,7 +588,10 @@ it('lists only principal ids, roles, statuses, grants and enrollment receipts, a
   const before = f.turns.at(-1)!;
   const access = JSON.stringify(before.access);
   const result = data(await f.manage('list', {}));
-  expect(result).toEqual({ recentEnrollments: [], members: [] });
+  expect(result).toEqual({
+    recentEnrollments: [],
+    members: [{ principalId: f.managingOwner, status: 'active', roles: ['owner'], grants: [] }],
+  });
   await f.settled(f.message('owner', 'fixture identical input'));
   expect(f.turns.at(-1)!.session).toBe(before.session);
   expect(f.turns.at(-1)!.access).toBe(before.access);
@@ -626,7 +632,10 @@ it('lists enrollment pick times in the current owner timezone without member_roo
         receipt,
       },
     ],
-    members: [{ principalId: f.member, status: 'suspended', roles: [], grants: [] }],
+    members: [
+      { principalId: f.managingOwner, status: 'active', roles: ['owner'], grants: [] },
+      { principalId: f.member, status: 'suspended', roles: [], grants: [] },
+    ],
   });
   fs.writeFileSync(join(f.home, 'config.yaml'), 'version: 1\ntimezone: Asia/Seoul\n');
   const ref = f.message('owner', 'fixture timezone change');
@@ -663,6 +672,7 @@ it('lists retained source-channel grants without revealing their transport ident
   });
   const result = data(await f.manage('list', {}));
   expect(result.members).toEqual([
+    { principalId: f.managingOwner, status: 'active', roles: ['owner'], grants: [] },
     {
       principalId: f.member,
       status: 'active',
@@ -781,7 +791,11 @@ it('refuses offboard without member_root before any change', async () => {
   expect(createPrincipalRepository(f.runtime.database.adapter).findById(f.member)?.status).toBe(
     'suspended'
   );
-  expect(data(await f.manage('list', {}))).toMatchObject({
-    members: [{ principalId: f.member, status: 'suspended' }],
+  expect(data(await f.manage('list', {}))).toEqual({
+    recentEnrollments: [],
+    members: [
+      { principalId: f.managingOwner, status: 'active', roles: ['owner'], grants: [] },
+      { principalId: f.member, status: 'suspended', roles: [], grants: [] },
+    ],
   });
 });

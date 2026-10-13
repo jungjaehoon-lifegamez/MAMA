@@ -246,6 +246,33 @@ describe('P2b member share through the product catalog and real dispatcher', () 
     ]);
   });
 
+  it('shares an owner DM record only into common defaults, readable by another owner but not a granted member', async () => {
+    repository.grantRole({ principalId: a, role: 'owner', now: 4 });
+    repository.grantRole({ principalId: c, role: 'owner', now: 4 });
+    const before = stored(original);
+    const shared = data<{ id: string }>(await share({ partition_id: undefined }));
+    expect(bindings(shared.id)).toEqual([
+      { kind: 'user', id: a },
+      ...surface.ownerAccess.defaultScopes!,
+    ]);
+    const record = await read(shared.id, OWNER);
+    expect(record).not.toBeNull();
+    const content = JSON.parse(record!.details);
+    expect(content.current.summary).toBe('Current review');
+    expect(content.revisions.map((revision: Revision) => revision.summary)).toEqual([
+      'Initial review',
+      'Updated review',
+    ]);
+    expect(stored(original)).toEqual(before);
+    expect(await read(shared.id, c)).not.toBeNull();
+    expect(access(b).readScopes).toContainEqual(PARTITION);
+    expect(await read(shared.id, b)).toBeNull();
+    const results = data<{ results: Array<{ id: string }> }>(
+      await call('memory.search', { query: 'Current review' }, turn(OWNER))
+    );
+    expect(results.results.map(({ id }) => id)).toContain(shared.id);
+  });
+
   it('refuses a member revising or retiring its shared copy in its own chat, without writing', async () => {
     const saved = data<{ id: string }>(await share()).id;
     const retire = (id: string, principalId = a) =>

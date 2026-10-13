@@ -79,6 +79,7 @@ describe('W1 action surface', () => {
       'graph.query',
       'help',
       'judge',
+      'manage.member.enroll',
       'manage.member.grant',
       'manage.member.list',
       'manage.member.offboard',
@@ -123,15 +124,7 @@ describe('W1 action surface', () => {
         .list()
         .map((contract) => contract.name)
         .sort()
-    ).toEqual(
-      [
-        ...expected,
-        'manage.member.enroll',
-        'memory.share',
-        'records.export',
-        'records.erase',
-      ].sort()
-    );
+    ).toEqual([...expected, 'memory.share', 'records.export', 'records.erase'].sort());
     const personal = surface.catalog
       .list()
       .filter((contract) => contract.name.startsWith('records.'));

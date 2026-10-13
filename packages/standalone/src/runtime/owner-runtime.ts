@@ -44,7 +44,7 @@ import { openCoreDatabase, type CoreDatabase } from './core-db.js';
 import { createActionSurface, type ActionSurface } from './action-surface.js';
 import type { OutboundAttemptEvent, MemberConnectionEvent } from '../api/security-events.js';
 import type { SandboxNetworkProxy } from '../cli/runtime/claude-caller-config.js';
-import { ownerRuleIds, RULE_KINDS } from './owner-authority.js';
+import { holdsOwnerRole, ownerRuleIds, RULE_KINDS } from './owner-authority.js';
 import { createNativeSession, type NativeSession } from './native-session.js';
 import type { ActionDispatcher } from '@jungjaehoon/mama-core/api/dispatch';
 import type { Mailbox } from '@jungjaehoon/mama-core/runtime/mailbox';
@@ -366,8 +366,27 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       storedSourceReader,
       timeZone: options.timeZone,
       configPath: join(options.runtimeRoot, 'config.yaml'),
-      isOwnerMessageTurn: (sourceMessageRef, principalId = options.ownerPrincipalId) =>
+      isOwnerMessageTurn: (sourceMessageRef, principalId) =>
         ownerMailbox?.readInput(sourceMessageRef, principalId)?.kind === 'owner_message',
+      recordManagementReceipt: ({ callerPrincipalId, operationId, action, input, result }) => {
+        const at = Date.now();
+        const ref = `host:management:${operationId}`;
+        chat.saveOwnerMessage({
+          id: ref,
+          channelKey: 'management',
+          senderPrincipalId: callerPrincipalId,
+          occurredAt: at,
+          text: action,
+          payload: { managementAction: action },
+        });
+        chat.saveReply({
+          messageRef: ref,
+          text: JSON.stringify({ action, input, result }),
+          occurredAt: at,
+          deliveryVerified: true,
+          author: 'host',
+        });
+      },
       // Without member_root no member can be served or set aside, so no change may be committed.
       ...(memberRoot === undefined
         ? {}
@@ -421,7 +440,10 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
                 if (!member) throw new Error(`Member session is not served: ${id}`);
                 await member.native.resetSession(member.native.sessionKey);
               },
-              cancelQueued: (id, reason) => ownerMailbox!.cancelQueued(id, reason),
+              cancelQueued: (id, reason) => {
+                if (reason === 'member_suspend') options.memberEnrollment?.cancelSelection?.(id);
+                return ownerMailbox!.cancelQueued(id, reason);
+              },
               retire: (id) => retireMember(id),
               resume: async (id) => {
                 // A suspended member may retain a session after an earlier stop/move failure.
@@ -540,6 +562,12 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       timeZone: options.timeZone,
       principalRoles: (principalId) => principals.listRoles(principalId).map(({ role }) => role),
       commonPrincipalId: options.ownerPrincipalId,
+      ownerMessageSenderActive: (id) => {
+        const person = principals.findById(id);
+        return (
+          person?.kind === 'member' && person.status === 'active' && holdsOwnerRole(principals, id)
+        );
+      },
       wikiEnabled: options.wiki?.enabled ?? false,
       formattingRoutes: options.formattingRoutes ?? {
         reports: 'telegram',
@@ -556,7 +584,13 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         ? {}
         : { onUncertain: options.onStimulusUncertain }),
       ...(options.onStimulusDead === undefined ? {} : { onDead: options.onStimulusDead }),
-      ...(options.onStimulusSkipped === undefined ? {} : { onSkipped: options.onStimulusSkipped }),
+      onSkipped: async (row, reason) => {
+        if (row.kind === 'owner_message')
+          database.adapter
+            .prepare('UPDATE mailbox_inputs SET last_error = ? WHERE id = ?')
+            .run(reason, row.id);
+        await options.onStimulusSkipped?.(row, reason);
+      },
       ...(options.closeUncertain === undefined ? {} : { closeUncertain: options.closeUncertain }),
       sessionStart: (row) =>
         readSessionStartInput({
@@ -830,14 +864,29 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           ? principals.resolveByExternal('telegram', 'private', message.channelKey)
           : null;
         const archive =
-          person?.kind === 'member' && person.status === 'active'
-            ? (serveMember(person.principalId), members.get(person.principalId)!.chat)
+          person?.kind === 'member'
+            ? new ChatSources(
+                sourceStore,
+                database.adapter,
+                person.principalId,
+                `member-agent:${person.principalId}`
+              )
             : chat;
         archive.saveOwnerMessage({
           ...message,
           ...(person ? { senderPrincipalId: person.principalId } : {}),
         });
         archive.saveReply({ ...reply, messageRef: message.id, author: 'host' });
+        if (archive !== chat) {
+          const ref = `host:management:${message.id}`;
+          chat.saveOwnerMessage({
+            ...message,
+            id: ref,
+            channelKey: 'management',
+            ...(person ? { senderPrincipalId: person.principalId } : {}),
+          });
+          chat.saveReply({ ...reply, messageRef: ref, author: 'host' });
+        }
       },
       stop: () => {
         if (stopPromise) return stopPromise;

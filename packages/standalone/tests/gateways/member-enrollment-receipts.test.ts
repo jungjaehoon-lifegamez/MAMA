@@ -185,7 +185,7 @@ async function fixture(recordFails = false) {
   return { home, runtime, gateway, repo, person, turns, message, settled, select };
 }
 
-describe('P10.1 enrollment host receipts stay in the requesting person DM', () => {
+describe('enrollment host receipts remain in the requesting DM and the common record', () => {
   it('wires the receipt port through the daemon without admitting a model turn', async () => {
     const home = mkdtempSync(join(tmpdir(), 'enrollment-receipt-daemon-'));
     roots.push(home);
@@ -267,7 +267,7 @@ describe('P10.1 enrollment host receipts stay in the requesting person DM', () =
       let requestId = 1;
       if (outcome !== 'no pending') {
         // Direct host service characterization; no product action exposes enrollment in P10.1.
-        await f.gateway.requestMemberEnrollment(`telegram:${ownerId}:1`);
+        await f.gateway.requestMemberEnrollment(`telegram:${ownerId}:1`, String(ownerId));
         requestId =
           transport.send.mock.calls.at(-1)![2].reply_markup.keyboard[0][0].request_users.request_id;
       }
@@ -303,7 +303,7 @@ describe('P10.1 enrollment host receipts stay in the requesting person DM', () =
         WHERE memory_scope_id='common' AND content=?`
           )
           .get(text)
-      ).toEqual({ n: 0 });
+      ).toEqual({ n: 1 });
     }
   );
 

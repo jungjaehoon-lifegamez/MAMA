@@ -2,19 +2,23 @@ import { invalidInput } from '../utils/invalid-input.js';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { ActionContext, ActionRegistration } from '@jungjaehoon/mama-core';
+import type { ActionContext, ActionRegistration, DatabaseInstance } from '@jungjaehoon/mama-core';
 import type { TimeZoneSetting } from '../runtime/timezone.js';
+import { activeOwnerMessageCaller } from '../runtime/owner-authority.js';
 import { validateTimeZone } from '../runtime/timezone.js';
 
 export interface OwnerTimeZoneActionPorts {
   configPath: string;
+  adapter: DatabaseInstance;
   ownerPrincipalId: string;
   setting: TimeZoneSetting;
-  isOwnerMessageTurn(sourceMessageRef: string): boolean;
+  isOwnerMessageTurn(sourceMessageRef: string, principalId: string): boolean;
 }
 
 function denied(): Error {
-  const error = new Error('owner.timezone.set is available only in an owner message turn');
+  const error = new Error(
+    'owner.timezone.set changes common config; ask in the common channel in an active owner message turn'
+  );
   error.name = 'denied';
   return error;
 }
@@ -38,7 +42,7 @@ export function ownerTimeZoneActionRegistrations(
       contract: {
         name: 'owner.timezone.set',
         summary:
-          "Set the owner's IANA timezone when the owner states or changes it. Allowed only in a turn that answers an owner message; source-delta, scheduled and replay turns and non-owner callers are denied. It rewrites only the timezone line of config.yaml and applies at once to report hours, displayed times and date-only deadlines. Returns the new and previous timezone; a memory preference does not change it.",
+          'Set the common IANA timezone when an active owner-role sender states or changes it in the common channel. Owner DM, source-delta, scheduled and replay turns and non-owner callers are denied. It rewrites only the timezone line of config.yaml and applies at once to report hours, displayed times and date-only deadlines. Returns the new and previous timezone; a memory preference does not change it.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -55,9 +59,7 @@ export function ownerTimeZoneActionRegistrations(
       },
       exec: (input, context: ActionContext) => {
         if (context.access.principalId !== ports.ownerPrincipalId) throw denied();
-        if (context.session?.replaySourceEndMs !== undefined) throw denied();
-        const sourceMessageRef = context.session?.sourceMessageRef;
-        if (!sourceMessageRef || !ports.isOwnerMessageTurn(sourceMessageRef)) throw denied();
+        if (!activeOwnerMessageCaller(context, ports)) throw denied();
         const timeZone = (input as { timeZone?: unknown }).timeZone;
         if (typeof timeZone !== 'string' || timeZone.trim() === '')
           throw invalidInput('timeZone must be a nonblank IANA time zone');

@@ -8,13 +8,14 @@ import {
   type MemoryRecord,
   type MemoryScopeRef,
 } from '@jungjaehoon/mama-core';
-import { amendedRecordIds, ownerSpeaking } from '../runtime/owner-authority.js';
+import { amendedRecordIds, ownerSpeaking, holdsOwnerRole } from '../runtime/owner-authority.js';
 import { invalidInput } from '../utils/invalid-input.js';
 
 interface MemberSharePorts {
   adapter: DatabaseInstance;
   ownerPrincipalId: string;
   ownerDefaultScopes: readonly MemoryScopeRef[];
+  isOwnerMessageTurn(sourceMessageRef: string, principalId: string): boolean;
 }
 
 function denied(message: string): Error {
@@ -85,11 +86,11 @@ export function memberShareActionRegistrations(ports: MemberSharePorts): ActionR
         name: 'memory.share',
         recallableWrite: true,
         summary:
-          'Share a personal memory record and its whole revision history at sharing time with a granted project partition, only in your own message turn. A later private revision needs another share. The original stays private; returns the appended share record id.',
+          'Share a personal memory record and its whole revision history at sharing time with a granted project partition, or from an owner-role DM into common records (omit partition_id), only in your own message turn. A later private revision needs another share. The original stays private; returns the appended share record id.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
-          required: ['memory_id', 'partition_id', 'reason'],
+          required: ['memory_id', 'reason'],
           properties: {
             memory_id: {
               type: 'string',
@@ -99,7 +100,8 @@ export function memberShareActionRegistrations(ports: MemberSharePorts): ActionR
             partition_id: {
               type: 'string',
               pattern: '\\S',
-              description: 'Project partition id from your active memory read grants.',
+              description:
+                'Required for a plain member: project partition id from active memory read grants. Omit for an owner-role DM share into the common records.',
             },
             reason: {
               type: 'string',
@@ -126,7 +128,7 @@ export function memberShareActionRegistrations(ports: MemberSharePorts): ActionR
           reason,
         } = input as {
           memory_id: string;
-          partition_id: string;
+          partition_id?: string;
           reason: string;
         };
         if (!context.operationId?.trim()) throw invalidInput('memory.share requires operationId');
@@ -139,25 +141,36 @@ export function memberShareActionRegistrations(ports: MemberSharePorts): ActionR
         )
           throw denied('memory.share requires an active member; the owner shares by binding work');
         // The same host-stated principal, chat ref and live-turn predicate as owner chat consent.
-        if (!ownerSpeaking(context, principal.principalId))
+        if (
+          !ownerSpeaking(context, principal.principalId) ||
+          !ports.isOwnerMessageTurn(context.session!.sourceMessageRef!, principal.principalId)
+        )
           throw denied('memory.share is available only in the member own message turn');
-        if (
-          ports.ownerDefaultScopes.some(
-            (scope) => scope.kind === 'project' && scope.id === partitionId
-          )
-        )
-          throw denied('The partition is an owner default scope');
-        if (
-          !repository
-            .listActiveGrants(principal.principalId)
-            .some(
-              ({ scope }) =>
-                scope.kind === 'memory' &&
-                scope.scopeKind === 'project' &&
-                scope.scopeId === partitionId
+        const ownerRole = holdsOwnerRole(repository, principal.principalId);
+        if (ownerRole && partitionId !== undefined)
+          throw invalidInput(
+            'Omit partition_id to share an owner personal record into the common records'
+          );
+        if (!ownerRole) {
+          if (!partitionId?.trim()) throw invalidInput('A member share requires partition_id');
+          if (
+            ports.ownerDefaultScopes.some(
+              (scope) => scope.kind === 'project' && scope.id === partitionId
             )
-        )
-          throw denied('The partition requires an active project memory read grant');
+          )
+            throw denied('The partition is an owner default scope');
+          if (
+            !repository
+              .listActiveGrants(principal.principalId)
+              .some(
+                ({ scope }) =>
+                  scope.kind === 'memory' &&
+                  scope.scopeKind === 'project' &&
+                  scope.scopeId === partitionId
+              )
+          )
+            throw denied('The partition requires an active project memory read grant');
+        }
 
         const readable = [...context.access.scopes, ...(context.access.readScopes ?? [])];
         const record = await readMemoryRecordById(ports.adapter, memoryId, readable);
@@ -231,7 +244,7 @@ export function memberShareActionRegistrations(ports: MemberSharePorts): ActionR
         revisions.sort((a, b) => time(a.createdAt) - time(b.createdAt) || a.id.localeCompare(b.id));
         const scopes: MemoryScopeRef[] = [
           { kind: 'user', id: principal.principalId },
-          { kind: 'project', id: partitionId },
+          ...(ownerRole ? ports.ownerDefaultScopes : [{ kind: 'project', id: partitionId! }]),
         ];
         // This authority exists only for the append below; the ordinary member access stays intact.
         const shareAccess: JudgmentAccess = {
@@ -249,7 +262,7 @@ export function memberShareActionRegistrations(ports: MemberSharePorts): ActionR
             summary: record.summary,
             details: JSON.stringify({
               memoryId: record.id,
-              partitionId,
+              ...(ownerRole ? { commonScopes: ports.ownerDefaultScopes } : { partitionId }),
               reason,
               current: { ...revisionText(record), replaces: replaced(record.id) },
               revisions,

@@ -195,7 +195,7 @@ describe('P10.1 owner authority in a personal member DM', () => {
     expect(help).toContain('drive.read');
     expect(help).toContain('report.read');
     expect(help).not.toContain('drive.download');
-    expect(help).not.toContain('manage.member');
+    expect(help).toContain('manage.member.list');
   });
 
   it('binds an unscoped owner member save personally and a common delta save only to common scopes', async () => {
@@ -246,9 +246,6 @@ describe('P10.1 owner authority in a personal member DM', () => {
     ['manage.wiki.read', {}],
     ['deliver.discord.file', { path: 'fixture.pdf' }],
     ['deliver.slack.file', { path: 'fixture.pdf' }],
-    ['manage.member.enroll', {}],
-    ['manage.member.list', {}],
-    ['manage.member.suspend', { principalId: 'fixture-person' }],
   ])('records the unmodified action-boundary refusal for DM %s', async (action, input) => {
     expect(await call(action as string, input)).toMatchObject({
       status: 'failed',
@@ -304,19 +301,16 @@ describe('P10.1 owner authority in a personal member DM', () => {
     }
   );
 
-  it('refuses enrollment from the common room because the button requires an owner DM', async () => {
+  it('refuses common enrollment without a recorded owner-role sender', async () => {
     expect(await call('manage.member.enroll', {}, COMMON)).toMatchObject({
       status: 'failed',
-      error: {
-        code: 'action_not_granted',
-        message: `principal ${COMMON} may not call manage.member.enroll`,
-      },
+      error: { code: 'denied', message: expect.stringContaining('owner') },
     });
     const summary = surface.catalog
       .list()
       .find(({ name }) => name === 'manage.member.enroll')!.summary;
     expect(summary).toMatch(/button.*owner.*DM/);
-    expect(summary).toMatch(/not available now/);
+    expect(summary).toMatch(/own message turn/);
     expect(summary).not.toMatch(/P10\./);
   });
 });

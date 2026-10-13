@@ -254,15 +254,18 @@ it.each(['codex', 'claude'] as const)(
         channelKey: 'fixture',
         occurredAt: 5,
       });
-      await vi.waitFor(() => {
-        const traces = runtime.database.adapter
-          .prepare(
-            'SELECT input_summary FROM tool_traces t JOIN model_runs r ON r.model_run_id = t.model_run_id WHERE r.agent_id = ? AND t.tool_name = ?'
-          )
-          .all(`member-agent:${f.member}`, 'Bash') as Array<{ input_summary: string }>;
-        expect(traces).toHaveLength(1);
-        expect(traces[0].input_summary).toContain('MEMBER_NETWORK_SENTINEL');
-      });
+      await vi.waitFor(
+        () => {
+          const traces = runtime.database.adapter
+            .prepare(
+              'SELECT input_summary FROM tool_traces t JOIN model_runs r ON r.model_run_id = t.model_run_id WHERE r.agent_id = ? AND t.tool_name = ?'
+            )
+            .all(`member-agent:${f.member}`, 'Bash') as Array<{ input_summary: string }>;
+          expect(traces).toHaveLength(1);
+          expect(traces[0].input_summary).toContain('MEMBER_NETWORK_SENTINEL');
+        },
+        { timeout: 5_000 }
+      );
       await vi.waitFor(() => expect(intake.isPending!('fixture:member-network')).toBe(false));
       expect(readFileSync(path, 'utf8')).toBe(ownerLog);
       expect(sent).toEqual(ownerAlerts);

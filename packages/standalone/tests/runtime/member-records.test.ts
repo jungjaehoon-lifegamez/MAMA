@@ -374,6 +374,88 @@ it('binds and replaces tokens and refuses issuing, pre-issued, foreign and used 
   ).toMatchObject({ status: 'failed', error: { kind: 'denied' } });
 });
 
+it('keeps common management receipts visible to another owner after the acting owner personal erasure', async () => {
+  const f = await setup();
+  const db = f.runtime.database.adapter;
+  const repo = createPrincipalRepository(db);
+  repo.grantRole({ principalId: f.member, role: 'owner', now: 4 });
+  const target = repo.registerMember({
+    connector: 'telegram',
+    namespace: 'private',
+    externalId: 'fixture-managed-member',
+    now: 5,
+  });
+  f.runtime.serveMember(target);
+  for (const change of ['grant', 'revoke', 'suspend', 'resume', 'offboard']) {
+    data(
+      (
+        await f.actAs(f.member, `manage.member.${change}`, {
+          principalId: target,
+          ...(['grant', 'revoke'].includes(change)
+            ? { scopeKind: 'project', scopeId: 'fixture-audit-partition' }
+            : {}),
+        })
+      ).result
+    );
+  }
+  const pickRef = `telegram:${f.memberDm}:selection`;
+  f.runtime.recordHostExchange({
+    message: {
+      id: pickRef,
+      channelKey: f.memberDm,
+      senderPrincipalId: f.member,
+      occurredAt: Date.now(),
+      text: 'Member selection for enrollment',
+      payload: { enrollmentSelection: true },
+    },
+    reply: {
+      text: 'Enrollment refused: fixture own identity',
+      occurredAt: Date.now(),
+      deliveryVerified: true,
+    },
+  });
+  const receipts = () =>
+    db
+      .prepare(
+        "SELECT source_id, author, content FROM connector_event_index WHERE memory_scope_id='owner' AND channel='host:management' ORDER BY source_id"
+      )
+      .all();
+  const before = receipts();
+  expect(before).toHaveLength(12);
+  const actions = db
+    .prepare(
+      "SELECT json_extract(metadata_json, '$.input.managementAction') AS action FROM connector_event_index WHERE memory_scope_id='owner' AND author=? AND json_extract(metadata_json, '$.input.managementAction') IS NOT NULL ORDER BY source_timestamp_ms, rowid"
+    )
+    .all(f.member);
+  expect(actions).toEqual(
+    ['grant', 'revoke', 'suspend', 'resume', 'offboard'].map((change) => ({
+      action: `manage.member.${change}`,
+    }))
+  );
+  const listed = (await f.actAs(f.managingOwner, 'manage.member.list')).result;
+  expect(listed).toMatchObject({
+    data: {
+      recentEnrollments: [
+        { at: expect.any(String), receipt: 'Enrollment refused: fixture own identity' },
+      ],
+    },
+  });
+  const preview = await f.preview();
+  expect(await f.confirm(preview.confirmationToken)).toMatchObject({ status: 'scheduled' });
+  expect((await f.finish()).status).toBe('erased');
+  expect(
+    db.prepare('SELECT 1 FROM connector_event_index WHERE source_id=?').get(pickRef)
+  ).toBeUndefined();
+  expect(receipts()).toEqual(before);
+  const after = (await f.actAs(f.managingOwner, 'manage.member.list')).result;
+  expect(after).toMatchObject({
+    data: {
+      recentEnrollments: (listed as { data: { recentEnrollments: unknown } }).data
+        .recentEnrollments,
+    },
+  });
+});
+
 it('erases after settlement, preserves owner and shared rows, receipts counts and starts a fresh session', async () => {
   const f = await setup();
   const db = f.runtime.database.adapter;

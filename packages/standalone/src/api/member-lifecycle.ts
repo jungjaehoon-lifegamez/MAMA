@@ -7,7 +7,7 @@ import {
 import type { DatabaseInstance } from '@jungjaehoon/mama-core/db-manager';
 import { validateMemberMemoryGrant, resolvePrincipalAccess } from '../runtime/principal-access.js';
 import type { TimeZoneSetting } from '../runtime/timezone.js';
-import { holdsOwnerRole } from '../runtime/owner-authority.js';
+import { activeOwnerMessageCaller, holdsOwnerRole } from '../runtime/owner-authority.js';
 
 export const MEMBER_MANAGEMENT_ACTIONS = [
   'manage.member.grant',
@@ -30,7 +30,7 @@ export function memberLifecycleRegistrations(options: {
   adapter: DatabaseInstance;
   ownerPrincipalId: string;
   ownerAccess(): JudgmentAccess;
-  isOwnerMessageTurn(sourceMessageRef: string): boolean;
+  isOwnerMessageTurn(sourceMessageRef: string, principalId: string): boolean;
   timeZone: TimeZoneSetting;
   ports?: MemberLifecyclePorts;
 }): ActionRegistration[] {
@@ -66,9 +66,9 @@ export function memberLifecycleRegistrations(options: {
               'Resume a suspended member with retained grants. Move any remaining runtime and temp directories aside and serve a fresh environment.',
             offboard:
               'Permanently offboard an active or suspended member; revoke every grant atomically, end and unserve its session, move runtime/temp aside, and keep its identity binding.',
-            list: 'List member principal ids, registry roles (including owner), statuses and unrevoked grants, including grants retained during suspension, and the latest enrollment receipts the owner received (created, exists or refused, with the reason). Receipts carry the owner-local time of each pick. Never returns transport identities or record content.',
+            list: 'List member principal ids, registry roles (including owner), statuses and unrevoked grants, including grants retained during suspension, and the latest enrollment receipts from the common record (created, exists or refused, with the reason), in either room. Receipts carry the owner-local time of each pick. Never returns transport identities or record content.',
           }[change]! +
-          ' Only the owner own message turn is allowed; delta, scheduled/report, replay, member and subagent turns are denied. Changes apply after the running member turn on the shared serial chain and cancel queued inputs with a host reason.',
+          ' Only an active owner-role caller in its own DM or recorded common-channel message turn is allowed; delta, scheduled/report, replay, plain-member and subagent turns are denied. Changes apply after the running member turn on the shared serial chain and cancel queued inputs with a host reason.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -87,22 +87,19 @@ export function memberLifecycleRegistrations(options: {
         },
       },
       exec: async (input, context) => {
-        const ref = context.session?.sourceMessageRef;
-        if (
-          context.access.principalId !== options.ownerPrincipalId ||
-          context.session?.replaySourceEndMs !== undefined ||
-          !ref ||
-          !options.isOwnerMessageTurn(ref)
-        ) {
+        const caller = activeOwnerMessageCaller(context, options);
+        if (!caller) {
           throw Object.assign(
-            new Error('Member management is available only in an owner message turn'),
+            new Error(
+              "Member management requires a registered person's message turn from an active owner-role member. Discord and Slack common turns have no registered sender; use Telegram."
+            ),
             { name: 'denied' }
           );
         }
         const repo = (principals ??= createPrincipalRepository(options.adapter));
         if (change === 'list') {
           const timeZone = options.timeZone.get();
-          // Each users_shared pick ends in a host receipt in the owner's conversation record; a
+          // Each users_shared pick ends in a host receipt in the common conversation record; a
           // refused or failed pick leaves no registry row, so the receipt is its only trace.
           const enrollmentReceipts = options.adapter
             .prepare(
@@ -141,10 +138,18 @@ export function memberLifecycleRegistrations(options: {
         };
         const principal = repo.findById(principalId);
         if (!principal) throw new Error(`Unknown principal: ${principalId}`);
-        if (principal.kind !== 'member' || holdsOwnerRole(repo, principalId))
-          throw Object.assign(new Error('An owner cannot be a member-management target'), {
-            name: 'denied',
-          });
+        const refuse = (reason: string) => {
+          throw Object.assign(new Error(reason), { name: 'denied' });
+        };
+        if (principal.kind !== 'member')
+          refuse('The common principal cannot be a member-management target');
+        if (change === 'suspend' && principalId === caller) refuse('You cannot suspend yourself');
+        if (holdsOwnerRole(repo, principalId) && change !== 'suspend' && change !== 'resume')
+          refuse(
+            change === 'offboard'
+              ? 'An owner-role member cannot be offboarded'
+              : 'Grants cannot be changed for an owner-role member'
+          );
         const ports = options.ports;
         if (!ports)
           throw new Error('Member management requires member_root and a running member runtime');
