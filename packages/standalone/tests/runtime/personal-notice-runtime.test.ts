@@ -817,7 +817,11 @@ describe('personal event notices', () => {
     expect(
       await f.actRecordDelta(
         'member.notice',
-        { principalId: f.member, refs: [{ source: 'slack', observationRef }] },
+        // A work record id cited with the already-noticed observation does not reopen it.
+        {
+          principalId: f.member,
+          refs: [{ source: 'slack', observationRef }, { memory_id: 'mem_fixture_carried_work' }],
+        },
         third
       )
     ).toMatchObject({ status: 'completed', data: { queued: false, reason: 'already_queued' } });

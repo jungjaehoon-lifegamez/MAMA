@@ -149,12 +149,17 @@ export function memberNoticeRegistrations(ports: {
             .filter((batch) => alreadyQueued(batch.deltaStimulusId))
             .flatMap((batch) => batch.observationRefs)
         );
-        const freshRefs = refs.filter(
+        const filtered = refs.filter(
           (evidence) =>
             !('observationRef' in evidence) ||
             record?.observationRefs.includes(evidence.observationRef) ||
             !notifiedObservations.has(evidence.observationRef)
         );
+        // Work record ids accompany the observations they came from: when every cited
+        // observation was already noticed, the records were too.
+        const observed = (list: NoticeRef[]) =>
+          list.some((evidence) => 'observationRef' in evidence);
+        const freshRefs = observed(refs) && !observed(filtered) ? [] : filtered;
         if (freshRefs.length === 0) return refused('already_queued');
         const access = resolvePrincipalAccess(principalId, {
           adapter: ports.adapter,
