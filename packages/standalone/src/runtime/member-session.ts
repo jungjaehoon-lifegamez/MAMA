@@ -182,6 +182,11 @@ export function createMemberSession(
         store: ports.personalJobs,
         access,
         chat,
+        delivered: (resolved, key) => {
+          const telegram = options.memberRecordsTelegram?.();
+          if (!telegram) throw new Error('Personal job Telegram delivery is unavailable');
+          return telegram.memberTextDelivered(resolved, key);
+        },
         send: (resolved, text, key) => {
           const telegram = options.memberRecordsTelegram?.();
           if (!telegram) throw new Error('Personal job Telegram delivery is unavailable');

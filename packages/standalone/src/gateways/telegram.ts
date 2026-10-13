@@ -320,6 +320,17 @@ export class TelegramGateway extends BaseGateway {
   }
 
   /** Host receipt only. The dispatcher never exposes arbitrary member text/destination input. */
+  memberTextDelivered(access: JudgmentAccess, operationId: string): boolean {
+    const destinations = access.destinations?.filter((target) => target.kind === 'telegram');
+    if (destinations?.length !== 1 || !destinations[0]!.id.trim())
+      throw new Error('Member text delivery requires exactly one Telegram destination');
+    if (!operationId.trim()) throw new Error('Member text operation id is required');
+    const entry = this.messageLedger.get(outboundLedgerKey(operationId));
+    return (
+      entry?.state === 'delivered' && entry.deliveryTarget === `telegram:${destinations[0]!.id}`
+    );
+  }
+
   async sendMemberText(
     access: JudgmentAccess,
     text: string,
@@ -338,7 +349,7 @@ export class TelegramGateway extends BaseGateway {
         this.messageLedger.markFailed(outboundLedgerKey(operationId));
       throw error;
     }
-    return this.messageLedger.get(outboundLedgerKey(operationId))?.state === 'delivered';
+    return this.memberTextDelivered(access, operationId);
   }
 
   async sendFile(

@@ -42,7 +42,8 @@ export async function fixture(
     content: 'FIXTURE_OWNER_POLICY',
     fingerprint: 'fixture',
     loaded: true,
-  })
+  }),
+  onStimulusFailed?: OwnerRuntimeOptions['onStimulusFailed']
 ) {
   // Only the unavailable socket listener is replaced; dispatcher, sessions and stores are real.
   vi.spyOn(ipc, 'createActionIpcServer').mockImplementation(async (_: ActionIpcServerOptions) => ({
@@ -136,6 +137,7 @@ export async function fixture(
     timeZone: createTimeZoneSetting(timeZone),
     messageLedger: () => ledger,
     memberRecordsTelegram: () => telegram,
+    onStimulusFailed,
     timeout: 1_000,
     maxTurns: 10,
     embedder: { embed: async () => new Float32Array(1024).fill(0.25) },

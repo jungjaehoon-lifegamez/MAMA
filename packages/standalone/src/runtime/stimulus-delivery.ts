@@ -568,6 +568,7 @@ function planTurn(row: MailboxRow, options: StimulusDeliveryOptions): TurnPlan {
     const latest = latestCronOccurrence(job.cron, job.timeZone, Date.now(), job.scheduleFrom);
     if (
       options.personalJobs!.isClosed(row) ||
+      options.personalJobs!.isSuperseded(row) ||
       row.occurredAt <= job.scheduleFrom ||
       (latest !== null && row.occurredAt < latest)
     )
@@ -810,7 +811,9 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
           await options.personalJobs.close(row);
           await options.onFailed?.(
             row,
-            'Personal job interrupted before completion; retry on the next occurrence',
+            options.personalJobs.isSuperseded(row)
+              ? 'Personal job occurrence superseded by a later occurrence'
+              : 'Personal job interrupted before completion; retry on the next occurrence',
             null
           );
         }

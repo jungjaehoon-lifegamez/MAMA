@@ -107,7 +107,8 @@ describe('personal job scheduling and final settlement', () => {
         deliverPersonalJobResult(row, result, {
           store,
           access: () => context().access,
-          chat: { saveJobExchange: () => {} },
+          chat: { saveJobExchange: () => {}, hasJobExchange: () => false },
+          delivered: () => false,
           send: async (_access, text) => {
             sent.push(text);
             if (reject) throw reject;
@@ -115,6 +116,56 @@ describe('personal job scheduling and final settlement', () => {
           },
         }),
     });
+
+  it.each(['[ack]', '', null])(
+    'keeps an occurrence closed by %s after a newer completion, without repeating its effects',
+    async (response) => {
+      const { id } = await create();
+      clock(DUE);
+      await scheduler().tick(new Date(Date.now()));
+      const older = rowFor(id);
+      const sent: string[] = [];
+      const failures: string[] = [];
+      const port = delivery(response, sent, failures);
+      expect(await port.reconcile!(older)).toBe('settled');
+      const firstFailures = [...failures];
+      clock(DUE + 3_600_000);
+      await scheduler().tick(new Date(Date.now()));
+      const newer = rowFor(id, Date.now());
+      expect(await delivery('[ack]', sent, failures).reconcile!(newer)).toBe('settled');
+      expect(store.isClosed(older)).toBe(true);
+      expect(await port.reconcile!(older)).toBe('settled');
+      expect(sent).toEqual([]);
+      expect(failures).toEqual(firstFailures);
+      expect(store.find(person, id)).toMatchObject({
+        lastClosedAt: newer.occurredAt,
+        lastCompletedAt: newer.occurredAt,
+      });
+    }
+  );
+  it('reports a superseded occurrence without a stored result once and preserves the newer anchors', async () => {
+    const { id } = await create();
+    clock(DUE);
+    await scheduler().tick(new Date(Date.now()));
+    const older = rowFor(id);
+    clock(DUE + 3_600_000);
+    await scheduler().tick(new Date(Date.now()));
+    const newer = rowFor(id, Date.now());
+    expect(await delivery('[ack]', [], []).reconcile!(newer)).toBe('settled');
+    expect(store.isClosed(older)).toBe(false);
+    const sent: string[] = [];
+    const failures: string[] = [];
+    const port = delivery(null, sent, failures);
+    expect(await port.reconcile!(older)).toBe('settled');
+    expect(await port.reconcile!(older)).toBe('settled');
+    expect(sent).toEqual([]);
+    expect(failures).toEqual([expect.stringMatching(/superseded/i)]);
+    expect(store.isClosed(older)).toBe(true);
+    expect(store.find(person, id)).toMatchObject({
+      lastClosedAt: newer.occurredAt,
+      lastCompletedAt: newer.occurredAt,
+    });
+  });
 
   it.each(['empty', 'rejected', 'suspended', 'offboarded', 'changed', 'deleted'])(
     'closes a stored result once after %s without advancing the completion anchor',

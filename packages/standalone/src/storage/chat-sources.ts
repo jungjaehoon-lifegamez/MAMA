@@ -81,6 +81,20 @@ export class ChatSources {
     );
   }
 
+  /** An occurrence is archived only when both personal chat items are indexed. */
+  hasJobExchange(jobId: string, occurrenceAt: number): boolean {
+    const ref = `job:${jobId}:${occurrenceAt}`;
+    const row = this.adapter
+      .prepare(
+        `SELECT COUNT(*) AS n FROM connector_event_index
+         WHERE source_connector='chat' AND memory_scope_kind='user' AND memory_scope_id=?
+           AND ((source_id=? AND json_extract(metadata_json, '$.kind')='job_instruction')
+             OR (source_id=? AND json_extract(metadata_json, '$.kind')='job_reply'))`
+      )
+      .get(this.principalId, ref, `${ref}:reply`) as { n: number };
+    return row.n === 2;
+  }
+
   /** Autonomous job orders are host-authored, never messages this person sent. */
   saveJobExchange(input: {
     jobId: string;

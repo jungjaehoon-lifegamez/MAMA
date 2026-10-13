@@ -55,6 +55,10 @@ async function setup() {
       receipts.push({ text, principal: access.principalId, operationId });
       return true;
     }),
+    memberTextDelivered: (access, operationId) =>
+      receipts.some(
+        (receipt) => receipt.principal === access.principalId && receipt.operationId === operationId
+      ),
   };
   const f = await fixture('codex', true, false, 'UTC', telegram, `fixture-member-${randomUUID()}`);
   const paths = memberPaths(f.root, f.member);

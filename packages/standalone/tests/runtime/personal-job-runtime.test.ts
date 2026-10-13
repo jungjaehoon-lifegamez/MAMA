@@ -3,6 +3,7 @@ import { createPrincipalRepository, erasePrincipalRecords } from '@jungjaehoon/m
 import { TelegramGateway } from '../../src/gateways/telegram.js';
 import { ChatSources } from '../../src/storage/chat-sources.js';
 import { RawStore } from '../../src/storage/source-archive.js';
+import { deliverPersonalJobResult } from '../../src/runtime/personal-jobs.js';
 import { join } from 'node:path';
 import { fixture } from '../helpers/member-runtime.js';
 const transport = vi.hoisted(() => ({
@@ -46,6 +47,7 @@ const body = {
   instruction: 'Check the readable changes since the last completed check.',
 };
 async function setup() {
+  const failures: Array<{ stimulusId: string; reason: string }> = [];
   const f = await fixture(
     'codex',
     true,
@@ -59,8 +61,13 @@ async function setup() {
         if (transport.unavailable) throw new Error('fixture gateway not connected');
         return gateway!.sendMemberText(...args);
       },
+      memberTextDelivered: (...args) => gateway!.memberTextDelivered(...args),
     },
-    '21001'
+    '21001',
+    undefined,
+    (row, reason) => {
+      failures.push({ stimulusId: row.stimulusId, reason });
+    }
   );
   const startGateway = async () => {
     gateway = new TelegramGateway({
@@ -95,7 +102,7 @@ async function setup() {
       occurred_at: number;
       status: string;
     }>;
-  return { f, create, due, tick, jobRows, startGateway };
+  return { f, create, due, tick, jobRows, startGateway, failures };
 }
 describe('personal scheduled turns and P10.2 recovery', () => {
   it('runs once as that person with fresh context/current access, own rules, DM ledger and host/agent job chat', async () => {
@@ -408,6 +415,159 @@ describe('personal scheduled turns and P10.2 recovery', () => {
         .get()
     ).toEqual({ n: 1 });
   });
+  it.each([
+    { restart: false, response: '[ack]', sends: 1 },
+    { restart: true, response: '[ack]', sends: 1 },
+    { restart: false, response: 'Newer completed result', sends: 2 },
+    { restart: true, response: 'Newer completed result', sends: 2 },
+  ])(
+    'archives a delivered older occurrence once after $response (restart: $restart)',
+    async ({ restart, response, sends }) => {
+      const { f, create, due, tick, jobRows, startGateway } = await setup();
+      const id = await create();
+      f.memberResponse('Older delivered result');
+      const saveJobExchange = ChatSources.prototype.saveJobExchange;
+      const save = vi.spyOn(ChatSources.prototype, 'saveJobExchange').mockImplementation(function (
+        this: ChatSources,
+        input
+      ) {
+        if (input.occurrenceAt === due) throw new Error('fixture archive write failed');
+        saveJobExchange.call(this, input);
+      });
+      await tick();
+      await vi.waitFor(() =>
+        expect(
+          f.runtime.runtime.mailbox!.readInput(jobRows()[0]!.stimulus_id, f.member)?.nativeDelivery
+            ?.state
+        ).toBe('uncertain')
+      );
+      expect(transport.sent).toEqual([{ chatId: 21001, text: 'Older delivered result' }]);
+      f.memberResponse(response);
+      await tick(due + 3_600_000);
+      await vi.waitFor(() => expect(jobRows()).toHaveLength(2));
+      await f.settled(jobRows()[1]!.stimulus_id, f.member);
+      const anchors = { lastClosedAt: due + 3_600_000, lastCompletedAt: due + 3_600_000 };
+      expect(f.runtime.surface.personalJobs.find(f.member, id)).toMatchObject(anchors);
+      const turns = f.turns.length;
+      if (restart) {
+        await gateway!.stop();
+        await f.restart();
+        await startGateway();
+      }
+      save.mockRestore();
+      await f.runtime.runtime.drainOnce();
+      await f.settled(jobRows()[0]!.stimulus_id, f.member);
+      for (let n = 0; n < 2; n++) await f.runtime.runtime.drainOnce();
+      const mailbox = f.runtime.runtime.mailbox!;
+      const older = mailbox.readInput(jobRows()[0]!.stimulus_id, f.member)!;
+      const result = mailbox.nativeInputs.resultForReceipt(
+        older.nativeDelivery!.receipt!,
+        f.member
+      )!;
+      const raw = new RawStore(join(f.home, 'raw'));
+      try {
+        await deliverPersonalJobResult(
+          older,
+          { ...result, history: [] },
+          {
+            store: f.runtime.surface.personalJobs,
+            access: () => f.turns.at(-1)!.access,
+            chat: new ChatSources(
+              raw,
+              f.runtime.database.adapter,
+              f.member,
+              `member-agent:${f.member}`
+            ),
+            delivered: () => {
+              throw new Error('An archived occurrence needs no outbound check');
+            },
+            send: async () => {
+              throw new Error('An archived occurrence must not send');
+            },
+          }
+        );
+      } finally {
+        raw.close();
+      }
+      expect(f.turns).toHaveLength(turns);
+      expect(transport.attempts).toBe(sends);
+      expect(f.runtime.surface.personalJobs.find(f.member, id)).toMatchObject(anchors);
+      expect(
+        f.runtime.database.adapter
+          .prepare(
+            "SELECT source_id, content, json_extract(metadata_json, '$.kind') AS kind FROM connector_event_index WHERE json_extract(metadata_json, '$.jobId')=? ORDER BY rowid"
+          )
+          .all(id)
+      ).toEqual([
+        ...(response === '[ack]'
+          ? []
+          : [
+              {
+                source_id: `job:${id}:${due + 3_600_000}`,
+                content: body.instruction,
+                kind: 'job_instruction',
+              },
+              {
+                source_id: `job:${id}:${due + 3_600_000}:reply`,
+                content: response,
+                kind: 'job_reply',
+              },
+            ]),
+        { source_id: `job:${id}:${due}`, content: body.instruction, kind: 'job_instruction' },
+        {
+          source_id: `job:${id}:${due}:reply`,
+          content: 'Older delivered result',
+          kind: 'job_reply',
+        },
+      ]);
+    }
+  );
+  it.each([false, true])(
+    'supersedes an undelivered older occurrence after a newer [ack] without a late send (restart: %s)',
+    async (restart) => {
+      const { f, create, due, tick, jobRows, startGateway, failures } = await setup();
+      const id = await create();
+      transport.unavailable = true;
+      await tick();
+      await vi.waitFor(() =>
+        expect(
+          f.runtime.runtime.mailbox!.readInput(jobRows()[0]!.stimulus_id, f.member)?.nativeDelivery
+            ?.state
+        ).toBe('uncertain')
+      );
+      f.memberResponse('[ack]');
+      await tick(due + 3_600_000);
+      await vi.waitFor(() => expect(jobRows()).toHaveLength(2));
+      await f.settled(jobRows()[1]!.stimulus_id, f.member);
+      const turns = f.turns.length;
+      if (restart) {
+        await gateway!.stop();
+        await f.restart();
+        await startGateway();
+      }
+      transport.unavailable = false;
+      await f.runtime.runtime.drainOnce();
+      await f.settled(jobRows()[0]!.stimulus_id, f.member);
+      for (let n = 0; n < 2; n++) await f.runtime.runtime.drainOnce();
+      expect(f.turns).toHaveLength(turns);
+      expect(transport.attempts).toBe(0);
+      expect(transport.sent).toEqual([]);
+      expect(f.runtime.surface.personalJobs.find(f.member, id)).toMatchObject({
+        lastClosedAt: due + 3_600_000,
+        lastCompletedAt: due + 3_600_000,
+      });
+      expect(failures.filter((failure) => /superseded/i.test(failure.reason))).toEqual([
+        { stimulusId: jobRows()[0]!.stimulus_id, reason: expect.stringMatching(/superseded/i) },
+      ]);
+      expect(
+        f.runtime.database.adapter
+          .prepare(
+            "SELECT COUNT(*) AS n FROM connector_event_index WHERE json_extract(metadata_json, '$.jobId')=?"
+          )
+          .get(id)
+      ).toEqual({ n: 0 });
+    }
+  );
   it.each(['suspend', 'offboard'])(
     '%s cancels a queued scheduled input using the existing principal cancellation',
     async (action) => {

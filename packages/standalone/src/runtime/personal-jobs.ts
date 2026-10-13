@@ -198,10 +198,16 @@ export function createPersonalJobStore(adapter: DatabaseInstance, timeZone: Time
     scopes: [{ kind: 'user', id: principalId }],
     actions: [],
   });
-  const isClosed = (row: MailboxRow) => {
+  const isClosed = (row: MailboxRow) =>
+    adapter
+      .prepare(
+        'SELECT 1 FROM command_bindings WHERE command_id=? AND principal_id=? AND erased_at IS NULL'
+      )
+      .get(`job-close:${row.principalId}:${row.stimulusId}`, row.principalId) !== undefined;
+  const isSuperseded = (row: MailboxRow) => {
     const payload = personalJobPayload(row)!;
     const job = find(row.principalId, payload.jobId);
-    return job?.version === payload.version && (job.lastClosedAt ?? 0) >= row.occurredAt;
+    return job?.version === payload.version && (job.lastClosedAt ?? 0) > row.occurredAt;
   };
   const finish = async (
     row: MailboxRow,
@@ -210,13 +216,14 @@ export function createPersonalJobStore(adapter: DatabaseInstance, timeZone: Time
   ) => {
     const payload = personalJobPayload(row)!;
     const job = find(row.principalId, payload.jobId);
-    if (!job || job.version !== payload.version || (job.lastClosedAt ?? 0) >= row.occurredAt)
-      return;
+    if (!job || job.version !== payload.version || isClosed(row)) return;
     await write(
       {
         ...job,
-        lastClosedAt: row.occurredAt,
-        ...(completed ? { lastCompletedAt: row.occurredAt } : {}),
+        lastClosedAt: Math.max(job.lastClosedAt ?? 0, row.occurredAt),
+        ...(completed && (job.lastClosedAt ?? 0) < row.occurredAt
+          ? { lastCompletedAt: row.occurredAt }
+          : {}),
       },
       access,
       `job-close:${row.principalId}:${row.stimulusId}`,
@@ -228,6 +235,7 @@ export function createPersonalJobStore(adapter: DatabaseInstance, timeZone: Time
     find,
     view,
     isClosed,
+    isSuperseded,
     isActive: (principalId: string) =>
       createPrincipalRepository(adapter).findById(principalId)?.status === 'active',
     close: (row: MailboxRow) => finish(row, false),
@@ -384,17 +392,18 @@ export async function deliverPersonalJobResult(
   ports: {
     store: PersonalJobStore;
     access(): JudgmentAccess;
-    chat: Pick<ChatSources, 'saveJobExchange'>;
+    chat: Pick<ChatSources, 'saveJobExchange' | 'hasJobExchange'>;
     send(access: JudgmentAccess, text: string, key: string): Promise<boolean>;
+    delivered(access: JudgmentAccess, key: string): boolean;
   }
 ) {
   const payload = personalJobPayload(row)!;
+  if (ports.store.isClosed(row) || ports.chat.hasJobExchange(payload.jobId, row.occurredAt)) return;
   const job = ports.store.find(row.principalId, payload.jobId);
   if (!ports.store.isActive(row.principalId))
     throw new PersonalJobFinalFailure('Personal job person is no longer active');
   if (!job || !job.enabled || job.version !== payload.version)
     throw new PersonalJobFinalFailure('Personal job changed or deleted');
-  if (ports.store.isClosed(row)) return;
   const access = ports.access();
   const text = result.response.trim();
   if (!text)
@@ -402,8 +411,13 @@ export async function deliverPersonalJobResult(
       'Personal job returned no result; use [ack] when there is nothing to tell'
     );
   if (text !== '[ack]') {
+    const key = personalJobOccurrenceId(job.jobId, row.occurredAt);
+    const delivered = ports.delivered(access, key);
+    const superseded = ports.store.isSuperseded(row);
+    if (superseded && !delivered)
+      throw new PersonalJobFinalFailure('Personal job occurrence superseded by a later occurrence');
     try {
-      if (!(await ports.send(access, text, personalJobOccurrenceId(job.jobId, row.occurredAt))))
+      if (!delivered && !(await ports.send(access, text, key)))
         throw new Error('Personal job DM delivery was not confirmed');
     } catch (error) {
       if (isDefinitiveTelegramRejection(error))
@@ -419,6 +433,7 @@ export async function deliverPersonalJobResult(
       text,
       timeZone: payload.timeZone,
     });
+    if (superseded) return;
   }
   await ports.store.complete(row, access);
 }

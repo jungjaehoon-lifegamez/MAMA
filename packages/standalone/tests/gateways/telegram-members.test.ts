@@ -491,6 +491,41 @@ describe('P10.1 Telegram person routing', () => {
     ]);
   });
 
+  it('reads exact outbound member delivery receipts without sending, including after restart', async () => {
+    const access = {
+      principalId: second,
+      agentId: `agent:${second}`,
+      scopes: [{ kind: 'user' as const, id: second }],
+      destinations: [{ kind: 'telegram' as const, id: '20002' }],
+    };
+    const key = 'job:fixture-job:1700000000000';
+    expect(gateway.memberTextDelivered(access, key)).toBe(false);
+    expect(await gateway.sendMemberText(access, 'Delivered result', key)).toBe(true);
+    const pendingKey = 'job:fixture-job:1700003600000';
+    transport.api.sendMessage.mockRejectedValueOnce(
+      Object.assign(new Error('fixture rate limit'), { error_code: 429 })
+    );
+    await expect(gateway.sendMemberText(access, 'Pending result', pendingKey)).rejects.toThrow();
+    const receipt = ledger.listUndelivered().find((entry) => entry.idempotencyKey === pendingKey)!;
+    const saved = readFileSync(join(root, 'ledger.json'), 'utf8');
+    expect(gateway.memberTextDelivered(access, key)).toBe(true);
+    expect(gateway.memberTextDelivered(access, pendingKey)).toBe(false);
+    expect(
+      gateway.memberTextDelivered(
+        { ...access, destinations: [{ kind: 'telegram', id: '20001' }] },
+        key
+      )
+    ).toBe(false);
+    expect(readFileSync(join(root, 'ledger.json'), 'utf8')).toBe(saved);
+    ledger.markFailed(receipt.key);
+    await gateway.stop();
+    expect(gateway.memberTextDelivered(access, key)).toBe(true);
+    await restartGateway();
+    expect(gateway.memberTextDelivered(access, key)).toBe(true);
+    expect(gateway.memberTextDelivered(access, pendingKey)).toBe(false);
+    expect(transport.sent).toEqual([{ chatId: 20002, text: 'Delivered result' }]);
+  });
+
   it.each([true, false])(
     'recovers a ready non-allowlisted member receipt once (owner role: %s), retaining other destination rules',
     async (ownerRole) => {

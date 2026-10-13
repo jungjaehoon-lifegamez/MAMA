@@ -76,6 +76,7 @@ export interface DaemonLogger {
 
 export interface DaemonGateway {
   sendMemberText?: import('../../api/member-records.js').MemberRecordsTelegram['sendMemberText'];
+  memberTextDelivered?: import('../../api/member-records.js').MemberRecordsTelegram['memberTextDelivered'];
   /** This owner message has a delivered answer, an interruption notice included. */
   answered(sourceRef: string): boolean;
   requestMemberEnrollment?(sourceRef: string, ownerUserId: string, name?: string): Promise<void>;
@@ -541,10 +542,11 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
           }),
       messageLedger: () => messageLedger,
       memberRecordsTelegram: () =>
-        gateway?.sendMemberText && gateway.sendFile
+        gateway?.sendMemberText && gateway.memberTextDelivered && gateway.sendFile
           ? {
               sendFile: gateway.sendFile.bind(gateway),
               sendMemberText: gateway.sendMemberText.bind(gateway),
+              memberTextDelivered: gateway.memberTextDelivered.bind(gateway),
             }
           : undefined,
       attachmentPorts: {
