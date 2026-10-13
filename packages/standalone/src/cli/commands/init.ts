@@ -4,7 +4,9 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import * as yaml from 'js-yaml';
 import type { ConnectorsConfig } from '../../connectors/framework/types.js';
-import { parseConfig } from '../../runtime/config.js';
+import { parseConfig, type W1Config } from '../../runtime/config.js';
+import { installDocumentToolkit } from '../../tools/document-toolkit.js';
+import { defaultToolsRoot } from './tools.js';
 import { findExecutable, launchAgent, startScript } from '../launch-files.js';
 import {
   CliInputError,
@@ -21,6 +23,9 @@ export interface InitOptions {
   cliPath?: string;
   nodePath?: string;
   findExecutable?: (name: string) => string | undefined;
+  toolsRoot?: string;
+  platform?: NodeJS.Platform;
+  installToolkit?: (config: W1Config) => Promise<unknown>;
 }
 
 const connectorNames = [
@@ -346,6 +351,7 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
     {
       version: 1,
       timezone,
+      tools_root: options.toolsRoot ?? defaultToolsRoot(options.platform, home),
       agent: {
         backend,
         model,
@@ -429,4 +435,25 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
       `After login, start with: launchctl bootstrap gui/$(id -u) ${shellQuote(plistPath)}`
     );
   else prompt.write(`After login, start with: ${shellQuote(join(root, 'start.sh'))}`);
+  // Host provisioning is last; a failure leaves setup available for mama tools install.
+  if (!config.tools_root) {
+    prompt.write(
+      'Set tools_root to a writable directory outside HOME in config.yaml, then run mama tools install on the host.'
+    );
+    return;
+  }
+  try {
+    if (options.installToolkit) await options.installToolkit(config);
+    else
+      await installDocumentToolkit({
+        toolsRoot: config.tools_root,
+        home,
+        memberRoot: config.member_root,
+      });
+  } catch (error) {
+    throw new CliInputError(
+      `Document toolkit setup failed. Run mama tools install on the host. ${error instanceof Error ? error.message : ''}`
+    );
+  }
+  prompt.write('Document toolkit installed for owner and member sessions.');
 }

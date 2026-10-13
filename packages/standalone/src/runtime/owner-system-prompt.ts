@@ -130,7 +130,7 @@ function helpTopicWhen(wikiEnabled: boolean): Record<string, string> {
  * the standing prompt carries only their names, so no turn starts with every procedure loaded.
  */
 export function ownerHelpTopics(
-  backend: OwnerRuntimeBackend,
+  _backend: OwnerRuntimeBackend,
   wikiEnabled: boolean,
   judgeEnabled = false,
   driveDeliveryEnabled = false
@@ -186,9 +186,7 @@ export function ownerHelpTopics(
             "- A file over the messengers' 50 MB limit goes to the owner's Drive delivery folder with deliver.drive.file, at full quality rather than shrunk to fit; reply with its link, and record the link and sha256 on the work item's revision.",
           ]
         : []),
-      backend === 'claude'
-        ? '- File readers: images and PDFs with the Read tool; spreadsheets with Bash/python3 (openpyxl); archives with Bash/unzip.'
-        : '- File readers: images by viewing them; PDFs and spreadsheets with python3 (PyMuPDF/pdfplumber/openpyxl); archives with unzip.',
+      '- The host document toolkit puts python3 on PATH with python-pptx, python-docx, openpyxl, xlsxwriter, PyMuPDF, pdfplumber, reportlab and Pillow, including under python3 -I. Noto Sans/Serif CJK font files are in tools_root/current/fonts, beside bin/python3 (locate python3 on PATH with shutil.which). Pillow needs the font file path. Reportlab cannot embed the CFF Noto collections; make CJK PDFs by rendering an office file or with PyMuPDF. Use document.render on your workspace document to get a PDF and page PNGs, and look at every page before sending it; PDF inputs are rasterized directly. Packages cannot be installed by sessions and shell egress stays closed. If the toolkit is missing, ask the owner to run mama tools install on the host. Read PDFs with PyMuPDF/pdfplumber and inspect images or rendered PNGs; use unzip for archives.',
     ].join('\n'),
     ...(wikiEnabled
       ? {

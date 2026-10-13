@@ -5,6 +5,7 @@ import {
   type NoticeRef,
   type PersonalNoticeStore,
 } from './personal-notices.js';
+import { documentActionRegistrations, type DocumentActionPorts } from '../api/document-actions.js';
 import { StimulusQuarantine } from '@jungjaehoon/mama-core/runtime/runtime';
 import { createPersonalJobStore, type PersonalJobStore } from './personal-jobs.js';
 import { personalJobRegistrations, PERSONAL_JOB_ACTIONS } from '../api/personal-job-actions.js';
@@ -89,6 +90,7 @@ import {
 const OWNER_ACTIONS = [
   'member.directory',
   'member.notice',
+  'document.render',
   'code_act',
   'graph.query',
   'source.search',
@@ -136,6 +138,7 @@ const OWNER_ACTIONS = [
 
 /** The member role: Telegram file delivery honours the caller's DM. Exact catalog names only. */
 export const MEMBER_ACTIONS = [
+  'document.render',
   ...PERSONAL_JOB_ACTIONS,
   'graph.query',
   'work.list',
@@ -185,6 +188,7 @@ export interface ActionSurfaceOptions {
   reportSseClients?: Set<ServerResponse>;
   wikiPorts?: WikiPorts;
   attachmentPorts?: AttachmentActionPorts;
+  documentPorts?: Omit<DocumentActionPorts, 'ownerPrincipalId'>;
   /** Large-file delivery to the owner's Drive folder; absent unless delivery.drive is configured. */
   driveDelivery?: Omit<DriveDeliveryPorts, 'ownerPrincipalId'>;
   /** Jev, the agent's filter for candidates it should not read whole; absent unless enabled. */
@@ -470,6 +474,10 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       timeZone: options.timeZone,
       notices: options.memberNotices,
       read: readNoticeRef,
+    }),
+    ...documentActionRegistrations({
+      ...options.documentPorts,
+      ownerPrincipalId: options.ownerPrincipalId,
     }),
     ...personalJobRegistrations(personalJobs, options),
     ...core,

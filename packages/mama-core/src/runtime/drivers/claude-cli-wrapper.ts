@@ -43,6 +43,8 @@ const { DebugLogger } = debugLogger as {
 const logger = new DebugLogger('ClaudeCLI');
 
 export interface ClaudeCLIWrapperOptions {
+  /** Consumer-resolved executable; defaults to the inherited PATH for other consumers. */
+  command?: string;
   /** The isolated workspace this CLI runs in; the product states where. */
   /**
    * Where this run keeps its files. Required: a driver does not know a product's
@@ -231,7 +233,7 @@ export class ClaudeCLIWrapper {
         }
       );
       this.options.beforeSpawn?.();
-      const claude = spawn('claude', args, {
+      const claude = spawn(this.options.command ?? 'claude', args, {
         stdio: ['pipe', 'pipe', 'pipe'],
         // ⚠️ NEVER spawn in the user's home directory — it breaks agent isolation.
         cwd: mamaWorkspace,

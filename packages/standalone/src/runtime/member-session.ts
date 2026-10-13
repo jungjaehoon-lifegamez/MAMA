@@ -82,6 +82,7 @@ export function createMemberSession(
     (options.createSession ?? createNativeSession)({
       backend: options.backend,
       model: options.model,
+      toolsRoot: options.toolsRoot,
       ...paths,
       socketPath: options.socketPath,
       actionSurface: surface,

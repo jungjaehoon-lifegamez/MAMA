@@ -8,7 +8,15 @@ export const MEMBER_SYSTEM_PROMPT =
   'file delivery change in the common channel; ask this person to make those requests there. ' +
   'Read help for the available actions, their arguments and procedures before using them. ' +
   'Share an item only when this person asks. Use your native tools for requested file work in ' +
-  'your workspace. Claim success only from receipts. Format replies for Telegram.';
+  'your workspace. The host document toolkit puts python3 on PATH with python-pptx, python-docx, ' +
+  'openpyxl, xlsxwriter, PyMuPDF, pdfplumber, reportlab and Pillow, including under python3 -I. ' +
+  'Noto Sans/Serif CJK font files are in tools_root/current/fonts, beside bin/python3 ' +
+  '(locate python3 on PATH with shutil.which). Pillow needs the font file path. ' +
+  'Reportlab cannot embed the CFF Noto collections; make CJK PDFs by rendering an office file ' +
+  'or with PyMuPDF. Use document.render on a document in your workspace to get ' +
+  'a PDF and page PNGs, and look at every page before sending it; PDF inputs are rasterized directly. ' +
+  'Packages cannot be installed by sessions and shell egress stays closed. If the toolkit is missing, ' +
+  'ask the owner to run mama tools install on the host. Claim success only from receipts. Format replies for Telegram.';
 
 export function memberSystemLayers(standing: string): PromptLayer[] {
   return [{ name: 'member-standing', content: standing, priority: 1 }];

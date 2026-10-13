@@ -69,6 +69,7 @@ describe('Claude process start hook', () => {
       });
       const options = {
         workspaceDir: workspace(),
+        command: '/fixture/host-bin/claude',
         sessionId: 'fixture-session',
         beforeSpawn: () => {
           generation += 1;
@@ -93,6 +94,10 @@ describe('Claude process start hook', () => {
         }
       }
       expect(seen).toEqual([1, 2]);
+      expect(vi.mocked(spawn).mock.calls.map((call) => call[0])).toEqual([
+        '/fixture/host-bin/claude',
+        '/fixture/host-bin/claude',
+      ]);
     }
   );
 
@@ -120,7 +125,7 @@ describe('Claude process start hook', () => {
     }
   );
 
-  it('carries the hook into the adapter replacement after death before input', async () => {
+  it('carries the executable and hook into the adapter replacement after death before input', async () => {
     let generation = 0;
     const seen: number[] = [];
     const children: Child[] = [];
@@ -131,6 +136,7 @@ describe('Claude process start hook', () => {
       return child as never;
     });
     const driver = new PersistentCLIAdapter({
+      command: '/fixture/host-bin/claude',
       workspaceDir: workspace(),
       beforeSpawn: () => {
         generation += 1;
@@ -149,6 +155,9 @@ describe('Claude process start hook', () => {
       expect(children[0].inputs).toEqual([]);
       expect(children[1].inputs).toHaveLength(1);
       expect(seen).toEqual([1, 2]);
+      expect(
+        vi.mocked(spawn).mock.calls.every((call) => call[0] === '/fixture/host-bin/claude')
+      ).toBe(true);
     } finally {
       await driver.stop();
     }

@@ -11,7 +11,8 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { defaultToolsRoot } from '../../src/cli/commands/tools.js';
 import { tmpdir } from 'node:os';
 import { runInit } from '../../src/cli/commands/init.js';
 import { runSecret } from '../../src/cli/commands/secret.js';
@@ -72,11 +73,13 @@ function options(adapter: PromptAdapter) {
     cliPath: join(home, 'package', 'cli.js'),
     nodePath: process.execPath,
     findExecutable: (name: string) => join(home, 'bin', name),
+    installToolkit: async () => {},
+    toolsRoot: join(dirname(home), `${basename(home)}-tools`),
   };
 }
 
 beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), 'mama-init-'));
+  home = realpathSync(mkdtempSync(join(tmpdir(), 'mama-init-')));
   root = join(home, '.mama');
   vi.stubEnv('HOME', home);
   vi.stubEnv('MAMA_DB_PATH', join(home, 'dev.db'));
@@ -87,6 +90,42 @@ afterEach(() => {
 });
 
 describe('owner-only onboarding', () => {
+  it('finishes Linux init without a default root and names tools_root and the install command', async () => {
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    const installToolkit = vi.fn();
+    await runInit({
+      ...options(p.adapter),
+      toolsRoot: undefined,
+      platform: 'linux',
+      installToolkit,
+    });
+    expect(defaultToolsRoot('linux')).toBeUndefined();
+    expect(loadConfig({ home }).tools_root).toBeUndefined();
+    expect(installToolkit).not.toHaveBeenCalled();
+    expect(p.output.join('\n')).toMatch(/tools_root.*mama tools install/);
+  });
+
+  it('installs the toolkit last and keeps rerunnable setup when installation fails', async () => {
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    let called = false;
+    await expect(
+      runInit({
+        ...options(p.adapter),
+        installToolkit: async (config) => {
+          called = true;
+          expect(defaultToolsRoot('darwin', join('/fixture-homes', 'person'))).toBe(
+            join('/fixture-homes', 'Shared', 'mama-tools')
+          );
+          expect(config.tools_root).toBe(options(p.adapter).toolsRoot);
+          expect(existsSync(join(root, 'config.yaml'))).toBe(true);
+          expect(existsSync(join(root, 'start.sh'))).toBe(true);
+          throw new Error('fixture failed');
+        },
+      })
+    ).rejects.toThrow(/mama tools install/);
+    expect(called).toBe(true);
+    expect(loadConfig({ home }).tools_root).toBe(options(p.adapter).toolsRoot);
+  });
   it.each(['100', '0', '-0', 'group', '-100abc', '-01'])(
     'refuses a non-group Telegram common destination before writing setup: %s',
     async (chatId) => {

@@ -65,6 +65,7 @@ const poolLogger = new DebugLogger('ProcessPool');
 const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
 export interface PersistentProcessOptions {
+  command?: string;
   sessionId: string;
   /**
    * Timeouts the product states. A driver does not read a config file: the
@@ -479,7 +480,7 @@ export class PersistentClaudeProcess extends EventEmitter {
       }
     );
     this.options.beforeSpawn?.();
-    this.process = spawn('claude', args, {
+    this.process = spawn(this.options.command ?? 'claude', args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       // ⚠️ NEVER spawn in the user's home directory — it breaks agent isolation.
       cwd: workspaceDir,

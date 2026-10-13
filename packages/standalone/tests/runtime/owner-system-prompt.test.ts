@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MEMBER_SYSTEM_PROMPT } from '../../src/runtime/member-system-prompt.js';
 import { TELEGRAM_FORMAT_GUIDE } from '../../src/gateways/telegram-format.js';
 import type { Client } from '@jungjaehoon/mama-core/client/client';
 import type { DatabaseInstance, Knowledge } from '@jungjaehoon/mama-core';
@@ -278,14 +279,10 @@ describe('owner standing prompt', () => {
       if (backend === 'claude') {
         expect(/spawn_agent|wait_agent|\bCodex\b/.test(prompt)).toBe(false);
         expect(prompt).toContain('use the Agent tool');
-        expect(ownerHelpTopics(backend, true).files).toContain(
-          'images and PDFs with the Read tool'
-        );
+        expect(ownerHelpTopics(backend, true).files).toContain('document.render');
       } else {
         expect(prompt).toContain('direct spawn_agent tool call');
-        expect(ownerHelpTopics(backend, true).files).toContain(
-          'PDFs and spreadsheets with python3'
-        );
+        expect(ownerHelpTopics(backend, true).files).toContain('python3 -I');
       }
       const surface = createActionSurface({
         timeZone: createTimeZoneSetting('UTC'),
@@ -330,4 +327,19 @@ describe('owner standing prompt', () => {
       prompt.indexOf('Owner policy decides the language and title format.')
     );
   });
+});
+
+it('names CJK font files and supported PDF tools for both owner backends and members', () => {
+  for (const prompt of [
+    ownerHelpTopics('claude', true).files,
+    ownerHelpTopics('codex', true).files,
+    MEMBER_SYSTEM_PROMPT,
+  ]) {
+    expect(prompt).toContain('tools_root/current/fonts');
+    expect(prompt).toContain('Pillow needs the font file path');
+    expect(prompt).toContain('Reportlab cannot embed the CFF Noto collections');
+    expect(prompt).toContain('PyMuPDF');
+  }
+  expect(ownerHelpTopics('codex', true).files).toContain('PyMuPDF/pdfplumber');
+  expect(ownerHelpTopics('codex', true).files).not.toContain('native reader');
 });

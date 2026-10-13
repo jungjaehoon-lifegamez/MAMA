@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, realpathSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -64,6 +64,45 @@ function validConfig(): W1Config {
 }
 
 describe('W1 runtime configuration', () => {
+  it('loads an old live config without tools_root, and validates the shared toolkit boundary', () => {
+    const path = join(testHome, 'fixture-config.yaml');
+    writeFileSync(path, JSON.stringify(validConfig()));
+    expect(loadConfig({ path, home: testHome }).tools_root).toBeUndefined();
+    const shared = join(realpathSync(tmpdir()), 'fixture-tools');
+    const members = join(realpathSync(tmpdir()), 'fixture-members');
+    expect(
+      parseConfig(
+        { ...validConfig(), tools_root: shared, member_root: members },
+        { home: testHome }
+      ).tools_root
+    ).toBe(shared);
+    for (const invalid of [
+      'relative',
+      '~/.tools',
+      testHome,
+      join(testHome, '.mama'),
+      members,
+      join(members, 'tools'),
+      realpathSync(tmpdir()),
+    ])
+      expect(() =>
+        parseConfig(
+          { ...validConfig(), tools_root: invalid, member_root: members },
+          { home: testHome }
+        )
+      ).toThrow(/tools_root/);
+    expect(() =>
+      parseConfig(
+        { ...validConfig(), tools_root: shared, member_root: join(shared, 'members') },
+        { home: testHome }
+      )
+    ).toThrow(/tools_root/);
+    const alias = join(testHome, 'home-alias');
+    symlinkSync(testHome, alias);
+    expect(() =>
+      parseConfig({ ...validConfig(), tools_root: join(alias, 'tools') }, { home: testHome })
+    ).toThrow(/tools_root/);
+  });
   it.each([[], ['legacy-owner'], null])(
     'refuses deprecated Telegram owner identities before returning a config (%j)',
     (ownerIds) => {

@@ -1,4 +1,5 @@
 import { createPersonalJobScheduler } from './personal-jobs.js';
+import { homedir } from 'node:os';
 import type { MemberEnrollmentPorts, MemberSelection } from '../api/member-enrollment.js';
 import type { ActionResult } from '@jungjaehoon/mama-core';
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
@@ -37,6 +38,8 @@ import type { NativeSessionHandle } from '@jungjaehoon/mama-core/runtime/runtime
 import type { NativeModelRunPort } from '@jungjaehoon/mama-core/runtime/native-turn';
 import { createStoredSourceReader } from '../api/stored-source-reader.js';
 import type { AttachmentActionPorts } from '../api/attachment-actions.js';
+import { credentialReadPaths } from './backend-security.js';
+import { memberPaths, otherMemberReadPaths } from './member-paths.js';
 import { createPersistentReportStore } from '../api/report-persistence.js';
 import { ObsidianWriter } from '../wiki/obsidian-writer.js';
 import { RawStore } from '../storage/source-archive.js';
@@ -94,6 +97,7 @@ export interface OwnerRuntimeOptions {
   rawPath: string;
   embedder?: NonNullable<KnowledgeOptions['embedder']>;
   memberRoot?: string;
+  toolsRoot?: string;
   memberEnrollment?: Omit<MemberEnrollmentPorts, 'memberRoot' | 'serveMember'>;
   /** Additional configured owner locations (config, logging, custom MCP), denied only to members. */
   ownerDeniedReadPaths?: readonly string[];
@@ -370,6 +374,30 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       : {};
     const surface = createActionSurface({
       runtimeRoot: options.runtimeRoot,
+      documentPorts: {
+        toolsRoot: options.toolsRoot,
+        workspaceDir: options.workspaceDir,
+        deniedReadPaths: [
+          homedir(),
+          ...credentialReadPaths(options.runtimeRoot, options.codexHome, options.replayKeyFile),
+          ...ownerNativeDataReadPaths(options),
+        ],
+        ...(memberRoot === undefined
+          ? {}
+          : {
+              principalPaths: (id: string) => memberPaths(memberRoot, id),
+              // Linked document resources have the same private-data boundary as native tools.
+              principalDeniedReadPaths: (id: string) => [
+                ...ownerDataReadPaths(options),
+                memberPaths(memberRoot, id).claudeConfigDir,
+                ...otherMemberReadPaths(
+                  memberRoot,
+                  id,
+                  principals.listMembers().map((row) => row.principalId)
+                ),
+              ],
+            }),
+      },
       memberDirectoryChange: sessions.exclusive,
       adapter: database.adapter,
       ...(options.outboundAttempts === undefined
@@ -561,6 +589,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         model: options.model,
         workspaceDir: options.workspaceDir,
         runtimeRoot: options.runtimeRoot,
+        toolsRoot: options.toolsRoot,
         deniedReadPaths: ownerNativeDataReadPaths(options),
         replayKeyFile: options.replayKeyFile,
         ...(options.sandboxNetworkProxy === undefined

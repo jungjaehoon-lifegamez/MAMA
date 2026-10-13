@@ -17,6 +17,7 @@ import { ownerMessageItem } from '../../src/storage/chat-sources.js';
 import { ownerRuleIds } from '../../src/runtime/owner-authority.js';
 
 const ROLE = [
+  'document.render',
   'schedule.job.create',
   'schedule.job.list',
   'schedule.job.update',

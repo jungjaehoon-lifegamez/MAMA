@@ -78,6 +78,7 @@ export class PersistentCLIAdapter extends EventEmitter implements IModelRunner {
     this.options = { ...options };
     this.channelKey = options.sessionId || 'default';
     this.processPool = new PersistentProcessPool({
+      command: options.command,
       workspaceDir: options.workspaceDir,
       model: options.model,
       systemPrompt: options.systemPrompt,

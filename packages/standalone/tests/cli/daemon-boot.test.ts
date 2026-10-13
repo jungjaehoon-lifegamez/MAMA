@@ -6,6 +6,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
@@ -105,6 +106,68 @@ function viewerDouble(order: string[]) {
 }
 
 describe('daemon bootstrap', () => {
+  it.each([false, true, 'broken'])(
+    'logs toolkit presence once and forwards its path to sessions (present=%s)',
+    async (present) => {
+      const root = mkdtempSync(join(tmpdir(), 'toolkit-boot-home-'));
+      const tools = mkdtempSync(join(tmpdir(), 'toolkit-boot-tools-'));
+      roots.push(root, tools);
+      vi.spyOn(egressProxy, 'startEgressProxy').mockResolvedValue({
+        httpPort: 12345,
+        socksPort: 12346,
+        close: async () => {},
+      } as never);
+      if (present) {
+        const version = join(tools, 'v-fixture');
+        mkdirSync(join(version, 'bin'), { recursive: true });
+        for (const name of ['bin/python3', 'fonts.conf', 'pyvenv.cfg', 'soffice'])
+          writeFileSync(join(version, name), 'fixture');
+        writeFileSync(
+          join(version, 'manifest.json'),
+          JSON.stringify({ version: 1, soffice: join(version, 'soffice') })
+        );
+        symlinkSync('v-fixture', join(tools, 'current'));
+      }
+      if (present === 'broken') {
+        const python = join(tools, 'v-fixture', 'bin', 'python3');
+        rmSync(python);
+        symlinkSync('/fixture/removed-python', python);
+      }
+      const logs: string[] = [];
+      const configured = { ...config(root), ...(present ? { tools_root: tools } : {}) };
+      const daemon = await bootDaemon({
+        home: root,
+        configPath: join(root, 'config.yaml'),
+        config: configured,
+        logger: { info: (line) => logs.push(line), error: (line) => logs.push(line) },
+        dependencies: {
+          ensureIsolation: () => {},
+          createOwnerRuntime: async (options) => {
+            expect(options.toolsRoot).toBe(present ? tools : undefined);
+            return ownerDouble([]) as never;
+          },
+          createViewerServer: () => viewerDouble([]) as never,
+          startConnectorRuntime: async () => ({ stop: async () => {} }) as never,
+          createTelegramGateway: () =>
+            ({
+              start: async () => {},
+              stop: async () => {},
+              deliverResponse: async () => {},
+              sendToOwner: async () => {},
+              sendFile: async () => ({ sentAs: 'document', size: 0 }),
+            }) as never,
+        },
+      });
+      expect(logs.filter((line) => line.startsWith('document toolkit:'))).toEqual([
+        present === true
+          ? 'document toolkit: present'
+          : 'document toolkit: absent (run mama tools install)',
+      ]);
+      if (present === 'broken')
+        expect(logs.some((line) => /unavailable.*mama tools install/.test(line))).toBe(true);
+      await daemon.stop();
+    }
+  );
   it('reports a rejected personal job boot tick and keeps the daemon running', async () => {
     vi.spyOn(egressProxy, 'startEgressProxy').mockResolvedValue({
       httpProxyPort: 1,

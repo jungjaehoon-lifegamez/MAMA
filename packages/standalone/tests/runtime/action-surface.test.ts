@@ -119,6 +119,7 @@ describe('W1 action surface', () => {
     const expected = [
       'code_act',
       'deliver.telegram.file',
+      'document.render',
       'drive.download',
       'drive.read',
       'graph.query',

@@ -1,4 +1,5 @@
 import { validateMemberRoot } from './member-paths.js';
+import { validateToolsRoot } from './tools-paths.js';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -85,6 +86,7 @@ export interface W1Config {
   version: 1;
   timezone: string;
   member_root?: string;
+  tools_root?: string;
   agent: W1AgentConfig;
   database: { path: string };
   logging: { level: 'debug' | 'info' | 'warn' | 'error'; file: string };
@@ -122,6 +124,7 @@ const CONFIG_KEYS = [
   'version',
   'timezone',
   'member_root',
+  'tools_root',
   'agent',
   'database',
   'logging',
@@ -513,6 +516,15 @@ function parseConfigValue(
     config: {
       version: 1,
       timezone,
+      ...(raw.tools_root === undefined
+        ? {}
+        : {
+            tools_root: validateToolsRoot(text(raw.tools_root, 'tools_root'), [
+              home,
+              join(home, '.mama'),
+              ...(raw.member_root === undefined ? [] : [text(raw.member_root, 'member_root')]),
+            ]),
+          }),
       ...(raw.member_root === undefined
         ? {}
         : {

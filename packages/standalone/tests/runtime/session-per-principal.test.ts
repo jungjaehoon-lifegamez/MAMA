@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, realpathSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir, userInfo } from 'node:os';
 import { createRequire } from 'node:module';
@@ -21,11 +29,56 @@ import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
 import { memberClaudeTmpDir, memberPaths } from '../../src/runtime/member-paths.js';
 import { credentialReadPaths, physicalReadPath } from '../../src/runtime/backend-security.js';
 import { createOutboundEventRecorder } from '../../src/api/security-events.js';
+import * as documentRenderer from '../../src/tools/document-render.js';
+import { resolvePrincipalAccess } from '../../src/runtime/principal-access.js';
 
 // Only the unavailable socket transport is replaced. Core intake, credentials, mailbox,
 // native runner, records, model_runs and traces stay real.
 const ipc = createRequire(import.meta.url)('@jungjaehoon/mama-core/client/ipc');
 const roots: string[] = [];
+it.each(['codex', 'claude'] as const)(
+  'carries native private-data read denies into the host renderer (%s)',
+  async (backend) => {
+    const f = await fixture(backend);
+    const seen: documentRenderer.DocumentRenderOptions[] = [];
+    vi.spyOn(documentRenderer, 'createDocumentRenderer').mockImplementation((options) => {
+      seen.push(options);
+      return {
+        render: async () => ({
+          pdf: 'render/document.pdf',
+          pages: ['render/page-001.png'],
+          pageCount: 1,
+          fonts: [[]],
+        }),
+      };
+    });
+    const runtime = await createOwnerRuntime(f.options);
+    try {
+      const memberAccess = resolvePrincipalAccess(f.member, {
+        adapter: runtime.database.adapter,
+        ownerAccess: runtime.surface.ownerAccess,
+        agentId: 'fixture-agent',
+      });
+      for (const access of [runtime.surface.ownerAccess, memberAccess]) {
+        const result = await runtime.surface.hostToolCall(
+          'document.render',
+          { path: 'draft.docx' },
+          `fixture-render-${access.principalId}`,
+          { access }
+        );
+        expect(result.status).toBe('completed');
+      }
+      expect(seen[0]!.deniedReadPaths).toContain(f.options.databasePath);
+      expect(seen[0]!.deniedReadPaths).toContain(f.options.rawPath);
+      expect(seen[0]!.deniedReadPaths).toContain(f.root);
+      expect(seen[1]!.deniedReadPaths).toContain(f.home);
+      expect(seen[1]!.deniedReadPaths).toContain(memberPaths(f.root, f.inactive).runtimeRoot);
+      expect(seen[1]!.deniedReadPaths).not.toContain(memberPaths(f.root, f.member).workspaceDir);
+    } finally {
+      await runtime.stop();
+    }
+  }
+);
 let socket: ActionIpcServerOptions;
 beforeEach(() => {
   vi.spyOn(ipc, 'createActionIpcServer').mockImplementation(
@@ -377,6 +430,18 @@ it.each(['codex', 'claude'] as const)(
     const f = await fixture(backend);
     const external = realpathSync(mkdtempSync(join(tmpdir(), 'fixture-external-')));
     roots.push(external);
+    const toolsRoot = realpathSync(mkdtempSync(join(tmpdir(), 'fixture-tools-root-')));
+    roots.push(toolsRoot);
+    const version = join(toolsRoot, 'v-fixture');
+    mkdirSync(join(version, 'bin'), { recursive: true });
+    for (const name of ['bin/python3', 'pyvenv.cfg', 'fonts.conf', 'soffice'])
+      writeFileSync(join(version, name), 'fixture');
+    writeFileSync(
+      join(version, 'manifest.json'),
+      JSON.stringify({ version: 1, soffice: join(version, 'soffice') })
+    );
+    symlinkSync('v-fixture', join(toolsRoot, 'current'));
+    f.options.toolsRoot = toolsRoot;
     const orphan = join(f.root, 'fixture-orphan');
     mkdirSync(orphan);
     Object.assign(f.options, {
@@ -408,7 +473,9 @@ it.each(['codex', 'claude'] as const)(
       );
       expect(owner.deniedReadPaths).not.toContain(f.options.workspaceDir);
       expect(owner.processEnv.TMPDIR).toBe(process.env.TMPDIR);
-      if (backend === 'codex') expect(owner.shellEnvironment).toEqual({ PATH: process.env.PATH });
+      const toolPath = `${join(toolsRoot, 'current', 'bin')}:${process.env.PATH}`;
+      expect(owner.processEnv.PATH).toBe(toolPath);
+      if (backend === 'codex') expect(owner.shellEnvironment).toEqual({ PATH: toolPath });
       const paths = memberPaths(f.root, f.member);
       const expected = [
         f.home,
@@ -436,6 +503,12 @@ it.each(['codex', 'claude'] as const)(
         const driver = f.drivers.get(f.member)!;
         for (const path of expected) expect(driver.deniedReadPaths, path).toContain(path);
         expect(driver.deniedReadPaths).not.toContain(paths.runtimeRoot);
+        expect(driver.processEnv.PATH).toBe(toolPath);
+        expect(
+          driver.deniedReadPaths.some(
+            (path) => toolsRoot === path || toolsRoot.startsWith(`${path}/`)
+          )
+        ).toBe(false);
         expect(driver.processEnv.TMPDIR).toBe(join(paths.workspaceDir, '.tmp'));
         if (backend === 'codex')
           expect(driver.shellEnvironment?.TMPDIR).toBe(join(paths.workspaceDir, '.tmp'));

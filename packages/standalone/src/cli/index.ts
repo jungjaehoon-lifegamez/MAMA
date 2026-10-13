@@ -16,6 +16,11 @@ async function requireDaemonStopped(command: string): Promise<void> {
 
 async function main(): Promise<void> {
   const command = process.argv[2];
+  if (command === 'tools') {
+    const { runTools } = await import('./commands/tools.js');
+    await runTools(process.argv.slice(3));
+    return;
+  }
   if (command === 'init') {
     if (process.argv.length !== 3) throw new CliInputError('Usage: mama init');
     const { runInit } = await import('./commands/init.js');
@@ -61,7 +66,7 @@ async function main(): Promise<void> {
     return;
   }
   console.log(
-    'Usage: mama init | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status | stop'
+    'Usage: mama init | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status | stop'
   );
 }
 

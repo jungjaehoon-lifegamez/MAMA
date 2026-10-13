@@ -1,4 +1,5 @@
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
+import { readDocumentToolkit } from '../../tools/document-toolkit.js';
 import {
   closeSync,
   existsSync,
@@ -377,6 +378,9 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
     currentStage = 'config';
     stage(logger, 'config');
     config = options.config ?? loadConfig({ path: configPath, home: options.home });
+    logger.info(
+      `document toolkit: ${readDocumentToolkit(config.tools_root, (error) => logger.error(error.message)) ? 'present' : 'absent (run mama tools install)'}`
+    );
     const timeZone = createTimeZoneSetting(config.timezone);
     validateDeliveryRoutes(config);
     // launchd may have created the redirected log already; preserve its contents and tighten it.
@@ -485,6 +489,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       credentialPath: paths.credentialPath,
       runtimeRoot: paths.mamaRoot,
       ...(config.member_root === undefined ? {} : { memberRoot: config.member_root }),
+      ...(config.tools_root === undefined ? {} : { toolsRoot: config.tools_root }),
       ownerDeniedReadPaths: [
         configPath,
         config.logging.file,

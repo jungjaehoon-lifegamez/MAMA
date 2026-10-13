@@ -42,6 +42,7 @@
     "dist",
     "public",
     "db",
+    "toolkit",
     "README.md",
     "CHANGELOG.md"
   ],
