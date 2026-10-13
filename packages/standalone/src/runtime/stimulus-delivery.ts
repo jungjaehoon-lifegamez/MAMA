@@ -1,6 +1,7 @@
 import {
   personalJobPayload,
   personalJobSessionKey,
+  personalJobOccurrenceId,
   PersonalJobFinalFailure,
   type PersonalJobStore,
 } from './personal-jobs.js';
@@ -102,6 +103,7 @@ export interface StimulusDeliveryOptions {
   backend: OwnerRuntimeBackend;
   turnChain?: ReturnType<typeof createSerialTurnChain>;
   personalJobs?: PersonalJobStore;
+  retirePersonalJobText?: (operationId: string) => void;
   member?: { principalId: string; sessionKey: string; voice: TurnVoice };
   wikiEnabled?: boolean;
   formattingRoutes?: { reports: string; notifications: string };
@@ -665,6 +667,13 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
     return fresh;
   };
 
+  const closePersonalJob = async (row: MailboxRow): Promise<void> => {
+    const payload = personalJobPayload(row);
+    if (!payload) return;
+    await options.personalJobs?.close(row);
+    options.retirePersonalJobText?.(personalJobOccurrenceId(payload.jobId, row.occurredAt));
+  };
+
   const deliverResult = async (
     row: MailboxRow,
     result: NativeTurnResult,
@@ -679,12 +688,15 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
     if (row.kind === 'scheduled') {
       if (isRecordOrderRow(row)) await options.recordOrders?.onResult(row, modelRunId ?? null);
       else {
-        if (personalJobPayload(row) && options.personalJobs?.isClosed(row)) return;
+        if (personalJobPayload(row) && options.personalJobs?.isClosed(row)) {
+          await closePersonalJob(row);
+          return;
+        }
         try {
           await options.onScheduledResult?.(row, result);
         } catch (error) {
           if (!(error instanceof PersonalJobFinalFailure)) throw error;
-          await options.personalJobs!.close(row);
+          await closePersonalJob(row);
           await options.onFailed?.(row, stimulusFailureReason(error), modelRunId ?? null);
           return;
         }
@@ -701,7 +713,7 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
         activeReplaySourceEndMs = replaySourceEndMs;
         const plan = planTurn(row, options);
         if (plan.kind === 'skip') {
-          if (personalJobPayload(row)) await options.personalJobs?.close(row);
+          await closePersonalJob(row);
           // Kagemusha's backfill guard: only history lines, so no live turn and no record order.
           await options.onSkipped?.(row, plan.reason);
           await options.onDelivered?.(row, null);
@@ -796,7 +808,7 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
       await options.onUncertain?.(row, reason);
     },
     onDead: async (row, reason) => {
-      if (personalJobPayload(row)) await options.personalJobs?.close(row);
+      await closePersonalJob(row);
       await lost(row, reason);
       await options.onDead?.(row, reason);
     },
@@ -807,8 +819,9 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
         return 'settled';
       }
       if (personalJobPayload(row) && options.personalJobs) {
-        if (!options.personalJobs.isClosed(row)) {
-          await options.personalJobs.close(row);
+        const closed = options.personalJobs.isClosed(row);
+        await closePersonalJob(row);
+        if (!closed) {
           await options.onFailed?.(
             row,
             options.personalJobs.isSuperseded(row)

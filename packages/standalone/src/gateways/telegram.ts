@@ -35,7 +35,7 @@ import {
   type MemberFileDeliveryContext,
   type TelegramFileDeliveryResult,
 } from '../api/file-delivery.js';
-import { isDefinitiveTelegramRejection } from './telegram-errors.js';
+import { isDefinitiveTelegramRejection, TelegramJobDeliveryRejected } from './telegram-errors.js';
 import { downloadTelegramFiles, telegramFiles } from './telegram-attachments.js';
 
 const TELEGRAM_MAX_LENGTH = 4096;
@@ -331,6 +331,13 @@ export class TelegramGateway extends BaseGateway {
     );
   }
 
+  /** Host-only retirement after the mailbox occurrence closes, including inactive recipients. */
+  retireMemberJobText(operationId: string): void {
+    if (!/^job:[^:]+:\d+$/.test(operationId))
+      throw new Error('Only personal job occurrence receipts can be retired');
+    this.messageLedger.retireUndelivered(outboundLedgerKey(operationId));
+  }
+
   async sendMemberText(
     access: JudgmentAccess,
     text: string,
@@ -342,13 +349,7 @@ export class TelegramGateway extends BaseGateway {
     if (!this.bot || !this.connected) throw new Error('Telegram gateway not connected');
     if (!operationId.trim()) throw new Error('Member text operation id is required');
     const chatId = destinations[0]!.id;
-    try {
-      await this.runInChatQueue(chatId, () => this.sendMessageNow(chatId, text, operationId));
-    } catch (error) {
-      if (operationId.startsWith('job:') && isDefinitiveTelegramRejection(error))
-        this.messageLedger.markFailed(outboundLedgerKey(operationId));
-      throw error;
-    }
+    await this.runInChatQueue(chatId, () => this.sendMessageNow(chatId, text, operationId));
     return this.memberTextDelivered(access, operationId);
   }
 
@@ -960,6 +961,9 @@ export class TelegramGateway extends BaseGateway {
     };
     const existing = this.messageLedger.claim(key, binding).entry;
     if (existing.state === 'delivered') return;
+    // Keep the rejection until the occurrence closes. A restart in between must not send it.
+    if (idempotencyKey.startsWith('job:') && existing.state === 'failed')
+      throw new TelegramJobDeliveryRejected('Personal job DM delivery was already rejected');
     if (existing.state !== 'ready') this.messageLedger.markReady(key, text, 'html-v1');
     await this.deliverOutboundEntry(key, chatId);
   }
@@ -984,7 +988,9 @@ export class TelegramGateway extends BaseGateway {
         this.messageLedger.markDeliveryProgress(key, index + 1, false, sent.message_id);
       } catch (error) {
         if (isDefinitiveTelegramRejection(error)) {
-          this.messageLedger.markDeliveryProgress(key, index, false);
+          // A job refusal is final. Never persist a retryable ready receipt before its failure.
+          if (entry.idempotencyKey?.startsWith('job:')) this.messageLedger.markFailed(key);
+          else this.messageLedger.markDeliveryProgress(key, index, false);
         }
         throw error;
       }

@@ -97,6 +97,13 @@ export class OwnerMessageLedger {
     return this.get(key) !== null;
   }
 
+  /** A producer has durably closed this undelivered occurrence; delivered receipts keep their TTL. */
+  retireUndelivered(key: string): void {
+    const entry = this.entries.get(key);
+    if (!entry || entry.state === 'delivered') return;
+    this.commit(() => this.entries.delete(key));
+  }
+
   /** Exact DM boundaries cover explicit deliveries and legacy inbound reply keys. */
   listForTelegramDm(dm: string): OwnerMessageLedgerEntry[] {
     return [...this.entries.values()]

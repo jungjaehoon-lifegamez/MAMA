@@ -25,6 +25,7 @@ import {
 export interface MemberRecordsTelegram extends TelegramFileSender {
   sendMemberText(access: JudgmentAccess, text: string, operationId: string): Promise<boolean>;
   memberTextDelivered(access: JudgmentAccess, operationId: string): boolean;
+  retireMemberJobText(operationId: string): void;
 }
 export interface MemberRecordsPorts {
   root: string;

@@ -115,6 +115,98 @@ async function gatewayFor(
 }
 
 describe('TelegramGateway', () => {
+  it('keeps a job rejection unsendable across restart if its failed receipt cannot be saved', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'telegram-job-rejection-write-'));
+    temporaryRoots.push(root);
+    const path = join(root, 'ledger.json');
+    const ledger = new TelegramMessageLedger(path);
+    const gateway = new TelegramGateway({
+      token: 'fixture-token',
+      ...(await telegramPrincipalFixture(root, intakeFor([]))),
+      intake: intakeFor([]),
+      messageLedger: ledger,
+      config: { allowedChats: ['7'], polling: false },
+    });
+    const access = {
+      principalId: 'fixture-person',
+      agentId: 'host',
+      scopes: [],
+      actions: [],
+      destinations: [{ kind: 'telegram', id: '7' }],
+    };
+    await gateway.start();
+    const failed = vi.spyOn(ledger, 'markFailed').mockImplementationOnce(() => {
+      throw new Error('fixture interrupted before failed receipt persistence');
+    });
+    try {
+      seams.api.sendMessage.mockRejectedValueOnce(
+        Object.assign(new Error('fixture blocked'), { error_code: 403 })
+      );
+      await expect(
+        gateway.sendMemberText(access, 'Rejected job', 'job:rejected:1000')
+      ).rejects.toThrow('failed receipt persistence');
+      expect(new TelegramMessageLedger(path).listForTelegramDm('7')).toEqual([
+        expect.objectContaining({ state: 'ready', deliveryUncertain: true }),
+      ]);
+      await gateway.stop();
+      const restarted = await gatewayFor(intakeFor([]), path);
+      try {
+        await expect(
+          restarted.sendMemberText(access, 'Rejected job', 'job:rejected:1000')
+        ).rejects.toThrow(/uncertain/);
+        expect(seams.api.sendMessage).toHaveBeenCalledTimes(1);
+      } finally {
+        await restarted.stop();
+      }
+    } finally {
+      failed.mockRestore();
+      await gateway.stop();
+    }
+  });
+  it('retires only undelivered job receipts, retaining delivered jobs and other outbound keys', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'telegram-retire-job-'));
+    temporaryRoots.push(root);
+    const path = join(root, 'ledger.json');
+    const gateway = await gatewayFor(intakeFor([]), path);
+    const access = {
+      principalId: 'fixture-person',
+      agentId: 'host',
+      scopes: [],
+      actions: [],
+      destinations: [{ kind: 'telegram', id: '7' }],
+    };
+    try {
+      await gateway.sendMemberText(access, 'Delivered job', 'job:delivered:1000');
+      await gateway.sendMemberText(access, 'Other outbound', 'fixture:outbound');
+      seams.api.sendMessage.mockRejectedValueOnce(new Error('fixture disconnected'));
+      await expect(
+        gateway.sendMemberText(access, 'Uncertain job', 'job:uncertain:2000')
+      ).rejects.toThrow();
+      seams.api.sendMessage.mockRejectedValueOnce(
+        Object.assign(new Error('fixture blocked'), { error_code: 403 })
+      );
+      await expect(
+        gateway.sendMemberText(access, 'Rejected job', 'job:rejected:3000')
+      ).rejects.toThrow();
+      seams.api.sendMessage.mockRejectedValueOnce(new Error('fixture other disconnected'));
+      await expect(
+        gateway.sendMemberText(access, 'Other uncertain', 'fixture:uncertain')
+      ).rejects.toThrow();
+      const before = new TelegramMessageLedger(path).listForTelegramDm('7');
+      gateway.retireMemberJobText('job:uncertain:2000');
+      gateway.retireMemberJobText('job:rejected:3000');
+      gateway.retireMemberJobText('job:delivered:1000');
+      gateway.retireMemberJobText('job:missing:4000');
+      expect(() => gateway.retireMemberJobText('fixture:uncertain')).toThrow(/job/i);
+      expect(new TelegramMessageLedger(path).listForTelegramDm('7')).toEqual(
+        before.filter(
+          (entry) => !['job:uncertain:2000', 'job:rejected:3000'].includes(entry.idempotencyKey!)
+        )
+      );
+    } finally {
+      await gateway.stop();
+    }
+  });
   it.each([400, 403, 429, 503, undefined])(
     'recovers the next entry and starts polling after a send error (%s)',
     async (code) => {

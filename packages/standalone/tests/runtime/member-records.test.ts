@@ -59,6 +59,7 @@ async function setup() {
       receipts.some(
         (receipt) => receipt.principal === access.principalId && receipt.operationId === operationId
       ),
+    retireMemberJobText: () => {},
   };
   const f = await fixture('codex', true, false, 'UTC', telegram, `fixture-member-${randomUUID()}`);
   const paths = memberPaths(f.root, f.member);

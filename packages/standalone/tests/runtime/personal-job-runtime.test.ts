@@ -4,6 +4,7 @@ import { TelegramGateway } from '../../src/gateways/telegram.js';
 import { ChatSources } from '../../src/storage/chat-sources.js';
 import { RawStore } from '../../src/storage/source-archive.js';
 import { deliverPersonalJobResult } from '../../src/runtime/personal-jobs.js';
+import { resolvePrincipalAccess } from '../../src/runtime/principal-access.js';
 import { join } from 'node:path';
 import { fixture } from '../helpers/member-runtime.js';
 const transport = vi.hoisted(() => ({
@@ -11,6 +12,7 @@ const transport = vi.hoisted(() => ({
   fail: false,
   unavailable: false,
   attempts: 0,
+  error: undefined as Error | undefined,
 }));
 vi.mock('grammy', () => ({
   Bot: vi.fn(() => ({
@@ -21,6 +23,7 @@ vi.mock('grammy', () => ({
     api: {
       sendMessage: async (chatId: number, text: string) => {
         transport.attempts++;
+        if (transport.error) throw transport.error;
         if (transport.fail)
           throw Object.assign(new Error('fixture rejected'), {
             error_code: 403,
@@ -40,6 +43,7 @@ afterEach(async () => {
   transport.fail = false;
   transport.unavailable = false;
   transport.attempts = 0;
+  transport.error = undefined;
 });
 const body = {
   cron: '0 * * * *',
@@ -62,6 +66,7 @@ async function setup() {
         return gateway!.sendMemberText(...args);
       },
       memberTextDelivered: (...args) => gateway!.memberTextDelivered(...args),
+      retireMemberJobText: (key) => gateway!.retireMemberJobText(key),
     },
     '21001',
     undefined,
@@ -358,6 +363,63 @@ describe('personal scheduled turns and P10.2 recovery', () => {
     expect(transport.attempts).toBe(1);
     expect(transport.sent).toEqual([]);
   });
+  it('retires every rejected hourly occurrence without advancing the completed anchor', async () => {
+    const { f, create, due, tick, jobRows } = await setup();
+    const id = await create();
+    transport.fail = true;
+    for (let n = 0; n < 12; n++) {
+      await tick(due + n * 3_600_000);
+      await vi.waitFor(() => expect(jobRows()).toHaveLength(n + 1));
+      await f.settled(jobRows()[n]!.stimulus_id, f.member);
+      expect(f.ledger.listForTelegramDm('21001')).toEqual([]);
+      expect(f.runtime.surface.personalJobs.find(f.member, id)).toMatchObject({
+        lastClosedAt: due + n * 3_600_000,
+        lastCompletedAt: null,
+      });
+    }
+    expect(transport.attempts).toBe(12);
+  });
+  it.each(['close', 'retirement'])(
+    'does not resend after restart before %s persists following a definitive rejection',
+    async (phase) => {
+      const { f, create, tick, jobRows, startGateway } = await setup();
+      await create();
+      transport.fail = true;
+      const interrupted =
+        phase === 'close'
+          ? vi
+              .spyOn(f.runtime.surface.personalJobs, 'close')
+              .mockRejectedValue(new Error('fixture stop before close'))
+          : vi.spyOn(gateway!, 'retireMemberJobText').mockImplementation(() => {
+              throw new Error('fixture stop before retirement');
+            });
+      await tick();
+      await vi.waitFor(() => expect(f.ledger.listForTelegramDm('21001')[0]?.state).toBe('failed'));
+      await vi.waitFor(() =>
+        expect(
+          f.runtime.runtime.mailbox!.readInput(jobRows()[0]!.stimulus_id, f.member)?.nativeDelivery
+            ?.state
+        ).toBe('uncertain')
+      );
+      interrupted.mockRestore();
+      await gateway!.stop();
+      // A real daemon restart has no old gateway able to mutate the reopened ledger at boot.
+      gateway = undefined;
+      transport.fail = false;
+      await f.restart();
+      await startGateway();
+      await vi.waitFor(async () => {
+        await f.runtime.runtime.drainOnce();
+        expect(
+          f.runtime.runtime.mailbox!.readInput(jobRows()[0]!.stimulus_id, f.member)?.status
+        ).toBe('acked');
+      });
+      expect(transport.attempts).toBe(1);
+      expect(transport.sent).toEqual([]);
+      expect(f.ledger.listForTelegramDm('21001')).toEqual([]);
+      expect(f.runtime.surface.personalJobs.list(f.member)[0]!.lastCompletedAt).toBeNull();
+    }
+  );
   it('serves an unserved person through the member directory lane, after running member turns', async () => {
     const { f, create, tick, jobRows } = await setup();
     await create();
@@ -414,6 +476,226 @@ describe('personal scheduled turns and P10.2 recovery', () => {
         )
         .get()
     ).toEqual({ n: 1 });
+  });
+  it.each(
+    ['update', 'disable', 'delete', 'suspend/resume'].flatMap((change) =>
+      [false, true].map((restart) => ({ change, restart }))
+    )
+  )('archives a confirmed DM after $change (restart: $restart)', async ({ change, restart }) => {
+    const { f, create, due, tick, jobRows, startGateway, failures } = await setup();
+    const id = await create();
+    f.memberResponse('Original delivered result');
+    const save = vi.spyOn(ChatSources.prototype, 'saveJobExchange').mockImplementation(() => {
+      throw new Error('fixture archive write failed');
+    });
+    await tick();
+    await vi.waitFor(() =>
+      expect(
+        f.runtime.runtime.mailbox!.readInput(jobRows()[0]!.stimulus_id, f.member)?.nativeDelivery
+          ?.state
+      ).toBe('uncertain')
+    );
+    expect(transport.sent).toEqual([{ chatId: 21001, text: 'Original delivered result' }]);
+    if (change === 'suspend/resume') {
+      expect((await f.manage('suspend')).status).toBe('completed');
+      expect(f.runtime.runtime.servesPrincipal(f.member)).toBe(false);
+      expect((await f.manage('resume')).status).toBe('completed');
+    } else {
+      const changed = await f.act(
+        `schedule.job.${change === 'delete' ? 'delete' : 'update'}`,
+        change === 'delete'
+          ? { id }
+          : change === 'disable'
+            ? { id, enabled: false }
+            : { id, instruction: 'Updated instruction' }
+      );
+      expect(changed.result.status).toBe('completed');
+      await f.settled(changed.ref, f.member);
+    }
+    const anchors = f.runtime.surface.personalJobs.find(f.member, id);
+    const receipt = f.ledger.listForTelegramDm('21001')[0];
+    save.mockRestore();
+    if (restart) {
+      await gateway!.stop();
+      gateway = undefined; // As at a daemon restart: no old gateway can change the reopened ledger.
+      await f.restart();
+      await startGateway();
+    }
+    await f.runtime.runtime.drainOnce();
+    await f.settled(jobRows()[0]!.stimulus_id, f.member);
+    for (let n = 0; n < 2; n++) await f.runtime.runtime.drainOnce();
+    expect(
+      f.runtime.runtime.mailbox!.readInput(jobRows()[0]!.stimulus_id, f.member)?.nativeDelivery
+        ?.state
+    ).toBe('settled');
+    expect(
+      failures.filter((failure) => /Personal job (changed|person)/.test(failure.reason))
+    ).toEqual([]);
+    expect(transport.attempts).toBe(1);
+    expect(f.ledger.listForTelegramDm('21001')).toEqual([receipt]);
+    expect(f.runtime.surface.personalJobs.find(f.member, id)).toEqual(anchors);
+    expect(
+      f.runtime.database.adapter
+        .prepare(
+          "SELECT source_id, content, json_extract(metadata_json, '$.kind') AS kind FROM connector_event_index WHERE json_extract(metadata_json, '$.jobId')=? ORDER BY rowid"
+        )
+        .all(id)
+    ).toEqual([
+      { source_id: `job:${id}:${due}`, content: body.instruction, kind: 'job_instruction' },
+      {
+        source_id: `job:${id}:${due}:reply`,
+        content: 'Original delivered result',
+        kind: 'job_reply',
+      },
+    ]);
+  });
+  it.each(['suspended', 'offboarded'])(
+    'reconciles a delivered result in a still-served %s session without widening access',
+    async (status) => {
+      const { f, create, due, tick, jobRows, failures } = await setup();
+      const id = await create();
+      f.memberResponse('Delivered before the lifecycle change');
+      const save = vi.spyOn(ChatSources.prototype, 'saveJobExchange').mockImplementation(() => {
+        throw new Error('fixture archive write failed');
+      });
+      await tick();
+      await vi.waitFor(() =>
+        expect(
+          f.runtime.runtime.mailbox!.readInput(jobRows()[0]!.stimulus_id, f.member)?.nativeDelivery
+            ?.state
+        ).toBe('uncertain')
+      );
+      // Keep this fixture served while changing registry status to exercise the retained host
+      // recovery callback. Normal lifecycle unserves before native shutdown.
+      const repo = createPrincipalRepository(f.runtime.database.adapter);
+      if (status === 'suspended') repo.suspend(f.member, Date.now());
+      else repo.offboard(f.member, Date.now());
+      expect(() =>
+        resolvePrincipalAccess(f.member, {
+          adapter: f.runtime.database.adapter,
+          ownerAccess: f.runtime.surface.ownerAccess,
+          agentId: 'host',
+        })
+      ).toThrow(status);
+      save.mockRestore();
+      await f.runtime.runtime.drainOnce();
+      await f.settled(jobRows()[0]!.stimulus_id, f.member);
+      expect(transport.attempts).toBe(1);
+      expect(f.runtime.surface.personalJobs.find(f.member, id)).toMatchObject({
+        lastCompletedAt: null,
+        lastClosedAt: status === 'suspended' ? null : due,
+      });
+      expect(
+        f.runtime.database.adapter
+          .prepare(
+            "SELECT COUNT(*) AS n FROM connector_event_index WHERE json_extract(metadata_json, '$.jobId')=?"
+          )
+          .get(id)
+      ).toEqual({ n: status === 'suspended' ? 2 : 0 });
+      expect(failures.filter((failure) => /Personal job person/.test(failure.reason))).toHaveLength(
+        status === 'suspended' ? 0 : 1
+      );
+    }
+  );
+  it.each(['update', 'disable', 'delete', 'suspend/resume'])(
+    'retires an uncertain undelivered receipt after %s and restart',
+    async (change) => {
+      const { f, create, tick, jobRows, startGateway } = await setup();
+      const id = await create();
+      transport.error = new Error('fixture disconnected');
+      await tick();
+      await vi.waitFor(() =>
+        expect(
+          f.runtime.runtime.mailbox!.readInput(jobRows()[0]!.stimulus_id, f.member)?.nativeDelivery
+            ?.state
+        ).toBe('uncertain')
+      );
+      expect(f.ledger.listForTelegramDm('21001')).toHaveLength(1);
+      if (change === 'suspend/resume') {
+        expect((await f.manage('suspend')).status).toBe('completed');
+        expect((await f.manage('resume')).status).toBe('completed');
+      } else {
+        const changed = await f.act(
+          `schedule.job.${change === 'delete' ? 'delete' : 'update'}`,
+          change === 'delete'
+            ? { id }
+            : change === 'disable'
+              ? { id, enabled: false }
+              : { id, instruction: 'Updated instruction' }
+        );
+        expect(changed.result.status).toBe('completed');
+        await f.settled(changed.ref, f.member);
+      }
+      transport.error = undefined;
+      await gateway!.stop();
+      gateway = undefined; // As at a daemon restart: no old gateway can change the reopened ledger.
+      await f.restart();
+      await startGateway();
+      await vi.waitFor(async () => {
+        await f.runtime.runtime.drainOnce();
+        expect(
+          f.runtime.runtime.mailbox!.readInput(jobRows()[0]!.stimulus_id, f.member)?.status
+        ).toBe('acked');
+      });
+      expect(transport.attempts).toBe(1);
+      expect(transport.sent).toEqual([]);
+      expect(f.ledger.listForTelegramDm('21001')).toEqual([]);
+      expect(f.runtime.surface.personalJobs.find(f.member, id)?.lastCompletedAt ?? null).toBeNull();
+    }
+  );
+  it.each(['suspended', 'offboarded'])(
+    'retires an undelivered receipt when the still-served person becomes %s',
+    async (status) => {
+      const { f, create, tick, jobRows } = await setup();
+      const id = await create();
+      transport.error = new Error('fixture disconnected');
+      await tick();
+      await vi.waitFor(() =>
+        expect(
+          f.runtime.runtime.mailbox!.readInput(jobRows()[0]!.stimulus_id, f.member)?.nativeDelivery
+            ?.state
+        ).toBe('uncertain')
+      );
+      const repo = createPrincipalRepository(f.runtime.database.adapter);
+      if (status === 'suspended') repo.suspend(f.member, Date.now());
+      else repo.offboard(f.member, Date.now());
+      transport.error = undefined;
+      await f.runtime.runtime.drainOnce();
+      await f.settled(jobRows()[0]!.stimulus_id, f.member);
+      expect(transport.attempts).toBe(1);
+      expect(transport.sent).toEqual([]);
+      expect(f.ledger.listForTelegramDm('21001')).toEqual([]);
+      expect(f.runtime.surface.personalJobs.find(f.member, id)?.lastCompletedAt).toBeNull();
+    }
+  );
+  it('does not archive or resend a confirmed DM for an offboarded person across restart', async () => {
+    const { f, create, tick, jobRows, startGateway } = await setup();
+    const id = await create();
+    const save = vi.spyOn(ChatSources.prototype, 'saveJobExchange').mockImplementation(() => {
+      throw new Error('fixture archive write failed');
+    });
+    await tick();
+    await vi.waitFor(() =>
+      expect(
+        f.runtime.runtime.mailbox!.readInput(jobRows()[0]!.stimulus_id, f.member)?.nativeDelivery
+          ?.state
+      ).toBe('uncertain')
+    );
+    expect((await f.manage('offboard')).status).toBe('completed');
+    save.mockRestore();
+    await gateway!.stop();
+    gateway = undefined; // As at a daemon restart: no old gateway can change the reopened ledger.
+    await f.restart();
+    await startGateway();
+    await f.runtime.runtime.drainOnce();
+    expect(transport.attempts).toBe(1);
+    expect(
+      f.runtime.database.adapter
+        .prepare(
+          "SELECT COUNT(*) AS n FROM connector_event_index WHERE json_extract(metadata_json, '$.jobId')=?"
+        )
+        .get(id)
+    ).toEqual({ n: 0 });
   });
   it.each([
     { restart: false, response: '[ack]', sends: 1 },
@@ -527,7 +809,7 @@ describe('personal scheduled turns and P10.2 recovery', () => {
     async (restart) => {
       const { f, create, due, tick, jobRows, startGateway, failures } = await setup();
       const id = await create();
-      transport.unavailable = true;
+      transport.error = new Error('fixture transport disconnected');
       await tick();
       await vi.waitFor(() =>
         expect(
@@ -542,16 +824,18 @@ describe('personal scheduled turns and P10.2 recovery', () => {
       const turns = f.turns.length;
       if (restart) {
         await gateway!.stop();
+        gateway = undefined; // As at a daemon restart: no old gateway can change the reopened ledger.
         await f.restart();
         await startGateway();
       }
-      transport.unavailable = false;
+      transport.error = undefined;
       await f.runtime.runtime.drainOnce();
       await f.settled(jobRows()[0]!.stimulus_id, f.member);
       for (let n = 0; n < 2; n++) await f.runtime.runtime.drainOnce();
       expect(f.turns).toHaveLength(turns);
-      expect(transport.attempts).toBe(0);
+      expect(transport.attempts).toBe(1);
       expect(transport.sent).toEqual([]);
+      expect(f.ledger.listForTelegramDm('21001')).toEqual([]);
       expect(f.runtime.surface.personalJobs.find(f.member, id)).toMatchObject({
         lastClosedAt: due + 3_600_000,
         lastCompletedAt: due + 3_600_000,

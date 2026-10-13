@@ -177,15 +177,20 @@ export function createMemberSession(
     turnChain: ports.turnChain,
     member: { principalId, sessionKey, voice: MEMBER_VOICE },
     personalJobs: ports.personalJobs,
+    retirePersonalJobText: (key) => {
+      const telegram = options.memberRecordsTelegram?.();
+      if (!telegram) throw new Error('Personal job Telegram delivery is unavailable');
+      telegram.retireMemberJobText(key);
+    },
     onScheduledResult: (row, result) =>
       deliverPersonalJobResult(row, result, {
         store: ports.personalJobs,
         access,
         chat,
-        delivered: (resolved, key) => {
+        delivered: (key) => {
           const telegram = options.memberRecordsTelegram?.();
           if (!telegram) throw new Error('Personal job Telegram delivery is unavailable');
-          return telegram.memberTextDelivered(resolved, key);
+          return telegram.memberTextDelivered(initialAccess, key);
         },
         send: (resolved, text, key) => {
           const telegram = options.memberRecordsTelegram?.();
