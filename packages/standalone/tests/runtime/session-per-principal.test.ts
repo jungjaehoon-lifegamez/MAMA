@@ -827,6 +827,23 @@ it('fails an unauthenticated member turn loudly without constructing an owner-pa
   }
 });
 
+it('tells delivery whether a member DM was stored in that member scope', async () => {
+  const f = await fixture();
+  const runtime = await createOwnerRuntime(f.options);
+  try {
+    const intake = runtime.memberIntake(f.member);
+    const ref = 'telegram:fixture:stored';
+    // A host notice for a DM interrupted before storage has no original to attach to.
+    expect(intake.hasOwnerMessage?.(ref)).toBe(false);
+    intake.acceptOwnerMessage({ id: ref, channelKey: 'fixture', occurredAt: 1, text: 'stored' });
+    await vi.waitFor(() => expect(intake.hasOwnerMessage?.(ref)).toBe(true));
+    expect(runtime.intake.hasOwnerMessage?.(ref)).toBe(false);
+  } finally {
+    await runtime.stop();
+    f.pool.dispose();
+  }
+});
+
 it('refuses to boot when a denied owner path contains member_root', async () => {
   const f = await fixture();
   // The report slot directory is denied to members; here it would cover their own workspaces.

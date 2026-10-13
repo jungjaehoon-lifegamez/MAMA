@@ -793,6 +793,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           return member.chat.saveOwnerMessage(input);
         },
         saveReply: (input) => member.chat.saveReply(input),
+        hasOwnerMessage: (ref) => member.chat.hasOwnerMessage(ref),
       });
     for (const [id, member] of members) memberIntakes.set(id, createMemberIntake(id, member));
     const retireMember = async (id: string, setAside = true) => {
