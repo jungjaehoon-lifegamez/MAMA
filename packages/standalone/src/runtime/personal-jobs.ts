@@ -3,10 +3,12 @@ import {
   appendJudgment,
   retireMemoryRecord,
   createPrincipalRepository,
+  JudgmentError,
   type DatabaseInstance,
   type JudgmentAccess,
   type ActionContext,
 } from '@jungjaehoon/mama-core';
+import { canonicalizeJSON } from '@jungjaehoon/mama-core/canonicalize';
 import type { Mailbox, MailboxRow } from '@jungjaehoon/mama-core/runtime/mailbox';
 import type { JsonValue } from '@jungjaehoon/mama-core/knowledge';
 import type { NativeTurnResult } from '@jungjaehoon/mama-core/runtime/native-turn';
@@ -15,6 +17,7 @@ import type { ChatSources } from '../storage/chat-sources.js';
 import { cronOccurrences, latestCronOccurrence, validateJobCron } from './personal-job-cron.js';
 import { localNow, validateTimeZone, type TimeZoneSetting } from './timezone.js';
 import { invalidInput } from '../utils/invalid-input.js';
+import { isDefinitiveTelegramRejection } from '../gateways/telegram-errors.js';
 
 export interface PersonalJob {
   jobId: string;
@@ -26,6 +29,7 @@ export interface PersonalJob {
   scheduleFrom: number;
   version: string;
   lastCompletedAt: number | null;
+  lastClosedAt: number | null;
 }
 export interface StoredPersonalJob extends PersonalJob {
   recordId: string;
@@ -66,10 +70,10 @@ export function createPersonalJobStore(adapter: DatabaseInstance, timeZone: Time
       ORDER BY d.created_at, d.rowid`
       )
       .all(principalId) as Array<{ id: string; payload_json: string }>;
-    return rows.map((row) => ({
-      ...(JSON.parse(row.payload_json) as PersonalJob),
-      recordId: row.id,
-    }));
+    return rows.map((row) => {
+      const { type: _type, operation: _operation, ...job } = JSON.parse(row.payload_json);
+      return { ...(job as PersonalJob), recordId: row.id };
+    });
   };
   const find = (principalId: string, id: string) =>
     list(principalId).find((job) => job.jobId === id);
@@ -84,7 +88,8 @@ export function createPersonalJobStore(adapter: DatabaseInstance, timeZone: Time
     access: JudgmentAccess,
     commandId: string,
     previous?: StoredPersonalJob,
-    context?: ActionContext
+    context?: ActionContext,
+    operation?: { action: string; input: JsonValue; result: JsonValue }
   ) => {
     const { recordId: _recordId, ...payload } = job as StoredPersonalJob;
     const receipt = await appendJudgment(
@@ -93,7 +98,11 @@ export function createPersonalJobStore(adapter: DatabaseInstance, timeZone: Time
         topic: `personal-job/${job.jobId}`,
         recordKind: 'judgment',
         summary: job.instruction,
-        payload: { type: 'personal-job', ...payload } as Record<string, JsonValue>,
+        payload: {
+          type: 'personal-job',
+          ...payload,
+          ...(operation ? { operation } : {}),
+        } as Record<string, JsonValue>,
         scopes: [{ kind: 'user', id: access.principalId }],
         ...(previous
           ? { replaces: [{ id: previous.recordId, reason: 'Personal job revision' }] }
@@ -135,14 +144,108 @@ export function createPersonalJobStore(adapter: DatabaseInstance, timeZone: Time
         ? null
         : `${localNow(job.lastCompletedAt, job.timeZone)} ${job.timeZone}`,
   });
+  // Like work.link, recover the committed statement before reading mutable heads. The
+  // principal-bound command receipt selects the immutable revision, including its first reply.
+  const replay = <T>(context: ActionContext, action: string, input: unknown): T | null => {
+    const binding = adapter
+      .prepare(
+        'SELECT principal_id, action, receipt_key, erased_at FROM command_bindings WHERE command_id=?'
+      )
+      .get(context.operationId!) as
+      | { principal_id: string; action: string; receipt_key: string; erased_at: number | null }
+      | undefined;
+    if (!binding) return null;
+    if (binding.erased_at !== null)
+      throw new JudgmentError('COMMAND_ERASED', 'The command belongs to an erased record');
+    const conflict = () => {
+      throw new JudgmentError(
+        'COMMAND_CONFLICT',
+        'The command id is already bound to another request'
+      );
+    };
+    if (binding.principal_id !== context.access.principalId || binding.action !== 'judgment.append')
+      conflict();
+    const record = adapter
+      .prepare('SELECT payload_json FROM decisions WHERE id=?')
+      .get(binding.receipt_key) as { payload_json: string };
+    const payload = JSON.parse(record.payload_json);
+    if (action === 'delete') {
+      if (
+        typeof payload.amended !== 'string' ||
+        payload.status !== 'stale' ||
+        payload.reason !== 'The person deleted this job'
+      )
+        conflict();
+      const target = adapter
+        .prepare(
+          "SELECT json_extract(payload_json, '$.jobId') AS id FROM decisions WHERE id=? AND json_extract(payload_json, '$.type')='personal-job'"
+        )
+        .get(payload.amended) as { id: string } | undefined;
+      if (!target || canonicalizeJSON(input) !== canonicalizeJSON({ id: target.id })) conflict();
+      return { id: target!.id, deleted: true } as T;
+    }
+    if (
+      payload.type !== 'personal-job' ||
+      payload.operation?.action !== action ||
+      canonicalizeJSON(payload.operation.input) !== canonicalizeJSON(input)
+    )
+      conflict();
+    return payload.operation.result as T;
+  };
+  const hostAccess = (principalId: string): JudgmentAccess => ({
+    principalId,
+    agentId: 'host',
+    scopes: [{ kind: 'user', id: principalId }],
+    actions: [],
+  });
+  const isClosed = (row: MailboxRow) => {
+    const payload = personalJobPayload(row)!;
+    const job = find(row.principalId, payload.jobId);
+    return job?.version === payload.version && (job.lastClosedAt ?? 0) >= row.occurredAt;
+  };
+  const finish = async (
+    row: MailboxRow,
+    completed: boolean,
+    access = hostAccess(row.principalId)
+  ) => {
+    const payload = personalJobPayload(row)!;
+    const job = find(row.principalId, payload.jobId);
+    if (!job || job.version !== payload.version || (job.lastClosedAt ?? 0) >= row.occurredAt)
+      return;
+    await write(
+      {
+        ...job,
+        lastClosedAt: row.occurredAt,
+        ...(completed ? { lastCompletedAt: row.occurredAt } : {}),
+      },
+      access,
+      `job-close:${row.principalId}:${row.stimulusId}`,
+      job
+    );
+  };
   return {
     list,
     find,
     view,
+    isClosed,
+    isActive: (principalId: string) =>
+      createPrincipalRepository(adapter).findById(principalId)?.status === 'active',
+    close: (row: MailboxRow) => finish(row, false),
+    resume: async (principalId: string, now: number) => {
+      for (const job of list(principalId))
+        await write(
+          { ...job, scheduleFrom: now, version: randomUUID() },
+          hostAccess(principalId),
+          `job-resume:${principalId}:${job.recordId}:${now}`,
+          job
+        );
+    },
     create: async (
       body: { cron: string; timeZone?: string; instruction: string },
       context: ActionContext
     ) => {
+      const committed = replay<ReturnType<typeof view>>(context, 'create', body);
+      if (committed) return committed;
       const now = Date.now();
       const job: PersonalJob = {
         jobId: randomUUID(),
@@ -154,9 +257,16 @@ export function createPersonalJobStore(adapter: DatabaseInstance, timeZone: Time
         scheduleFrom: now,
         version: randomUUID(),
         lastCompletedAt: null,
+        lastClosedAt: null,
       };
       validate(job, context.access.principalId);
-      return view(await write(job, context.access, context.operationId!, undefined, context));
+      const result = view(job);
+      await write(job, context.access, context.operationId!, undefined, context, {
+        action: 'create',
+        input: body,
+        result,
+      });
+      return result;
     },
     update: async (
       body: {
@@ -168,14 +278,24 @@ export function createPersonalJobStore(adapter: DatabaseInstance, timeZone: Time
       },
       context: ActionContext
     ) => {
+      const committed = replay<ReturnType<typeof view>>(context, 'update', body);
+      if (committed) return committed;
       const previous = find(context.access.principalId, body.id);
       if (!previous) throw invalidInput('This personal job does not exist');
       const { id: _id, ...changes } = body;
       const job = { ...previous, ...changes, scheduleFrom: Date.now(), version: randomUUID() };
       validate(job, context.access.principalId, body.id);
-      return view(await write(job, context.access, context.operationId!, previous, context));
+      const result = view(job);
+      await write(job, context.access, context.operationId!, previous, context, {
+        action: 'update',
+        input: body,
+        result,
+      });
+      return result;
     },
     delete: async (id: string, context: ActionContext) => {
+      const committed = replay<{ id: string; deleted: true }>(context, 'delete', { id });
+      if (committed) return committed;
       const job = find(context.access.principalId, id);
       if (!job) throw invalidInput('This personal job does not exist');
       await retireMemoryRecord(
@@ -187,18 +307,7 @@ export function createPersonalJobStore(adapter: DatabaseInstance, timeZone: Time
       );
       return { id, deleted: true };
     },
-    complete: async (row: MailboxRow, access: JudgmentAccess) => {
-      const payload = personalJobPayload(row)!;
-      const job = find(row.principalId, payload.jobId);
-      if (!job || job.version !== payload.version || (job.lastCompletedAt ?? 0) >= row.occurredAt)
-        return;
-      await write(
-        { ...job, lastCompletedAt: row.occurredAt },
-        access,
-        `job-complete:${row.principalId}:${row.stimulusId}`,
-        job
-      );
-    },
+    complete: (row: MailboxRow, access: JudgmentAccess) => finish(row, true, access),
   };
 }
 export type PersonalJobStore = ReturnType<typeof createPersonalJobStore>;
@@ -214,36 +323,42 @@ export function createPersonalJobScheduler(ports: {
   let timer: ReturnType<typeof setInterval> | undefined;
   const tick = async (now = new Date()) => {
     for (const person of createPrincipalRepository(ports.adapter).listMembers()) {
-      if (person.status !== 'active' || ports.blocked(person.principalId)) continue;
-      const due = ports.store.list(person.principalId).flatMap((job) => {
-        if (!job.enabled) return [];
-        const at = latestCronOccurrence(
-          job.cron,
-          job.timeZone,
-          now.getTime(),
-          Math.max(job.scheduleFrom, job.lastCompletedAt ?? job.createdAt)
-        );
-        return at === null ||
-          ports.mailbox.readInput(personalJobOccurrenceId(job.jobId, at), person.principalId)
-          ? []
-          : [{ job, at }];
-      });
-      if (due.length === 0) continue;
-      // An unserved person is served through the member directory lane, which may wait for
-      // running member turns; the mailbox drops an occurrence an overlapping tick already took.
-      const intake = await ports.intake(person.principalId);
-      for (const { job, at } of due)
-        intake.acceptScheduled({
-          id: personalJobOccurrenceId(job.jobId, at),
-          channelKey: `job:${job.jobId}`,
-          occurredAt: at,
-          payload: {
-            jobId: job.jobId,
-            version: job.version,
-            instruction: job.instruction,
-            timeZone: job.timeZone,
-          },
+      try {
+        if (person.status !== 'active' || ports.blocked(person.principalId)) continue;
+        const due = ports.store.list(person.principalId).flatMap((job) => {
+          if (!job.enabled) return [];
+          const at = latestCronOccurrence(
+            job.cron,
+            job.timeZone,
+            now.getTime(),
+            Math.max(job.scheduleFrom, job.lastClosedAt ?? job.createdAt)
+          );
+          return at === null ||
+            ports.mailbox.readInput(personalJobOccurrenceId(job.jobId, at), person.principalId)
+            ? []
+            : [{ job, at }];
         });
+        if (due.length === 0) continue;
+        // An unserved person is served through the member directory lane, which may wait for
+        // running member turns; the mailbox drops an occurrence an overlapping tick already took.
+        const intake = await ports.intake(person.principalId);
+        for (const { job, at } of due)
+          intake.acceptScheduled({
+            id: personalJobOccurrenceId(job.jobId, at),
+            channelKey: `job:${job.jobId}`,
+            occurredAt: at,
+            payload: {
+              jobId: job.jobId,
+              version: job.version,
+              instruction: job.instruction,
+              timeZone: job.timeZone,
+            },
+          });
+      } catch (error) {
+        ports.onError(
+          new Error(`Personal job scheduling failed for ${person.principalId}`, { cause: error })
+        );
+      }
     }
   };
   return {
@@ -260,6 +375,8 @@ export function createPersonalJobScheduler(ports: {
     },
   };
 }
+/** Final product failures settle the occurrence without claiming a successful completion. */
+export class PersonalJobFinalFailure extends Error {}
 /** Durable native result + outbound receipt recover delivery and chat independently of model context. */
 export async function deliverPersonalJobResult(
   row: MailboxRow,
@@ -273,20 +390,28 @@ export async function deliverPersonalJobResult(
 ) {
   const payload = personalJobPayload(row)!;
   const job = ports.store.find(row.principalId, payload.jobId);
-  if (
-    !job ||
-    !job.enabled ||
-    job.version !== payload.version ||
-    (job.lastCompletedAt ?? 0) >= row.occurredAt
-  )
-    return;
+  if (!ports.store.isActive(row.principalId))
+    throw new PersonalJobFinalFailure('Personal job person is no longer active');
+  if (!job || !job.enabled || job.version !== payload.version)
+    throw new PersonalJobFinalFailure('Personal job changed or deleted');
+  if (ports.store.isClosed(row)) return;
   const access = ports.access();
   const text = result.response.trim();
   if (!text)
-    throw new Error('Personal job returned no result; use [ack] when there is nothing to tell');
+    throw new PersonalJobFinalFailure(
+      'Personal job returned no result; use [ack] when there is nothing to tell'
+    );
   if (text !== '[ack]') {
-    if (!(await ports.send(access, text, personalJobOccurrenceId(job.jobId, row.occurredAt))))
-      throw new Error('Personal job DM delivery was not confirmed');
+    try {
+      if (!(await ports.send(access, text, personalJobOccurrenceId(job.jobId, row.occurredAt))))
+        throw new Error('Personal job DM delivery was not confirmed');
+    } catch (error) {
+      if (isDefinitiveTelegramRejection(error))
+        throw new PersonalJobFinalFailure('Personal job DM delivery was rejected', {
+          cause: error,
+        });
+      throw error;
+    }
     ports.chat.saveJobExchange({
       jobId: job.jobId,
       occurrenceAt: row.occurredAt,

@@ -331,7 +331,13 @@ export class TelegramGateway extends BaseGateway {
     if (!this.bot || !this.connected) throw new Error('Telegram gateway not connected');
     if (!operationId.trim()) throw new Error('Member text operation id is required');
     const chatId = destinations[0]!.id;
-    await this.runInChatQueue(chatId, () => this.sendMessageNow(chatId, text, operationId));
+    try {
+      await this.runInChatQueue(chatId, () => this.sendMessageNow(chatId, text, operationId));
+    } catch (error) {
+      if (operationId.startsWith('job:') && isDefinitiveTelegramRejection(error))
+        this.messageLedger.markFailed(outboundLedgerKey(operationId));
+      throw error;
+    }
     return this.messageLedger.get(outboundLedgerKey(operationId))?.state === 'delivered';
   }
 
@@ -892,6 +898,9 @@ export class TelegramGateway extends BaseGateway {
           continue;
         }
         if (entry.key.startsWith('outbound:') && entry.state === 'ready') {
+          // Job recovery belongs to mailbox reconciliation, which checks the current person
+          // and job version before sending. Gateway startup cannot establish that authority.
+          if (entry.idempotencyKey?.startsWith('job:')) continue;
           const chatId = entry.deliveryTarget?.slice('telegram:'.length);
           if (!entry.deliveryTarget?.startsWith('telegram:') || !chatId) {
             throw new Error('Telegram outbound entry has no valid destination');

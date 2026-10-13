@@ -1,8 +1,10 @@
 import {
   personalJobPayload,
   personalJobSessionKey,
+  PersonalJobFinalFailure,
   type PersonalJobStore,
 } from './personal-jobs.js';
+import { latestCronOccurrence } from './personal-job-cron.js';
 import { createSerialTurnChain } from './principal-sessions.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import { createHash } from 'node:crypto';
@@ -561,6 +563,18 @@ function planTurn(row: MailboxRow, options: StimulusDeliveryOptions): TurnPlan {
     const job = options.personalJobs?.find(row.principalId, jobPayload.jobId);
     if (!job || !job.enabled || job.version !== jobPayload.version)
       return { kind: 'skip', reason: 'personal job changed or deleted' };
+    if (!options.personalJobs!.isActive(row.principalId))
+      return { kind: 'skip', reason: 'personal job person is no longer active' };
+    const latest = latestCronOccurrence(job.cron, job.timeZone, Date.now(), job.scheduleFrom);
+    if (
+      options.personalJobs!.isClosed(row) ||
+      row.occurredAt <= job.scheduleFrom ||
+      (latest !== null && row.occurredAt < latest)
+    )
+      return {
+        kind: 'skip',
+        reason: 'personal job occurrence is no longer the latest due occurrence',
+      };
     return {
       kind: 'turn',
       lessonQuery: jobPayload.instruction,
@@ -663,7 +677,17 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
     }
     if (row.kind === 'scheduled') {
       if (isRecordOrderRow(row)) await options.recordOrders?.onResult(row, modelRunId ?? null);
-      else await options.onScheduledResult?.(row, result);
+      else {
+        if (personalJobPayload(row) && options.personalJobs?.isClosed(row)) return;
+        try {
+          await options.onScheduledResult?.(row, result);
+        } catch (error) {
+          if (!(error instanceof PersonalJobFinalFailure)) throw error;
+          await options.personalJobs!.close(row);
+          await options.onFailed?.(row, stimulusFailureReason(error), modelRunId ?? null);
+          return;
+        }
+      }
     }
     await options.onDelivered?.(row, modelRunId ?? null);
   };
@@ -676,6 +700,7 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
         activeReplaySourceEndMs = replaySourceEndMs;
         const plan = planTurn(row, options);
         if (plan.kind === 'skip') {
+          if (personalJobPayload(row)) await options.personalJobs?.close(row);
           // Kagemusha's backfill guard: only history lines, so no live turn and no record order.
           await options.onSkipped?.(row, plan.reason);
           await options.onDelivered?.(row, null);
@@ -770,6 +795,7 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
       await options.onUncertain?.(row, reason);
     },
     onDead: async (row, reason) => {
+      if (personalJobPayload(row)) await options.personalJobs?.close(row);
       await lost(row, reason);
       await options.onDead?.(row, reason);
     },
@@ -777,6 +803,17 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
       const result = options.readResult?.(row);
       if (result) {
         await deliverResult(row, { ...result, history: [] });
+        return 'settled';
+      }
+      if (personalJobPayload(row) && options.personalJobs) {
+        if (!options.personalJobs.isClosed(row)) {
+          await options.personalJobs.close(row);
+          await options.onFailed?.(
+            row,
+            'Personal job interrupted before completion; retry on the next occurrence',
+            null
+          );
+        }
         return 'settled';
       }
       // Core invokes reconciliation only when no delivery in this process owns

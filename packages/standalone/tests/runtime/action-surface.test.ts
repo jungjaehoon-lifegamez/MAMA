@@ -105,10 +105,6 @@ describe('W1 action surface', () => {
       'owner.timezone.set',
       'report.publish',
       'report.read',
-      'schedule.job.create',
-      'schedule.job.delete',
-      'schedule.job.list',
-      'schedule.job.update',
       'schedule.upcoming',
       'source.attachment.download',
       'source.attachment.list',
@@ -129,7 +125,18 @@ describe('W1 action surface', () => {
         .list()
         .map((contract) => contract.name)
         .sort()
-    ).toEqual([...expected, 'memory.share', 'records.export', 'records.erase'].sort());
+    ).toEqual(
+      [
+        ...expected,
+        'memory.share',
+        'records.export',
+        'records.erase',
+        'schedule.job.create',
+        'schedule.job.delete',
+        'schedule.job.list',
+        'schedule.job.update',
+      ].sort()
+    );
     const personal = surface.catalog
       .list()
       .filter((contract) => contract.name.startsWith('records.'));

@@ -80,7 +80,6 @@ import {
 } from '../api/member-share-actions.js';
 
 const OWNER_ACTIONS = [
-  ...PERSONAL_JOB_ACTIONS,
   'code_act',
   'graph.query',
   'source.search',

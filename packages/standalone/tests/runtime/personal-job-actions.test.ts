@@ -75,6 +75,38 @@ describe('personal jobs through the product catalog', () => {
       { action: `schedule.job.${action}`, input: body, operationId: `fixture-job-${++sequence}` },
       ctx
     );
+  it('replays create, update and delete from their committed operation without another record', async () => {
+    const retry = (action: string, body: unknown, operationId: string) =>
+      surface.dispatch({ action: `schedule.job.${action}`, input: body, operationId }, context());
+    const count = () => db.adapter.prepare('SELECT COUNT(*) AS n FROM decisions').get();
+    const created = data<{ id: string }>(await retry('create', input, 'fixture-create-retry'));
+    const firstCount = count();
+    vi.mocked(Date.now).mockReturnValue(NOW + 86_400_000);
+    expect(data(await retry('create', input, 'fixture-create-retry'))).toEqual(created);
+    expect(count()).toEqual(firstCount);
+    const changes = { id: created.id, instruction: 'Revised check' };
+    const updated = data(await retry('update', changes, 'fixture-update-retry'));
+    const secondCount = count();
+    vi.mocked(Date.now).mockReturnValue(NOW + 2 * 86_400_000);
+    expect(data(await retry('update', changes, 'fixture-update-retry'))).toEqual(updated);
+    expect(count()).toEqual(secondCount);
+    const deleted = data(await retry('delete', { id: created.id }, 'fixture-delete-retry'));
+    const thirdCount = count();
+    expect(data(await retry('delete', { id: created.id }, 'fixture-delete-retry'))).toEqual(
+      deleted
+    );
+    expect(count()).toEqual(thirdCount);
+    // Later revisions and deletion cannot change a lost earlier reply.
+    expect(data(await retry('create', input, 'fixture-create-retry'))).toEqual(created);
+    expect(data(await retry('update', changes, 'fixture-update-retry'))).toEqual(updated);
+    expect(count()).toEqual(thirdCount);
+    expect(
+      await retry('create', { ...input, instruction: 'Different request' }, 'fixture-create-retry')
+    ).toMatchObject({
+      status: 'failed',
+      error: { message: expect.stringMatching(/bound|conflict/i) },
+    });
+  });
   it.each(['owner', 'member'])(
     'creates, lists, revises and retires only the caller’s job in a %s DM',
     async (role) => {
@@ -159,6 +191,14 @@ describe('personal jobs through the product catalog', () => {
       });
     }
   );
+  it('offers job actions only to personal sessions, including owner-role members', () => {
+    for (const action of ['create', 'list', 'update', 'delete']) {
+      const name = `schedule.job.${action}`;
+      expect(surface.ownerAccess.actions).not.toContain(name);
+      expect(context(owner).access.actions).toContain(name);
+      expect(context(member).access.actions).toContain(name);
+    }
+  });
   it.each(['delta', 'scheduled', 'replay', 'subagent', 'missing', 'suspended'])(
     'refuses an apparent DM in a %s turn',
     async (kind) => {

@@ -875,7 +875,11 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
     } else stage(logger, 'report_scheduler:route_unavailable');
     if (gateway?.sendMemberText) {
       owner.personalJobs.start();
-      await owner.personalJobs.tick();
+      await owner.personalJobs
+        .tick()
+        .catch((error: unknown) =>
+          logger.error(`personal job scheduler failed reason=${stimulusFailureReason(error)}`)
+        );
       stage(logger, 'personal_job_scheduler');
     }
     deliveryReady = true;

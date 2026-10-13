@@ -8,6 +8,8 @@ import { fixture } from '../helpers/member-runtime.js';
 const transport = vi.hoisted(() => ({
   sent: [] as Array<{ chatId: number; text: string }>,
   fail: false,
+  unavailable: false,
+  attempts: 0,
 }));
 vi.mock('grammy', () => ({
   Bot: vi.fn(() => ({
@@ -17,10 +19,11 @@ vi.mock('grammy', () => ({
     stop: vi.fn(async () => {}),
     api: {
       sendMessage: async (chatId: number, text: string) => {
+        transport.attempts++;
         if (transport.fail)
           throw Object.assign(new Error('fixture rejected'), {
-            error_code: 400,
-            description: 'Bad Request',
+            error_code: 403,
+            description: 'Forbidden',
           });
         transport.sent.push({ chatId, text });
         return { message_id: transport.sent.length + 100 };
@@ -34,6 +37,8 @@ afterEach(async () => {
   gateway = undefined;
   transport.sent = [];
   transport.fail = false;
+  transport.unavailable = false;
+  transport.attempts = 0;
 });
 const body = {
   cron: '0 * * * *',
@@ -50,7 +55,10 @@ async function setup() {
       sendFile: async () => {
         throw new Error('unused');
       },
-      sendMemberText: (...args) => gateway!.sendMemberText(...args),
+      sendMemberText: (...args) => {
+        if (transport.unavailable) throw new Error('fixture gateway not connected');
+        return gateway!.sendMemberText(...args);
+      },
     },
     '21001'
   );
@@ -222,7 +230,7 @@ describe('personal scheduled turns and P10.2 recovery', () => {
   it('recovers a result before delivery without another model turn', async () => {
     const { f, create, tick, jobRows, startGateway } = await setup();
     await create();
-    transport.fail = true;
+    transport.unavailable = true;
     await tick();
     await vi.waitFor(() =>
       expect(
@@ -233,9 +241,15 @@ describe('personal scheduled turns and P10.2 recovery', () => {
     const turns = f.turns.length;
     expect(transport.sent).toEqual([]);
     await gateway!.stop();
-    transport.fail = false;
+    transport.unavailable = false;
     await f.restart();
     await startGateway();
+    await vi.waitFor(async () => {
+      await f.runtime.runtime.drainOnce();
+      expect(
+        f.runtime.runtime.mailbox!.readInput(jobRows()[0]!.stimulus_id, f.member)?.status
+      ).toBe('acked');
+    });
     await f.settled(jobRows()[0]!.stimulus_id, f.member);
     expect(f.turns).toHaveLength(turns);
     expect(transport.sent).toHaveLength(1);
@@ -260,6 +274,82 @@ describe('personal scheduled turns and P10.2 recovery', () => {
     expect(f.turns.filter((turn) => turn.principal === f.member).at(-1)!.prompt).not.toContain(
       'personal_job'
     );
+  });
+  it('resume starts jobs from the resume time without catching up a suspended daily occurrence', async () => {
+    const { f } = await setup();
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now');
+    const day = Math.floor(now / 86_400_000) * 86_400_000 + 86_400_000;
+    const created = await f.act('schedule.job.create', { ...body, cron: '0 8 * * *' });
+    await f.settled(created.ref, f.member);
+    expect(created.result.status).toBe('completed');
+    clock.mockReturnValue(day + 7 * 3_600_000);
+    expect((await f.manage('suspend')).status).toBe('completed');
+    clock.mockReturnValue(day + 15 * 3_600_000);
+    expect((await f.manage('resume')).status).toBe('completed');
+    await f.runtime.personalJobs.tick(new Date(Date.now()));
+    expect(
+      f.runtime.database.adapter
+        .prepare("SELECT COUNT(*) AS n FROM mailbox_inputs WHERE channel_key LIKE 'job:%'")
+        .get()
+    ).toEqual({ n: 0 });
+  });
+  it('never delivers an old stored result after suspension and resume', async () => {
+    const { f, create, tick, jobRows } = await setup();
+    await create();
+    let release!: () => void;
+    f.holdMemberCompletion(
+      new Promise<void>((resolve) => {
+        release = resolve;
+      })
+    );
+    transport.unavailable = true;
+    await tick();
+    await vi.waitFor(() => expect(f.turns.at(-1)!.prompt).toContain('<personal_job>'));
+    // Suspension owns the directory lane but must wait for the running job to finish.
+    const suspension = f.manage('suspend');
+    try {
+      await vi.waitFor(() =>
+        expect(
+          f.runtime.database.adapter
+            .prepare(
+              "SELECT 1 FROM mailbox_inputs WHERE principal_id=? AND kind='host_job' AND status IN ('pending','claimed')"
+            )
+            .get(f.member)
+        ).toBeDefined()
+      );
+    } finally {
+      f.holdMemberCompletion(undefined);
+      release();
+    }
+    await vi.waitFor(() =>
+      expect(
+        f.runtime.runtime.mailbox!.readInput(jobRows()[0]!.stimulus_id, f.member)?.nativeDelivery
+          ?.state
+      ).toBe('uncertain')
+    );
+    expect((await suspension).status).toBe('completed');
+    transport.unavailable = false;
+    expect((await f.manage('resume')).status).toBe('completed');
+    await f.runtime.runtime.drainOnce();
+    expect(transport.sent).toEqual([]);
+    expect(f.runtime.surface.personalJobs.list(f.member)[0]!.lastCompletedAt).toBeNull();
+  });
+  it('settles a definitive Telegram rejection once, including across gateway restart', async () => {
+    const { f, create, tick, jobRows, startGateway } = await setup();
+    await create();
+    transport.fail = true;
+    await tick();
+    await vi.waitFor(() => expect(jobRows()).toHaveLength(1));
+    await f.settled(jobRows()[0]!.stimulus_id, f.member);
+    for (let n = 0; n < 3; n++) await f.runtime.runtime.drainOnce();
+    expect(transport.attempts).toBe(1);
+    expect(f.runtime.surface.personalJobs.list(f.member)[0]!.lastCompletedAt).toBeNull();
+    await gateway!.stop();
+    await f.restart();
+    await startGateway();
+    expect(transport.attempts).toBe(1);
+    expect(transport.sent).toEqual([]);
   });
   it('serves an unserved person through the member directory lane, after running member turns', async () => {
     const { f, create, tick, jobRows } = await setup();
@@ -420,12 +510,8 @@ describe('personal scheduled turns and P10.2 recovery', () => {
     await create();
     f.finishMemberTurn('after_acceptance');
     await tick();
-    await vi.waitFor(() =>
-      expect(
-        f.runtime.runtime.mailbox!.readInput(jobRows()[0]!.stimulus_id, f.member)?.nativeDelivery
-          ?.state
-      ).toBe('uncertain')
-    );
+    await vi.waitFor(() => expect(jobRows()).toHaveLength(1));
+    await f.settled(jobRows()[0]!.stimulus_id, f.member);
     const failedSession = f.turns.at(-1)!.session;
     expect(f.runtime.surface.personalJobs.list(f.member)[0]!.lastCompletedAt).toBeNull();
     await tick(due + 3_600_000);

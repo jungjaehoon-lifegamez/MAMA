@@ -462,7 +462,9 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
               resume: async (id) => {
                 // A suspended member may retain a session after an earlier stop/move failure.
                 await retireMember(id);
-                principals.resume(id, Date.now());
+                const resumedAt = Date.now();
+                await surface.personalJobs.resume(id, resumedAt);
+                principals.resume(id, resumedAt);
                 try {
                   serveMember(id);
                 } catch (error) {

@@ -24,7 +24,7 @@ function field(text: string, min: number, max: number, sunday = false): Field {
       throw invalidInput(`Invalid cron range or step: ${text}`);
     for (let n = start!; n <= end!; n += step) values.add(sunday && n === 7 ? 0 : n);
   }
-  return { values: [...values].sort((a, b) => a - b), wildcard: text === '*' };
+  return { values: [...values].sort((a, b) => a - b), wildcard: text.startsWith('*') };
 }
 function parse(cron: string) {
   const fields = cron.trim().split(/\s+/);
@@ -68,9 +68,9 @@ function dayMatches(date: Date, cron: ReturnType<typeof parse>) {
   if (!cron.month.values.includes(date.getUTCMonth() + 1)) return false;
   const dom = cron.day.values.includes(date.getUTCDate());
   const dow = cron.weekday.values.includes(date.getUTCDay());
-  return cron.day.wildcard ? dow : cron.weekday.wildcard ? dom : dom || dow;
+  return cron.day.wildcard || cron.weekday.wildcard ? dom && dow : dom || dow;
 }
-/** Convert a wall minute to every matching UTC minute. Gaps yield none; folds yield two. */
+/** Folds use the first instant; gaps use the first instant after the clock jumps. */
 function dayOccurrences(
   day: number,
   cron: ReturnType<typeof parse>,
@@ -86,10 +86,23 @@ function dayOccurrences(
   for (const hour of cron.hour.values)
     for (const minute of cron.minute.values) {
       const wall = day + hour * 3_600_000 + minute * MINUTE;
-      for (const offset of offsets) {
-        const epoch = wall - offset;
-        if (wallAt(epoch) === wall) result.add(epoch);
+      const candidates = [...offsets].map((offset) => wall - offset).sort((a, b) => a - b);
+      const match = candidates.find((epoch) => wallAt(epoch) === wall);
+      if (match !== undefined) {
+        result.add(match);
+        continue;
       }
+      // No matching instant means this wall minute was skipped. The offset projections
+      // bracket the jump; find its first UTC minute rather than shifting by the gap's size.
+      let low = candidates[0]!;
+      let high = candidates.at(-1)!;
+      if (wallAt(low) >= wall || wallAt(high) <= wall) continue;
+      while (high - low > MINUTE) {
+        const middle = Math.floor((low + high) / (2 * MINUTE)) * MINUTE;
+        if (wallAt(middle) < wall) low = middle;
+        else high = middle;
+      }
+      result.add(high);
     }
   return [...result].sort((a, b) => a - b);
 }
@@ -130,8 +143,22 @@ export function latestCronOccurrence(
   return null;
 }
 export function validateJobCron(cron: string, timeZone: string, now: number): void {
-  const occurrences = cronOccurrences(cron, timeZone, now, 48);
-  for (let n = 1; n < occurrences.length; n++)
-    if (occurrences[n]! - occurrences[n - 1]! < 60 * MINUTE)
-      throw invalidInput('Cron occurrences must be at least 60 minutes apart');
+  const parsed = parse(cron);
+  const wallAt = clock(timeZone);
+  const first = Math.floor(wallAt(now) / DAY) * DAY;
+  const horizon = now + 366 * DAY;
+  let previous: number | undefined;
+  for (let day = first; day <= first + 146_097 * DAY; day += DAY) {
+    if (!dayMatches(new Date(day), parsed)) continue;
+    for (const epoch of dayOccurrences(day, parsed, wallAt)) {
+      if (epoch <= now) continue;
+      if (previous !== undefined && epoch - previous < 60 * MINUTE)
+        throw invalidInput('Cron occurrences must be at least 60 minutes apart');
+      // Include the spacing into the first occurrence beyond a full year. Sparse schedules
+      // still need two occurrences, and impossible dates retain the Gregorian bound.
+      if (previous !== undefined && epoch > horizon) return;
+      previous = epoch;
+    }
+  }
+  throw invalidInput('Cron has no sufficient occurrences in the Gregorian calendar');
 }

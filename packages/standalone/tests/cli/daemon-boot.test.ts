@@ -21,6 +21,7 @@ import {
 import type { W1Config } from '../../src/runtime/config.js';
 import type { OutboundAttemptEvent } from '../../src/api/security-events.js';
 import { createOwnerRuntime } from '../../src/runtime/owner-runtime.js';
+import * as egressProxy from '../../src/runtime/egress-proxy.js';
 import { actionMcpSession } from '../helpers/action-mcp-session.js';
 import {
   createSecurityEventRecorder,
@@ -34,6 +35,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -103,6 +105,49 @@ function viewerDouble(order: string[]) {
 }
 
 describe('daemon bootstrap', () => {
+  it('reports a rejected personal job boot tick and keeps the daemon running', async () => {
+    vi.spyOn(egressProxy, 'startEgressProxy').mockResolvedValue({
+      httpProxyPort: 1,
+      socksProxyPort: 2,
+      close: async () => {},
+    } as never);
+    const root = mkdtempSync(join(tmpdir(), 'daemon-job-boot-'));
+    roots.push(root);
+    const logs: string[] = [];
+    const daemon = await bootDaemon({
+      config: config(root),
+      home: root,
+      configPath: join(root, 'config.yaml'),
+      logger: { info: () => {}, error: (line) => logs.push(line) },
+      dependencies: {
+        ensureIsolation: () => {},
+        createOwnerRuntime: async () =>
+          ({
+            ...ownerDouble([]),
+            personalJobs: {
+              start: () => {},
+              stop: () => {},
+              tick: async () => {
+                throw new Error('fixture job tick failed');
+              },
+            },
+          }) as never,
+        createViewerServer: () => viewerDouble([]) as never,
+        startConnectorRuntime: async () => ({ stop: async () => {} }) as never,
+        createTelegramGateway: () =>
+          ({
+            start: async () => {},
+            stop: async () => {},
+            sendMemberText: async () => true,
+          }) as never,
+      },
+    });
+    try {
+      expect(logs.join(' ')).toMatch(/personal job scheduler failed.*fixture job tick failed/);
+    } finally {
+      await daemon.stop();
+    }
+  });
   it('exits loudly when Telegram reports fatal polling failure so launchd can restart', async () => {
     const root = mkdtempSync(join(tmpdir(), 'daemon-fatal-'));
     roots.push(root);
