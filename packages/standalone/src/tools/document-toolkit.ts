@@ -19,7 +19,11 @@ import { homedir, tmpdir } from 'node:os';
 import { basename, join, isAbsolute, relative, sep } from 'node:path';
 import { findExecutable } from '../cli/launch-files.js';
 import { credentialReadPaths } from '../runtime/backend-security.js';
-import { assertToolsOwnership, validateToolsRoot } from '../runtime/tools-paths.js';
+import {
+  assertOwnedDirectory,
+  assertToolsOwnership,
+  validateToolsRoot,
+} from '../runtime/tools-paths.js';
 import { liveToolkitLease, onToolkitSignal, tryToolkitLock } from './toolkit-process.js';
 import { runCommand, type CommandRunner } from './command-runner.js';
 import { renderEnvironment, renderOffice, sandboxedCommand } from './office-render.js';
@@ -194,6 +198,8 @@ function fontFiles(directory: string): string[] {
   }
   if (!meta.isDirectory())
     throw new Error(`Font directory ${directory} must be a real directory, not a symlink`);
+  // The copy happens after this check; only an owned, non-shared directory keeps it true.
+  assertOwnedDirectory(directory);
   return readdirSync(directory).flatMap((name) => {
     const path = join(directory, name);
     const entry = lstatSync(path);
@@ -283,6 +289,7 @@ async function installOffice(
   // `cp -c` clones on APFS, so a snapshot costs no disk until brew changes the originals;
   // Node's cpSync ignores COPYFILE_FICLONE for directories (measured: 815 MB vs 8 MB).
   const snapshot = join(version, 'LibreOffice.app');
+  assertOwnedDirectory(join(root, 'apps'));
   await run('/bin/cp', ['-cRP', app, snapshot], { timeoutMs: 600_000 });
   // The clone keeps brew's quarantine flag, and a headless first launch would wait on the
   // Gatekeeper prompt. Assess the signature and notarization here, then clear the flag.

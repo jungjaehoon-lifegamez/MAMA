@@ -269,6 +269,14 @@ describe('host document toolkit installer', () => {
     }
   );
 
+  it('refuses a fonts directory other accounts can write, before copying from it', async () => {
+    const host = fakeHost();
+    mkdirSync(join(tools, 'fonts'), { recursive: true });
+    chmodSync(join(tools, 'fonts'), 0o777);
+    await expect(install(host.run)).rejects.toThrow(/without group\/other write/);
+    expect(host.calls.some((call) => call.command === '/bin/cp')).toBe(false);
+  });
+
   it('refuses a pre-existing expected font symlink before running host commands', async () => {
     const target = join(root, 'private.txt');
     writeFileSync(target, 'private data');

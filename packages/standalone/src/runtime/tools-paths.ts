@@ -4,6 +4,18 @@ import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from 'node
 import { join } from 'node:path';
 
 /** A shared parent must never supply executable code owned/writable by someone else. */
+/** Only this uid may change what the installer copies; another account cannot swap a file in. */
+export function assertOwnedDirectory(path: string): void {
+  const uid = process.getuid?.();
+  if (uid === undefined) throw new Error('tools_root ownership requires a POSIX uid');
+  const meta = lstatSync(path);
+  // System font directories are root's; root-owned and not shared-writable is as safe.
+  if (!meta.isDirectory() || (meta.uid !== uid && meta.uid !== 0) || (meta.mode & 0o022) !== 0)
+    throw new Error(
+      `Unsafe tools_root directory ${path}: require a real directory of uid ${uid} without group/other write`
+    );
+}
+
 export function assertToolsOwnership(root: string): void {
   if (!existsSync(root)) return;
   const uid = process.getuid?.();
