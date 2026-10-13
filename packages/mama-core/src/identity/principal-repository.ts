@@ -151,6 +151,17 @@ export class PrincipalRoleError extends Error {
   }
 }
 
+/** One rule for every write of a member's display name. */
+function canonicalDisplayName(displayName: unknown): string {
+  if (typeof displayName !== 'string') throw new TypeError('Display name must be text');
+  const name = displayName.trim();
+  if (name.length === 0 || name.length > PRINCIPAL_DISPLAY_NAME_MAX_LENGTH)
+    throw new Error(
+      `Display name must contain 1 to ${PRINCIPAL_DISPLAY_NAME_MAX_LENGTH} characters after trimming`
+    );
+  return name;
+}
+
 function canonicalRole(role: string): string {
   if (typeof role !== 'string' || role.trim().length === 0)
     throw new PrincipalRoleError('invalid_role', 'Role must be nonblank text');
@@ -471,6 +482,8 @@ export function createPrincipalRepository(
       );
     }
 
+    const displayName =
+      input.displayName === undefined ? null : canonicalDisplayName(input.displayName);
     const principalId = mintPrincipalId(
       'member',
       input.connector,
@@ -478,13 +491,7 @@ export function createPrincipalRepository(
       input.externalId
     );
     adapter.transaction(() => {
-      insertPrincipalStatement.run(
-        principalId,
-        'member',
-        input.displayName ?? null,
-        input.now,
-        input.now
-      );
+      insertPrincipalStatement.run(principalId, 'member', displayName, input.now, input.now);
       bindIdentity(principalId, input.connector, input.namespace, input.externalId, input.now);
     });
     return principalId;
@@ -702,12 +709,7 @@ export function createPrincipalRepository(
       return row ? mapPrincipal(row) : null;
     },
     setDisplayName: ({ principalId, displayName, now }) => {
-      if (typeof displayName !== 'string') throw new TypeError('Display name must be text');
-      const name = displayName.trim();
-      if (name.length === 0 || name.length > PRINCIPAL_DISPLAY_NAME_MAX_LENGTH)
-        throw new Error(
-          `Display name must contain 1 to ${PRINCIPAL_DISPLAY_NAME_MAX_LENGTH} characters after trimming`
-        );
+      const name = canonicalDisplayName(displayName);
       if (setDisplayNameStatement.run(name, now, principalId).changes !== 1)
         throw new Error('Only members can have a display name');
       return name;

@@ -78,6 +78,31 @@ describe('Story TG-01/TG-04 / Phase 2b Task 1 AC: principal repository at migrat
     });
   });
 
+  it('applies the display-name rule to a name given at registration', () => {
+    const repository = createPrincipalRepository(adapter);
+    const principalId = repository.registerMember({
+      displayName: '  Padded member  ',
+      connector: 'telegram',
+      namespace: 'private',
+      externalId: 'external-padded',
+      now: 120,
+    });
+    expect(repository.findById(principalId)?.displayName).toBe('Padded member');
+    for (const displayName of ['   ', 'x'.repeat(121)])
+      expect(() =>
+        repository.registerMember({
+          displayName,
+          connector: 'telegram',
+          namespace: 'private',
+          externalId: `external-${displayName.length}`,
+          now: 121,
+        })
+      ).toThrow('Display name must contain 1 to 120 characters after trimming');
+    expect(
+      repository.resolveByExternal('telegram', 'private', `external-${'x'.repeat(121).length}`)
+    ).toBeNull();
+  });
+
   it('sets, trims and replaces a member display name through the registry', () => {
     const repo = createPrincipalRepository(adapter);
     const principalId = repo.registerMember({
