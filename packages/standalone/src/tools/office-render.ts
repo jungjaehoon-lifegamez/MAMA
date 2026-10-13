@@ -104,8 +104,9 @@ export async function renderOffice(options: {
       '<prop oor:name="DisableMacrosExecution" oor:op="fuse"><value>true</value></prop>' +
       '<prop oor:name="BlockUntrustedRefererLinks" oor:op="fuse"><value>true</value></prop>' +
       '</item>' +
+      // Writer's Link: 2 is Never (1 is On Request); Calc's Link: 1 is Never.
       '<item oor:path="/org.openoffice.Office.Writer/Content/Update">' +
-      '<prop oor:name="Link" oor:op="fuse"><value>1</value></prop></item>' +
+      '<prop oor:name="Link" oor:op="fuse"><value>2</value></prop></item>' +
       '<item oor:path="/org.openoffice.Office.Calc/Content/Update">' +
       '<prop oor:name="Link" oor:op="fuse"><value>1</value></prop></item>' +
       '</oor:items>\n',

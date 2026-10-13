@@ -67,7 +67,13 @@ function fakeRenderer() {
       expect(macros).toContain('BlockUntrustedRefererLinks');
       expect(macros).toContain('/org.openoffice.Office.Writer/Content/Update');
       expect(macros).toContain('/org.openoffice.Office.Calc/Content/Update');
-      expect(macros.match(/oor:name="Link" oor:op="fuse"><value>1<\/value>/g)).toHaveLength(2);
+      // Never in both schemas: Writer's Link uses 2, Calc's uses 1.
+      expect(macros).toContain(
+        '/org.openoffice.Office.Writer/Content/Update"><prop oor:name="Link" oor:op="fuse"><value>2</value>'
+      );
+      expect(macros).toContain(
+        '/org.openoffice.Office.Calc/Content/Update"><prop oor:name="Link" oor:op="fuse"><value>1</value>'
+      );
       expect(macros).toContain(
         'oor:name="BlockUntrustedRefererLinks" oor:op="fuse"><value>true</value>'
       );

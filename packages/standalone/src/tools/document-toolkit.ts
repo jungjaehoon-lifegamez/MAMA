@@ -188,7 +188,7 @@ function removeVersion(path: string): void {
   rmSync(path, { recursive: true });
 }
 
-function fontFiles(directory: string): string[] {
+function fontFiles(directory: string, owned = true): string[] {
   let meta;
   try {
     meta = lstatSync(directory);
@@ -199,11 +199,12 @@ function fontFiles(directory: string): string[] {
   if (!meta.isDirectory())
     throw new Error(`Font directory ${directory} must be a real directory, not a symlink`);
   // The copy happens after this check; only an owned, non-shared directory keeps it true.
-  assertOwnedDirectory(directory);
+  // System font directories belong to the OS, not to tools_root.
+  if (owned) assertOwnedDirectory(directory);
   return readdirSync(directory).flatMap((name) => {
     const path = join(directory, name);
     const entry = lstatSync(path);
-    if (entry.isDirectory()) return fontFiles(path);
+    if (entry.isDirectory()) return fontFiles(path, owned);
     if (!/^Noto(?:Sans|Serif)CJK.*\.(otf|ttf|ttc)$/i.test(name)) return [];
     if (entry.isSymbolicLink()) throw new Error(`Expected font ${path} must not be a symlink`);
     if (!entry.isFile()) throw new Error(`Expected font ${path} must be a regular file`);
@@ -232,9 +233,10 @@ async function installOffice(
       throw new Error(
         'soffice is missing from PATH; install LibreOffice and Noto Sans/Serif CJK fonts on the host'
       );
-    const fonts = [join(root, 'fonts'), '/usr/share/fonts', '/usr/local/share/fonts'].flatMap(
-      fontFiles
-    );
+    const fonts = [
+      ...fontFiles(join(root, 'fonts')),
+      ...['/usr/share/fonts', '/usr/local/share/fonts'].flatMap((path) => fontFiles(path, false)),
+    ];
     mkdirSync(join(version, 'fonts'));
     for (const family of ['Sans', 'Serif']) {
       const files = fonts.filter((path) =>
