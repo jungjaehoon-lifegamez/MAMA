@@ -7,6 +7,7 @@ import { Mailbox } from '@jungjaehoon/mama-core/runtime/mailbox';
 import { TelegramGateway } from '../../src/gateways/telegram.js';
 import { TelegramMessageLedger } from '../../src/gateways/telegram-message-ledger.js';
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
+import { createPrincipalSessions } from '../../src/runtime/principal-sessions.js';
 import { memberPaths } from '../../src/runtime/member-paths.js';
 import { createStimulusIntake } from '../../src/runtime/stimulus-delivery.js';
 import { RawStore } from '../../src/storage/source-archive.js';
@@ -78,13 +79,19 @@ async function send(overrides: Record<string, unknown> = {}) {
   });
 }
 
-function createGateway() {
+function createGateway(
+  memberIntake: (
+    id: string
+  ) =>
+    | ReturnType<typeof createStimulusIntake>
+    | Promise<ReturnType<typeof createStimulusIntake>> = (id) => intakes.get(id)!
+) {
   return new TelegramGateway({
     token: 'fixture-token',
     messageLedger: ledger,
     intake: intakes.get(common)!,
     registry: repository,
-    memberIntake: (id) => intakes.get(id)!,
+    memberIntake,
     principalPaths: (id) => memberPaths(join(root, 'members'), id),
     downloadsDir: join(root, 'common-downloads'),
     config: { allowedChats, ownerChatId: '-100', polling: false },
@@ -153,6 +160,56 @@ afterEach(async () => {
 });
 
 describe('P10.1 Telegram person routing', () => {
+  it('returns during serve-on-demand and accepts other chats while preserving the waiting DM order', async () => {
+    await gateway.stop();
+    let served!: () => void;
+    const serving = new Promise<void>((resolve) => (served = resolve));
+    const sessions = createPrincipalSessions(common);
+    const longTurn = sessions.turnChain(second)(() => serving);
+    let isServed = false;
+    gateway = createGateway((id) =>
+      id === member && !isServed
+        ? sessions.exclusive(async () => {
+            isServed = true;
+            return intakes.get(id)!;
+          })
+        : intakes.get(id)!
+    );
+    await gateway.start();
+    let returned = false;
+    const first = send({ message_id: 21, text: 'first waiting message' }).then(() => {
+      returned = true;
+    });
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(returned).toBe(true);
+      await send({ message_id: 22, text: 'second waiting message' });
+      await send({
+        message_id: 23,
+        chat: { id: 20002, type: 'private' },
+        from: { id: 20002 },
+        text: 'other chat',
+      });
+      expect(mailbox.readInput('telegram:20002:23', second)).not.toBeNull();
+      expect(mailbox.readInput('telegram:20001:21', member)).toBeNull();
+      served();
+      await vi.waitFor(() => expect(mailbox.readInput('telegram:20001:22', member)).not.toBeNull());
+      const inputs = database.adapter
+        .prepare('SELECT stimulus_id FROM mailbox_inputs WHERE principal_id=? ORDER BY id')
+        .all(member);
+      expect(inputs).toEqual([
+        { stimulus_id: 'telegram:20001:21' },
+        { stimulus_id: 'telegram:20001:22' },
+      ]);
+      expect(ledger.get('telegram:20001:21')?.state).toBe('processing');
+    } finally {
+      served();
+      await first;
+      await longTurn;
+      await sessions.idle();
+    }
+  });
+
   it('admits an active owner role in the allowed group and records the sender on common chat', async () => {
     repository.grantRole({ principalId: member, role: 'owner', now: 3 });
     await send({ chat: { id: -100, type: 'supergroup' }, text: 'Common correction' });

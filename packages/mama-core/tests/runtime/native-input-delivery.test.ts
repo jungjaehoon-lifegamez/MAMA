@@ -328,7 +328,7 @@ describe('v7 R2: native acceptance is durable and separate from adapter completi
     const started: string[] = [];
     const h = await boot({
       maxPendingInputs: 2,
-      maxPerTick: 8,
+      maxPerTick: 2,
       deliver: async (row, context) => {
         started.push(row.stimulusId);
         await held;
@@ -380,6 +380,47 @@ describe('v7 R2: native acceptance is durable and separate from adapter completi
     } finally {
       finish();
     }
+  });
+
+  it('defers and recovers an unserved principal host job without native delivery or a retry attempt', async () => {
+    const listener = vi
+      .spyOn(await import('../../src/client/ipc.js'), 'createActionIpcServer')
+      .mockResolvedValue({ close: async () => {} } as never);
+    cleanup.push(() => listener.mockRestore());
+    let ready = false;
+    let jobs = 0;
+    const h = await boot({
+      ready: () => false,
+      hostReady: () => true,
+      deliver: async () => {
+        throw new Error('Host job reached native delivery');
+      },
+      deliverHost: async () => {
+        if (!ready) return 'deferred';
+        jobs++;
+        return 'handled';
+      },
+    });
+    const id = h.runtime.mailbox!.enqueue({
+      id: 'host-1',
+      kind: 'host_job',
+      principalId: 'unserved',
+      channelKey: 'host',
+      occurredAt: 1,
+    })!;
+    await h.runtime.drainOnce();
+    expect(h.runtime.mailbox!.readInput('host-1', 'unserved')).toMatchObject({
+      status: 'pending',
+      attempts: 0,
+    });
+    ready = true;
+    await h.runtime.drainOnce();
+    expect(h.runtime.mailbox!.readInput('host-1', 'unserved')).toMatchObject({
+      status: 'acked',
+      attempts: 0,
+    });
+    expect(h.runtime.mailbox!.nativeInputs.get(id)).toBeNull();
+    expect(jobs).toBe(1);
   });
 
   it('journals a second input steered into the same native turn under its own mailbox row', async () => {

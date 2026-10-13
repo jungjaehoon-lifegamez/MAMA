@@ -182,6 +182,10 @@ export interface NativeDeliveryContext {
 
 export interface StimulusDelivery {
   deliver(row: MailboxRow, context: NativeDeliveryContext): Promise<void>;
+  /** Consumer-owned durable host inputs, including unserved principals; never invoke a model. */
+  deliverHost?(row: MailboxRow): Promise<'handled' | 'deferred' | 'unhandled'>;
+  /** Host inputs may run while native producers are still opening; defaults to ready(). */
+  hostReady?(): boolean;
   /** Reuse recorded results only. Never submit the input to a model again. */
   reconcile?(row: MailboxRow): Promise<'settled' | 'unresolved'>;
   onUncertain?(row: MailboxRow, reason: string): void | Promise<void>;
@@ -502,6 +506,7 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
     number,
     {
       principalId: string;
+      host: boolean;
       accepted: boolean;
       result: Promise<DrainResult>;
     }
@@ -560,6 +565,19 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
   const deliverClaim = async (row: MailboxRow): Promise<DrainResult> => {
     const result = { delivered: 0, failed: 0, dead: 0 };
     try {
+      const host = row.kind === 'host_job' ? await delivery!.deliverHost?.(row) : 'unhandled';
+      if (host === 'handled') {
+        mailbox!.ack(row.id);
+        result.delivered += 1;
+        await announceSettled(row);
+        return result;
+      }
+      if (host === 'deferred') {
+        mailbox!.deferClaim(row.id);
+        return result;
+      }
+      if (row.kind === 'host_job')
+        throw new StimulusQuarantine('Host input has no host delivery port');
       if (!servedPrincipals.has(row.principalId))
         throw new StimulusQuarantine('Input principal is no longer served');
       const nativeDelivery = mailbox!.nativeInputs.prepare(row.id);
@@ -744,9 +762,12 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
     return result;
   };
 
+  const nativeReady = () => delivery?.ready?.() !== false;
+  const hostReady = () => delivery?.hostReady?.() ?? nativeReady();
   const drainOnce = async (): Promise<DrainResult> => {
     const result = { delivered: 0, failed: 0, dead: 0 };
-    if (!mailbox || !delivery || draining || stopped || delivery.ready?.() === false) return result;
+    if (!mailbox || !delivery || draining || stopped || (!nativeReady() && !hostReady()))
+      return result;
     const started: Promise<DrainResult>[] = [];
     draining = true;
     let finishScan!: () => void;
@@ -765,32 +786,60 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
         result.dead += replay.newlyDead.length;
         for (const dead of replay.newlyDead) await announceDead(dead, 'lease expired repeatedly');
       }
-      const unresolved = mailbox.unsettledNative(maxPerTick, reconciliationCursor);
-      reconciliationCursor =
-        unresolved.length === maxPerTick ? unresolved[unresolved.length - 1].id : 0;
-      for (const row of unresolved) {
-        if (activeDeliveries.has(row.id) || !servedPrincipals.has(row.principalId)) continue;
-        try {
-          if ((await delivery.reconcile?.(row)) === 'settled') {
-            mailbox.nativeInputs.settle(row.id, true);
-            await announceSettled(row);
+      if (nativeReady()) {
+        const unresolved = mailbox.unsettledNative(maxPerTick, reconciliationCursor);
+        reconciliationCursor =
+          unresolved.length === maxPerTick ? unresolved[unresolved.length - 1].id : 0;
+        for (const row of unresolved) {
+          if (activeDeliveries.has(row.id) || !servedPrincipals.has(row.principalId)) continue;
+          try {
+            if ((await delivery.reconcile?.(row)) === 'settled') {
+              mailbox.nativeInputs.settle(row.id, true);
+              await announceSettled(row);
+            }
+          } catch (error) {
+            await markUncertain(row, error instanceof Error ? error.message : String(error));
           }
-        } catch (error) {
-          await markUncertain(row, error instanceof Error ? error.message : String(error));
         }
       }
-      for (let count = 0; count < maxPerTick && !stopped && delivery.ready?.() !== false; count++) {
+      for (
+        let count = 0;
+        count < maxPerTick && !stopped && (nativeReady() || hostReady());
+        count++
+      ) {
         const waiting = new Map<string, number>();
+        const hostWaiting = new Map<string, number>();
         for (const active of activeDeliveries.values()) {
-          if (!active.accepted)
-            waiting.set(active.principalId, (waiting.get(active.principalId) ?? 0) + 1);
+          if (!active.accepted) {
+            const window = active.host ? hostWaiting : waiting;
+            window.set(active.principalId, (window.get(active.principalId) ?? 0) + 1);
+          }
         }
-        const row = mailbox.claimNext({
-          prefer: delivery.prefer,
-          excludePrincipals: [...waiting]
-            .filter(([, count]) => count >= maxPendingInputs)
-            .map(([id]) => id),
-        });
+        const row =
+          (hostReady()
+            ? mailbox.claimNext({
+                onlyKinds: ['host_job'],
+                excludePrincipals: [...hostWaiting]
+                  .filter(([, count]) => count >= maxPendingInputs)
+                  .map(([id]) => id),
+              })
+            : null) ??
+          (nativeReady()
+            ? mailbox.claimNext({
+                prefer: delivery.prefer,
+                excludeKinds: ['host_job'],
+                // A pending host change owns the next target slot; keep its later native
+                // inputs durable until that change runs (including an unserved target's resume).
+                excludePrincipals: [
+                  ...new Set([
+                    ...hostWaiting.keys(),
+                    ...[...waiting]
+                      .filter(([, count]) => count >= maxPendingInputs)
+                      .map(([id]) => id),
+                  ]),
+                ],
+              })
+            : null);
         if (!row) break;
         const completion = Promise.resolve()
           .then(() => deliverClaim(row))
@@ -800,10 +849,14 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
           });
         activeDeliveries.set(row.id, {
           principalId: row.principalId,
+          host: row.kind === 'host_job',
           accepted: false,
           result: completion,
         });
         started.push(completion);
+        // A full tick may only have filled one principal's window. Scan again so
+        // exclusions expose other ready principals, even with intervalMs: 0.
+        if (count + 1 === maxPerTick) scheduleDrain();
       }
     } finally {
       // Scanning/claiming is serialized; an accepted native turn's result is not the next input's gate.

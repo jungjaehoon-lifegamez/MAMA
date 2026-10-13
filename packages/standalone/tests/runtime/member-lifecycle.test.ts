@@ -799,3 +799,24 @@ it('refuses offboard without member_root before any change', async () => {
     ],
   });
 });
+
+it.each(['suspend', 'offboard'])(
+  'clears carried code_act values when the session is retired by %s',
+  async (change) => {
+    const f = await fixture();
+    const action = f.runtime.surface.catalog.entry('code_act');
+    const context = {
+      access: { ...f.runtime.surface.ownerAccess, principalId: f.member },
+      operationId: 'fixture-carried',
+      session: { modelRunId: 'fixture-carried-run' },
+    };
+    await action.exec({ code: 'globalThis.saved = "personal value";' }, context);
+    expect(await action.exec({ code: 'return saved;' }, context)).toMatchObject({
+      value: 'personal value',
+    });
+    data(await f.manage(change));
+    expect(await action.exec({ code: 'return typeof saved;' }, context)).toMatchObject({
+      value: 'undefined',
+    });
+  }
+);

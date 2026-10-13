@@ -35,13 +35,19 @@ import { NativeInputJournal, type NativeDeliveryRecord } from './native-input-jo
  * message body to decide what kind of work it is would be doing the
  * classification this contract removes.
  */
-export type StimulusKind = 'owner_message' | 'source_delta' | 'scheduled' | 'native_event';
+export type StimulusKind =
+  | 'owner_message'
+  | 'source_delta'
+  | 'scheduled'
+  | 'native_event'
+  | 'host_job';
 
 const STIMULUS_KINDS: ReadonlySet<string> = new Set([
   'owner_message',
   'source_delta',
   'scheduled',
   'native_event',
+  'host_job',
 ]);
 
 export function isStimulusKind(value: unknown): value is StimulusKind {
@@ -295,6 +301,7 @@ export class Mailbox {
          FROM mailbox_inputs
         WHERE status = 'pending' AND COALESCE(retry_after, 0) <= ?
           AND principal_id NOT IN (SELECT value FROM json_each(?))
+          AND (kind IS NULL OR kind NOT IN (SELECT value FROM json_each(?)))
           AND NOT EXISTS (SELECT 1 FROM native_input_deliveries n WHERE n.input_id=mailbox_inputs.id AND n.state!='prepared')
         ORDER BY id ASC LIMIT 1`
     );
@@ -304,6 +311,7 @@ export class Mailbox {
          FROM mailbox_inputs
         WHERE status = 'pending' AND COALESCE(retry_after, 0) <= ? AND kind = ?
           AND principal_id NOT IN (SELECT value FROM json_each(?))
+          AND (kind IS NULL OR kind NOT IN (SELECT value FROM json_each(?)))
           AND NOT EXISTS (SELECT 1 FROM native_input_deliveries n WHERE n.input_id=mailbox_inputs.id AND n.state!='prepared')
         ORDER BY id ASC LIMIT 1`
     );
@@ -497,21 +505,26 @@ export class Mailbox {
   claimNext(
     options: {
       prefer?: readonly StimulusKind[];
+      /** Claim only these kinds, with no general-input fallback. */
+      onlyKinds?: readonly StimulusKind[];
+      excludeKinds?: readonly StimulusKind[];
       /** Principals whose host delivery window is full; their rows remain pending. */
       excludePrincipals?: readonly string[];
     } = {}
   ): MailboxRow | null {
-    const prefer = options.prefer ?? [];
+    const prefer = options.onlyKinds ?? options.prefer ?? [];
     const excluded = JSON.stringify(options.excludePrincipals ?? []);
+    const excludedKinds = JSON.stringify(options.excludeKinds ?? []);
     const select = (): StoredRow | undefined => {
       const now = this.now();
       for (const kind of prefer) {
-        const preferred = this.stmtClaimSelectKind.get(now, kind, excluded) as
+        const preferred = this.stmtClaimSelectKind.get(now, kind, excluded, excludedKinds) as
           | StoredRow
           | undefined;
         if (preferred) return preferred;
       }
-      return this.stmtClaimSelect.get(now, excluded) as StoredRow | undefined;
+      if (options.onlyKinds) return undefined;
+      return this.stmtClaimSelect.get(now, excluded, excludedKinds) as StoredRow | undefined;
     };
     let row = select();
     while (row) {
@@ -707,6 +720,15 @@ export class Mailbox {
    * or done — §4.4 is explicit that a delivery ACK is not a work receipt, and
    * there is deliberately no field here to record one in.
    */
+  /** Return an unexecuted host claim without spending a retry (for example, at shutdown). */
+  deferClaim(id: number): void {
+    this.db
+      .prepare(
+        "UPDATE mailbox_inputs SET status='pending', claimed_at=NULL WHERE id=? AND status='claimed'"
+      )
+      .run(id);
+  }
+
   ack(id: number): void {
     this.stmtAck.run(this.now(), id);
   }
@@ -748,6 +770,7 @@ export class Mailbox {
       .prepare(
         `UPDATE mailbox_inputs SET status = 'dead', last_error = ?, claimed_at = NULL
        WHERE principal_id = ? AND status IN ('pending', 'claimed')
+         AND (kind IS NULL OR kind != 'host_job')
          AND NOT EXISTS (SELECT 1 FROM native_input_deliveries AS native
            WHERE native.input_id = mailbox_inputs.id AND native.state <> 'prepared')`
       )

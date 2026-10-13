@@ -17,13 +17,14 @@ const echo = (name: string): ActionRegistration => ({
   exec: async (input, context) => ({ name, input, operationId: context.operationId }),
 });
 
-function surface(actions: string[]) {
+function surface(actions: string[], options?: Parameters<typeof codeActRegistration>[1]) {
+  const codeAct = codeActRegistration(() => dispatch, options);
   const catalog = createCatalog([
     echo('work.list'),
     echo('schedule.upcoming'),
     echo('memory.read:provenance'),
     echo('admin.only'),
-    codeActRegistration(() => dispatch),
+    codeAct,
   ]);
   const dispatch: ActionDispatcher = createDispatcher(catalog);
   const access: JudgmentAccess = {
@@ -32,14 +33,17 @@ function surface(actions: string[]) {
     scopes: [],
     actions,
   };
-  return (code: string, modelRunId?: string, principalId = 'owner') =>
-    dispatch(
-      { action: 'code_act', input: { code }, operationId: 'op-1' },
-      {
-        access: { ...access, principalId },
-        ...(modelRunId === undefined ? {} : { session: { modelRunId } }),
-      }
-    );
+  return Object.assign(
+    (code: string, modelRunId?: string, principalId = 'owner') =>
+      dispatch(
+        { action: 'code_act', input: { code }, operationId: 'op-1' },
+        {
+          access: { ...access, principalId },
+          ...(modelRunId === undefined ? {} : { session: { modelRunId } }),
+        }
+      ),
+    { releasePrincipal: codeAct.releasePrincipal }
+  );
 }
 
 describe('code_act', () => {
@@ -180,6 +184,42 @@ describe('code_act', () => {
       const result = await run('return saved;', `run-${n}`, `principal-${n}`);
       expect((result as { data: { value: number } }).data.value).toBe(n);
     }
+  });
+
+  it('releases retired principals and bounds idle principals without evicting an active run', async () => {
+    const active = new Set(['active-run']);
+    const run = surface(['code_act'], {
+      maxPrincipals: 2,
+      isRunActive: (_id, runId) => active.has(runId),
+    });
+    await run('globalThis.saved = "active";', 'active-run', 'active');
+    await run('globalThis.saved = "old";', 'old-run', 'old');
+    await run('globalThis.saved = "new";', 'new-run', 'new');
+    expect(
+      ((await run('return saved;', 'active-run', 'active')) as { data: { value: unknown } }).data
+        .value
+    ).toBe('active');
+    expect(
+      ((await run('return typeof saved;', 'old-run', 'old')) as { data: { value: unknown } }).data
+        .value
+    ).toBe('undefined');
+    run.releasePrincipal('active');
+    expect(
+      ((await run('return typeof saved;', 'active-run', 'active')) as { data: { value: unknown } })
+        .data.value
+    ).toBe('undefined');
+  });
+
+  it('reports a full principal limit without losing any active run values', async () => {
+    const run = surface(['code_act'], { maxPrincipals: 1, isRunActive: () => true });
+    await run('globalThis.saved = "active";', 'active-run', 'active');
+    expect(await run('globalThis.saved = "new";', 'new-run', 'new')).toMatchObject({
+      status: 'failed',
+    });
+    expect(
+      ((await run('return saved;', 'active-run', 'active')) as { data: { value: unknown } }).data
+        .value
+    ).toBe('active');
   });
 
   it('keeps what parallel scripts of one run each left', async () => {

@@ -459,6 +459,16 @@ it('keeps common management receipts visible to another owner after the acting o
 
 it('erases after settlement, preserves owner and shared rows, receipts counts and starts a fresh session', async () => {
   const f = await setup();
+  const codeAct = f.runtime.surface.catalog.entry('code_act');
+  const carriedContext = {
+    access: { ...f.runtime.surface.ownerAccess, principalId: f.member },
+    operationId: 'fixture-carried',
+    session: { modelRunId: 'fixture-carried-run' },
+  };
+  await codeAct.exec({ code: 'globalThis.saved = "personal value";' }, carriedContext);
+  expect(await codeAct.exec({ code: 'return saved;' }, carriedContext)).toMatchObject({
+    value: 'personal value',
+  });
   const db = f.runtime.database.adapter;
   const saved = data(
     (
@@ -571,6 +581,9 @@ it('erases after settlement, preserves owner and shared rows, receipts counts an
   expect(await f.confirm(p.confirmationToken)).toMatchObject({ status: 'scheduled' });
   const receipt = await f.finish();
   expect(receipt.status).toBe('erased');
+  expect(await codeAct.exec({ code: 'return typeof saved;' }, carriedContext)).toMatchObject({
+    value: 'undefined',
+  });
   const coreReceipt = erasePrincipalRecords(db, {
     principalId: f.member,
     commandId: receipt.commandId,

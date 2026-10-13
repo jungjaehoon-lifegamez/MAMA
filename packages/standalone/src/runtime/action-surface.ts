@@ -1,3 +1,4 @@
+import type { MailboxRow } from '@jungjaehoon/mama-core/runtime/mailbox';
 import {
   createMemberEnrollment,
   type MemberEnrollmentPorts,
@@ -197,6 +198,8 @@ export interface ActionSurfaceOptions {
 
 export interface ActionSurface {
   memberRecords: ReturnType<typeof createMemberRecords>;
+  releasePrincipal(principalId: string): void;
+  deliverManagement(row: MailboxRow): Promise<'handled' | 'deferred' | 'unhandled'>;
   completeMemberEnrollment(selection: MemberSelection): ReturnType<ActionDispatcher>;
   createNativeEffectObserver(
     modelRunId: string,
@@ -344,6 +347,16 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     scheduleChange: async (name, input, context) => {
       const ports = options.memberLifecycle!;
       const { principalId } = input as { principalId: string };
+      const earlier = context.operationId
+        ? ports.mailbox().readInput(`member-management:${context.operationId}`, principalId)
+        : null;
+      if (earlier)
+        return {
+          principalId,
+          change: name.slice('manage.member.'.length),
+          status: 'scheduled',
+          commandId: earlier.stimulusId,
+        };
       const chain = ports.turnChain(principalId);
       const changesDirectory = [
         'manage.member.suspend',
@@ -357,29 +370,25 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
             .exec(input, { ...context, memberManagementQueued: true } as MemberManagementContext)
         );
 
-      // Reserve on the target chain in request order. A directory reservation starts the
-      // lane without awaiting it inside that chain: the lane drains current member work,
-      // including this short reservation. Awaiting it here would wait for itself.
-      const commandId = `member-management:${randomUUID()}`;
-      const execute = () =>
-        dispatch({ action: name, input, operationId: commandId }, {
-          ...context,
-          memberManagementQueued: true,
-          operationId: commandId,
-          session: { ...context.session, modelRunId: undefined, gatewayCallId: undefined },
-        } as MemberManagementContext);
-      const work = chain.afterCurrent(async () => {
-        if (!changesDirectory) {
-          await execute();
-          return;
-        }
-        void memberDirectoryChange!(execute).catch((error) =>
-          console.error('[Member management] scheduled directory change failed', error)
-        );
+      if (!context.operationId) throw new Error('Member management requires an operation id');
+      const commandId = `member-management:${context.operationId}`;
+      ports.mailbox().enqueue({
+        id: commandId,
+        kind: 'host_job',
+        principalId,
+        channelKey: 'member-management',
+        occurredAt: Date.now(),
+        payload: JSON.parse(
+          JSON.stringify({
+            action: name,
+            input,
+            callerPrincipalId: activeOwnerMessageCaller(context, options),
+            requestPrincipalId: context.access.principalId,
+            sourceMessageRef: context.session?.sourceMessageRef,
+          })
+        ),
       });
-      void work.catch((error) =>
-        console.error('[Member management] scheduled change failed', error)
-      );
+      ports.resumeQueued();
       return {
         principalId,
         change: name.slice('manage.member.'.length),
@@ -387,6 +396,14 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
         commandId,
       };
     },
+  });
+  const codeAct = codeActRegistration(() => dispatch, {
+    isRunActive: (_principalId, runId) =>
+      (
+        options.adapter.prepare('SELECT status FROM model_runs WHERE model_run_id=?').get(runId) as
+          | { status: string }
+          | undefined
+      )?.status === 'running',
   });
   const registrations = [
     ...core,
@@ -477,7 +494,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     }),
     // Claude calls every action from inside code_act, as Kagemusha's code_act; the inner calls go
     // through the dispatcher below, so each is granted and traced as the caller's.
-    codeActRegistration(() => dispatch),
+    codeAct,
   ];
   const catalog = createCatalog(registrations);
   const observeCall: NonNullable<DispatcherOptions['observeCall']> = async ({
@@ -586,6 +603,77 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
 
   return {
     memberRecords,
+    releasePrincipal: codeAct.releasePrincipal,
+    deliverManagement: async (row) => {
+      if (row.kind !== 'host_job' || row.channelKey !== 'member-management') return 'unhandled';
+      const ports = options.memberLifecycle;
+      if (!ports) throw new Error('Member management job requires lifecycle ports');
+      const job = row.payload as unknown as {
+        action: string;
+        input: unknown;
+        callerPrincipalId: string;
+        requestPrincipalId: string;
+        sourceMessageRef: string;
+      };
+      if (!lifecycle.some((r) => r.contract.name === job.action))
+        throw new Error('Invalid member management job');
+      const execute = async (): Promise<'handled' | 'deferred'> => {
+        if (ports.isStopping()) return 'deferred';
+        // The common receipt is also the command's durable completion marker. A replay after
+        // receipt storage but before mailbox ACK must not reset or move the session again.
+        const receipt = options.adapter
+          .prepare('SELECT 1 FROM connector_event_index WHERE source_entity_id=?')
+          .get(`host:management:${row.stimulusId}:reply`);
+        if (!receipt) {
+          const result = await dispatch(
+            { action: job.action, input: job.input, operationId: row.stimulusId },
+            {
+              access: {
+                principalId: job.requestPrincipalId,
+                agentId: 'member-management-host',
+                scopes: [],
+                actions: [job.action],
+              },
+              session: { sourceMessageRef: job.sourceMessageRef },
+              operationId: row.stimulusId,
+              memberManagementQueued: true,
+            } as MemberManagementContext
+          );
+          // The authenticated caller id survives even if that caller erased the requesting
+          // message while the target was busy; a denied change still owes its common receipt.
+          if (
+            !options.adapter
+              .prepare('SELECT 1 FROM connector_event_index WHERE source_entity_id=?')
+              .get(`host:management:${row.stimulusId}:reply`)
+          )
+            options.recordManagementReceipt?.({
+              callerPrincipalId: job.callerPrincipalId,
+              operationId: row.stimulusId,
+              action: job.action,
+              input: job.input,
+              result,
+            });
+        }
+        return 'handled';
+      };
+      let completion: Promise<'handled' | 'deferred'> = Promise.resolve('deferred');
+      await ports.turnChain(row.principalId).afterCurrent(async () => {
+        if (ports.isStopping()) return;
+        if (
+          ['manage.member.suspend', 'manage.member.resume', 'manage.member.offboard'].includes(
+            job.action
+          )
+        ) {
+          // Release this reservation before the directory lane drains all current member work.
+          // Awaiting that lane here would make it wait for its own target reservation.
+          completion = memberDirectoryChange!(execute);
+        } else {
+          completion = execute();
+          await completion;
+        }
+      });
+      return completion;
+    },
     createNativeEffectObserver: (modelRunId, access = ownerAccess) => {
       const traces = createNativeToolTraceObserver(options.adapter, modelRunId);
       return options.outboundAttempts === undefined

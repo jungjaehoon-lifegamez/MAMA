@@ -9,6 +9,7 @@ import type { DatabaseInstance } from '@jungjaehoon/mama-core/db-manager';
 import { validateMemberMemoryGrant, resolvePrincipalAccess } from '../runtime/principal-access.js';
 import type { TimeZoneSetting } from '../runtime/timezone.js';
 import { activeOwnerMessageCaller, holdsOwnerRole } from '../runtime/owner-authority.js';
+import type { Mailbox } from '@jungjaehoon/mama-core/runtime/mailbox';
 import type { createSerialTurnChain } from '../runtime/principal-sessions.js';
 
 /**
@@ -33,6 +34,9 @@ export const MEMBER_MANAGEMENT_ACTIONS = [
 export type MemberManagementContext = ActionContext & { memberManagementQueued?: boolean };
 
 export interface MemberLifecyclePorts {
+  mailbox(): Mailbox;
+  resumeQueued(): void;
+  isStopping(): boolean;
   turnChain(principalId: string): ReturnType<typeof createSerialTurnChain>;
   resetSession(principalId: string): Promise<void>;
   retire(principalId: string): Promise<void>;

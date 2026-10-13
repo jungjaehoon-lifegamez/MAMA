@@ -117,7 +117,8 @@ export async function fixture(
   const reads: ActionResult[][] = [];
   let sequence = 0;
   let deltaResponse = false;
-  const runtime = await createOwnerRuntime({
+  let runtime: Awaited<ReturnType<typeof createOwnerRuntime>>;
+  const runtimeOptions: Parameters<typeof createOwnerRuntime>[0] = {
     backend,
     model: 'fixture',
     databasePath: join(home, 'state.db'),
@@ -279,7 +280,8 @@ export async function fixture(
       natives.set(principal, native);
       return native;
     },
-  });
+  };
+  runtime = await createOwnerRuntime(runtimeOptions);
   if (suspendedWithoutRoot)
     createPrincipalRepository(runtime.database.adapter).resume(managingOwner, 5);
   close.push(async () => {
@@ -343,7 +345,13 @@ export async function fixture(
     return { result: memberResults.get(principal)!, ref };
   };
   return {
-    runtime,
+    get runtime() {
+      return runtime;
+    },
+    restart: async () => {
+      await runtime.stop();
+      runtime = await createOwnerRuntime(runtimeOptions);
+    },
     managingOwner,
     actAs,
     member,

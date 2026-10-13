@@ -315,7 +315,7 @@ it("a suspend waits for that member's running turn but not for the common sessio
     expect(repo.findById(f.member)?.status).toBe('active');
     const queued = f.message(f.member);
     await vi.waitFor(() =>
-      expect(f.runtime.runtime.mailbox!.readInput(queued, f.member)?.status).toBe('claimed')
+      expect(f.runtime.runtime.mailbox!.readInput(queued, f.member)?.status).toBe('pending')
     );
     memberGate.release();
     await f.settled(running, f.member);
@@ -447,5 +447,171 @@ it('applies a queued grant before a later suspend on the same busy member', asyn
     expect(repo.listRetainedGrants(f.member)).toHaveLength(1);
   } finally {
     runningGate.release();
+  }
+});
+
+it('keeps a busy-target management job through restart and records its receipt exactly once without a model turn', async () => {
+  const f = await fixture();
+  const held = gate();
+  f.blockPrincipal(f.member, held.promise);
+  f.message(f.member);
+  try {
+    await vi.waitFor(() => expect(f.turns.some((turn) => turn.principal === f.member)).toBe(true));
+    // Fill the native claim window too: host jobs must still reserve the next target slot.
+    for (let n = 0; n < 10; n++) f.message(f.member, `queued before management ${n}`);
+    await vi.waitFor(() =>
+      expect(
+        f.runtime.database.adapter
+          .prepare(
+            "SELECT count(*) AS n FROM mailbox_inputs WHERE principal_id=? AND status='claimed'"
+          )
+          .get(f.member)
+      ).toEqual({ n: 9 })
+    );
+    const request = await f.actAs(f.managingOwner, 'manage.member.grant', {
+      principalId: f.member,
+      scopeKind: 'project',
+      scopeId: 'fixture-durable-partition',
+    });
+    expect(request.result).toMatchObject({ status: 'completed', data: { status: 'scheduled' } });
+    const commandId = (request.result as { data: { commandId: string } }).data.commandId;
+    const row = f.runtime.runtime.mailbox!.readInput(commandId, f.member);
+    expect(row).not.toBeNull();
+    expect(row!.channelKey).toBe('member-management');
+    const restarting = f.restart();
+    held.release();
+    await restarting;
+    await vi.waitFor(() =>
+      expect(f.runtime.runtime.mailbox!.readInput(commandId, f.member)?.status).toBe('acked')
+    );
+    const repo = createPrincipalRepository(f.runtime.database.adapter);
+    expect(repo.listActiveGrants(f.member)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          scope: expect.objectContaining({ scopeId: 'fixture-durable-partition' }),
+        }),
+      ])
+    );
+    expect(f.runtime.runtime.mailbox!.nativeInputs.get(row!.id)).toBeNull();
+    const receipt = () =>
+      f.runtime.database.adapter
+        .prepare('SELECT content FROM connector_event_index WHERE source_entity_id=?')
+        .all(`host:management:${commandId}:reply`) as Array<{ content: string }>;
+    expect(receipt()).toHaveLength(1);
+    expect(JSON.parse(receipt()[0].content).result).toMatchObject({
+      status: 'completed',
+      data: { change: 'grant' },
+    });
+    expect(
+      f.runtime.runtime.mailbox!.enqueue({
+        id: commandId,
+        kind: 'host_job',
+        principalId: f.member,
+        channelKey: row!.channelKey,
+        occurredAt: row!.occurredAt,
+        payload: row!.payload,
+      })
+    ).toBeNull();
+    await f.runtime.runtime.drainOnce();
+    expect(receipt()).toHaveLength(1);
+    // Simulate a crash after the receipt was written but before the host claim was ACKed.
+    f.runtime.database.adapter
+      .prepare("UPDATE mailbox_inputs SET status='claimed', claimed_at=0, acked_at=NULL WHERE id=?")
+      .run(row!.id);
+    await f.restart();
+    await vi.waitFor(() =>
+      expect(f.runtime.runtime.mailbox!.readInput(commandId, f.member)?.status).toBe('acked')
+    );
+    expect(receipt()).toHaveLength(1);
+    expect(
+      f.runtime.database.adapter
+        .prepare('SELECT count(*) AS n FROM tool_traces WHERE operation_id=?')
+        .get(commandId)
+    ).toEqual({ n: 1 });
+    expect(
+      await f.runtime.surface.hostToolCall(
+        'manage.member.grant',
+        {
+          principalId: f.member,
+          scopeKind: 'project',
+          scopeId: 'fixture-durable-partition',
+        },
+        commandId.slice('member-management:'.length),
+        {
+          access: { ...f.runtime.surface.ownerAccess, principalId: f.managingOwner },
+          session: { sourceMessageRef: request.ref },
+        }
+      )
+    ).toMatchObject({ status: 'completed', data: { status: 'scheduled', commandId } });
+    expect(f.turns.filter((turn) => turn.principal === f.member)).toHaveLength(1);
+  } finally {
+    held.release();
+  }
+});
+
+it('recovers reciprocal owner suspension jobs after restart with one active owner and both receipts', async () => {
+  const f = await fixture();
+  createPrincipalRepository(f.runtime.database.adapter).grantRole({
+    principalId: f.member,
+    role: 'owner',
+    now: 10,
+  });
+  const held = gate();
+  f.holdMemberCompletion(held.promise);
+  const request = (caller: string, target: string) =>
+    f.message(caller, 'fixture suspend', undefined, {
+      action: 'manage.member.suspend',
+      input: { principalId: target },
+    });
+  const first = request(f.managingOwner, f.member);
+  const second = request(f.member, f.managingOwner);
+  try {
+    await vi.waitFor(() => {
+      expect(f.resultFor(first)).toMatchObject({
+        status: 'completed',
+        data: { status: 'scheduled' },
+      });
+      expect(f.resultFor(second)).toMatchObject({
+        status: 'completed',
+        data: { status: 'scheduled' },
+      });
+    });
+    const commands = [first, second].map(
+      (ref) => (f.resultFor(ref) as { data: { commandId: string } }).data.commandId
+    );
+    expect(
+      f.runtime.database.adapter
+        .prepare("SELECT count(*) AS n FROM mailbox_inputs WHERE channel_key='member-management'")
+        .get()
+    ).toEqual({ n: 2 });
+    const restarting = f.restart();
+    held.release();
+    f.holdMemberCompletion(undefined);
+    await restarting;
+    await vi.waitFor(() => {
+      for (const commandId of commands) {
+        const target = commandId === commands[0] ? f.member : f.managingOwner;
+        expect(f.runtime.runtime.mailbox!.readInput(commandId, target)?.status).toBe('acked');
+      }
+    });
+    const repo = createPrincipalRepository(f.runtime.database.adapter);
+    expect(repo.listActiveMembersWithRole('owner')).toHaveLength(1);
+    const results = commands.map(
+      (id) =>
+        JSON.parse(
+          (
+            f.runtime.database.adapter
+              .prepare('SELECT content FROM connector_event_index WHERE source_entity_id=?')
+              .get(`host:management:${id}:reply`) as { content: string }
+          ).content
+        ).result
+    );
+    expect(results.filter((r) => r.status === 'completed')).toHaveLength(1);
+    expect(results.filter((r) => r.status === 'failed' && r.error.kind === 'denied')).toHaveLength(
+      1
+    );
+  } finally {
+    held.release();
+    f.holdMemberCompletion(undefined);
   }
 });

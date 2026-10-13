@@ -267,11 +267,35 @@ export const CODE_ACT_CONTRACT: ActionContract = {
  * The code_act action over a dispatcher built after it: the functions are the actions the
  * caller is granted, and each call is dispatched with the caller's own context.
  */
-export function codeActRegistration(dispatcher: () => ActionDispatcher): ActionRegistration {
+export function codeActRegistration(
+  dispatcher: () => ActionDispatcher,
+  options: {
+    maxPrincipals?: number;
+    isRunActive?(principalId: string, runId: string): boolean;
+  } = {}
+): ActionRegistration & { releasePrincipal(principalId: string): void } {
   // Principals run concurrently; activity in one must not evict another's carried values.
   // Retain the latest four runs per principal; scripts can carry entire ledgers.
   const carriedByPrincipal = new Map<string, Map<string, CarriedValues>>();
+  const inFlight = new Map<string, Map<string, number>>();
+  const active = (id: string, runId: string) =>
+    (inFlight.get(id)?.get(runId) ?? 0) > 0 || options.isRunActive?.(id, runId) === true;
+  const makeRoom = () => {
+    if (carriedByPrincipal.size < (options.maxPrincipals ?? 128)) return;
+    for (const [id, runs] of carriedByPrincipal) {
+      if (![...runs.keys()].some((runId) => active(id, runId)) && !inFlight.has(id)) {
+        carriedByPrincipal.delete(id);
+        return;
+      }
+    }
+    throw new Error(
+      'code_act carried-value principal limit reached; all retained principals have active runs'
+    );
+  };
   return {
+    releasePrincipal: (id) => {
+      carriedByPrincipal.delete(id);
+    },
     contract: CODE_ACT_CONTRACT,
     exec: async (input, context: ActionContext) => {
       const dispatch = dispatcher();
@@ -289,47 +313,68 @@ export function codeActRegistration(dispatcher: () => ActionDispatcher): ActionR
       const runId = context.session?.modelRunId;
       const principalId = context.access.principalId;
       let carriedByRun = carriedByPrincipal.get(principalId);
-      if (!carriedByRun) carriedByPrincipal.set(principalId, (carriedByRun = new Map()));
-      const before = runId === undefined ? {} : (carriedByRun.get(runId) ?? {});
-      const { carried: after, ...result } = await runCodeAct(
-        (input as { code: string }).code,
-        {
-          functions,
-          call: async (name, params) => {
-            // callTool() takes any name; code_act itself would start a worker inside a worker.
-            if (!callable.has(name)) throw new Error(`action_not_granted: ${name}`);
-            calls += 1;
-            const result = await dispatch(
-              {
-                action: name,
-                input: params ?? {},
-                operationId: `${operationId}#${calls}`,
-              },
-              context
-            );
-            if (result.status === 'completed') return result.data;
-            throw new Error(`${result.error.code}: ${result.error.message}`);
-          },
-        },
-        DEFAULT_TIMEOUT_MS,
-        before
-      );
-      if (runId === undefined) return result;
-      // One model message can carry several code_act calls, each started from the same values:
-      // apply only what this call changed, so it does not replace what the others left.
-      const current = { ...(carriedByRun.get(runId) ?? {}) };
-      for (const key of Object.keys(before)) if (!(key in after)) delete current[key];
-      for (const [key, value] of Object.entries(after))
-        if (JSON.stringify(value) !== JSON.stringify(before[key])) current[key] = value;
-      carriedByRun.delete(runId);
-      carriedByRun.set(runId, current);
-      for (const oldest of carriedByRun.keys()) {
-        if (carriedByRun.size <= CARRIED_RUNS_PER_PRINCIPAL) break;
-        carriedByRun.delete(oldest);
+      if (!carriedByRun) {
+        if (runId !== undefined) makeRoom();
+        carriedByRun = new Map();
       }
-      const { kept: _ownView, ...rest } = result;
-      const kept = Object.keys(current);
-      return kept.length > 0 ? { ...rest, kept } : rest;
+      if (runId !== undefined) {
+        carriedByPrincipal.delete(principalId);
+        carriedByPrincipal.set(principalId, carriedByRun);
+        let running = inFlight.get(principalId);
+        if (!running) inFlight.set(principalId, (running = new Map()));
+        running.set(runId, (running.get(runId) ?? 0) + 1);
+      }
+      try {
+        const before = runId === undefined ? {} : (carriedByRun.get(runId) ?? {});
+        const { carried: after, ...result } = await runCodeAct(
+          (input as { code: string }).code,
+          {
+            functions,
+            call: async (name, params) => {
+              // callTool() takes any name; code_act itself would start a worker inside a worker.
+              if (!callable.has(name)) throw new Error(`action_not_granted: ${name}`);
+              calls += 1;
+              const result = await dispatch(
+                {
+                  action: name,
+                  input: params ?? {},
+                  operationId: `${operationId}#${calls}`,
+                },
+                context
+              );
+              if (result.status === 'completed') return result.data;
+              throw new Error(`${result.error.code}: ${result.error.message}`);
+            },
+          },
+          DEFAULT_TIMEOUT_MS,
+          before
+        );
+        if (runId === undefined || carriedByPrincipal.get(principalId) !== carriedByRun)
+          return result;
+        // One model message can carry several code_act calls, each started from the same values:
+        // apply only what this call changed, so it does not replace what the others left.
+        const current = { ...(carriedByRun.get(runId) ?? {}) };
+        for (const key of Object.keys(before)) if (!(key in after)) delete current[key];
+        for (const [key, value] of Object.entries(after))
+          if (JSON.stringify(value) !== JSON.stringify(before[key])) current[key] = value;
+        carriedByRun.delete(runId);
+        carriedByRun.set(runId, current);
+        for (const oldest of carriedByRun.keys()) {
+          if (carriedByRun.size <= CARRIED_RUNS_PER_PRINCIPAL) break;
+          if (!active(principalId, oldest)) carriedByRun.delete(oldest);
+        }
+        const { kept: _ownView, ...rest } = result;
+        const kept = Object.keys(current);
+        return kept.length > 0 ? { ...rest, kept } : rest;
+      } finally {
+        if (runId !== undefined) {
+          const running = inFlight.get(principalId)!;
+          const count = running.get(runId)! - 1;
+          if (count) running.set(runId, count);
+          else running.delete(runId);
+          if (!running.size) inFlight.delete(principalId);
+        }
+      }
     },
   };
 }

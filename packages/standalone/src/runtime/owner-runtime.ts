@@ -437,6 +437,13 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
               },
             },
             memberLifecycle: {
+              mailbox: () => ownerMailbox!,
+              isStopping: () => stopping,
+              resumeQueued: () => {
+                void intakeRuntime
+                  .drainOnce()
+                  .catch((error) => console.error('[Member management] delivery failed', error));
+              },
               turnChain: sessions.turnChain,
               resetSession: async (id) => {
                 const member = members.get(id);
@@ -752,6 +759,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       nativeSession: sessions.native,
       delivery: {
         ...sessions.delivery,
+        deliverHost: surface.deliverManagement,
+        hostReady: () => !stopping && !surface.memberRecords.isBusy(),
         onSettled: surface.memberRecords.onSettled,
         onDead: (row, reason) => {
           surface.memberRecords.onDead(row, reason);
@@ -768,6 +777,10 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
     });
     ownerMailbox = intakeRuntime.mailbox;
     recordOrders.recover();
+    // Recovered host inputs need no new Telegram update to run.
+    void intakeRuntime
+      .drainOnce()
+      .catch((error) => console.error('[Member management] recovery failed', error));
     const intake = createStimulusIntake(intakeRuntime, options.ownerPrincipalId, chat);
     const createMemberIntake = (id: string, member: ReturnType<typeof createMemberSession>) =>
       createStimulusIntake(intakeRuntime, id, {
@@ -782,6 +795,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
     for (const [id, member] of members) memberIntakes.set(id, createMemberIntake(id, member));
     const retireMember = async (id: string, setAside = true) => {
       if (memberRoot === undefined) throw new Error('Member lifecycle requires member_root');
+      surface.releasePrincipal(id);
       intakeRuntime.unservePrincipal(id);
       const member = members.get(id);
       if (member) {
