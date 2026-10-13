@@ -60,7 +60,14 @@ export const runCommand: CommandRunner = (command, args, options = {}) =>
       clearTimeout(timer);
       unregister();
       if (failure) reject(failure);
-      else if (code !== 0) reject(new Error(`${basename(command)} failed (exit ${String(code)})`));
-      else resolve({ stdout, stderr });
+      else if (code !== 0) {
+        // The last stderr line names the cause (a Python traceback ends with it).
+        const cause = stderr.trim().split('\n').at(-1)?.trim().slice(0, 300);
+        reject(
+          new Error(
+            `${basename(command)} failed (exit ${String(code)})${cause ? `: ${cause}` : ''}`
+          )
+        );
+      } else resolve({ stdout, stderr });
     });
   });

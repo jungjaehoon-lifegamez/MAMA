@@ -44,6 +44,8 @@ it('stores the owner PID, names live leases and recovers dead locks', () => {
   }
   writeFileSync(path, '2147483647');
   expect(liveToolkitLease(path)).toBe(false);
+  // A lease released between the installer's scan and its read counts as released.
+  expect(liveToolkitLease(join(root, 'released-lease'))).toBe(false);
   tryToolkitLock(path)!();
   expect(existsSync(path)).toBe(false);
 });

@@ -377,7 +377,7 @@ export async function installDocumentToolkit(
         ? readdirSync(join(root, '.leases')).filter((name) => {
             const path = join(root, '.leases', name);
             if (liveToolkitLease(path)) return true;
-            rmSync(path);
+            rmSync(path, { force: true });
             return false;
           })
         : [];

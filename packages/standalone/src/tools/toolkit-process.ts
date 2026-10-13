@@ -61,7 +61,15 @@ export function pidIsAlive(pid: number): boolean {
 }
 
 export function liveToolkitLease(path: string): boolean {
-  return pidIsAlive(Number(readFileSync(path, 'utf8').trim()));
+  let owner: string;
+  try {
+    owner = readFileSync(path, 'utf8');
+  } catch (error) {
+    // A render released its lease between the directory scan and this read.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+  return pidIsAlive(Number(owner.trim()));
 }
 
 /** Publish a nonempty lock atomically; unique owner files make concurrent stale recovery safe. */

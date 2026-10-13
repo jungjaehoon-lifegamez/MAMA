@@ -129,9 +129,12 @@ export function createDocumentRenderer(options: DocumentRenderOptions) {
         ].includes(extension)
       )
         throw new Error('Render requires an office document or PDF extension');
-      output = mkdtempSync(
-        join(dirname(file.path), `${basename(file.path, extname(file.path))}.render-`)
-      );
+      // Keep the name inside the 255-byte component limit whatever the input's basename.
+      const stem = Buffer.from(basename(file.path, extname(file.path)), 'utf8')
+        .subarray(0, 120)
+        .toString('utf8')
+        .replace(/\uFFFD+$/, '');
+      output = mkdtempSync(join(dirname(file.path), `${stem}.render-`));
       if (realpathSync(dirname(file.path)) !== dirname(file.path))
         throw new Error('Document output directory changed');
       const staged = join(temp, `document${extension}`);

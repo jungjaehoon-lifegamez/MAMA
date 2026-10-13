@@ -93,6 +93,23 @@ function fakeRenderer() {
 }
 
 describe('host document renderer', () => {
+  it('keeps the output directory name within the component limit for a long input name', async () => {
+    const host = fakeRenderer();
+    const name = `${'é'.repeat(121)}.pptx`; // 242 bytes before the extension, 2 bytes a character
+    writeFileSync(join(workspace, name), 'fixture input');
+    const renderer = createDocumentRenderer({
+      toolsRoot: tools,
+      run: host.run,
+      platform: 'darwin',
+      deniedReadPaths: [],
+      timeoutMs: 120,
+    });
+    const result = await renderer.render(workspace, name);
+    const directory = result.pdf.split('/')[0]!;
+    expect(Buffer.byteLength(directory, 'utf8')).toBeLessThanOrEqual(255);
+    expect(existsSync(join(workspace, result.pdf))).toBe(true);
+  });
+
   it('returns only relative output paths and cleans a fresh macro-disabled profile', async () => {
     const host = fakeRenderer();
     const input = join(workspace, 'draft.pptx');
@@ -358,6 +375,20 @@ it.runIf(Boolean(liveSoffice))(
     );
     expect(result.fonts.flat().some((font) => /Noto.*CJK/i.test(font))).toBe(true);
     await runCommand('python3', ['-I', smoke, 'check', join(workspace, result.pdf)], { env });
+    // Pages just under the per-page limit still stop at the document's pixel budget.
+    await runCommand(
+      'python3',
+      [
+        '-I',
+        '-c',
+        'import pymupdf,sys\nd=pymupdf.open()\nfor _ in range(30): d.new_page(width=1500,height=1600)\nd.save(sys.argv[1])',
+        join(workspace, 'large.pdf'),
+      ],
+      { env }
+    );
+    await expect(
+      createDocumentRenderer({ toolsRoot, soffice: liveSoffice }).render(workspace, 'large.pdf')
+    ).rejects.toThrow(/200 megapixel/);
   },
-  30_000
+  60_000
 );
