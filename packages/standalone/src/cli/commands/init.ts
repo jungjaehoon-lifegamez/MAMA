@@ -449,6 +449,7 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
         toolsRoot: config.tools_root,
         home,
         memberRoot: config.member_root,
+        write: prompt.write,
       });
   } catch (error) {
     throw new CliInputError(

@@ -38,6 +38,58 @@ export interface InstallToolkitOptions {
   platform?: NodeJS.Platform;
   run?: CommandRunner;
   locate?: (name: string) => string | undefined;
+  write?: (line: string) => void;
+}
+
+/** Recursive pruning requires both our generated name and our complete publication receipt. */
+function isManagedVersion(path: string, name: string): boolean {
+  if (!/^v-\d+-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(name))
+    return false;
+  try {
+    const manifestPath = join(path, 'manifest.json');
+    if (!lstatSync(manifestPath).isFile()) return false;
+    const manifest: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) return false;
+    const data = manifest as Record<string, unknown>;
+    return (
+      data.version === 1 &&
+      typeof data.installedAt === 'string' &&
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(data.installedAt) &&
+      Number.isFinite(Date.parse(data.installedAt)) &&
+      typeof data.pythonVersion === 'string' &&
+      /^\d+\.\d+\.\d+$/.test(data.pythonVersion) &&
+      typeof data.officeVersion === 'string' &&
+      data.officeVersion.trim().length > 0 &&
+      typeof data.platform === 'string' &&
+      [
+        'aix',
+        'android',
+        'darwin',
+        'freebsd',
+        'haiku',
+        'linux',
+        'openbsd',
+        'sunos',
+        'win32',
+        'cygwin',
+        'netbsd',
+      ].includes(data.platform) &&
+      Array.isArray(data.requirements) &&
+      data.requirements.length > 0 &&
+      data.requirements.every((line) => typeof line === 'string') &&
+      typeof data.requirementsSha256 === 'string' &&
+      /^[0-9a-f]{64}$/.test(data.requirementsSha256) &&
+      typeof data.soffice === 'string' &&
+      isAbsolute(data.soffice) &&
+      Array.isArray(data.fonts) &&
+      data.fonts.length === 2 &&
+      data.fonts[0] === 'Noto Sans CJK' &&
+      data.fonts[1] === 'Noto Serif CJK'
+    );
+  } catch {
+    // Missing, malformed or unreadable receipts never authorize deleting someone else's files.
+    return false;
+  }
 }
 
 /** Do not follow venv interpreter symlinks into the host Python while changing permissions. */
@@ -264,40 +316,42 @@ export async function installDocumentToolkit(
       ],
       { env }
     );
-    const smoke = join(TOOLKIT_ASSETS, 'smoke.py');
-    const stagedSmoke = join(temp, 'smoke.py');
-    cpSync(smoke, stagedSmoke);
-    const deniedReadPaths = [
-      home,
-      ...credentialReadPaths(join(home, '.mama')),
-      ...(options.memberRoot ? [options.memberRoot] : []),
-    ];
-    const pptx = join(temp, 'smoke.pptx');
-    const smokeCommand = (args: string[]) =>
-      sandboxedCommand({
-        command: versionPython,
-        args: ['-I', stagedSmoke, ...args],
-        temp: temp!,
-        output: temp!,
+    // Libraries remain installable elsewhere; rendering requires the macOS host sandbox.
+    if (platform === 'darwin') {
+      const stagedSmoke = join(temp, 'smoke.py');
+      cpSync(join(TOOLKIT_ASSETS, 'smoke.py'), stagedSmoke);
+      const deniedReadPaths = [
+        home,
+        ...credentialReadPaths(join(home, '.mama')),
+        ...(options.memberRoot ? [options.memberRoot] : []),
+      ];
+      const pptx = join(temp, 'smoke.pptx');
+      const smokeCommand = (args: string[]) =>
+        sandboxedCommand({
+          command: versionPython,
+          args: ['-I', stagedSmoke, ...args],
+          temp: temp!,
+          output: temp!,
+          env,
+          deniedReadPaths,
+          platform,
+          timeoutMs: 30_000,
+          run,
+        });
+      await smokeCommand(['create', pptx]);
+      await renderOffice({
+        soffice,
+        input: pptx,
+        output: temp,
+        temp,
         env,
         deniedReadPaths,
         platform,
         timeoutMs: 30_000,
         run,
       });
-    await smokeCommand(['create', pptx]);
-    await renderOffice({
-      soffice,
-      input: pptx,
-      output: temp,
-      temp,
-      env,
-      deniedReadPaths,
-      platform,
-      timeoutMs: 30_000,
-      run,
-    });
-    await smokeCommand(['check', join(temp, 'smoke.pdf')]);
+      await smokeCommand(['check', join(temp, 'smoke.pdf')]);
+    }
     writeFileSync(
       join(versionDir, 'manifest.json'),
       JSON.stringify(
@@ -335,8 +389,13 @@ export async function installDocumentToolkit(
           path !== versionDir &&
           path !== previous &&
           !leases.some((lease) => lease.startsWith(`${entry.name}.`))
-        )
-          removeVersion(path);
+        ) {
+          if (isManagedVersion(path, entry.name)) removeVersion(path);
+          else
+            (options.write ?? console.log)(
+              `Document toolkit: left ${path} untouched; it is not a managed toolkit version.`
+            );
+        }
       }
       // Publication is the last install operation: even pruning must succeed before switching.
       symlinkSync(basename(versionDir), link);

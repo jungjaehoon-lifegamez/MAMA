@@ -2,12 +2,11 @@ import type { JudgmentAccess } from '@jungjaehoon/mama-core';
 import { memberSystemLayers } from './member-system-prompt.js';
 import { backendEnvironment, credentialReadPaths, normalizeReadPaths } from './backend-security.js';
 import { memberClaudeTmpDir } from './member-paths.js';
-import { assertToolsReadable } from './tools-paths.js';
-import { readDocumentToolkit } from '../tools/toolkit-state.js';
+import { assertToolsOwnership, assertToolsReadable } from './tools-paths.js';
 import { findExecutable } from '../cli/launch-files.js';
 import { untrustedToolData } from '../utils/untrusted-content.js';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type {
   ActionCall,
@@ -218,9 +217,10 @@ function driverOptions(
   bridge: NativeDriverOptions['createSubagentBridge'],
   webTools: boolean
 ): NativeDriverOptions {
-  const toolkit = readDocumentToolkit(options.toolsRoot);
+  if (options.toolsRoot) assertToolsOwnership(options.toolsRoot);
+  // Pin the stable path once the host owns the root; installation can fill it later.
   const path =
-    toolkit && options.toolsRoot
+    options.toolsRoot && existsSync(options.toolsRoot)
       ? `${join(options.toolsRoot, 'current', 'bin')}:${process.env.PATH ?? ''}`
       : process.env.PATH;
   const configDir = options.claudeConfigDir;

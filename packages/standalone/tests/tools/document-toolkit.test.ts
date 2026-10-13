@@ -52,6 +52,7 @@ function fakeHost(fail?: string, fonts = true) {
     if (fail && label.includes(fail)) throw new Error('fixture command failure');
     if (label.includes('sys.base_prefix')) return { stdout: '/fixture/python\n', stderr: '' };
     if (label.includes('sys.version_info')) return { stdout: '3.14.0\n', stderr: '' };
+    if (args.includes('--version')) return { stdout: 'LibreOffice 26.2\n', stderr: '' };
     if (args[0] === '-m' && args[1] === 'venv') {
       const version = args[2]!;
       mkdirSync(join(version, 'bin'), { recursive: true });
@@ -185,6 +186,53 @@ describe('host document toolkit installer', () => {
     expect(existsSync(first.versionDir)).toBe(false);
     expect(readdirSync(tools).some((name) => name.startsWith('.current-'))).toBe(false);
   });
+
+  it('leaves unrelated v-other data untouched and reports the preserved directory', async () => {
+    const unrelated = join(tools, 'v-other');
+    mkdirSync(unrelated, { recursive: true });
+    writeFileSync(join(unrelated, 'keep.txt'), 'unrelated data');
+    const output: string[] = [];
+    await installDocumentToolkit({
+      toolsRoot: tools,
+      home,
+      platform: 'darwin',
+      run: fakeHost().run,
+      locate: (name) => `/fixture/${name}`,
+      write: (line) => output.push(line),
+    });
+    expect(readFileSync(join(unrelated, 'keep.txt'), 'utf8')).toBe('unrelated data');
+    expect(
+      output.some((line) => line.includes(unrelated) && /left|preserv|untouched/i.test(line))
+    ).toBe(true);
+  });
+
+  it.each(['missing', 'malformed', 'partial', 'symlink', 'wrong-name'])(
+    'preserves a directory without a managed version name and valid manifest (%s)',
+    async (kind) => {
+      const installed = await install(fakeHost().run);
+      const unrelated = join(
+        tools,
+        kind === 'wrong-name' ? 'v-other' : 'v-1234567890123-00000000-0000-4000-8000-000000000000'
+      );
+      mkdirSync(unrelated);
+      writeFileSync(join(unrelated, 'keep.txt'), 'unrelated data');
+      const manifest = join(unrelated, 'manifest.json');
+      if (kind === 'malformed') writeFileSync(manifest, '{');
+      if (kind === 'partial')
+        writeFileSync(manifest, JSON.stringify({ version: 1, soffice: '/fixture/soffice' }));
+      if (kind === 'symlink') symlinkSync(join(installed.versionDir, 'manifest.json'), manifest);
+      if (kind === 'wrong-name') cpSync(join(installed.versionDir, 'manifest.json'), manifest);
+      await installDocumentToolkit({
+        toolsRoot: tools,
+        home,
+        platform: 'darwin',
+        run: fakeHost().run,
+        locate: (name) => `/fixture/${name}`,
+        write: () => {},
+      });
+      expect(readFileSync(join(unrelated, 'keep.txt'), 'utf8')).toBe('unrelated data');
+    }
+  );
 
   it('keeps relative app-bundle symlinks in the immutable renderer snapshot', async () => {
     const host = fakeHost();
@@ -366,6 +414,32 @@ describe('host document toolkit installer', () => {
         locate: () => undefined,
       })
     ).rejects.toThrow(/soffice.*PATH/);
+  });
+
+  it('installs the libraries on Linux without running an unsandboxed renderer', async () => {
+    mkdirSync(join(tools, 'fonts'), { recursive: true });
+    for (const family of ['Sans', 'Serif'])
+      writeFileSync(join(tools, 'fonts', `Noto${family}CJK.ttc`), 'fixture font');
+    const host = fakeHost();
+    const result = await installDocumentToolkit({
+      toolsRoot: tools,
+      home,
+      platform: 'linux',
+      run: host.run,
+      locate: (name) => {
+        if (name === 'soffice') {
+          writeFileSync(join(tools, 'soffice'), 'fixture office');
+          return join(tools, 'soffice');
+        }
+        return `/fixture/${name}`;
+      },
+    });
+    expect(readDocumentToolkit(tools)?.versionDir).toBe(result.versionDir);
+    expect(host.calls.some((call) => call.args.includes('--require-hashes'))).toBe(true);
+    expect(host.calls.some((call) => call.args.includes('--convert-to'))).toBe(false);
+    expect(host.calls.some((call) => call.args.some((arg) => arg.endsWith('rasterize.py')))).toBe(
+      false
+    );
   });
 
   it('treats an absent toolkit as unavailable', () => {

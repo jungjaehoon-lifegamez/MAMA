@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   existsSync,
   mkdirSync,
@@ -12,7 +12,7 @@ import {
   chmodSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
@@ -27,6 +27,20 @@ import { SessionPool } from '@jungjaehoon/mama-core/runtime/session-pool';
 import { createActionSurface } from '../../src/runtime/action-surface.js';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
 import { createNativeSession, type NativeDriverOptions } from '../../src/runtime/native-session.js';
+
+let hostBin: string;
+const originalPath = process.env.PATH;
+beforeAll(() => {
+  hostBin = mkdtempSync(join(tmpdir(), 'native-session-host-bin-'));
+  for (const backend of ['claude', 'codex'])
+    writeFileSync(join(hostBin, backend), '#!/bin/sh\nexit 99\n', { mode: 0o755 });
+  process.env.PATH = `${hostBin}${delimiter}${originalPath ?? ''}`;
+});
+afterAll(() => {
+  if (originalPath === undefined) delete process.env.PATH;
+  else process.env.PATH = originalPath;
+  rmSync(hostBin, { recursive: true, force: true });
+});
 
 function surface() {
   return createActionSurface({
@@ -453,8 +467,8 @@ describe('managed document toolkit session PATH', () => {
             return runner(backend);
           },
         });
-        expect(driver.processEnv.PATH).toBe(process.env.PATH);
-        if (backend === 'codex') expect(driver.shellEnvironment?.PATH).toBe(process.env.PATH);
+        expect(driver.processEnv.PATH?.split(delimiter)[0]).toBe(join(toolsRoot, 'current', 'bin'));
+        if (backend === 'codex') expect(driver.shellEnvironment?.PATH).toBe(driver.processEnv.PATH);
         await broken.stop();
         chmodSync(toolsRoot, 0o777);
         expect(() =>
@@ -492,6 +506,65 @@ describe('managed document toolkit session PATH', () => {
       }
     }
   );
+
+  it.each([
+    ['claude', 'missing-root'],
+    ['claude', 'missing-current'],
+    ['claude', 'dangling-current'],
+    ['claude', 'broken-manifest'],
+    ['codex', 'missing-root'],
+    ['codex', 'missing-current'],
+    ['codex', 'dangling-current'],
+    ['codex', 'broken-manifest'],
+  ] as const)('keeps a stable session PATH for %s with %s', async (backend, state) => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'toolkit-pending-')));
+    const toolsRoot = join(root, 'tools');
+    let driver!: NativeDriverOptions;
+    const pool = new SessionPool({ cleanupInterval: 0 });
+    if (state !== 'missing-root') mkdirSync(toolsRoot);
+    if (state === 'dangling-current') symlinkSync('v-missing', join(toolsRoot, 'current'));
+    if (state === 'broken-manifest') {
+      mkdirSync(join(toolsRoot, 'v-broken'));
+      writeFileSync(join(toolsRoot, 'v-broken', 'manifest.json'), '{');
+      symlinkSync('v-broken', join(toolsRoot, 'current'));
+    }
+    try {
+      const session = createNativeSession({
+        backend,
+        model: 'fixture',
+        workspaceDir: join(root, 'workspace'),
+        runtimeRoot: join(root, 'runtime'),
+        toolsRoot,
+        actionSurface: surface(),
+        sessionPool: pool,
+        timeout: 1000,
+        maxTurns: 1,
+        createAgent: (options) => {
+          driver = options;
+          return runner(backend);
+        },
+      });
+      const expected =
+        state === 'missing-root'
+          ? process.env.PATH
+          : `${join(toolsRoot, 'current', 'bin')}${delimiter}${process.env.PATH}`;
+      expect(driver.processEnv.PATH).toBe(expected);
+      expect(driver.command).toBe(join(hostBin, backend));
+      if (backend === 'codex') expect(driver.shellEnvironment?.PATH).toBe(expected);
+      if (state === 'missing-current') {
+        mkdirSync(join(toolsRoot, 'v-installed', 'bin'), { recursive: true });
+        writeFileSync(join(toolsRoot, 'v-installed', 'bin', 'python3'), 'new toolkit');
+        symlinkSync('v-installed', join(toolsRoot, 'current'));
+        expect(
+          readFileSync(join(driver.processEnv.PATH!.split(delimiter)[0]!, 'python3'), 'utf8')
+        ).toBe('new toolkit');
+      }
+      await session.stop();
+    } finally {
+      pool.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('one owner native session', () => {

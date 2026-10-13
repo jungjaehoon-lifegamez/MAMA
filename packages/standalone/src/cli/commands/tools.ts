@@ -1,10 +1,11 @@
-import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import * as yaml from 'js-yaml';
 import { loadConfig, parseConfig, type W1Config } from '../../runtime/config.js';
 import { installDocumentToolkit } from '../../tools/document-toolkit.js';
+import { onToolkitSignal } from '../../tools/toolkit-process.js';
 import { CliInputError } from '../prompt.js';
 
 /** macOS keeps a Shared folder beside the home folders, readable by every session. */
@@ -37,13 +38,23 @@ export async function runTools(
       'Set tools_root to a writable directory outside HOME in config.yaml, then run mama tools install on the host'
     );
   const next = parseConfig({ ...config, tools_root: root }, { home });
+  const needsRestart = config.tools_root === undefined || !existsSync(root);
+  const unregister = onToolkitSignal(() => {}, { exit: true });
   try {
     if (options.install) await options.install(next);
-    else await installDocumentToolkit({ toolsRoot: root, memberRoot: config.member_root, home });
+    else
+      await installDocumentToolkit({
+        toolsRoot: root,
+        memberRoot: config.member_root,
+        home,
+        write: options.write,
+      });
   } catch (error) {
     throw new CliInputError(
       `Document toolkit install failed; run mama tools install on the host. ${error instanceof Error ? error.message : ''}`
     );
+  } finally {
+    unregister();
   }
   if (config.tools_root === undefined) {
     // Append one key so the owner's comments and layout survive. Initial enrollment of
@@ -73,8 +84,8 @@ export async function runTools(
     }
   }
   (options.write ?? console.log)(
-    config.tools_root === undefined
-      ? 'Document toolkit installed. Restart the daemon once to load tools_root.'
+    needsRestart
+      ? 'Document toolkit installed. Restart the daemon once to load the tools_root PATH.'
       : 'Document toolkit installed; existing sessions use the updated current PATH.'
   );
 }

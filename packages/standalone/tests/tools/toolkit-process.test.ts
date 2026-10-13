@@ -49,12 +49,14 @@ it('stores the owner PID, names live leases and recovers dead locks', () => {
 });
 
 it.each([
-  ['SIGINT', 130],
-  ['SIGHUP', 129],
-  ['SIGTERM', 143],
+  ['cli', 'SIGINT', 130],
+  ['cli', 'SIGHUP', 129],
+  ['cli', 'SIGTERM', 143],
+  ['daemon', 'SIGINT', 0],
+  ['daemon', 'SIGTERM', 0],
 ] as const)(
-  'on %s kills the command group and releases install/state locks and leases',
-  async (signal, code) => {
+  '%s on %s kills children and releases locks/leases while preserving its exit policy',
+  async (mode, signal, code) => {
     // Compile only these host helpers, then run Node fixtures. No backend or installer CLI runs.
     for (const name of ['toolkit-process', 'command-runner']) {
       const source = readFileSync(join(__dirname, '../../src/tools', `${name}.ts`), 'utf8');
@@ -78,6 +80,13 @@ it.each([
         `
       const {tryToolkitLock, onToolkitSignal} = require(${JSON.stringify(join(root, 'toolkit-process.js'))});
       const {runCommand} = require(${JSON.stringify(join(root, 'command-runner.js'))});
+      if (${JSON.stringify(mode)} === 'cli') onToolkitSignal(() => {}, {exit: true});
+      else process.once(${JSON.stringify(signal)}, () => {
+        setTimeout(() => {
+          require('node:fs').writeFileSync(${JSON.stringify(join(root, 'graceful-stop'))}, 'finished');
+          process.exit(0);
+        }, 80);
+      });
       tryToolkitLock(${JSON.stringify(installLock)});
       tryToolkitLock(${JSON.stringify(stateLock)});
       require('node:fs').writeFileSync(${JSON.stringify(lease)}, String(process.pid));
@@ -100,6 +109,7 @@ it.each([
     try {
       parent.kill(signal);
       expect(await exited).toBe(code);
+      expect(existsSync(join(root, 'graceful-stop'))).toBe(mode === 'daemon');
       for (const path of [installLock, stateLock, lease]) expect(existsSync(path)).toBe(false);
       // A grandchild may briefly remain a zombie; a stopped heartbeat proves it cannot run.
       const afterExit = readFileSync(heartbeat, 'utf8');

@@ -13,28 +13,31 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
 const signals = { SIGINT: 130, SIGHUP: 129, SIGTERM: 143 } as const;
-const cleanups = new Set<() => void>();
+const cleanups = new Map<() => void, boolean>();
 const handlers = new Map<NodeJS.Signals, () => void>();
 
 /** Kill command groups before releasing their locks, even when no finally can run. */
-export function onToolkitSignal(cleanup: () => void): () => void {
+export function onToolkitSignal(cleanup: () => void, options: { exit?: boolean } = {}): () => void {
   if (!cleanups.size) {
     for (const [signal, code] of Object.entries(signals)) {
       const handler = () => {
-        for (const release of [...cleanups].reverse()) {
+        let exit = false;
+        for (const [release, exitOnSignal] of [...cleanups].reverse()) {
+          exit ||= exitOnSignal;
           try {
             release();
           } catch (error) {
             process.stderr.write(`Document toolkit cleanup failed: ${String(error)}\n`);
           }
         }
-        process.exit(code);
+        // Daemon shutdown owns its async stop. Only the host install CLI requests exit.
+        if (exit) process.exit(code);
       };
       handlers.set(signal as NodeJS.Signals, handler);
       process.on(signal, handler);
     }
   }
-  cleanups.add(cleanup);
+  cleanups.set(cleanup, options.exit === true);
   return () => {
     cleanups.delete(cleanup);
     if (!cleanups.size) {

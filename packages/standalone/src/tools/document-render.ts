@@ -20,7 +20,12 @@ import {
   OWNER_FILE_MAX_UPLOAD_BYTES,
 } from '../api/file-delivery.js';
 import { runCommand, type CommandRunner } from './command-runner.js';
-import { renderEnvironment, renderOffice, sandboxedCommand } from './office-render.js';
+import {
+  requireOfficeSandbox,
+  renderEnvironment,
+  renderOffice,
+  sandboxedCommand,
+} from './office-render.js';
 import { leaseDocumentToolkit, TOOLKIT_ASSETS } from './toolkit-state.js';
 
 export { officeSandboxProfile } from './office-render.js';
@@ -89,6 +94,7 @@ function publishFile(temp: string, output: string, name: string): void {
 
 export function createDocumentRenderer(options: DocumentRenderOptions) {
   const perform = async (workspace: string, input: string): Promise<DocumentRenderResult> => {
+    requireOfficeSandbox(options.platform);
     const lease = await leaseDocumentToolkit(options.toolsRoot);
     const toolkit = lease.toolkit;
     let fd: number | undefined;

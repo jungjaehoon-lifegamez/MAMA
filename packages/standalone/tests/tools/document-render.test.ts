@@ -112,6 +112,7 @@ describe('host document renderer', () => {
     expect(existsSync(join(workspace, result.pdf))).toBe(true);
     expect(existsSync(join(workspace, result.pages[0]!))).toBe(true);
     expect(host.calls[0]!.command).toBe('/usr/bin/sandbox-exec');
+    expect(host.calls.every((call) => call.command === '/usr/bin/sandbox-exec')).toBe(true);
     const profileText = host.calls[0]!.args[1]!;
     expect(profileText).toContain('(deny network*)');
     expect(profileText).toContain('(allow network-bind network-inbound (local unix-socket))');
@@ -128,7 +129,7 @@ describe('host document renderer', () => {
     const result = await createDocumentRenderer({
       toolsRoot: tools,
       run: host.run,
-      platform: 'linux',
+      platform: 'darwin',
     }).render(workspace, 'original.pdf');
     expect(result.pdf).toBe('original.pdf');
     expect(host.calls).toHaveLength(1);
@@ -136,9 +137,38 @@ describe('host document renderer', () => {
     expect(readFileSync(join(workspace, result.pdf), 'utf8')).toBe('original pdf bytes');
   });
 
+  it.each([
+    ['linux', 'draft.docx'],
+    ['linux', 'original.pdf'],
+    ['win32', 'draft.docx'],
+    ['win32', 'original.pdf'],
+  ] as const)(
+    'refuses rendering on %s for %s before running any subprocess',
+    async (platform, input) => {
+      const host = fakeRenderer();
+      writeFileSync(join(workspace, input), 'fixture document');
+      await expect(
+        createDocumentRenderer({
+          toolsRoot: tools,
+          run: host.run,
+          platform,
+        }).render(workspace, input)
+      ).rejects.toThrow(/sandbox-exec.*read.*network/i);
+      expect(host.calls).toHaveLength(0);
+      expect(readdirSync(workspace)).toEqual([input]);
+      expect(existsSync(join(tools, '.leases'))).toBe(false);
+      expect(existsSync(join(tools, '.state-lock'))).toBe(false);
+    }
+  );
+
   it('refuses escapes, symlinks, nonregular files, unsupported extensions and oversized files', async () => {
     const host = fakeRenderer();
-    const render = createDocumentRenderer({ toolsRoot: tools, run: host.run, maxBytes: 20 });
+    const render = createDocumentRenderer({
+      toolsRoot: tools,
+      run: host.run,
+      maxBytes: 20,
+      platform: 'darwin',
+    });
     writeFileSync(join(root, 'outside.docx'), 'fixture');
     symlinkSync(join(root, 'outside.docx'), join(workspace, 'link.docx'));
     mkdirSync(join(workspace, 'nested'));
@@ -160,9 +190,9 @@ describe('host document renderer', () => {
   });
 
   it('refuses an absent toolkit with the host install command', async () => {
-    await expect(createDocumentRenderer({}).render(workspace, 'draft.pptx')).rejects.toThrow(
-      /mama tools install/
-    );
+    await expect(
+      createDocumentRenderer({ platform: 'darwin' }).render(workspace, 'draft.pptx')
+    ).rejects.toThrow(/mama tools install/);
   });
 
   it('serializes calls and continues after a timeout', async () => {
@@ -184,10 +214,10 @@ describe('host document renderer', () => {
       }
       return host.run(command, args, options);
     };
-    const renderer = createDocumentRenderer({ toolsRoot: tools, run, platform: 'linux' });
+    const renderer = createDocumentRenderer({ toolsRoot: tools, run, platform: 'darwin' });
     const a = renderer.render(workspace, 'draft.docx');
     const rejected = expect(a).rejects.toThrow(/timed out/);
-    const b = createDocumentRenderer({ toolsRoot: tools, run, platform: 'linux' }).render(
+    const b = createDocumentRenderer({ toolsRoot: tools, run, platform: 'darwin' }).render(
       workspace,
       'draft.docx'
     );
@@ -228,7 +258,7 @@ describe('host document renderer', () => {
         return result;
       };
       await expect(
-        createDocumentRenderer({ toolsRoot: tools, run, platform: 'linux' }).render(
+        createDocumentRenderer({ toolsRoot: tools, run, platform: 'darwin' }).render(
           workspace,
           'draft.docx'
         )
@@ -296,7 +326,7 @@ describe('host document renderer', () => {
         return { workspaceDir: personal };
       },
       run: host.run,
-      platform: 'linux',
+      platform: 'darwin',
     });
     const result = (await action!.exec({ path: 'mine.docx' }, {
       access: { principalId: 'person' },

@@ -33,6 +33,7 @@ afterEach(() => {
 });
 
 it('updates on the host without stopping the daemon or rewriting an existing tools_root', async () => {
+  mkdirSync(join(root, 'tools'));
   const before = readFileSync(configPath, 'utf8');
   const install = vi.fn(async (config) => {
     expect(config.tools_root).toBe(join(root, 'tools'));
@@ -42,7 +43,21 @@ it('updates on the host without stopping the daemon or rewriting an existing too
   expect(install).toHaveBeenCalledOnce();
   expect(readFileSync(configPath, 'utf8')).toBe(before);
   expect(write).toHaveBeenCalledWith(expect.stringContaining('installed'));
+  expect(write).toHaveBeenCalledWith(expect.stringContaining('existing sessions'));
   expect(loadConfig({ home, path: configPath }).tools_root).toBe(join(root, 'tools'));
+});
+
+it('asks for a restart when the configured tools_root did not exist before installation', async () => {
+  const write = vi.fn();
+  await runTools(['install'], {
+    home,
+    configPath,
+    install: async () => {
+      mkdirSync(join(root, 'tools'));
+    },
+    write,
+  });
+  expect(write).toHaveBeenCalledWith(expect.stringContaining('Restart'));
 });
 
 it('preserves config on failure and prints the retry command', async () => {
@@ -118,3 +133,26 @@ it('requires an explicit tools_root on Linux without invoking installation', asy
   ).rejects.toThrow(/tools_root.*mama tools install/);
   expect(install).not.toHaveBeenCalled();
 });
+
+it.each([
+  ['SIGINT', 130],
+  ['SIGTERM', 143],
+] as const)(
+  'the tools install CLI exits on %s and removes its handler after installation',
+  async (signal, code) => {
+    const before = process.listeners(signal);
+    const exit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    await runTools(['install'], {
+      home,
+      configPath,
+      install: async () => {
+        const handlers = process.listeners(signal).filter((handler) => !before.includes(handler));
+        expect(handlers).toHaveLength(1);
+        for (const handler of handlers) handler();
+      },
+      write: () => {},
+    });
+    expect(exit).toHaveBeenCalledWith(code);
+    expect(process.listeners(signal)).toEqual(before);
+  }
+);

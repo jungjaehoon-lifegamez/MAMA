@@ -4,6 +4,13 @@ import { pathToFileURL } from 'node:url';
 import { backendEnvironment, normalizeReadPaths } from '../runtime/backend-security.js';
 import { runCommand, type CommandRunner } from './command-runner.js';
 
+export function requireOfficeSandbox(platform: NodeJS.Platform = process.platform): void {
+  if (platform !== 'darwin')
+    throw new Error(
+      `document.render requires macOS sandbox-exec to enforce read denies and the network deny; rendering is unavailable on ${platform}`
+    );
+}
+
 /** Office needs an AF_UNIX bind in /tmp; that grants no outbound network. */
 export function officeSandboxProfile(
   temp: string,
@@ -61,23 +68,18 @@ export async function sandboxedCommand(options: {
   timeoutMs: number;
   run?: CommandRunner;
 }): ReturnType<CommandRunner> {
+  requireOfficeSandbox(options.platform);
   const run = options.run ?? runCommand;
-  return (options.platform ?? process.platform) === 'darwin'
-    ? run(
-        '/usr/bin/sandbox-exec',
-        [
-          '-p',
-          officeSandboxProfile(options.temp, options.output, options.deniedReadPaths),
-          options.command,
-          ...options.args,
-        ],
-        { env: options.env, cwd: options.temp, timeoutMs: options.timeoutMs }
-      )
-    : run(options.command, options.args, {
-        env: options.env,
-        cwd: options.temp,
-        timeoutMs: options.timeoutMs,
-      });
+  return run(
+    '/usr/bin/sandbox-exec',
+    [
+      '-p',
+      officeSandboxProfile(options.temp, options.output, options.deniedReadPaths),
+      options.command,
+      ...options.args,
+    ],
+    { env: options.env, cwd: options.temp, timeoutMs: options.timeoutMs }
+  );
 }
 
 export async function renderOffice(options: {
