@@ -108,6 +108,7 @@ function standingPrompt(
 /** When each procedure applies: the standing prompt lists these; help({topic}) returns the text. */
 function helpTopicWhen(wikiEnabled: boolean): Record<string, string> {
   return {
+    skills: 'saving, reading or publishing a personal or common skill',
     'full-report':
       'the owner asks for the full report in any words, or a [scheduled_full_report] order',
     record: 'recording or revising work, its people and its evidence',
@@ -138,6 +139,8 @@ export function ownerHelpTopics(
   const readers =
     'Board sections are read by people: who, when, what changed, what is awaited next, in sentences a reader understands alone, with no ids in their text.';
   return {
+    skills:
+      'Skills are workflow records (personal in a DM, common in this channel) or skills/<name>/SKILL.md with scripts/templates in your workspace; skill.list lists personal and read-only common skills, and skill.read gives the steps and file paths. Save a workflow with memory.save kind=workflow (appliesWhen, steps, evidenceChecks), or write a folder with SKILL.md frontmatter name and description; run scripts in your workspace, and publish/remove common file skills with skill.publish/skill.unpublish only in a common-channel message from an owner.',
     'full-report': [
       'Full report — when the owner asks for it in any words, or a [scheduled_full_report] order arrives:',
       '1. The ledger is the record: the report is what changed since the previous report on top of it. Find the items whose events happened since then with work.list eventSince, the deadlines and the calendar ahead, and open originals only for a change the ledger does not explain; an item written since then about earlier events is a late recording, so name it as one and never as a change of this period. Never leave an item vaguely unconfirmed: settle what the ledger shows (done, cancelled or continuing) and record it; for an item it cannot settle, say what is missing and who can settle it. Tell an empty result from failed or stale collection.',

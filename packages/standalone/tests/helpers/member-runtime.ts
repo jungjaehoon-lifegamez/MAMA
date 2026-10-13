@@ -44,7 +44,8 @@ export async function fixture(
     loaded: true,
   }),
   onStimulusFailed?: OwnerRuntimeOptions['onStimulusFailed'],
-  connectors: string[] = []
+  connectors: string[] = [],
+  toolsRoot?: string
 ) {
   // Only the unavailable socket listener is replaced; dispatcher, sessions and stores are real.
   vi.spyOn(ipc, 'createActionIpcServer').mockImplementation(async (_: ActionIpcServerOptions) => ({
@@ -53,6 +54,20 @@ export async function fixture(
   const home = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'lifecycle-home-')));
   const root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'lifecycle-members-')));
   roots.push(home, root);
+  if (toolsRoot)
+    close.push(async () => {
+      const writable = (path: string) => {
+        if (
+          !fs.existsSync(path) ||
+          !fs.lstatSync(path).isDirectory() ||
+          fs.lstatSync(path).isSymbolicLink()
+        )
+          return;
+        fs.chmodSync(path, 0o700);
+        for (const name of fs.readdirSync(path)) writable(join(path, name));
+      };
+      writable(toolsRoot);
+    });
   vi.stubEnv('HOME', home);
   vi.stubEnv('MAMA_DB_PATH', join(home, 'state.db'));
   // Fixture records need no vector: partition reads and session resets use real storage/actions.
@@ -122,6 +137,7 @@ export async function fixture(
   let runtime: Awaited<ReturnType<typeof createOwnerRuntime>>;
   let memberResponse = 'fixture answer';
   const runtimeOptions: OwnerRuntimeOptions = {
+    toolsRoot,
     backend,
     model: 'fixture',
     databasePath: join(home, 'state.db'),

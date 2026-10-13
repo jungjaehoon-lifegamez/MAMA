@@ -126,6 +126,8 @@ export interface StimulusDeliveryOptions {
   ownerMessageSenderActive?: (principalId: string) => boolean;
   /** Top lessons for a turn's text, most relevant first. */
   lessons?: (text: string) => Promise<readonly TurnLesson[]>;
+  /** A session-start skill inventory; subsequent turns get only set changes. */
+  skills?: (isNewSession: boolean, stateless: boolean, sessionKey: string) => Promise<string>;
   recordOrders?: RecordOrderPort;
   readResult?: (row: MailboxRow) => NativeTurnResultRecord | null;
   onUncertain?: StimulusDelivery['onUncertain'];
@@ -688,8 +690,14 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
       shownDay = day;
     }
     if (query === null || query.trim() === '' || !options.lessons) return [];
+    let repeatedWorkflow = false;
     const fresh = (await options.lessons(query))
-      .filter((lesson) => !shownLessons.has(lesson.id))
+      .filter((lesson) => {
+        if (!shownLessons.has(lesson.id)) return true;
+        if (lesson.skillId === undefined || repeatedWorkflow) return false;
+        repeatedWorkflow = true;
+        return true;
+      })
       .slice(0, 3);
     for (const lesson of fresh) shownLessons.add(lesson.id);
     return fresh;
@@ -759,17 +767,24 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
         const text = (blocks: readonly string[]): ContentBlock[] => [
           { type: 'text', text: blocks.filter((block) => block !== '').join('\n\n') },
         ];
+        const sessionKey =
+          (personalNoticePayload(row) && options.member
+            ? personalNoticeSessionKey(row)
+            : undefined) ??
+          (personalJobPayload(row) && options.member
+            ? personalJobSessionKey(row.principalId, personalJobPayload(row)!.jobId)
+            : undefined) ??
+          options.member?.sessionKey ??
+          (replaySourceEndMs === undefined ? OWNER_RUNTIME_SESSION_KEY : OWNER_REPLAY_SESSION_KEY);
         const result = await context.run(text([plan.render([], new Date())]), {
           onModelRunStarted: (id: string) => {
             modelRunId = id;
           },
           prepareSessionContent: async ({ isNewSession }) => {
-            const lessons = await pickLessons(
-              plan.lessonQuery,
-              isNewSession,
+            const stateless =
               options.member !== undefined &&
-                (personalJobPayload(row) !== null || personalNoticePayload(row) !== null)
-            );
+              (personalJobPayload(row) !== null || personalNoticePayload(row) !== null);
+            const lessons = await pickLessons(plan.lessonQuery, isNewSession, stateless);
             const start = isNewSession
               ? sessionStartBlock(
                   (await options.sessionStart?.(row)) ?? { exchanges: [], decisions: [] },
@@ -783,19 +798,10 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
                   options.member?.voice
                 )
               : '';
-            return text([start, plan.render(lessons, new Date())]);
+            const skills = (await options.skills?.(isNewSession, stateless, sessionKey)) ?? '';
+            return text([start, skills, plan.render(lessons, new Date())]);
           },
-          sessionKey:
-            (personalNoticePayload(row) && options.member
-              ? personalNoticeSessionKey(row)
-              : undefined) ??
-            (personalJobPayload(row) && options.member
-              ? personalJobSessionKey(row.principalId, personalJobPayload(row)!.jobId)
-              : undefined) ??
-            options.member?.sessionKey ??
-            (replaySourceEndMs === undefined
-              ? OWNER_RUNTIME_SESSION_KEY
-              : OWNER_REPLAY_SESSION_KEY),
+          sessionKey,
           source: row.kind,
           channelId: row.channelKey,
           sourceMessageRef: row.stimulusId,

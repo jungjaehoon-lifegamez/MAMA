@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import { basename, dirname, join } from 'node:path';
@@ -36,7 +37,7 @@ const data = (r: ActionResult): FixtureData => {
   expect(r.status, JSON.stringify(r)).toBe('completed');
   return (r as { data: FixtureData }).data;
 };
-async function setup() {
+async function setup(toolsRoot?: string) {
   const uploads: Array<{ bytes: Buffer; principal: string; operationId: string; path?: string }> =
     [];
   const receipts: Array<{ text: string; principal: string; operationId: string }> = [];
@@ -61,7 +62,18 @@ async function setup() {
       ),
     retireMemberJobText: () => {},
   };
-  const f = await fixture('codex', true, false, 'UTC', telegram, `fixture-member-${randomUUID()}`);
+  const f = await fixture(
+    'codex',
+    true,
+    false,
+    'UTC',
+    telegram,
+    `fixture-member-${randomUUID()}`,
+    undefined,
+    undefined,
+    [],
+    toolsRoot
+  );
   const paths = memberPaths(f.root, f.member);
   const put = (path: string, text = 'fixture bytes') => {
     fs.mkdirSync(dirname(path), { recursive: true });
@@ -259,6 +271,81 @@ it('exports core and product rows and regular files, excluding credentials and p
   expect(Object.values(zip).some((bytes) => strFromU8(bytes).includes('fixture credential'))).toBe(
     false
   );
+});
+
+it('P9 exports and erases personal workflow and file skills while keeping common skills', async () => {
+  const tools = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'fixture-p9-skill-tools-')));
+  roots.push(tools);
+  fs.writeFileSync(join(tools, '.mama-document-toolkit'), 'mama-document-toolkit-v1\n');
+  const f = await setup(tools);
+  const skill = {
+    topic: 'fixture-personal-skill',
+    kind: 'workflow',
+    summary: 'Personal fixture procedure',
+    details: 'PERSONAL_SKILL_CONTENT',
+    appliesWhen: 'When making a fixture',
+    steps: ['Write the fixture'],
+    evidenceChecks: ['Read it back'],
+    source: { package: 'fixture', source_type: 'fixture' },
+  };
+  const saved = data((await f.act('memory.save', skill)).result).id;
+  const commonTurn = f.message('owner', 'Save common fixture skill', f.managingOwner, {
+    action: 'memory.save',
+    input: { ...skill, topic: 'fixture-common-skill', details: 'COMMON_SKILL_CONTENT' },
+  });
+  await f.settled(commonTurn);
+  const common = data(f.resultFor(commonTurn)!).id;
+  const commonFile = join(f.home, 'workspace', 'skills', 'fixture-common-skill', 'SKILL.md');
+  f.put(
+    commonFile,
+    '---\nname: fixture-common-skill\ndescription: Common procedure\n---\nCOMMON_FILE_SKILL'
+  );
+  const publish = f.message('owner', 'Publish common file skill', f.managingOwner, {
+    action: 'skill.publish',
+    input: { name: 'fixture-common-skill' },
+  });
+  await f.settled(publish);
+  expect(f.resultFor(publish)).toMatchObject({ status: 'completed' });
+  const personalFile = join(f.paths.workspaceDir, 'skills', 'fixture-skill', 'SKILL.md');
+  f.put(
+    personalFile,
+    '---\nname: fixture-skill\ndescription: Fixture procedure\n---\nPERSONAL_FILE_SKILL'
+  );
+  f.put(
+    join(f.paths.workspaceDir, 'skills', 'fixture-skill', 'scripts', 'run.sh'),
+    'printf fixture > artifact.txt\n'
+  );
+  await runExport(f);
+  const archive = unzipSync(f.uploads.at(-1)!.bytes);
+  const exported = JSON.parse(strFromU8(archive['core.json']));
+  expect(
+    exported.stores.decisions.some(
+      (record: { id: string; kind: string }) => record.id === saved && record.kind === 'workflow'
+    )
+  ).toBe(true);
+  expect(JSON.stringify(exported.stores.decisions)).not.toContain('COMMON_SKILL_CONTENT');
+  expect(Object.keys(archive).join('\n')).not.toContain('fixture-common-skill');
+  expect(strFromU8(archive[`files/${f.member}/workspace/skills/fixture-skill/SKILL.md`])).toContain(
+    'PERSONAL_FILE_SKILL'
+  );
+  expect(archive[`files/${f.member}/workspace/skills/fixture-skill/scripts/run.sh`]).toBeDefined();
+  const preview = await f.preview();
+  await f.confirm(preview.confirmationToken);
+  expect((await f.finish()).status).toBe('erased');
+  expect(fs.existsSync(personalFile)).toBe(false);
+  expect(exportPrincipalRecords(f.runtime.database.adapter, f.member).stores.decisions).toEqual([]);
+  const read = await f.runtime.surface.hostToolCall(
+    'skill.read',
+    { id: common },
+    'fixture-common-read'
+  );
+  expect(read).toMatchObject({
+    status: 'completed',
+    data: { kind: 'workflow', details: 'COMMON_SKILL_CONTENT' },
+  });
+  expect(
+    fs.readFileSync(join(tools, 'skills', 'fixture-common-skill', 'SKILL.md'), 'utf8')
+  ).toContain('COMMON_FILE_SKILL');
 });
 
 it('exports an owner-role member own records and files without the common records it may read', async () => {

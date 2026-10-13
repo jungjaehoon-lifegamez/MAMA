@@ -1,4 +1,6 @@
 import type { MailboxRow } from '@jungjaehoon/mama-core/runtime/mailbox';
+import { createSkillStore, type SkillPaths, type SkillStore } from './skills.js';
+import { skillActionRegistrations } from '../api/skill-actions.js';
 import { memberNoticeRegistrations, type MemberNoticePorts } from '../api/member-notice-actions.js';
 import {
   createPersonalNoticeStore,
@@ -88,6 +90,10 @@ import {
 } from '../api/member-share-actions.js';
 
 const OWNER_ACTIONS = [
+  'skill.list',
+  'skill.read',
+  'skill.publish',
+  'skill.unpublish',
   'member.directory',
   'member.notice',
   'document.render',
@@ -138,6 +144,8 @@ const OWNER_ACTIONS = [
 
 /** The member role: Telegram file delivery honours the caller's DM. Exact catalog names only. */
 export const MEMBER_ACTIONS = [
+  'skill.list',
+  'skill.read',
   'document.render',
   ...PERSONAL_JOB_ACTIONS,
   'graph.query',
@@ -174,6 +182,7 @@ export interface HostToolDefinition {
 }
 
 export interface ActionSurfaceOptions {
+  skillPaths?: SkillPaths;
   runtimeRoot: string;
   adapter: DatabaseInstance;
   /** Native shell commands that open a network connection, reported as they start (W35). */
@@ -215,6 +224,7 @@ export interface ActionSurfaceOptions {
 }
 
 export interface ActionSurface {
+  skills: SkillStore;
   personalNotices: PersonalNoticeStore;
   readNoticeRef(ref: NoticeRef, access: JudgmentAccess): Promise<boolean>;
   personalJobs: PersonalJobStore;
@@ -274,6 +284,12 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     options.ownerPrincipalId,
     options.connectors ?? OWNER_CONNECTORS
   );
+  const skills = createSkillStore({
+    adapter: options.adapter,
+    commonPrincipalId: options.ownerPrincipalId,
+    commonScopes: () => defaultScopes,
+    paths: options.skillPaths,
+  });
   const core = coreActionRegistrations(options.knowledge, options.adapter, {
     // The owner's checkpoint saves stay unscoped. A member's hand-off is personal,
     // irrespective of its shared read grants.
@@ -467,6 +483,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     return record !== null && !isErasedRecord(record);
   };
   const registrations = [
+    ...skillActionRegistrations(skills, options),
     ...memberNoticeRegistrations({
       adapter: options.adapter,
       ownerPrincipalId: options.ownerPrincipalId,
@@ -676,6 +693,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
   };
 
   return {
+    skills,
     personalNotices,
     readNoticeRef,
     personalJobs,

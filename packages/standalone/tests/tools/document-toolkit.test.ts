@@ -27,6 +27,8 @@ import {
   withToolkitState,
 } from '../../src/tools/toolkit-state.js';
 import { onToolkitSignal } from '../../src/tools/toolkit-process.js';
+import { openCoreDatabase } from '../../src/runtime/core-db.js';
+import { createSkillStore } from '../../src/runtime/skills.js';
 
 let root: string;
 let home: string;
@@ -135,6 +137,42 @@ describe('host document toolkit installer', () => {
       run,
       locate: (name) => `/fixture/${name}`,
     });
+
+  it.each(['install-first', 'publish-first'])(
+    'keeps published skills through toolkit installation (%s)',
+    async (order) => {
+      const source = join(home, 'workspace', 'skills', 'fixture-skill');
+      mkdirSync(source, { recursive: true });
+      mkdirSync(tools);
+      writeFileSync(
+        join(source, 'SKILL.md'),
+        '---\nname: fixture-skill\ndescription: Fixture\n---\nFixture steps'
+      );
+      const db = await openCoreDatabase({ path: join(root, 'state.db') });
+      try {
+        const skills = createSkillStore({
+          adapter: db.adapter,
+          commonPrincipalId: 'common',
+          commonScopes: () => [],
+          paths: { toolsRoot: tools, workspace: () => join(home, 'workspace') },
+        });
+        if (order === 'publish-first') {
+          expect(() => skills.publish('fixture-skill')).toThrow(/mama tools install/);
+          expect(existsSync(join(tools, 'skills'))).toBe(false);
+        }
+        await install(fakeHost().run);
+        skills.publish('fixture-skill');
+        // The adoption path must also recognise a skill publication in an older unmarked root.
+        rmSync(join(tools, '.mama-document-toolkit'));
+        await install(fakeHost().run);
+        expect((await skills.read('common', 'file:common:fixture-skill')).text).toContain(
+          'Fixture steps'
+        );
+      } finally {
+        db.close();
+      }
+    }
+  );
 
   it('refuses an unrelated non-empty root before running host commands', async () => {
     mkdirSync(tools);

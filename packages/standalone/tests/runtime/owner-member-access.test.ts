@@ -536,9 +536,13 @@ describe('owner rules reach the personal DM session', () => {
     expect(own).not.toContain('COMMON_WORK_RECORD');
     expect(own).not.toContain('OTHER_PRIVATE_RECORD');
     await f.settled(f.message(plain, 'unrelated question'), plain);
-    expect(f.turns.at(-1)!.prompt).toContain('OTHER_PRIVATE_RECORD');
-    expect(f.turns.at(-1)!.prompt).not.toContain('COMMON_START_');
-    expect(f.turns.at(-1)!.prompt).not.toContain('PERSONAL_START_RECORD');
+    const plainStart = f.turns.at(-1)!.prompt;
+    expect(plainStart).toContain('OTHER_PRIVATE_RECORD');
+    expect(plainStart).toContain('COMMON_START_workflow');
+    for (const kind of ['lesson', 'preference', 'constraint'])
+      expect(plainStart).not.toContain(`COMMON_START_${kind}`);
+    expect(plainStart).not.toContain('COMMON_WORK_RECORD');
+    expect(plainStart).not.toContain('PERSONAL_START_RECORD');
   });
 
   it('recalls a common owner correction next to personal lessons without allowing its replacement in DM', async () => {

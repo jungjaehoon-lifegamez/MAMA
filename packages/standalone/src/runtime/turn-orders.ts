@@ -34,6 +34,8 @@ export interface TurnOrderOptions {
 }
 
 export interface Lesson {
+  /** A workflow's full procedure is read on demand, and remains recallable each turn. */
+  skillId?: string;
   topic: string;
   summary: string;
   appliesWhen?: string;
@@ -130,7 +132,7 @@ export function lessonsBlock(lessons: readonly Lesson[], voice: TurnVoice = OWNE
     const line = escapeMarkup(
       `- [${lesson.commonOwnerRule ? OWNER_VOICE.ruleLabel : lesson.ownerRule ? voice.ruleLabel : 'learned'}] ${clip(lesson.topic, 80)}: ${clip(lesson.summary, 360)}${
         lesson.appliesWhen ? ` (applies when: ${clip(lesson.appliesWhen, 160)})` : ''
-      }`
+      }${lesson.skillId ? ` (skill; read steps with skill.read ${lesson.skillId})` : ''}`
     );
     if (size + line.length + 1 > LESSONS_LIMIT) break;
     lines.push(line);

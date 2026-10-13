@@ -258,8 +258,15 @@ export function memberShareActionRegistrations(ports: MemberSharePorts): ActionR
           ports.adapter,
           {
             topic: record.topic,
-            kind: 'fact',
+            kind: ownerRole && record.kind === 'workflow' ? 'workflow' : 'fact',
             summary: record.summary,
+            ...(ownerRole && record.kind === 'workflow'
+              ? {
+                  appliesWhen: record.applies_when,
+                  steps: record.steps,
+                  evidenceChecks: record.evidence_checks,
+                }
+              : {}),
             details: JSON.stringify({
               memoryId: record.id,
               ...(ownerRole ? { commonScopes: ports.ownerDefaultScopes } : { partitionId }),

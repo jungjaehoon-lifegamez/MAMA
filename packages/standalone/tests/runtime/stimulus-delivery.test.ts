@@ -931,6 +931,39 @@ describe('one stimulus intake and delivery', () => {
     ]);
   });
 
+  it('leaves room for a fresh correction behind three repeated workflows', async () => {
+    const prompts: string[] = [];
+    const delivery = createDelivery({
+      lessons: async () => [
+        ...[1, 2, 3].map((n) => ({
+          id: `workflow-${n}`,
+          skillId: `workflow-${n}`,
+          topic: `workflow-${n}`,
+          summary: 'Fixture steps',
+          ownerRule: false,
+        })),
+        {
+          id: 'correction',
+          topic: 'fresh-correction',
+          summary: 'Fixture correction',
+          ownerRule: true,
+        },
+      ],
+    });
+    for (let i = 0; i < 2; i++)
+      await delivery.deliver(
+        claimed({
+          stimulusId: `telegram:fixture:${i}`,
+          kind: 'owner_message',
+          channelKey: 'fixture',
+          payload: { text: 'fixture work' },
+        }),
+        context((text) => prompts.push(text), { isNewSession: false })
+      );
+    expect(prompts[1]).toContain('fresh-correction');
+    expect(prompts[1]!.match(/skill.read workflow-/g)).toHaveLength(1);
+  });
+
   it('hands uncertain and dead record rows to the record check, and only those', async () => {
     const records = recordOrders();
     const delivery = createDelivery({ recordOrders: records });

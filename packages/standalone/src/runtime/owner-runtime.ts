@@ -1,4 +1,5 @@
 import { createPersonalJobScheduler } from './personal-jobs.js';
+import { createSkillTurnContext } from './skills.js';
 import { homedir } from 'node:os';
 import type { MemberEnrollmentPorts, MemberSelection } from '../api/member-enrollment.js';
 import type { ActionResult } from '@jungjaehoon/mama-core';
@@ -253,7 +254,8 @@ export function guidanceInSearchOrder(
   hitIds: readonly string[],
   records: readonly MemoryRecord[],
   limit: number,
-  ownerRuleRecordIds: ReadonlySet<string>
+  ownerRuleRecordIds: ReadonlySet<string>,
+  skillScopes: readonly MemoryScopeRef[] = []
 ): TurnLesson[] {
   const active = new Map(
     records
@@ -270,6 +272,14 @@ export function guidanceInSearchOrder(
               topic: record.topic,
               summary: record.summary,
               ...(record.applies_when ? { appliesWhen: record.applies_when } : {}),
+              ...(record.kind === 'workflow' &&
+              record.scopes.some((scope) =>
+                skillScopes.some(
+                  (admitted) => admitted.kind === scope.kind && admitted.id === scope.id
+                )
+              )
+                ? { skillId: record.id }
+                : {}),
               ownerRule: ownerRuleRecordIds.has(record.id),
             },
           ]
@@ -374,6 +384,14 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       : {};
     const surface = createActionSurface({
       runtimeRoot: options.runtimeRoot,
+      skillPaths: {
+        toolsRoot: options.toolsRoot,
+        workspace: (id) => {
+          if (id === options.ownerPrincipalId) return options.workspaceDir;
+          if (memberRoot === undefined) throw new Error('Member skills require member_root');
+          return memberPaths(memberRoot, id).workspaceDir;
+        },
+      },
       documentPorts: {
         toolsRoot: options.toolsRoot,
         workspaceDir: options.workspaceDir,
@@ -623,6 +641,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       ...(options.onRecordOrderEvent === undefined ? {} : { onEvent: options.onRecordOrderEvent }),
     });
     delivery = createStimulusDelivery({
+      skills: createSkillTurnContext(() => surface.skills.list(options.ownerPrincipalId)),
       turnChain: sessions.turnChain(options.ownerPrincipalId),
       backend: options.backend,
       timeZone: options.timeZone,
@@ -722,7 +741,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
             hitIds,
             active,
             10,
-            ownerRuleIds(database.adapter, hitIds, options.ownerPrincipalId)
+            ownerRuleIds(database.adapter, hitIds, options.ownerPrincipalId),
+            surface.skills.workflowScopes(options.ownerPrincipalId)
           );
         }),
       recordOrders,

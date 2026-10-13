@@ -1,4 +1,5 @@
 import { deliverPersonalJobResult, type PersonalJobStore } from './personal-jobs.js';
+import { createSkillTurnContext } from './skills.js';
 import { deliverPersonalNoticeResult, personalNoticePayload } from './personal-notices.js';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
@@ -175,6 +176,7 @@ export function createMemberSession(
     },
   };
   const delivery = createStimulusDelivery({
+    skills: createSkillTurnContext(() => surface.skills.list(principalId)),
     backend: options.backend,
     timeZone: options.timeZone,
     turnChain: ports.turnChain,
@@ -254,7 +256,7 @@ export function createMemberSession(
         {
           access: {
             ...access(),
-            readScopes: ownerRole ? surface.ownerAccess.scopes : [],
+            readScopes: ownerRole ? surface.ownerAccess.scopes : surface.ownerAccess.defaultScopes,
           },
         }
       );
@@ -263,12 +265,25 @@ export function createMemberSession(
       const hits = (result.data as { results?: Array<{ id: string }> }).results ?? [];
       const records = await readRecords({ kind: [...RULE_KINDS], status: 'active' });
       const hitIds = hits.map((hit) => hit.id);
+      // One search carries common workflows too; the pool admits no other common kind for
+      // plain members, even when a common correction ranks among those host-only search hits.
+      if (!ownerRole) {
+        const workflows = await surface.skills.workflows(principalId);
+        records.push(...workflows.filter((record) => !records.some((own) => own.id === record.id)));
+      }
       const ruleIds = ownerRuleIds(database.adapter, hitIds, principalId);
       const commonRuleIds = ownerRole
         ? ownerRuleIds(database.adapter, hitIds, surface.ownerAccess.principalId)
         : new Set<string>();
       for (const id of commonRuleIds) ruleIds.add(id);
-      return guidanceInSearchOrder(hitIds, records, 10, ruleIds).map((lesson) => ({
+      const merged = guidanceInSearchOrder(
+        hitIds,
+        records,
+        10,
+        ruleIds,
+        surface.skills.workflowScopes(principalId)
+      );
+      return merged.map((lesson) => ({
         ...lesson,
         commonOwnerRule: commonRuleIds.has(lesson.id),
       }));

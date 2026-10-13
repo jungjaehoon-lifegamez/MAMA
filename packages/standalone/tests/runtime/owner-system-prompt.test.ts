@@ -73,6 +73,7 @@ describe('owner standing prompt', () => {
       expect(prompt).toContain(heading);
     expect(prompt).not.toContain('## Full report');
     expect(Object.keys(topics)).toEqual([
+      'skills',
       'full-report',
       'record',
       'corrections',
