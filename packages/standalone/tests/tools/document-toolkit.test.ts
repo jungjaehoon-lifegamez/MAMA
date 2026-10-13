@@ -17,10 +17,16 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { installDocumentToolkit, readDocumentToolkit } from '../../src/tools/document-toolkit.js';
 import type { CommandRunner } from '../../src/tools/command-runner.js';
 import { validateToolsRoot } from '../../src/runtime/tools-paths.js';
-import { leaseDocumentToolkit, withToolkitState } from '../../src/tools/toolkit-state.js';
+import {
+  leaseDocumentToolkit,
+  toolkitLeaseDirectory,
+  withToolkitState,
+} from '../../src/tools/toolkit-state.js';
+import { onToolkitSignal } from '../../src/tools/toolkit-process.js';
 
 let root: string;
 let home: string;
@@ -130,6 +136,215 @@ describe('host document toolkit installer', () => {
       locate: (name) => `/fixture/${name}`,
     });
 
+  it('refuses an unrelated non-empty root before running host commands', async () => {
+    mkdirSync(tools);
+    writeFileSync(join(tools, 'keep.txt'), 'unrelated data');
+    const host = fakeHost();
+    await expect(install(host.run)).rejects.toThrow(/unmarked.*tools_root/);
+    expect(readFileSync(join(tools, 'keep.txt'), 'utf8')).toBe('unrelated data');
+    expect(readdirSync(tools)).toEqual(['keep.txt']);
+    expect(host.calls).toEqual([]);
+  });
+
+  it('marks an empty root and adopts an unmarked root made by the previous installer', async () => {
+    mkdirSync(tools);
+    const first = await install(fakeHost().run);
+    const marker = join(tools, '.mama-document-toolkit');
+    expect(lstatSync(marker).isFile()).toBe(true);
+    const receipt = readFileSync(marker, 'utf8');
+    rmSync(marker);
+    mkdirSync(join(tools, '.leases'));
+    mkdirSync(join(tools, '.install-lock'));
+    writeFileSync(join(tools, '.state-lock'), '2147483647');
+    const candidate = join(tools, '.install-lock.Abc123');
+    mkdirSync(candidate);
+    writeFileSync(join(candidate, `2147483647-${randomUUID()}`), '2147483647');
+    symlinkSync(first.versionDir.split('/').at(-1)!, join(tools, `.current-${randomUUID()}`));
+    const second = await install(fakeHost().run);
+    expect(readFileSync(marker, 'utf8')).toBe(receipt);
+    expect(readDocumentToolkit(tools)?.versionDir).toBe(second.versionDir);
+    expect(existsSync(first.versionDir)).toBe(true);
+  });
+
+  it.each(['unrelated-lock', 'manifest-less-version'])(
+    'refuses an unmarked root with %s',
+    async (kind) => {
+      const first = await install(fakeHost().run);
+      rmSync(join(tools, '.mama-document-toolkit'));
+      if (kind === 'unrelated-lock') {
+        mkdirSync(join(tools, '.install-lock'));
+        writeFileSync(join(tools, '.install-lock', 'keep.txt'), 'unrelated data');
+      } else {
+        const partial = join(tools, `v-1234567890123-${randomUUID()}`);
+        mkdirSync(partial);
+        writeFileSync(join(partial, 'keep.txt'), 'unrelated data');
+      }
+      const host = fakeHost();
+      await expect(install(host.run)).rejects.toThrow(/unmarked.*tools_root/);
+      expect(host.calls).toEqual([]);
+      expect(readDocumentToolkit(tools)?.versionDir).toBe(first.versionDir);
+      expect(existsSync(join(tools, '.mama-document-toolkit'))).toBe(false);
+    }
+  );
+
+  it('refuses a lease directory owned by a different uid', () => {
+    mkdirSync(join(tools, '.leases'), { recursive: true });
+    vi.spyOn(process, 'getuid').mockReturnValue(process.getuid!() + 1);
+    try {
+      expect(() => toolkitLeaseDirectory(tools)).toThrow(/\.leases.*owned by uid/);
+      expect(existsSync(join(tools, '.leases'))).toBe(true);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('leaves unrelated and non-regular lease entries untouched and reports them', async () => {
+    const first = await install(fakeHost().run);
+    const leases = join(tools, '.leases');
+    mkdirSync(leases);
+    const unrelated = join(leases, 'keep.txt');
+    writeFileSync(unrelated, 'unrelated data');
+    const target = join(root, 'private.txt');
+    writeFileSync(target, 'private data');
+    const link = join(leases, `${first.versionDir.split('/').at(-1)}.${randomUUID()}`);
+    symlinkSync(target, link);
+    const directory = join(leases, `${first.versionDir.split('/').at(-1)}.${randomUUID()}`);
+    mkdirSync(directory);
+    const output: string[] = [];
+    await installDocumentToolkit({
+      toolsRoot: tools,
+      home,
+      platform: 'darwin',
+      run: fakeHost().run,
+      locate: (name) => `/fixture/${name}`,
+      write: (line) => output.push(line),
+    });
+    expect(readFileSync(unrelated, 'utf8')).toBe('unrelated data');
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(lstatSync(directory).isDirectory()).toBe(true);
+    expect(readFileSync(target, 'utf8')).toBe('private data');
+    for (const path of [unrelated, link, directory])
+      expect(output.some((line) => line.includes(path) && /untouched/.test(line))).toBe(true);
+  });
+
+  it('refuses a symlinked lease directory without reading or modifying its target', async () => {
+    await install(fakeHost().run);
+    const target = join(root, 'other-leases');
+    mkdirSync(target);
+    writeFileSync(join(target, 'keep.txt'), 'unrelated data');
+    const link = join(tools, '.leases');
+    symlinkSync(target, link);
+    await expect(install(fakeHost().run)).rejects.toThrow(/\.leases.*real directory/);
+    await expect(leaseDocumentToolkit(tools)).rejects.toThrow(/\.leases.*real directory/);
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(readdirSync(target)).toEqual(['keep.txt']);
+    expect(readFileSync(join(target, 'keep.txt'), 'utf8')).toBe('unrelated data');
+  });
+
+  it.each(['file', 'directory'])(
+    'refuses an expected font symlink to a private %s',
+    async (kind) => {
+      const target = join(root, 'private');
+      if (kind === 'directory') {
+        mkdirSync(target);
+        writeFileSync(join(target, 'secret.txt'), 'private data');
+      } else writeFileSync(target, 'private data');
+      const host = fakeHost();
+      const run: CommandRunner = async (command, args, options) => {
+        const result = await host.run(command, args, options);
+        if (command === 'brew' && args.at(-1) === 'font-noto-serif-cjk') {
+          const font = join(tools, 'fonts', 'NotoSansCJK.ttc');
+          rmSync(font);
+          symlinkSync(target, font);
+        }
+        return result;
+      };
+      await expect(install(run)).rejects.toThrow(/NotoSansCJK\.ttc.*symlink/);
+      expect(host.calls.some((call) => call.command === '/bin/cp')).toBe(false);
+      expect(existsSync(join(tools, 'current'))).toBe(false);
+      expect(readdirSync(tools).filter((name) => name.startsWith('v-'))).toEqual([]);
+      expect(readFileSync(kind === 'directory' ? join(target, 'secret.txt') : target, 'utf8')).toBe(
+        'private data'
+      );
+    }
+  );
+
+  it('refuses a pre-existing expected font symlink before running host commands', async () => {
+    const target = join(root, 'private.txt');
+    writeFileSync(target, 'private data');
+    mkdirSync(join(tools, 'fonts'), { recursive: true });
+    symlinkSync(target, join(tools, 'fonts', 'NotoSansCJK.ttc'));
+    const host = fakeHost();
+    await expect(install(host.run)).rejects.toThrow(/NotoSansCJK\.ttc.*symlink/);
+    expect(host.calls).toEqual([]);
+    expect(readFileSync(target, 'utf8')).toBe('private data');
+  });
+
+  it('copies only verified CJK font files and does not follow unrelated font links', async () => {
+    const target = join(root, 'private');
+    mkdirSync(target);
+    writeFileSync(join(target, 'secret.txt'), 'private data');
+    const host = fakeHost();
+    const run: CommandRunner = async (command, args, options) => {
+      const result = await host.run(command, args, options);
+      if (command === 'brew' && args.at(-1) === 'font-noto-serif-cjk') {
+        writeFileSync(join(tools, 'fonts', 'unrelated.txt'), 'unrelated data');
+        symlinkSync(target, join(tools, 'fonts', 'private-link'));
+      }
+      return result;
+    };
+    const installed = await install(run);
+    expect(readdirSync(join(installed.versionDir, 'fonts'))).toEqual([
+      'NotoSansCJK.ttc',
+      'NotoSerifCJK.ttc',
+    ]);
+    const copies = host.calls.filter((call) => call.command === '/bin/cp');
+    expect(copies.map((call) => call.args[0])).toEqual(['-cRP', '-c', '-c']);
+  });
+
+  it.each(['SIGINT', 'SIGHUP', 'SIGTERM'] as const)(
+    'cleans an interrupted install before CLI exit on %s',
+    async (signal) => {
+      const codes = { SIGINT: 130, SIGHUP: 129, SIGTERM: 143 };
+      const unregister = onToolkitSignal(() => {}, { exit: true });
+      const exit = vi.spyOn(process, 'exit').mockImplementation(() => {
+        throw new Error('fixture interrupted');
+      });
+      const host = fakeHost();
+      let inspected = false;
+      const run: CommandRunner = async (command, args, options) => {
+        const result = await host.run(command, args, options);
+        if (args.some((arg) => arg.endsWith('smoke.py')) && args.includes('check')) {
+          const temporary = options!.env!.HOME!;
+          const version = readdirSync(tools).find((name) => name.startsWith('v-'))!;
+          expect(existsSync(join(tools, version))).toBe(true);
+          expect(existsSync(temporary)).toBe(true);
+          expect(() => process.emit(signal)).toThrow('fixture interrupted');
+          // Inspect here, before rejecting the runner lets the installer's finally execute.
+          expect(
+            readdirSync(tools).filter((name) =>
+              /^(v-|\.current-|\.install-lock|\.state-lock)/.test(name)
+            )
+          ).toEqual([]);
+          expect(existsSync(temporary)).toBe(false);
+          inspected = true;
+          throw new Error('fixture interrupted');
+        }
+        return result;
+      };
+      try {
+        await expect(install(run)).rejects.toThrow('fixture interrupted');
+        expect(inspected).toBe(true);
+        expect(exit).toHaveBeenCalledWith(codes[signal]);
+        expect(existsSync(join(tools, 'current'))).toBe(false);
+      } finally {
+        exit.mockRestore();
+        unregister();
+      }
+      await install(fakeHost().run);
+    }
+  );
+
   it('installs the shipped lock in place, verifies before publishing and strips package installers', async () => {
     const host = fakeHost();
     const result = await install(host.run);
@@ -188,6 +403,7 @@ describe('host document toolkit installer', () => {
   });
 
   it('leaves unrelated v-other data untouched and reports the preserved directory', async () => {
+    await install(fakeHost().run);
     const unrelated = join(tools, 'v-other');
     mkdirSync(unrelated, { recursive: true });
     writeFileSync(join(unrelated, 'keep.txt'), 'unrelated data');
@@ -322,7 +538,7 @@ describe('host document toolkit installer', () => {
     writeFileSync(join(tools, '.state-lock'), '2147483647');
     mkdirSync(join(tools, '.leases'), { recursive: true });
     writeFileSync(
-      join(tools, '.leases', `${first.versionDir.split('/').at(-1)}.dead`),
+      join(tools, '.leases', `${first.versionDir.split('/').at(-1)}.${randomUUID()}`),
       '2147483647'
     );
     await install(fakeHost().run);

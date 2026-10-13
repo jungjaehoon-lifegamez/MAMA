@@ -1,5 +1,6 @@
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   realpathSync,
@@ -14,6 +15,29 @@ import { onToolkitSignal, tryToolkitLock } from './toolkit-process.js';
 
 export const TOOLKIT_INSTALL_COMMAND = 'mama tools install';
 export const TOOLKIT_ASSETS = join(__dirname, '../../toolkit');
+const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
+export const TOOLKIT_VERSION_NAME = new RegExp(`^v-\\d+-${uuid}$`);
+export const TOOLKIT_LEASE_NAME = new RegExp(`^v-\\d+-${uuid}\\.${uuid}$`);
+
+/** Never follow a shared lease directory link, at either installation or rendering. */
+export function toolkitLeaseDirectory(root: string, create = false): string | null {
+  const path = join(root, '.leases');
+  let meta;
+  try {
+    meta = lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if (!create) return null;
+    mkdirSync(path, { mode: 0o700 });
+    meta = lstatSync(path);
+  }
+  const uid = process.getuid?.();
+  if (!meta.isDirectory() || uid === undefined || meta.uid !== uid)
+    throw new Error(
+      `Document toolkit: left ${path} untouched; require a real directory owned by uid ${uid}`
+    );
+  return path;
+}
 
 export interface DocumentToolkit {
   versionDir: string;
@@ -99,8 +123,7 @@ export async function leaseDocumentToolkit(
   assertToolsOwnership(root!);
   return withToolkitState(root!, () => {
     const toolkit = requireDocumentToolkit(root);
-    const directory = join(root!, '.leases');
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const directory = toolkitLeaseDirectory(root!, true)!;
     const lease = join(directory, `${basename(toolkit.versionDir)}.${randomUUID()}`);
     writeFileSync(lease, String(process.pid), { flag: 'wx', mode: 0o600 });
     const release = () => rmSync(lease, { force: true });

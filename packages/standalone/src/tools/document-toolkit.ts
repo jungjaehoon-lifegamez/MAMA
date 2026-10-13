@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -19,12 +20,15 @@ import { basename, join, isAbsolute, relative, sep } from 'node:path';
 import { findExecutable } from '../cli/launch-files.js';
 import { credentialReadPaths } from '../runtime/backend-security.js';
 import { assertToolsOwnership, validateToolsRoot } from '../runtime/tools-paths.js';
-import { liveToolkitLease, tryToolkitLock } from './toolkit-process.js';
+import { liveToolkitLease, onToolkitSignal, tryToolkitLock } from './toolkit-process.js';
 import { runCommand, type CommandRunner } from './command-runner.js';
 import { renderEnvironment, renderOffice, sandboxedCommand } from './office-render.js';
 import {
   TOOLKIT_ASSETS,
   TOOLKIT_INSTALL_COMMAND,
+  TOOLKIT_LEASE_NAME,
+  TOOLKIT_VERSION_NAME,
+  toolkitLeaseDirectory,
   withToolkitState,
   type DocumentToolkit,
 } from './toolkit-state.js';
@@ -43,8 +47,7 @@ export interface InstallToolkitOptions {
 
 /** Recursive pruning requires both our generated name and our complete publication receipt. */
 function isManagedVersion(path: string, name: string): boolean {
-  if (!/^v-\d+-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(name))
-    return false;
+  if (!TOOLKIT_VERSION_NAME.test(name)) return false;
   try {
     const manifestPath = join(path, 'manifest.json');
     if (!lstatSync(manifestPath).isFile()) return false;
@@ -92,6 +95,70 @@ function isManagedVersion(path: string, name: string): boolean {
   }
 }
 
+const ROOT_MARKER = '.mama-document-toolkit';
+const ROOT_RECEIPT = 'mama-document-toolkit-v1\n';
+
+/** Adopt only the layout written by the earlier installer, before acquiring/deleting locks. */
+function claimToolkitRoot(root: string): void {
+  const entries = readdirSync(root);
+  const marker = join(root, ROOT_MARKER);
+  if (entries.includes(ROOT_MARKER)) {
+    const meta = lstatSync(marker);
+    if (
+      !meta.isFile() ||
+      meta.uid !== process.getuid?.() ||
+      readFileSync(marker, 'utf8') !== ROOT_RECEIPT
+    )
+      throw new Error(`Invalid document toolkit root marker ${marker}; left untouched`);
+    return;
+  }
+  const managedLink = (path: string) => {
+    const target = readlinkSync(path);
+    return (
+      basename(target) === target &&
+      lstatSync(join(root, target)).isDirectory() &&
+      isManagedVersion(join(root, target), target)
+    );
+  };
+  for (const name of entries) {
+    const path = join(root, name);
+    const meta = lstatSync(path);
+    let managed = false;
+    if (['apps', 'fonts', '.leases'].includes(name)) managed = meta.isDirectory();
+    else if (TOOLKIT_VERSION_NAME.test(name))
+      managed = meta.isDirectory() && isManagedVersion(path, name);
+    else if (
+      name === 'current' ||
+      /^\.current-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(name)
+    ) {
+      if (meta.isSymbolicLink()) {
+        try {
+          managed = managedLink(path);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+      }
+    } else if (/^\.(install|state)-lock(?:\.[A-Za-z0-9]{6})?$/.test(name)) {
+      if (meta.isFile())
+        managed = name.endsWith('-lock') && /^[1-9]\d*$/.test(readFileSync(path, 'utf8').trim());
+      else if (meta.isDirectory())
+        managed = readdirSync(path).every((owner) => {
+          const file = join(path, owner);
+          return (
+            /^\d+-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+              owner
+            ) &&
+            lstatSync(file).isFile() &&
+            readFileSync(file, 'utf8').trim() === owner.split('-')[0]
+          );
+        });
+    }
+    if (!managed)
+      throw new Error(`Refusing unmarked tools_root ${root}: ${path} is not installer-managed`);
+  }
+  writeFileSync(marker, ROOT_RECEIPT, { flag: 'wx', mode: 0o644 });
+}
+
 /** Do not follow venv interpreter symlinks into the host Python while changing permissions. */
 function permissions(path: string, readOnly: boolean): void {
   const meta = lstatSync(path);
@@ -118,10 +185,23 @@ function removeVersion(path: string): void {
 }
 
 function fontFiles(directory: string): string[] {
-  if (!existsSync(directory)) return [];
-  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(directory, entry.name);
-    return entry.isDirectory() ? fontFiles(path) : [path];
+  let meta;
+  try {
+    meta = lstatSync(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+  if (!meta.isDirectory())
+    throw new Error(`Font directory ${directory} must be a real directory, not a symlink`);
+  return readdirSync(directory).flatMap((name) => {
+    const path = join(directory, name);
+    const entry = lstatSync(path);
+    if (entry.isDirectory()) return fontFiles(path);
+    if (!/^Noto(?:Sans|Serif)CJK.*\.(otf|ttf|ttc)$/i.test(name)) return [];
+    if (entry.isSymbolicLink()) throw new Error(`Expected font ${path} must not be a symlink`);
+    if (!entry.isFile()) throw new Error(`Expected font ${path} must be a regular file`);
+    return [path];
   });
 }
 
@@ -208,9 +288,11 @@ async function installOffice(
   // Gatekeeper prompt. Assess the signature and notarization here, then clear the flag.
   await run('/usr/sbin/spctl', ['--assess', '--type', 'execute', snapshot], { timeoutMs: 120_000 });
   await run('/usr/bin/xattr', ['-dr', 'com.apple.quarantine', snapshot], { timeoutMs: 120_000 });
-  await run('/bin/cp', ['-cRL', join(root, 'fonts'), join(version, 'fonts')], {
-    timeoutMs: 600_000,
-  });
+  mkdirSync(join(version, 'fonts'));
+  for (const path of fonts)
+    await run('/bin/cp', ['-c', path, join(version, 'fonts', basename(path))], {
+      timeoutMs: 600_000,
+    });
   return join(version, 'LibreOffice.app', 'Contents', 'MacOS', 'soffice');
 }
 
@@ -229,6 +311,10 @@ export async function installDocumentToolkit(
   const locate = options.locate ?? findExecutable;
   mkdirSync(root, { recursive: true, mode: 0o755 });
   assertToolsOwnership(root);
+  toolkitLeaseDirectory(root);
+  claimToolkitRoot(root);
+  // Reject existing font links before the host package manager can write through them.
+  fontFiles(join(root, 'fonts'));
   const lock = join(root, '.install-lock');
   const releaseLock = tryToolkitLock(lock);
   if (!releaseLock)
@@ -239,6 +325,19 @@ export async function installDocumentToolkit(
   let temp: string | undefined;
   const link = join(root, `.current-${randomUUID()}`);
   let switched = false;
+  const cleanup = () => {
+    try {
+      try {
+        rmSync(link, { force: true });
+        if (!switched && existsSync(versionDir)) removeVersion(versionDir);
+      } finally {
+        if (temp) rmSync(temp, { recursive: true, force: true });
+      }
+    } finally {
+      releaseLock();
+    }
+  };
+  const unregister = onToolkitSignal(cleanup);
   try {
     temp = realpathSync(mkdtempSync(join(tmpdir(), 'mama-tools-install-')));
     const current = join(root, 'current');
@@ -373,9 +472,23 @@ export async function installDocumentToolkit(
     permissions(versionDir, true);
     await withToolkitState(root, () => {
       // A renderer's lease pins an old version until its subprocesses finish.
-      const leases = existsSync(join(root, '.leases'))
-        ? readdirSync(join(root, '.leases')).filter((name) => {
-            const path = join(root, '.leases', name);
+      const directory = toolkitLeaseDirectory(root);
+      const leases = directory
+        ? readdirSync(directory).filter((name) => {
+            const path = join(directory, name);
+            let meta;
+            try {
+              meta = lstatSync(path);
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+              throw error;
+            }
+            if (!TOOLKIT_LEASE_NAME.test(name) || !meta.isFile()) {
+              (options.write ?? console.log)(
+                `Document toolkit: left ${path} untouched; it is not a regular renderer lease file.`
+              );
+              return false;
+            }
             if (liveToolkitLease(path)) return true;
             rmSync(path, { force: true });
             return false;
@@ -410,11 +523,9 @@ export async function installDocumentToolkit(
     );
   } finally {
     try {
-      rmSync(link, { force: true });
-      if (!switched && existsSync(versionDir)) removeVersion(versionDir);
-      if (temp) rmSync(temp, { recursive: true, force: true });
+      cleanup();
     } finally {
-      releaseLock();
+      unregister();
     }
   }
 }
