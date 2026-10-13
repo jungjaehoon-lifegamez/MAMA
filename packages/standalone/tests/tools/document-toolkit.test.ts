@@ -594,7 +594,7 @@ describe('host document toolkit installer', () => {
     await expect(leaseDocumentToolkit(tools)).rejects.toThrow(/mama tools install/);
   });
 
-  it.each(['root', 'current', 'version', 'uid'])(
+  it.each(['root', 'current', 'version', 'uid', 'ancestor'])(
     'refuses unsafe toolkit ownership at install and read (%s)',
     async (kind) => {
       const installed = await install(fakeHost().run);
@@ -603,9 +603,11 @@ describe('host document toolkit installer', () => {
         chmodSync(
           kind === 'root'
             ? tools
-            : kind === 'current'
-              ? join(tools, 'current')
-              : installed.versionDir,
+            : kind === 'ancestor'
+              ? root
+              : kind === 'current'
+                ? join(tools, 'current')
+                : installed.versionDir,
           0o777
         );
       try {
@@ -616,6 +618,15 @@ describe('host document toolkit installer', () => {
       }
     }
   );
+
+  it('refuses a future toolkit beneath an unsafe ancestor before install writes or commands', async () => {
+    chmodSync(root, 0o777);
+    const host = fakeHost();
+    await expect(install(host.run)).rejects.toThrow(/Unsafe tools_root ancestor/);
+    expect(host.calls).toEqual([]);
+    expect(existsSync(tools)).toBe(false);
+    expect(() => readDocumentToolkit(tools)).toThrow(/Unsafe tools_root ancestor/);
+  });
 
   it('rejects a HOME-based interpreter before creating a venv or installing packages', async () => {
     const host = fakeHost();

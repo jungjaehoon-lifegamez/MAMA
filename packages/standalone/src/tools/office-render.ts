@@ -35,6 +35,8 @@ export function officeSandboxProfile(
             .join(' ')})`,
         ]
       : []),
+    // Every agent denies the host render root. Only this renderer may read its private child.
+    `(allow file-read* (subpath ${quoted(temp)}))`,
   ].join('\n');
 }
 

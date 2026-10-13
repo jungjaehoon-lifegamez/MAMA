@@ -498,6 +498,7 @@ it.each(['codex', 'claude'] as const)(
         // The Claude sandbox temp dir every session of this OS user falls back to.
         physicalReadPath(join('/tmp', `claude-${userInfo().uid}`)),
         physicalReadPath(memberClaudeTmpDir(f.inactive)),
+        physicalReadPath(`/tmp/mama-office-host-${userInfo().uid}`),
       ];
       const check = () => {
         const driver = f.drivers.get(f.member)!;

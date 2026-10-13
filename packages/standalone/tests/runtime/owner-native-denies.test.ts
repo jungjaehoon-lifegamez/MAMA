@@ -8,7 +8,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { buildMAMACodexAppServerConfig } from '@jungjaehoon/mama-core/runtime/drivers/codex-home';
@@ -120,6 +120,8 @@ it.each([
         join(storage, 'raw'),
         '/tmp/mama-m',
         join(realpathSync('/tmp'), 'mama-m'),
+        `/tmp/mama-office-host-${userInfo().uid}`,
+        join(realpathSync('/tmp'), `mama-office-host-${userInfo().uid}`),
         ...(withMembers ? [join(alias, 'members'), join(storage, 'members')] : []),
       ];
       for (const path of expected) expect(driver.deniedReadPaths, path).toContain(path);

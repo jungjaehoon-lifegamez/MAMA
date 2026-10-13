@@ -1,9 +1,12 @@
 import {
   closeSync,
+  chmodSync,
   constants,
   copyFileSync,
   existsSync,
   fstatSync,
+  lstatSync,
+  mkdirSync,
   mkdtempSync,
   readlinkSync,
   readSync,
@@ -12,7 +15,6 @@ import {
   openSync,
   writeSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join, relative, resolve } from 'node:path';
 import {
   openWorkspaceFile,
@@ -27,6 +29,7 @@ import {
   sandboxedCommand,
 } from './office-render.js';
 import { leaseDocumentToolkit, TOOLKIT_ASSETS } from './toolkit-state.js';
+import { HOST_DOCUMENT_RENDER_ROOT } from '../runtime/backend-security.js';
 
 export { officeSandboxProfile } from './office-render.js';
 
@@ -52,6 +55,15 @@ export interface DocumentRenderResult {
 
 // All callers and both backends share the daemon's host renderer; failures release the queue.
 let queue: Promise<unknown> = Promise.resolve();
+
+function renderTempDirectory(): string {
+  mkdirSync(HOST_DOCUMENT_RENDER_ROOT, { recursive: true, mode: 0o700 });
+  const meta = lstatSync(HOST_DOCUMENT_RENDER_ROOT);
+  if (!meta.isDirectory() || meta.uid !== process.getuid?.())
+    throw new Error('Document render root must be a real directory owned by the daemon uid');
+  chmodSync(HOST_DOCUMENT_RENDER_ROOT, 0o700);
+  return realpathSync(mkdtempSync(join(HOST_DOCUMENT_RENDER_ROOT, 'mama-office-render-')));
+}
 
 /** Publish bounded regular files without following links planted by an untrusted renderer/caller. */
 function publishFile(temp: string, output: string, name: string): void {
@@ -113,7 +125,7 @@ export function createDocumentRenderer(options: DocumentRenderOptions) {
       );
       fd = file.fd;
       const extension = extname(file.path).toLowerCase();
-      temp = realpathSync(mkdtempSync(join(tmpdir(), 'mama-office-render-')));
+      temp = renderTempDirectory();
       if (
         ![
           '.pptx',
@@ -178,6 +190,16 @@ export function createDocumentRenderer(options: DocumentRenderOptions) {
         deniedReadPaths: options.deniedReadPaths ?? [],
       };
       const pdf = extension === '.pdf' ? staged : join(temp, 'document.pdf');
+      if (['.pptx', '.docx', '.xlsx', '.odt', '.odp', '.ods'].includes(extension)) {
+        const inspector = join(temp, 'inspect-office-zip.py');
+        copyFileSync(join(TOOLKIT_ASSETS, 'inspect-office-zip.py'), inspector);
+        await sandboxedCommand({
+          ...shared,
+          command: toolkit.python,
+          args: ['-I', inspector, staged],
+          timeoutMs: remaining(),
+        });
+      }
       if (extension !== '.pdf') {
         await renderOffice({
           ...shared,

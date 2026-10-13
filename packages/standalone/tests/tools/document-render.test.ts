@@ -8,6 +8,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
@@ -98,7 +99,132 @@ function fakeRenderer() {
   return { run, calls };
 }
 
+// Central-directory sizes describe expansion without allocating or extracting huge payloads.
+function metadataZip(entries: Array<{ size: number; compressed: number }>): Buffer {
+  const locals: Buffer[] = [];
+  const central: Buffer[] = [];
+  let offset = 0;
+  entries.forEach(({ size, compressed }, index) => {
+    const name = Buffer.from(`entry-${index}`);
+    const local = Buffer.alloc(30 + name.length);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(compressed, 18);
+    local.writeUInt32LE(size, 22);
+    local.writeUInt16LE(name.length, 26);
+    name.copy(local, 30);
+    locals.push(local);
+    const record = Buffer.alloc(46 + name.length);
+    record.writeUInt32LE(0x02014b50, 0);
+    record.writeUInt16LE(20, 4);
+    record.writeUInt16LE(20, 6);
+    record.writeUInt32LE(compressed, 20);
+    record.writeUInt32LE(size, 24);
+    record.writeUInt16LE(name.length, 28);
+    record.writeUInt32LE(offset, 42);
+    name.copy(record, 46);
+    central.push(record);
+    offset += local.length;
+  });
+  const directory = Buffer.concat(central);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(directory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, directory, end]);
+}
+
 describe('host document renderer', () => {
+  it('stages documents and the macro profile inside the private host render root', async () => {
+    const host = fakeRenderer();
+    writeFileSync(join(workspace, 'draft.doc'), 'legacy document');
+    let staged: string | undefined;
+    const run: CommandRunner = async (command, args, options) => {
+      staged = options?.cwd;
+      const parent = join(realpathSync('/tmp'), `mama-office-host-${process.getuid!()}`);
+      expect(staged).toMatch(new RegExp(`^${parent}/mama-office-render-`));
+      expect(statSync(parent).mode & 0o777).toBe(0o700);
+      expect(args[1]).toContain(`(allow file-read* (subpath ${JSON.stringify(staged)}))`);
+      expect(readFileSync(join(staged!, 'document.doc'), 'utf8')).toBe('legacy document');
+      return host.run(command, args, options);
+    };
+    await createDocumentRenderer({
+      toolsRoot: tools,
+      run,
+      platform: 'darwin',
+      deniedReadPaths: [`/tmp/mama-office-host-${process.getuid!()}`],
+    }).render(workspace, 'draft.doc');
+    expect(existsSync(staged!)).toBe(false);
+  });
+
+  it.each([
+    [
+      '512 MiB total',
+      Array.from({ length: 3 }, () => ({ size: 180 * 1024 ** 2, compressed: 10 * 1024 ** 2 })),
+    ],
+    ['256 MiB entry', [{ size: 256 * 1024 ** 2 + 1, compressed: 10 * 1024 ** 2 }]],
+    ['10,000 entries', Array.from({ length: 10_001 }, () => ({ size: 0, compressed: 0 }))],
+    ['100:1 expansion', [{ size: 101, compressed: 1 }]],
+    ['100:1 expansion', [{ size: 1, compressed: 0 }]],
+  ])('refuses ZIP input exceeding %s before LibreOffice', async (limit, entries) => {
+    const host = fakeRenderer();
+    writeFileSync(join(workspace, 'draft.docx'), metadataZip(entries));
+    const run: CommandRunner = (command, args, options) => {
+      const index = args.findIndex((arg) => arg.endsWith('inspect-office-zip.py'));
+      return index >= 0
+        ? runCommand('/usr/bin/python3', ['-I', ...args.slice(index)], options)
+        : host.run(command, args, options);
+    };
+    await expect(
+      createDocumentRenderer({ toolsRoot: tools, run, platform: 'darwin' }).render(
+        workspace,
+        'draft.docx'
+      )
+    ).rejects.toThrow(limit);
+    expect(host.calls.some((call) => call.args.includes('--convert-to'))).toBe(false);
+    expect(readdirSync(workspace)).toEqual(['draft.docx']);
+    expect(readdirSync(join(tools, '.leases'))).toEqual([]);
+  });
+
+  it.each(['docx', 'pptx', 'xlsx', 'odt', 'odp', 'ods'])(
+    'checks the ZIP directory before converting %s',
+    async (extension) => {
+      const host = fakeRenderer();
+      writeFileSync(
+        join(workspace, `draft.${extension}`),
+        metadataZip([{ size: 100, compressed: 1 }])
+      );
+      let inspected = false;
+      const run: CommandRunner = async (command, args, options) => {
+        const index = args.findIndex((arg) => arg.endsWith('inspect-office-zip.py'));
+        if (index >= 0) {
+          expect(args[index - 1]).toBe('-I');
+          expect(args[index - 2]).toBe(join(tools, 'v-fixture', 'bin', 'python3'));
+          expect(command).toBe('/usr/bin/sandbox-exec');
+          const result = await runCommand(
+            '/usr/bin/python3',
+            ['-I', ...args.slice(index)],
+            options
+          );
+          inspected = true;
+          return result;
+        }
+        if (args.includes('--convert-to')) expect(inspected).toBe(true);
+        return host.run(command, args, options);
+      };
+      expect(
+        (
+          await createDocumentRenderer({ toolsRoot: tools, run, platform: 'darwin' }).render(
+            workspace,
+            `draft.${extension}`
+          )
+        ).pageCount
+      ).toBe(1);
+    }
+  );
+
   it('keeps the output directory name within the component limit for a long input name', async () => {
     const host = fakeRenderer();
     const name = `${'é'.repeat(121)}.pptx`; // 242 bytes before the extension, 2 bytes a character

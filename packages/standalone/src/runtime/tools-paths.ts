@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { physicalReadPath } from './backend-security.js';
 import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -16,7 +16,28 @@ export function assertOwnedDirectory(path: string): void {
     );
 }
 
+/** Sticky shared parents prevent another uid from renaming this uid's toolkit tree. */
+function assertToolsAncestors(root: string): void {
+  const uid = process.getuid?.();
+  if (uid === undefined) throw new Error('tools_root ownership requires a POSIX uid');
+  for (let path = dirname(root); ; path = dirname(path)) {
+    if (existsSync(path)) {
+      const meta = statSync(path);
+      if (
+        !meta.isDirectory() ||
+        (meta.uid !== uid && meta.uid !== 0) ||
+        ((meta.mode & 0o022) !== 0 && (meta.mode & 0o1000) === 0)
+      )
+        throw new Error(
+          `Unsafe tools_root ancestor ${path}: require uid ${uid} or root and no group/other write unless sticky`
+        );
+    }
+    if (dirname(path) === path) break;
+  }
+}
+
 export function assertToolsOwnership(root: string): void {
+  assertToolsAncestors(physicalReadPath(root));
   if (!existsSync(root)) return;
   const uid = process.getuid?.();
   if (uid === undefined) throw new Error('tools_root ownership requires a POSIX uid');
@@ -67,6 +88,7 @@ function contains(parent: string, child: string): boolean {
 export function validateToolsRoot(root: string, forbiddenPaths: readonly string[]): string {
   if (!isAbsolute(root)) throw new Error('tools_root must be absolute');
   const physical = physicalReadPath(resolve(root));
+  assertToolsAncestors(physical);
   for (const forbidden of forbiddenPaths.map(physicalReadPath)) {
     if (contains(forbidden, physical) || contains(physical, forbidden))
       throw new Error('tools_root must not overlap HOME, the MAMA home or member_root');

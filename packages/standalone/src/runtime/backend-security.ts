@@ -22,6 +22,9 @@ export function normalizeReadPaths(paths: readonly string[]): string[] {
 /** Parent of each member's short Claude temp root (member-paths.ts). */
 export const MEMBER_CLAUDE_TMP_PARENT = join('/tmp', 'mama-m');
 
+/** Host renders contain every principal's staged input and trusted LibreOffice profile. */
+export const HOST_DOCUMENT_RENDER_ROOT = join('/tmp', `mama-office-host-${userInfo().uid}`);
+
 /** P6: owner native tools cannot bypass action access through shared storage or member files. */
 export function ownerNativeDataReadPaths(options: OwnerRuntimeOptions): string[] {
   const database = physicalReadPath(options.databasePath);
@@ -35,6 +38,7 @@ export function ownerNativeDataReadPaths(options: OwnerRuntimeOptions): string[]
     options.rawPath,
     ...(options.memberRoot === undefined ? [] : [options.memberRoot]),
     MEMBER_CLAUDE_TMP_PARENT,
+    HOST_DOCUMENT_RENDER_ROOT,
   ];
 }
 
@@ -81,6 +85,7 @@ export function ownerDataReadPaths(options: OwnerRuntimeOptions): string[] {
     join(root, 'logs'),
     // The Claude sandbox temp dir every session of this OS user falls back to, the owner's included.
     join('/tmp', `claude-${userInfo().uid}`),
+    HOST_DOCUMENT_RENDER_ROOT,
     ...(options.ownerDeniedReadPaths ?? []),
   ]);
 }

@@ -470,6 +470,21 @@ describe('managed document toolkit session PATH', () => {
         expect(driver.processEnv.PATH?.split(delimiter)[0]).toBe(join(toolsRoot, 'current', 'bin'));
         if (backend === 'codex') expect(driver.shellEnvironment?.PATH).toBe(driver.processEnv.PATH);
         await broken.stop();
+        chmodSync(root, 0o777);
+        expect(() =>
+          createNativeSession({
+            backend,
+            model: 'fixture',
+            workspaceDir: join(root, 'workspace'),
+            runtimeRoot,
+            actionSurface,
+            timeout: 1000,
+            maxTurns: 1,
+            toolsRoot,
+            createAgent: () => runner(backend),
+          })
+        ).toThrow(/Unsafe tools_root ancestor/);
+        chmodSync(root, 0o700);
         chmodSync(toolsRoot, 0o777);
         expect(() =>
           createNativeSession({

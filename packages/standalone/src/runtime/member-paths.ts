@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { sessionCredentialPath } from './session-credential.js';
 import {
   MEMBER_CLAUDE_TMP_PARENT,
+  HOST_DOCUMENT_RENDER_ROOT,
   normalizeReadPaths,
   physicalReadPath,
 } from './backend-security.js';
@@ -39,6 +40,7 @@ export function otherMemberReadPaths(
     : [];
   return normalizeReadPaths(
     [
+      HOST_DOCUMENT_RENDER_ROOT,
       ...registered.flatMap((id) => [memberPaths(root, id).runtimeRoot, memberClaudeTmpDir(id)]),
       ...readdirSync(root).map((entry) => join(root, entry)),
       ...tmpEntries,

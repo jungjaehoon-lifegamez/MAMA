@@ -25,5 +25,5 @@ with pymupdf.open(source) as pdf:
         page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False).save(output / name)
         pages.append(name)
         fonts.append(sorted({font[3] for font in page.get_fonts(full=True)
-                             if font[0] > 0 and pdf.extract_font(font[0])[3]}))
+                             if font[1] != "n/a"}))
 print(json.dumps({"pageCount": len(pages), "pages": pages, "fonts": fonts}))
