@@ -4,6 +4,51 @@ import { createActionSurface } from '../../src/runtime/action-surface.js';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
 
 describe('W1 action surface', () => {
+  const noticeReadSurface = () =>
+    createActionSurface({
+      timeZone: createTimeZoneSetting('UTC'),
+      runtimeRoot: '/tmp/mama-test-runtime',
+      configPath: '/tmp/mama-test-config.yaml',
+      isOwnerMessageTurn: () => true,
+      adapter: { prepare: () => ({ all: () => [] }) } as unknown as DatabaseInstance,
+      knowledge: {} as Knowledge,
+      ownerPrincipalId: 'owner-test',
+      agentId: 'agent-test',
+    });
+
+  it.each([
+    ['source.read', 'denied', false],
+    ['source.read', 'stored_source_out_of_scope', false],
+    ['source.read', 'stored_source_not_found', false],
+    ['source.read', 'source_unavailable', true],
+    ['source.read', 'Error', true],
+    ['memory.read:record', 'denied', false],
+    ['memory.read:record', 'Error', true],
+  ])('notice ref read preserves %s %s failures (throws: %s)', async (action, name, throws) => {
+    const surface = noticeReadSurface();
+    surface.catalog.entry(String(action)).exec = async () => {
+      throw Object.assign(new Error('fixture store failure'), { name });
+    };
+    const ref =
+      action === 'source.read'
+        ? { observationRef: 'fixture-obs' }
+        : { memory_id: 'fixture-record' };
+    const read = surface.readNoticeRef(ref, surface.ownerAccess);
+    if (throws) await expect(read).rejects.toThrow('fixture store failure');
+    else await expect(read).resolves.toBe(false);
+  });
+
+  it.each([null, { id: 'fixture-erased', state: 'erased', scopes: [] }])(
+    'a missing or erased record is explicitly unreadable',
+    async (record) => {
+      const surface = noticeReadSurface();
+      surface.catalog.entry('memory.read:record').exec = async () => ({ record });
+      await expect(
+        surface.readNoticeRef({ memory_id: 'fixture-record' }, surface.ownerAccess)
+      ).resolves.toBe(false);
+    }
+  );
+
   it('grants calendar reads and memory scopes to the owner by default', () => {
     const surface = createActionSurface({
       timeZone: createTimeZoneSetting('UTC'),

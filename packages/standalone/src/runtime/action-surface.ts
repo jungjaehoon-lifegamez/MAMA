@@ -448,7 +448,16 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       { action: 'observationRef' in ref ? 'source.read' : 'memory.read:record', input: ref },
       { access }
     );
-    if (result.status !== 'completed') return false;
+    if (result.status !== 'completed') {
+      if (
+        result.error.kind === 'denied' ||
+        ['stored_source_out_of_scope', 'stored_source_not_found'].includes(result.error.code)
+      )
+        return false;
+      throw Object.assign(new Error(`${result.error.code}: ${result.error.message}`), {
+        name: result.error.code,
+      });
+    }
     if ('observationRef' in ref) return true;
     const record = (result.data as { record: object | null }).record;
     return record !== null && !isErasedRecord(record);

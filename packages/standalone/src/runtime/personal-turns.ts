@@ -20,7 +20,7 @@ export async function deliverPersonalTurnResult(
     isClosed(): boolean;
     isActive(): boolean;
     isOffboarded(): boolean;
-    assertCurrent(): void;
+    assertCurrent(): void | Promise<void>;
     completeIfCurrent(): Promise<void>;
     complete(access: JudgmentAccess): Promise<void>;
     hasExchange(): boolean;
@@ -46,7 +46,7 @@ export async function deliverPersonalTurnResult(
   }
   if (!ports.isActive())
     throw new PersonalTurnFinalFailure(`${ports.label} person is no longer active`);
-  ports.assertCurrent();
+  await ports.assertCurrent();
   const access = ports.access();
   if (!text)
     throw new PersonalTurnFinalFailure(

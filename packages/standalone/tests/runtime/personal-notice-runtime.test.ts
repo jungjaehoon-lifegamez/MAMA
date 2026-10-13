@@ -3,6 +3,7 @@ import {
   appendJudgment,
   createPrincipalRepository,
   exportPrincipalRecords,
+  recallMemory,
 } from '@jungjaehoon/mama-core';
 import { readFileSync } from 'node:fs';
 import { unzipSync } from 'fflate';
@@ -232,11 +233,238 @@ async function setup(ownerRole = true) {
 }
 
 describe('personal event notices', () => {
+  it.each(['memory', 'source'] as const)(
+    'reconciliation closes an undelivered result after a %s grant is revoked',
+    async (kind) => {
+      const { f, repo, fact, call, observationRef, rows, archive, failures, startGateway } =
+        await setup(false);
+      const scope =
+        kind === 'memory'
+          ? { kind: 'memory' as const, scopeKind: 'project' as const, scopeId: 'fixture-recovery' }
+          : { kind: 'source' as const, connector: 'slack', channelId: 'fixture-room' };
+      repo().grantScope({
+        targetPrincipalId: f.member,
+        ownerPrincipalId: 'owner',
+        scope,
+        now: Date.now(),
+      });
+      const ref = kind === 'memory' ? await fact('fixture-recovery') : { observationRef };
+      repo().grantScope({
+        targetPrincipalId: f.member,
+        ownerPrincipalId: 'owner',
+        scope: { kind: 'memory', scopeKind: 'project', scopeId: 'fixture-still-readable' },
+        now: Date.now(),
+      });
+      const kept = await fact('fixture-still-readable');
+      transport.unavailable = true;
+      await call(f.member, [ref, kept]);
+      await vi.waitFor(() =>
+        expect(
+          f.runtime.runtime.mailbox!.readInput(rows()[0]!.stimulus_id, f.member)?.nativeDelivery
+            ?.state
+        ).toBe('uncertain')
+      );
+      const turns = f.turns.length;
+      repo().revokeScope({
+        targetPrincipalId: f.member,
+        ownerPrincipalId: 'owner',
+        scope,
+        now: Date.now(),
+      });
+      await gateway!.stop();
+      await f.restart();
+      transport.unavailable = false;
+      await startGateway();
+      await f.settled(rows()[0]!.stimulus_id, f.member);
+      expect(transport.sent).toEqual([]);
+      expect(archive()).toEqual([]);
+      expect(f.turns).toHaveLength(turns);
+      expect(failures).toEqual([
+        'fixture disconnected',
+        expect.stringContaining('Personal notice ref is no longer readable'),
+      ]);
+      expect(
+        f.runtime.surface.personalNotices.isClosed(
+          f.runtime.runtime.mailbox!.readInput(rows()[0]!.stimulus_id, f.member)!
+        )
+      ).toBe(true);
+    }
+  );
+
+  it('reconciliation closes an old result after suspension and resume, including equal timestamps', async () => {
+    const { f, repo, notice, rows, archive, failures, startGateway } = await setup();
+    transport.unavailable = true;
+    await notice();
+    await vi.waitFor(() =>
+      expect(
+        f.runtime.runtime.mailbox!.readInput(rows()[0]!.stimulus_id, f.member)?.nativeDelivery
+          ?.state
+      ).toBe('uncertain')
+    );
+    const row = f.runtime.runtime.mailbox!.readInput(rows()[0]!.stimulus_id, f.member)!;
+    const turns = f.turns.length;
+    repo().suspend(f.member, row.createdAt);
+    repo().resume(f.member, row.createdAt);
+    await gateway!.stop();
+    await f.restart();
+    transport.unavailable = false;
+    await startGateway();
+    await f.settled(row.stimulusId, f.member);
+    expect(transport.sent).toEqual([]);
+    expect(archive()).toEqual([]);
+    expect(f.turns).toHaveLength(turns);
+    expect(failures).toEqual([
+      'fixture disconnected',
+      expect.stringContaining('Personal notice person lifecycle changed'),
+    ]);
+    expect(f.runtime.surface.personalNotices.isClosed(row)).toBe(true);
+  });
+
+  it('checks refs before the initial send when access changes during the model turn', async () => {
+    const { f, repo, fact, grant, call, rows, failures } = await setup(false);
+    grant('fixture-during-turn');
+    const ref = await fact('fixture-during-turn');
+    let release!: () => void;
+    f.holdMemberCompletion(
+      new Promise<void>((resolve) => {
+        release = resolve;
+      })
+    );
+    try {
+      await call(f.member, [ref]);
+      await vi.waitFor(() =>
+        expect(f.turns.some((turn) => turn.principal === f.member)).toBe(true)
+      );
+      repo().revokeScope({
+        targetPrincipalId: f.member,
+        ownerPrincipalId: 'owner',
+        scope: { kind: 'memory', scopeKind: 'project', scopeId: 'fixture-during-turn' },
+        now: Date.now(),
+      });
+    } finally {
+      release();
+      f.holdMemberCompletion(undefined);
+    }
+    await f.settled(rows()[0]!.stimulus_id, f.member);
+    expect(transport.sent).toEqual([]);
+    expect(failures).toEqual([
+      expect.stringContaining('Personal notice ref is no longer readable'),
+    ]);
+  });
+
+  it('eleven close receipts stay in export but out of recall and a fresh session', async () => {
+    const { f, call, rows, observationRef } = await setup(false);
+    const scopes = [{ kind: 'user' as const, id: f.member }];
+    await appendJudgment(
+      {
+        commandId: 'fixture-personal-fact',
+        topic: 'fixture-personal',
+        recordKind: 'judgment',
+        summary: 'PERSONAL_FACT_RETAINED',
+        payload: {},
+        scopes,
+        record: { kind: 'fact', status: 'active' },
+      },
+      { principalId: f.member, agentId: 'fixture-agent', actions: [], scopes },
+      { adapter: f.runtime.database.adapter, embedder: null }
+    );
+    createPrincipalRepository(f.runtime.database.adapter).grantScope({
+      targetPrincipalId: f.member,
+      ownerPrincipalId: 'owner',
+      scope: { kind: 'source', connector: 'slack', channelId: 'fixture-room' },
+      now: Date.now(),
+    });
+    f.memberResponse('[ack]');
+    for (let n = 0; n < 11; n++) {
+      expect(await call(f.member, [{ observationRef }])).toMatchObject({
+        status: 'completed',
+        data: { queued: true },
+      });
+      await f.settled(rows()[n]!.stimulus_id, f.member);
+    }
+    const exported = exportPrincipalRecords(f.runtime.database.adapter, f.member);
+    expect(
+      exported.stores.decisions.filter(
+        (record) => JSON.parse(String(record.payload_json)).type === 'personal-notice-close'
+      )
+    ).toHaveLength(11);
+    const recall = await recallMemory(f.runtime.database.adapter, 'Personal notice closed', {
+      scopes,
+      includeProfile: false,
+      limit: 20,
+    });
+    expect(JSON.stringify(recall)).not.toContain('personal-notice/closed');
+    await f.restart();
+    const dm = f.message(f.member);
+    await f.settled(dm, f.member);
+    const prompt = f.turns.findLast((turn) => turn.principal === f.member)!.prompt;
+    expect(prompt).toContain('PERSONAL_FACT_RETAINED');
+    expect(prompt).not.toContain('Personal notice closed');
+  });
+
+  it('a ref store error reaches the enqueue caller instead of no_readable_refs', async () => {
+    const { f, call, observationRef, rows } = await setup();
+    const read = f.runtime.surface.catalog.entry('source.read').exec;
+    f.runtime.surface.catalog.entry('source.read').exec = () => {
+      throw new Error('fixture raw store failure');
+    };
+    try {
+      expect(await call(f.member, [{ observationRef }])).toMatchObject({
+        status: 'failed',
+        error: { message: expect.stringContaining('fixture raw store failure') },
+      });
+      expect(rows()).toEqual([]);
+    } finally {
+      f.runtime.surface.catalog.entry('source.read').exec = read;
+    }
+  });
+
+  it('a ref store error before the notice turn stays retryable and never closes it', async () => {
+    const { f, notice, rows } = await setup();
+    let release!: () => void;
+    f.blockMember(
+      new Promise<void>((resolve) => {
+        release = resolve;
+      })
+    );
+    const blocker = f.message(f.member);
+    await vi.waitFor(() => expect(f.turns.some((turn) => turn.principal === f.member)).toBe(true));
+    const read = f.runtime.surface.catalog.entry('source.read').exec;
+    try {
+      await notice();
+      f.runtime.surface.catalog.entry('source.read').exec = () => {
+        throw new Error('fixture raw store retry');
+      };
+      release();
+      f.blockMember(undefined);
+      await f.settled(blocker, f.member);
+      await vi.waitFor(() =>
+        expect(f.runtime.runtime.mailbox!.readInput(rows()[0]!.stimulus_id, f.member)?.status).toBe(
+          'pending'
+        )
+      );
+      const row = f.runtime.runtime.mailbox!.readInput(rows()[0]!.stimulus_id, f.member)!;
+      expect(row.attempts).toBeGreaterThan(0);
+      expect(f.runtime.surface.personalNotices.isClosed(row)).toBe(false);
+      expect(transport.sent).toEqual([]);
+    } finally {
+      release();
+      f.blockMember(undefined);
+      f.runtime.surface.catalog.entry('source.read').exec = read;
+    }
+    f.runtime.database.adapter
+      .prepare("UPDATE mailbox_inputs SET retry_after=0 WHERE channel_key='notice'")
+      .run();
+    await f.runtime.runtime.drainOnce();
+    await f.settled(rows()[0]!.stimulus_id, f.member);
+    expect(transport.sent).toHaveLength(1);
+  });
+
   it('a record order delivers one stateless co-owner DM and archives only refs and the agent reply', async () => {
     const { f, rows, archive, observationRef, delta } = await setup();
     const dm = f.message(f.member);
     await f.settled(dm, f.member);
-    const dmSession = f.turns.at(-1)!.session;
+    const dmSession = f.turns.findLast((t) => t.principal === f.member)!.session;
     f.memberResponse('The assignment needs your attention.');
     expect(
       await f.actRecordDelta(
@@ -273,7 +501,7 @@ describe('personal event notices', () => {
     expect(f.ledger.listForTelegramDm('21001')).toHaveLength(1);
     const next = f.message(f.member);
     await f.settled(next, f.member);
-    expect(f.turns.at(-1)!.session).toBe(dmSession);
+    expect(f.turns.findLast((t) => t.principal === f.member)!.session).toBe(dmSession);
   });
 
   it('directory works in a delta, exposes partitions and no transport identities, and is absent for members', async () => {
@@ -517,6 +745,119 @@ describe('personal event notices', () => {
     expect(prompt).toContain(nextRef);
     expect(prompt).toContain(memory.memory_id);
     expect(transport.sent).toHaveLength(2);
+  });
+
+  it('marks a carried batch first noticed on a later delta and suppresses it on the next carry', async () => {
+    const { f, delta, observationRef, rows, call, startGateway } = await setup();
+    const nextDelta = (id: string) => {
+      const raw = new RawStore(join(f.home, 'raw'));
+      const [item] = raw.save(
+        'slack',
+        [
+          {
+            source: 'slack',
+            sourceId: id,
+            channel: 'fixture-room',
+            author: 'fixture-author',
+            content: 'A later common fact',
+            timestamp: new Date(),
+            type: 'message',
+          },
+        ],
+        { collectOnly: true }
+      );
+      const [projection] = createCoreRawIndexSink(f.runtime.database.adapter)('slack', [item!]);
+      raw.acknowledgeProjection('slack', item!.sourceId, item!.pendingProjectionId!);
+      raw.close();
+      return {
+        ...delta,
+        coalesceKey: id,
+        refs: [
+          {
+            ...delta.refs[0]!,
+            sourceId: id,
+            sourceEntityId: item!.sourceEntityId!,
+            observationRef: projection!.observationRef,
+          },
+        ],
+      };
+    };
+    // The first batch fails the real record checker without ever queueing a notice.
+    await f.actRecordDelta('member.directory', {}, delta);
+    await f.settled(`record:${sourceDeltaStimulusId(delta)}:1`);
+    const second = nextDelta('fixture-second-carry');
+    expect(
+      await f.actRecordDelta(
+        'member.notice',
+        { principalId: f.member, refs: [{ observationRef }] },
+        second
+      )
+    ).toMatchObject({ status: 'completed', data: { queued: true } });
+    await f.settled(`record:${sourceDeltaStimulusId(second)}:1`);
+    await f.settled(rows()[0]!.stimulus_id, f.member);
+    // Restart proves the marker survives, including the recipient's closed notice.
+    await gateway!.stop();
+    await f.restart();
+    await startGateway();
+    const third = nextDelta('fixture-third-carry');
+    const thirdOrder = `record:${sourceDeltaStimulusId(third)}:1`;
+    expect(
+      await f.actRecordDelta(
+        'member.notice',
+        { principalId: f.member, refs: [{ source: 'slack', observationRef }] },
+        third
+      )
+    ).toMatchObject({ status: 'completed', data: { queued: false, reason: 'already_queued' } });
+    await f.settled(thirdOrder);
+    expect(f.runtime.runtime.mailbox!.readInput(thirdOrder, 'owner')!.payload).toMatchObject({
+      carried: expect.arrayContaining([
+        expect.objectContaining({
+          deltaStimulusId: sourceDeltaStimulusId(delta),
+          observationRefs: [observationRef],
+        }),
+      ]),
+    });
+    expect(rows()).toHaveLength(1);
+    expect(transport.sent).toHaveLength(1);
+    // Marking the carried batch must not consume the new delta's unrelated observation.
+    expect(
+      await call(
+        f.member,
+        [{ observationRef }, { observationRef: third.refs[0]!.observationRef }],
+        thirdOrder
+      )
+    ).toMatchObject({ status: 'completed', data: { queued: true } });
+    await f.settled(rows()[1]!.stimulus_id, f.member);
+    expect(JSON.parse(rows()[1]!.payload_json).refs).toEqual([
+      { observationRef: third.refs[0]!.observationRef },
+    ]);
+  });
+
+  it('atomically marks every included carried batch without consuming the mailbox ref budget', async () => {
+    const { f, record, observationRef, rows } = await setup();
+    const order = record();
+    const carried = Array.from({ length: 500 }, (_, n) => ({
+      ...order.payload,
+      deltaStimulusId: `fixture-carried-${n}`,
+      attempt: 2,
+    }));
+    f.memberResponse('[ack]');
+    expect(
+      await f.actScheduled({ ...order, payload: { ...order.payload, carried } }, 'member.notice', {
+        principalId: f.member,
+        refs: [{ observationRef }],
+      })
+    ).toMatchObject({ status: 'completed', data: { queued: true } });
+    await f.settled(rows()[0]!.stimulus_id, f.member);
+    const input = f.runtime.runtime.mailbox!.readInput(rows()[0]!.stimulus_id, f.member)!;
+    expect(input.refs).toHaveLength(501);
+    expect(
+      f.runtime.database.adapter
+        .prepare(
+          "SELECT COUNT(*) AS n FROM mailbox_seen WHERE principal_id=? AND ref_id LIKE 'notice:%'"
+        )
+        .get(f.member)
+    ).toEqual({ n: 501 });
   });
 
   it('a plain member can receive and read a delta observation granted by source channel', async () => {
@@ -924,6 +1265,7 @@ describe('personal event notices', () => {
     const exported = exportPrincipalRecords(f.runtime.database.adapter, f.member);
     expect(JSON.stringify(exported)).toContain('notice_refs');
     expect(JSON.stringify(exported)).toContain('notice_reply');
+    expect(JSON.stringify(exported)).toContain('personal-notice-close');
     const preview = await f.act('records.erase');
     await f.settled(preview.ref, f.member);
     expect(preview.result.status).toBe('completed');
@@ -938,8 +1280,16 @@ describe('personal event notices', () => {
       .join('\n');
     expect(contents).toContain('notice_refs');
     expect(contents).toContain('notice_reply');
+    expect(contents).toContain('personal-notice-close');
     await vi.waitFor(() => expect(archive()).toEqual([]));
     expect(rows()).toEqual([]);
+    expect(
+      f.runtime.database.adapter
+        .prepare(
+          "SELECT 1 FROM decisions WHERE json_extract(payload_json, '$.type') IN ('personal-notice-close', 'personal-notice-input') AND erased_at IS NULL"
+        )
+        .get()
+    ).toBeUndefined();
     const raw = new RawStore(join(f.home, 'raw'));
     expect(
       raw

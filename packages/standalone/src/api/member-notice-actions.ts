@@ -169,13 +169,41 @@ export function memberNoticeRegistrations(ports: {
         if (repo.findById(principalId)?.status !== 'active')
           return refused('recipient_not_active_member');
         if (alreadyQueued()) return refused('already_queued');
-        const accepted = mailbox.enqueue({
-          id,
-          kind: 'scheduled',
-          principalId,
-          channelKey: 'notice',
-          occurredAt: Date.now(),
-          payload: { refs: readable, timeZone: ports.timeZone.get() },
+        const carried = (record?.carried ?? []).filter((batch) =>
+          readable.some(
+            (evidence) =>
+              'observationRef' in evidence &&
+              batch.observationRefs.includes(evidence.observationRef)
+          )
+        );
+        const accepted = ports.adapter.transaction(() => {
+          const accepted = mailbox.enqueue({
+            id,
+            kind: 'scheduled',
+            principalId,
+            channelKey: 'notice',
+            occurredAt: Date.now(),
+            payload: {
+              refs: readable,
+              timeZone: ports.timeZone.get(),
+              lifecycleVersion: repo.lifecycleVersion(principalId),
+            },
+          });
+          if (accepted === null) return null;
+          // Commit carried-batch markers with the notice without spending its 500-ref budget.
+          // Their input binding also keeps P9 erasure and uncertain-input retention intact.
+          const seen = ports.adapter.prepare(
+            'INSERT OR IGNORE INTO mailbox_seen (ref_id, seen_at, principal_id) VALUES (?, ?, ?)'
+          );
+          const bind = ports.adapter.prepare(
+            'INSERT OR IGNORE INTO mailbox_input_refs (input_id, ref_id, observation_ref) VALUES (?, ?, NULL)'
+          );
+          for (const batch of carried) {
+            const key = noticeId(batch.deltaStimulusId);
+            seen.run(key, Date.now(), principalId);
+            bind.run(accepted, key);
+          }
+          return accepted;
         });
         if (accepted === null) return refused('already_queued');
         ports.notices.wake(principalId);

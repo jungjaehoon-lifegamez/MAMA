@@ -601,9 +601,12 @@ async function planTurn(row: MailboxRow, options: StimulusDeliveryOptions): Prom
       return { kind: 'skip', reason: 'personal notice person is no longer active' };
     if (options.personalNotices.isClosed(row))
       return { kind: 'skip', reason: 'personal notice already closed' };
+    if (!options.personalNotices.isCurrent(row))
+      return { kind: 'skip', reason: 'personal notice person lifecycle changed' };
     const refs: NoticeRef[] = [];
     for (const ref of notice.refs) if (await options.readNoticeRef!(ref)) refs.push(ref);
     if (refs.length === 0) return { kind: 'skip', reason: 'personal notice has no readable refs' };
+    await options.personalNotices.prepare(row, refs);
     return {
       kind: 'turn',
       lessonQuery: null,

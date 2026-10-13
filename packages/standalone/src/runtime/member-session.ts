@@ -204,6 +204,7 @@ export function createMemberSession(
         ? deliverPersonalNoticeResult(row, result, {
             ...deliveryPorts,
             store: surface.personalNotices,
+            read: surface.readNoticeRef,
           })
         : deliverPersonalJobResult(row, result, { ...deliveryPorts, store: ports.personalJobs });
     },

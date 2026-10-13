@@ -92,6 +92,8 @@ export interface PrincipalRepository {
    */
   ensureOwner(input: EnsureOwnerInput): 'created' | 'exists' | 'conflict';
   findById(principalId: string): PrincipalRow | null;
+  /** Monotonic status-transition identity; names and grants do not change it. */
+  lifecycleVersion(principalId: string): number;
   /** Set a member's nonblank, trimmed display name; the common principal is not a person. */
   setDisplayName(input: { principalId: string; displayName: string; now: number }): string;
   listMembers(): Array<{ principalId: string; displayName?: string; status: string }>;
@@ -704,6 +706,14 @@ export function createPrincipalRepository(
       transitionMember(principalId, 'offboarded', now);
     },
     ensureOwner,
+    lifecycleVersion: (principalId) => {
+      const row = adapter
+        .prepare(
+          'SELECT COALESCE(MAX(transition_id), 0) AS version FROM principal_lifecycle_transitions WHERE principal_id=?'
+        )
+        .get(principalId) as { version: number };
+      return row.version;
+    },
     findById: (principalId) => {
       const row = selectPrincipalStatement.get(principalId) as PrincipalDatabaseRow | undefined;
       return row ? mapPrincipal(row) : null;
