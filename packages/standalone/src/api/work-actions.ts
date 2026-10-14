@@ -25,6 +25,8 @@ export interface WorkPorts {
   observationExists: (observationId: string, context: ActionContext) => boolean;
   /** The observations at either end of an edge, which a link to that edge also cites. */
   edgeObservations: (edgeId: string) => string[];
+  /** The scopes the current head of a work item is bound to. */
+  workBindings: (commitmentId: string) => Array<{ kind: string; id: string }>;
 }
 
 export interface WorkListPorts {
@@ -1587,6 +1589,22 @@ export function minimalWorkActionRegistrations(ports: WorkPorts): ActionRegistra
         assertReplayEventDatetime(body, context, 'work.revise');
         assertSourceRefsExist(body, ports, context);
         const commitmentId = body.commitmentId as string;
+        // A revision becomes the head every reader sees, so a room revises only work whose
+        // every binding is within its grants (an access with roomChannel, principal-access.ts).
+        if (
+          (context.access as { roomChannel?: string }).roomChannel !== undefined &&
+          !ports
+            .workBindings(commitmentId)
+            .every((binding) =>
+              context.access.scopes.some(
+                (scope) => scope.kind === binding.kind && scope.id === binding.id
+              )
+            )
+        )
+          throw new JudgmentError(
+            'SCOPE_DENIED',
+            `${commitmentId} is also bound outside your granted projects; ask an owner to change it`
+          );
         return ports.knowledge.reviseWork(
           {
             ...commandFieldsFrom(body),

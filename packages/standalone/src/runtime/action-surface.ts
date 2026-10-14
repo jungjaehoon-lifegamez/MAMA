@@ -586,6 +586,17 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
               .prepare('SELECT 1 FROM observation_versions WHERE observation_id = ? LIMIT 1')
               .get(observationId) !== undefined
           : observationReadable(observationId, context),
+      workBindings: (commitmentId) =>
+        (
+          options.adapter
+            .prepare(
+              `SELECT s.kind, s.external_id FROM commitments c
+               JOIN memory_scope_bindings b ON b.memory_id = c.head_record_id
+               JOIN memory_scopes s ON s.id = b.scope_id
+               WHERE c.commitment_id = ?`
+            )
+            .all(commitmentId) as Array<{ kind: string; external_id: string }>
+        ).map((row) => ({ kind: row.kind, id: row.external_id })),
       edgeObservations: (edgeId) => {
         const edge = options.adapter
           .prepare(

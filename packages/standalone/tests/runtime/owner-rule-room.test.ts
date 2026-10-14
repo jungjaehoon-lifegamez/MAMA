@@ -457,3 +457,26 @@ it('keeps a corrected partition rule in its partition and has no graph-backed li
     error: { code: 'invalid_input' },
   });
 });
+
+it('revises work from a room only when every binding of its head is within its grants', async () => {
+  const create = (scopes: unknown[]) =>
+    call(
+      'work.create',
+      { topic: 'shared-work', summary: 'work', scopes, set: { title: 'shared work' } },
+      owner()
+    );
+  const wide = data(await create([PARTITION, { kind: 'user', id: OWNER }])) as {
+    commitmentId: string;
+  };
+  const narrow = data(await create([PARTITION])) as { commitmentId: string };
+  const revise = (commitmentId: string) =>
+    call('work.revise', {
+      commitmentId,
+      summary: 'room change',
+      scopes: [PARTITION],
+      set: { title: 'room change' },
+    });
+  // A room revision of a head also bound to the common scope would change it for every reader.
+  expect(await revise(wide.commitmentId)).toMatchObject({ status: 'failed' });
+  expect((await revise(narrow.commitmentId)).status).toBe('completed');
+});
