@@ -313,9 +313,10 @@ it('refuses policy changes from another allowed group and describes room capabil
     '-200'
   );
   await f.settled(ref, f.member);
+  // Another allowed group's room is not granted owner policy at all.
   expect(f.resultFor(ref)).toMatchObject({
     status: 'failed',
-    error: { message: expect.stringContaining('common channel') },
+    error: { code: 'action_not_granted' },
   });
   expect(
     data(await f.runtime.surface.hostToolCall('manage.policy.read', {}, 'policy-after')).fingerprint
@@ -342,6 +343,7 @@ it('durably reroutes a queued common message after owner role loss, once across 
   const blocker = f.message('owner', 'block common');
   await vi.waitFor(() => expect(f.turns.at(-1)?.principal).toBe('owner'));
   const ref = f.message('owner', 'queued before role loss', f.managingOwner);
+  f.ledger.claim(ref);
   f.runtime.database.adapter
     .prepare("DELETE FROM principal_roles WHERE principal_id=? AND role='owner'")
     .run(f.managingOwner);
@@ -356,6 +358,8 @@ it('durably reroutes a queued common message after owner role loss, once across 
   await f.settled(ref, f.managingOwner);
   const row = f.runtime.runtime.mailbox!.readInput(ref, f.managingOwner)!;
   expect(row.payload).toMatchObject({ roomChannel: 'fixture', senderPrincipalId: f.managingOwner });
+  // The reply follows the member's room, not the common archive.
+  expect(f.ledger.get(ref)?.principalId).toBe(f.managingOwner);
   expect(
     f.turns
       .filter((turn) => turn.prompt.includes('queued before role loss'))

@@ -176,7 +176,18 @@ describe('P1 principal access through the product dispatcher', () => {
       ownerAccess: surface.ownerAccess,
       agentId: 'agent-member-test',
       sessionKey: `member:${member}:room:telegram:-100`,
+      commonChannelId: '-100',
     });
+    // Only the common channel's room reads and changes owner policy.
+    const otherRoom = resolvePrincipalAccess(member, {
+      adapter: db.adapter,
+      ownerAccess: surface.ownerAccess,
+      agentId: 'agent-member-test',
+      sessionKey: `member:${member}:room:telegram:-200`,
+      commonChannelId: '-100',
+    });
+    expect(otherRoom.actions).not.toContain('manage.policy.read');
+    expect(otherRoom.actions).not.toContain('manage.policy.update');
     expect(access.scopes).toEqual([PARTITION]);
     expect(access.readScopes).toEqual([PARTITION]);
     expect(access.defaultScopes).toEqual([]);

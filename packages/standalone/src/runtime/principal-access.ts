@@ -30,6 +30,8 @@ export interface PrincipalAccessOptions {
   ownerAccess: JudgmentAccess;
   agentId: string;
   sessionKey?: string;
+  /** The common channel; only a room there reads and changes owner policy. */
+  commonChannelId?: string;
 }
 
 export function memberRoomSessionKey(principalId: string, channel: string): string {
@@ -130,8 +132,7 @@ export function resolvePrincipalAccess(
         'work.revise',
         'work.link',
         'work.no_update',
-        'manage.policy.read',
-        'manage.policy.update',
+        ...(room === options.commonChannelId ? ['manage.policy.read', 'manage.policy.update'] : []),
       ],
       roomChannel: room,
       roomChatFloor: principal.created_at,

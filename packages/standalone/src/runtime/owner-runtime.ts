@@ -724,6 +724,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
             roomChannel: row.channelKey,
           },
         });
+        // Its reply then comes back through the room session, authored by the member's agent.
+        options.messageLedger?.()?.handOff(row.stimulusId, sender);
         return true;
       },
       wikiEnabled: options.wiki?.enabled ?? false,
@@ -866,6 +868,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
             ownerAccess: access,
             agentId: `member-agent:${principalId}`,
             sessionKey,
+            commonChannelId: options.commonChannelId,
           });
     const socketDispatch: ActionDispatcher = Object.assign(
       async (...[call, context]: Parameters<ActionDispatcher>) => {

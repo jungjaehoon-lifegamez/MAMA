@@ -151,6 +151,19 @@ export class OwnerMessageLedger {
     return entry.ownerId === this.ownerId;
   }
 
+  /**
+   * A common message handed to a member's room session keeps its entry; recording the member
+   * routes the reply through that room. Only Telegram messages have an entry.
+   */
+  handOff(key: string, principalId: string): void {
+    const existing = this.entries.get(key);
+    if (!existing || existing.principalId === principalId) return;
+    if (existing.principalId !== undefined)
+      throw new Error(`Owner message ${key} belongs to another principal`);
+    const entry = { ...existing, principalId };
+    this.commit(() => this.entries.set(key, entry));
+  }
+
   claim(
     key: string,
     binding?: OwnerDeliveryBinding

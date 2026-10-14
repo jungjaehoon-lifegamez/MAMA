@@ -76,6 +76,7 @@ export function createMemberSession(
       ownerAccess: surface.ownerAccess,
       agentId,
       sessionKey,
+      commonChannelId: options.commonChannelId,
     });
   const initialAccess = access(); // Unknown/inactive ids fail before creating their paths.
   const personalPaths = ensureMemberPaths(root, principalId);
@@ -200,8 +201,9 @@ export function createMemberSession(
         prepareAccess: access,
       },
       // The host reads the common policy; the person's native tools still cannot read its file.
+      // A room reads it only in the common channel, where it may change it.
       ownerPolicyProvider: () =>
-        room !== undefined || readsOwnerRules()
+        (room !== undefined ? room === options.commonChannelId : readsOwnerRules())
           ? ports.ownerPolicyProvider()
           : { content: null, fingerprint: '', loaded: false },
       // Native session also denies this member's runtime and Codex credentials.
