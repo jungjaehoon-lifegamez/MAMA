@@ -28,6 +28,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { load } from 'js-yaml';
 import { assertOwnedDirectory, assertToolsOwnership } from './tools-paths.js';
 import { invalidInput } from '../utils/invalid-input.js';
+import { O_NOFOLLOW_ANY } from '../api/file-delivery.js';
 
 export interface SkillPaths {
   workspace(principalId: string): string;
@@ -62,6 +63,10 @@ const FILE_LIMIT = 128;
 const FILE_BYTES = 2 * 1024 * 1024;
 const TOTAL_BYTES = 8 * 1024 * 1024;
 const FRONTMATTER_BYTES = 16 * 1024;
+/** SKILL.md reaches the model whole through skill.read; supporting files stay paths. */
+const SKILL_MD_BYTES = 64 * 1024;
+/** Darwin refuses a symlink in any component; elsewhere only the last component is checked. */
+const NO_FOLLOW = process.platform === 'darwin' ? O_NOFOLLOW_ANY : constants.O_NOFOLLOW;
 
 export function skillDenied(): Error {
   return Object.assign(new Error('Skill is not readable in this session'), { name: 'denied' });
@@ -128,8 +133,10 @@ function personalFolder(workspace: string, name: string): string {
   return folder;
 }
 /** Bound a snapshot before copying. No symlinks, special files or outside-file aliases. */
-function readFolder(folder: string): FileSkill {
+function readFolder(folder: string, exact = false): FileSkill {
   const base = realpathSync(folder);
+  // A personal folder is already resolved; any difference means it was swapped for an alias.
+  if (exact && base !== folder) throw invalidInput('Skill source changed into an alias');
   const files: SkillFile[] = [];
   let total = 0;
   let count = 0;
@@ -145,7 +152,9 @@ function readFolder(folder: string): FileSkill {
       throw invalidInput('Skill files must be regular files without hard links');
     if (files.length >= FILE_LIMIT || meta.size > FILE_BYTES || total + meta.size > TOTAL_BYTES)
       throw invalidInput('Skill exceeds 128 files, 2 MiB per file or 8 MiB total');
-    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    if (relative(base, path) === 'SKILL.md' && meta.size > SKILL_MD_BYTES)
+      throw invalidInput('SKILL.md exceeds 64 KiB; keep long material in supporting files');
+    const fd = openSync(path, constants.O_RDONLY | NO_FOLLOW);
     try {
       const current = fstatSync(fd);
       if (current.dev !== meta.dev || current.ino !== meta.ino || current.size !== meta.size)
@@ -200,9 +209,11 @@ function readMetadata(text: string | undefined): Pick<FileSkill, 'name' | 'descr
 
 /** Inventory reads file names/mtimes, and at most 16 KiB of SKILL.md frontmatter. */
 function listFolder(
-  folder: string
+  folder: string,
+  exact = false
 ): Pick<FileSkill, 'name' | 'description'> & { revision: string } {
   const base = realpathSync(folder);
+  if (exact && base !== folder) throw invalidInput('Skill source changed into an alias');
   const revision = createHash('sha256');
   let count = 0;
   let files = 0;
@@ -219,13 +230,15 @@ function listFolder(
     } else {
       if (++files > FILE_LIMIT || meta.size > FILE_BYTES || total + meta.size > TOTAL_BYTES)
         throw invalidInput('Skill exceeds 128 files, 2 MiB per file or 8 MiB total');
+      if (relative(base, path) === 'SKILL.md' && meta.size > SKILL_MD_BYTES)
+        throw invalidInput('SKILL.md exceeds 64 KiB; keep long material in supporting files');
       total += meta.size;
     }
   };
   walk(base);
   const path = join(base, 'SKILL.md');
   const before = lstatSync(path);
-  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const fd = openSync(path, constants.O_RDONLY | NO_FOLLOW);
   try {
     const meta = fstatSync(fd);
     if (!meta.isFile() || meta.nlink !== 1 || meta.dev !== before.dev || meta.ino !== before.ino)
@@ -373,7 +386,7 @@ export function createSkillStore(ports: {
         try {
           const meta = lstatSync(join(parent, name));
           if (!meta.isDirectory() && !meta.isSymbolicLink()) continue;
-          const skill = listFolder(folder(name));
+          const skill = listFolder(folder(name), scope === 'personal');
           if (skill.name !== name)
             throw invalidInput('Skill frontmatter name must match its folder');
           skills.push(fileEntry(skill, scope, join(parent, name)));
@@ -408,7 +421,7 @@ export function createSkillStore(ports: {
         scope === 'personal'
           ? personalFolder(ports.paths.workspace(id), name)
           : publishedFolder(name);
-      const skill = readFolder(folder);
+      const skill = readFolder(folder, scope === 'personal');
       if (skill.name !== name) throw invalidInput('Skill frontmatter name must match its folder');
       return {
         ...fileEntry(skill, scope, folder),
@@ -461,7 +474,7 @@ export function createSkillStore(ports: {
     validateName(name);
     const tools = installed();
     const source = personalFolder(ports.paths!.workspace(ports.commonPrincipalId), name);
-    const skill = readFolder(source);
+    const skill = readFolder(source, true);
     if (skill.name !== name) throw invalidInput('Skill frontmatter name must match its folder');
     const root = join(tools, 'skills');
     const versions = join(root, '.versions');

@@ -371,7 +371,8 @@ describe('scoped skills through the product dispatcher', () => {
     const skillPath = join(path, 'SKILL.md');
     writeFileSync(
       skillPath,
-      '---\nname: fixture-script\ndescription: Fixture\n---\n' + 'x'.repeat(1024 * 1024)
+      // Under the 64 KiB SKILL.md limit, still well over the 16 KiB frontmatter read.
+      '---\nname: fixture-script\ndescription: Fixture\n---\n' + 'x'.repeat(60 * 1024)
     );
     const open = vi.spyOn(fs, 'openSync');
     const read = vi.spyOn(fs, 'readSync');
@@ -407,6 +408,17 @@ describe('scoped skills through the product dispatcher', () => {
       });
     }
   );
+
+  it('reports a SKILL.md over the 64 KiB model-facing limit as invalid and refuses to read it', async () => {
+    const path = file(a);
+    const head = readFileSync(join(path, 'SKILL.md'), 'utf8');
+    writeFileSync(join(path, 'SKILL.md'), `${head}\n${'x'.repeat(64 * 1024)}`);
+    expect((await list())[0]?.error).toContain('SKILL.md exceeds 64 KiB');
+    expect(await call('skill.read', { id: 'file:personal:fixture-script' })).toMatchObject({
+      status: 'failed',
+      error: { message: expect.stringContaining('SKILL.md exceeds 64 KiB') },
+    });
+  });
 
   it.each(['inventory', 'skill'])(
     'stops directory enumeration at the entry cap (%s)',
