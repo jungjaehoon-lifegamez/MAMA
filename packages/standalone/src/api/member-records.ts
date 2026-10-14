@@ -229,12 +229,7 @@ export function createMemberRecords(options: {
       return;
     }
     if (job.kind === 'erase') {
-      const state = ports()
-        .mailbox()
-        .hostJobCheckpoint(job.hostInputId!) as unknown as ErasureState;
-      state.phase = 'receipt';
-      state.text = `Erasure did not run because the confirming turn did not complete (${outcome}: ${reason}).\nYour personal records and files were kept. Make a new request in a later member message.\nYour enrollment and grants are kept.`;
-      checkpoint(job, state);
+      cancelErasureConfirmation(job, outcome, reason);
       launchErasure(job);
       job.release();
       return;
@@ -336,15 +331,21 @@ export function createMemberRecords(options: {
       .mailbox()
       .checkpointHostJob(job.hostInputId!, JSON.parse(JSON.stringify(state)));
   };
+  const cancelErasureConfirmation = (job: Scheduled, outcome: string, reason: string) => {
+    const state = ports().mailbox().hostJobCheckpoint(job.hostInputId!) as unknown as ErasureState;
+    state.phase = 'receipt';
+    state.text = `Erasure did not run because the confirming turn did not complete (${outcome}: ${reason}).\nYour personal records and files were kept. Make a new request in a later member message.\nYour enrollment and grants are kept.`;
+    checkpoint(job, state);
+  };
   const runErasure = async (job: Scheduled) => {
     const p = ports(),
       id = job.principalId;
     const state = p.mailbox().hostJobCheckpoint(job.hostInputId!) as unknown as ErasureState;
     if (state.phase === 'done') {
+      p.serve(id);
       p.mailbox().ack(job.hostInputId!);
       blocked.delete(id);
       erasing.delete(id);
-      p.serve(id);
       return;
     }
     let step = 'retire';
@@ -509,6 +510,9 @@ export function createMemberRecords(options: {
           // failure cannot change what the transport delivered or what the chat records.
           console.error('[Member records] service restoration failed after receipt attempt', error);
         }
+        // Keep the receipt carrier and principal exclusion until service restoration succeeds.
+        // The recovery tick retries this phase; deferred messages must not run unserved.
+        throw error;
       }
       const telegram = p.telegram();
       p.turnChain(id).releaseDirectoryWait();
@@ -600,16 +604,28 @@ export function createMemberRecords(options: {
       // Core reconciliation owns uncertain native intake, even after its process is gone.
       const mailbox = ports().mailbox();
       const status = mailbox.inputStatus(payload.inputId);
-      if (status === 'acked' || status === 'dead')
-        mailbox.quarantine(payload.inputId, 'member_erasure_confirmation_recovered');
-      launchErasure({
+      const confirmation = mailbox.nativeInputs.get(payload.inputId);
+      const job: Scheduled = {
         principalId: row.principal_id,
         inputId: payload.inputId,
         commandId: row.stimulus_id,
         kind: 'erase',
         hostInputId: row.id,
         release: () => {},
-      });
+      };
+      const state = mailbox.hostJobCheckpoint(row.id) as unknown as ErasureState;
+      // A confirmed command is still waiting for native settlement. A crash before the
+      // cancellation callback cannot turn an incomplete confirming turn into permission to erase.
+      if (state.phase === 'confirmed' && (status !== 'acked' || confirmation?.state !== 'settled'))
+        cancelErasureConfirmation(
+          job,
+          status === 'dead' ? 'dead' : (confirmation?.state ?? 'unsettled'),
+          confirmation?.error ??
+            `confirmation input status=${status ?? 'missing'}, native state=${confirmation?.state ?? 'missing'}`
+        );
+      if (status === 'acked' || status === 'dead')
+        mailbox.quarantine(payload.inputId, 'member_erasure_confirmation_recovered');
+      launchErasure(job);
     }
   };
   const schedule = (kind: Scheduled['kind'], row: MailboxRow) => {
