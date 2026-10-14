@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.76.0] / mama-core [8.7.0] - 2026-10-14
+
+Each person, owners included, now works from its own DM with personal jobs, notices, skills and a
+document toolkit, and an erasure survives restarts. A member without the owner role works in the
+common group in a session of its own. The package changelogs list every change.
+
+### Added
+
+- Personal jobs: in its own DM a person creates, changes and deletes scheduled jobs (cron with a
+  time zone, at least an hour apart, at most ten active); a run's result goes to that DM once
+  (#481, #482).
+- Event notices: the common session names a member for a change, and the member's own turn
+  decides whether to tell it (#483).
+- `mama tools install` (also run by `mama init`) installs a document toolkit outside the home
+  folder for every session, and `document.render` turns a workspace document into a PDF and page
+  images (#484).
+- Skills per person: saved workflows and `skills/<name>/SKILL.md` folders, plus common skills
+  published from the common channel (#485).
+- Members have names, set by owners and shown to every session (#479).
+- Members in the common channel: a member without the owner role works there in a session of its
+  own, under its grants (#489).
+
+### Changed
+
+- Owners manage members from their DMs and suspend each other (#478). Each person has its own turn
+  chain, so a DM no longer waits for the common session (#480), and restart recovery is per person
+  (#477).
+- An erasure resumes after a stop or crash, erases only what its export held, and only the erasing
+  member waits. Shutdown stops intake first and closes the database last (#486).
+- An owner's DM knows its rules, its person and the web (#475). A personal session no longer gives
+  the model the owner's account email (#476).
+- A DM is told where its readable sources live, a wrongly named source no longer reads as a
+  permission problem, and Trello errors name the boards (#487, #488).
+- Owner policy changes come from the common channel: an owner's turn there, or a member's room
+  session (#489).
+
+### Upgrade
+
+- Core migrations 105 and 106 are additive and apply at the first start.
+- Run `mama tools install` once for the document toolkit; it adds `tools_root` to the config.
+
 ## mama-os [0.75.0] / mama-core [8.6.0] - 2026-10-12
 
 Owners are members. Each person, owners included, answers in its own Telegram DM session with its

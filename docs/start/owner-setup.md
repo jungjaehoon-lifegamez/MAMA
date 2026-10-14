@@ -81,6 +81,11 @@ positive Telegram user ID. Each owner gets a personal member session; the common
 the common session. Private chats cannot serve as the common channel: they always enter that
 person's intake.
 
+`mama init` ends by installing the document toolkit under `tools_root`. If that step fails, run
+`mama tools install` on the host and restart the daemon once
+([CLI reference](../reference/cli.md#install-the-document-toolkit)). To add members after the first
+start, see [People and their DMs](../guides/people.md).
+
 ## Start one daemon
 
 On macOS, if you chose to write the launch agent, start it after backend login:

@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [8.7.0] - 2026-10-14
+
+### Added
+
+- Migration 105 records each principal status change in `principal_lifecycle_transitions`, so a
+  consumer can tell whether a member changed since a point in time (#483).
+- Migration 106 adds host-job checkpoints: `checkpointHostJob` and `hostJobCheckpoint`. A pending
+  host job with a checkpoint is owned by its consumer until it is acknowledged, and the stale sweep
+  leaves it alone (#486).
+- Member display names: one trimmed, 1-120 character setter (#479).
+- Runtime ports: `prepareNative` prepares a native input's principal before admission (#483), and
+  `excludePrincipals` keeps a consumer's chosen principals out of every claim, host inputs
+  included (#486). The mailbox adds `deferClaim` (#480) and `bindInputObservation` (#486).
+- The persistent CLI driver takes a consumer `beforeSpawn` hook (#476) and `command` (#484).
+- `admittedScopeIds`, `readableScopeIds` and `referenceExists` are exported from the knowledge
+  entry point (#489).
+
+### Changed
+
+- Stop has two steps: `beginStop` stops admission and claims while sockets and result writers stay
+  open, and `accept` stays durable after stop (#486).
+- A CLI turn that times out keeps its principal's turn until the process has exited (#480).
+
 ## [8.6.0] - 2026-10-12
 
 ### Added

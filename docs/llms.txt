@@ -9,6 +9,7 @@ and in-process public MCP server. The two products share mama-core, not a data h
 - [Development memory setup](start/claude-code-plugin.md)
 - [Backends](guides/backends.md)
 - [Telegram](guides/telegram.md)
+- [People and DMs](guides/people.md)
 - [Connectors](guides/connectors.md)
 - [Reports and board](guides/reports-and-board.md)
 - [Replay](guides/replay.md)

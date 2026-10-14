@@ -15,6 +15,7 @@ Use `mama` from `@jungjaehoon/mama-os` to configure and run the owner agent. Sta
 | `mama secret set <NAME>`            | Prompts with echo disabled and atomically updates one supported secret in `~/.mama/auth.env`. Restart the daemon afterward.                                 |
 | `mama secret list`                  | Prints configured secret names only. It does not print values.                                                                                              |
 | `mama register-owner <telegram id>` | Registers one active member with the owner role, leaving the common principal without a Telegram identity. Run with the daemon stopped; prints counts only. |
+| `mama tools install`                | Installs or updates the document toolkit under `tools_root` for every session, and adds `tools_root` to `config.yaml` when it is missing.                   |
 | `mama daemon`                       | Runs the daemon in the foreground until stopped. It expects the credentials in its environment.                                                             |
 | `mama replay`                       | Runs the historical replay using the configured database and prepared import manifest, then stops.                                                          |
 | `mama backfill <file>`              | Checks a backfill file and writes the period it describes through the owner's actions, then stops.                                                          |
@@ -38,6 +39,16 @@ log into a backend, start the daemon or prove that Telegram works.
 
 Allowed secret names are `MAMA_TELEGRAM_TOKEN`, `MAMA_SLACK_TOKEN`, `MAMA_CHATWORK_TOKEN`,
 `MAMA_TRELLO_KEY`, `MAMA_TRELLO_TOKEN`, and `MAMA_AUTH_TOKEN`.
+
+## Install the document toolkit
+
+`mama tools install` builds a new toolkit version under `tools_root` and switches to it only after
+its checks pass; the previous version is kept. The toolkit holds a Python environment with
+python-pptx, python-docx, openpyxl, PyMuPDF, pdfplumber, reportlab and Pillow, plus LibreOffice and
+Noto CJK fonts. On macOS `tools_root` defaults to the Shared folder beside the home folders; set it
+elsewhere in `config.yaml` if needed, outside HOME. `mama init` runs the install last. The first
+install adds `tools_root` to `config.yaml`; restart the daemon once after it. Later installs need no
+restart. The daemon log says `document toolkit: present` at start.
 
 ## Register owner people
 

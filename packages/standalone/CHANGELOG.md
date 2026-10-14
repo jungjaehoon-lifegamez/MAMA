@@ -5,6 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.76.0] - 2026-10-14
+
+### Added
+
+- Personal jobs (`schedule.job.*`), in a person's own DM turn only. A job is a 5-field cron with
+  an IANA time zone and an instruction. Runs must be at least an hour apart across a year of
+  daylight-saving shifts, and at most ten jobs may be active. Each due run is a stateless turn
+  under the person's current access. `[ack]` sends nothing; any other result goes to the DM once
+  and is archived as a job exchange (#481, #482).
+- Event notices: from a record order, the common session names a member with `member.notice`
+  (refs only). The member's own stateless turn re-reads the refs under its current access and
+  decides whether to tell it. Nothing returns to the common session (#483).
+- A managed document toolkit, installed by `mama tools install` (also the last step of
+  `mama init`) under `tools_root`:
+  - a hash-pinned Python environment with python-pptx, python-docx, openpyxl, PyMuPDF,
+    pdfplumber, reportlab and Pillow;
+  - LibreOffice;
+  - Noto Sans and Serif CJK fonts.
+
+  Every session gets it first on its shell PATH. `document.render` turns a workspace document
+  into a PDF and page images under a sandbox, with no network and with size and time limits
+  (#484).
+
+- Skills per person (#485):
+  - A workflow record saved in a DM is that person's skill; one saved in the common channel is a
+    common skill.
+  - `skills/<name>/SKILL.md` folders are a person's file skills.
+  - `skill.publish` and `skill.unpublish` publish common file skills from the common channel.
+  - `skill.list` and `skill.read` serve the common session and every member. Nobody reads another
+    person's skills.
+- `manage.member.name`: owners name members, and every session shows the names (#479).
+- Members in the common channel (#489):
+  - A member without the owner role works in the group in a session of its own for that room,
+    under its granted partitions, with no personal records and no skills.
+  - Its chat reads start at its enrollment, and its records are bound to it.
+  - A queued group message whose sender lost the owner role moves once to that member's room
+    session.
+
+### Changed
+
+- Owners manage members from their DMs and suspend and resume each other. Self-suspend,
+  offboarding an owner and grant changes on an owner are refused (#478).
+- Each person has its own turn chain, so a DM no longer waits for the common session or another
+  person's turn. Directory changes take one exclusive lane (#480).
+- Restart recovery is per person: a ready outbound message to an active member's DM recovers
+  after a restart, and an uncertain personal input closes or gets one interruption notice (#477).
+- Erasure is a durable job (#486):
+  - It resumes after a stop or crash.
+  - Nothing is erased until Telegram confirms the export, and only what the export held is
+    erased.
+  - Only the erasing member waits.
+  - The receipt is recovered after a restart.
+
+  Shutdown stops intake first, lets running work finish or reach a resumable point, then closes
+  the transports and the database last.
+
+- An owner's DM reads the owner rules, names its person and has web search and fetch. A personal
+  session no longer gives the model the owner's account email (#475, #476).
+- A DM is told where its readable sources live, with each source's chat families, on a new session
+  and on the first turn after each start. A wrongly named source is refused without reading as a
+  permission problem, and `trello.read` names boards next to their keys (#487, #488).
+- Owner policy and rule writes need a message in the common channel, from an owner's turn there
+  or from a member's room session, recorded with the member. Another allowed group, a DM, Slack
+  and Discord cannot change them (#489).
+
 ## [0.75.0] - 2026-10-12
 
 ### Changed

@@ -161,20 +161,20 @@ These are the current package versions.
 
 | Package                                                     | Role                             | Version |
 | ----------------------------------------------------------- | -------------------------------- | ------- |
-| [MAMA OS](packages/standalone/README.md)                    | Owner agent and `mama` command   | 0.75.0  |
-| [mama-core](packages/mama-core/README.md)                   | Shared engine and public exports | 8.6.0   |
+| [MAMA OS](packages/standalone/README.md)                    | Owner agent and `mama` command   | 0.76.0  |
+| [mama-core](packages/mama-core/README.md)                   | Shared engine and public exports | 8.7.0   |
 | [Public MCP server](packages/mcp-server/README.md)          | Development memory over stdio    | 2.5.0   |
 | [Claude Code plugin](packages/claude-code-plugin/README.md) | Development commands and hooks   | 2.2.0   |
 
 ## Status
 
-| Stage                  | What                                                                     | Status                         |
-| ---------------------- | ------------------------------------------------------------------------ | ------------------------------ |
-| The record             | Originals kept, work history with evidence, local search                 | done                           |
-| One owner agent        | Answers, reports, board, wiki, guidance and workflows on Claude or Codex | done, live checks in progress  |
-| Sources and messengers | The sources above; Telegram, Discord and Slack                           | restored in this release       |
-| History import         | Import past messages per source and replay them day by day               | `mama backfill`, `mama replay` |
-| Team members           | Verified people share the same record within their own permissions       | after the owner flow           |
+| Stage                  | What                                                                                                | Status                         |
+| ---------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------ |
+| The record             | Originals kept, work history with evidence, local search                                            | done                           |
+| One owner agent        | Answers, reports, board, wiki, guidance and workflows on Claude or Codex                            | done, live checks in progress  |
+| Sources and messengers | The sources above; Telegram, Discord and Slack                                                      | restored in this release       |
+| History import         | Import past messages per source and replay them day by day                                          | `mama backfill`, `mama replay` |
+| Team members           | Each person has its own DM, records, jobs and skills; members work in the group within their grants | built; live checks in progress |
 
 What still needs live confirmation is listed in the [changelog](CHANGELOG.md) under known issues.
 
