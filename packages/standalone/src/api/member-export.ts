@@ -15,7 +15,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { Zip, ZipDeflate, ZipPassThrough, strToU8 } from 'fflate';
-import { memberPaths, memberClaudeTmpDir } from '../runtime/member-paths.js';
+import { memberPaths, memberClaudeTmpDir, memberRoomTmpRoot } from '../runtime/member-paths.js';
 import { physicalReadPath } from '../runtime/backend-security.js';
 import { O_NOFOLLOW_ANY, OWNER_FILE_MAX_UPLOAD_BYTES } from './file-delivery.js';
 
@@ -41,11 +41,14 @@ export function memberTrees(root: string, id: string): string[] {
           )
           .map((name) => join(parent, name))
       : [];
+  const roomTemp = memberRoomTmpRoot(id);
   return [
     memberPaths(root, id).runtimeRoot,
     temp,
+    roomTemp,
     ...archives(root, id),
     ...archives(dirname(temp), basename(temp)),
+    ...archives(dirname(roomTemp), basename(roomTemp)),
   ]
     .filter(existsSync)
     .map((path) => join(physicalReadPath(dirname(path)), basename(path)));
@@ -89,15 +92,19 @@ export function memberFileInventory(root: string, id: string) {
       let eligible = true;
       let privateManaged = false;
       if (local !== undefined) {
-        if (managedRoots.has(local.split('/')[0]!)) {
+        // A room session keeps the same layout under rooms/<sha256>/, its own account and
+        // credential homes included. Its history is the common room's, not a personal record.
+        const inRoom = /^rooms\/[0-9a-f]{64}\/(.*)$/.exec(local)?.[1];
+        const own = inRoom ?? local;
+        if (managedRoots.has(own.split('/')[0]!)) {
           eligible =
-            managedHistoryFiles.has(local) ||
-            local.startsWith('claude-config/projects/') ||
-            local.startsWith('.codex/sessions/');
+            inRoom === undefined &&
+            (managedHistoryFiles.has(own) ||
+              own.startsWith('claude-config/projects/') ||
+              own.startsWith('.codex/sessions/'));
           privateManaged = !eligible;
-        } else if (local === 'workspace/.tmp' || local.startsWith('workspace/.tmp/'))
-          eligible = false;
-        else if (new RegExp(`^workspace/files/member-export-${archiveSuffix}\\.zip$`).test(local))
+        } else if (own === 'workspace/.tmp' || own.startsWith('workspace/.tmp/')) eligible = false;
+        else if (new RegExp(`^workspace/files/member-export-${archiveSuffix}\\.zip$`).test(own))
           eligible = false;
       }
       allFiles.push({

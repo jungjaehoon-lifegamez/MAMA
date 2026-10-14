@@ -1073,10 +1073,54 @@ it('keeps a room message received during the erasure with its room', async () =>
   const preview = await f.preview();
   await f.confirm(preview.confirmationToken);
   expect((await f.finish()).status).toBe('erased');
-  // It runs in that room session afterwards, not in the member's DM session.
+  // It runs in that room session afterwards, not in the member's DM session, and is archived
+  // in the room's common records, not the member's personal ones.
   expect(f.runtime.runtime.mailbox!.readInput(roomRef, f.member)?.payload).toMatchObject({
     roomChannel: '-100',
   });
+  await vi.waitFor(() =>
+    expect(
+      f.runtime.database.adapter
+        .prepare(
+          "SELECT memory_scope_id FROM connector_event_index WHERE source_connector='chat' AND source_id=?"
+        )
+        .all(roomRef)
+    ).toEqual([{ memory_scope_id: 'owner' }])
+  );
+});
+
+it('keeps a room intake taken during the erasure a room intake after it ends', async () => {
+  const f = await setup();
+  const send = f.telegram.sendFile.getMockImplementation()!;
+  let roomIntake!: Awaited<ReturnType<typeof f.runtime.memberIntake>>;
+  f.telegram.sendFile.mockImplementationOnce(async (...args) => {
+    roomIntake = await f.runtime.memberIntake(f.member, '-100');
+    return send(...args);
+  });
+  const preview = await f.preview();
+  await f.confirm(preview.confirmationToken);
+  expect((await f.finish()).status).toBe('erased');
+  // The message arrives only after the erasure ended (a queue wait or a download).
+  const roomRef = 'telegram:-100:fixture-room-after-erasure';
+  expect(
+    roomIntake.acceptOwnerMessage({
+      id: roomRef,
+      channelKey: '-100',
+      senderPrincipalId: f.member,
+      occurredAt: Date.now(),
+      text: 'fixture room message',
+    }).state
+  ).toBe('accepted');
+  expect(f.runtime.runtime.mailbox!.readInput(roomRef, f.member)?.payload).toMatchObject({
+    roomChannel: '-100',
+  });
+  expect(
+    f.runtime.database.adapter
+      .prepare(
+        "SELECT memory_scope_id FROM connector_event_index WHERE source_connector='chat' AND source_id=?"
+      )
+      .all(roomRef)
+  ).toEqual([{ memory_scope_id: 'owner' }]);
 });
 
 it('writes a personal receipt from other work after the erasure and keeps later DM ledger entries', async () => {

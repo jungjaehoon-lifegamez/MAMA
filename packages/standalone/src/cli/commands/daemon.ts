@@ -309,8 +309,13 @@ export function ensureDaemonIsolation(options: DaemonIsolationOptions): void {
   }
 }
 
-function loggedOwnerIntake(intake: StimulusIntake, logger: DaemonLogger): TurnIntake {
+export function loggedOwnerIntake(
+  intake: StimulusIntake & Pick<TurnIntake, 'deferIncoming'>,
+  logger: DaemonLogger
+): TurnIntake {
   return {
+    // The gateway keeps a retired member's message as a durable envelope only through this.
+    ...(intake.deferIncoming === undefined ? {} : { deferIncoming: intake.deferIncoming }),
     acceptOwnerMessage: (input: OwnerMessageInput) => {
       try {
         const receipt = intake.acceptOwnerMessage(input);

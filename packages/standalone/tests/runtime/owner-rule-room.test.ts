@@ -325,3 +325,26 @@ it('bounds room chat overview, search, recent and direct/batch reads by enrollme
     'PRE_ENROLLMENT_COMMON_ANSWER'
   );
 });
+
+it('refuses a common rule correction that links an observation the room cannot read', async () => {
+  const [before, after] = [1999, 2001].map((at) =>
+    chat.saveOwnerMessage({
+      id: `telegram:-100:${at}`,
+      channelKey: '-100',
+      occurredAt: at,
+      text: `marker ${at}`,
+    })
+  );
+  const rule = await save();
+  const correct = (id: string) =>
+    call(
+      'memory.save',
+      input({
+        replaces: [replace(rule)],
+        links: [{ relation: 'mentions', target: { kind: 'observation', id } }],
+      })
+    );
+  // Core only checks that an observation exists; the room's enrollment floor still applies.
+  expect(await correct(before!)).toMatchObject({ status: 'failed', error: { code: 'denied' } });
+  expect((await correct(after!)).status).toBe('completed');
+});

@@ -130,9 +130,15 @@ describe('P1 principal access through the product dispatcher', () => {
       scope,
       now: 4,
     });
+  // The common session speaks in the common channel; a member in its own DM.
   const ruleTurn = (principalId: string): ActionContext => ({
     access: resolve(principalId),
-    session: { sourceMessageRef: 'telegram:fixture-dm:fixture-message' },
+    session: {
+      sourceMessageRef:
+        principalId === OWNER
+          ? 'telegram:-100:fixture-message'
+          : 'telegram:fixture-dm:fixture-message',
+    },
   });
   const saveRule = (principalId: string, operationId: string, replaces?: string) =>
     surface.dispatch(
@@ -176,6 +182,9 @@ describe('P1 principal access through the product dispatcher', () => {
     expect(access.defaultScopes).toEqual([]);
     expect(access.channels?.chat).toEqual(['telegram:-100']);
     expect(access.destinations).toEqual([{ kind: 'telegram', id: '-100' }]);
+    // No personal skills, and no evidence reads that ignore the room's enrollment floor.
+    for (const action of ['skill.list', 'skill.read', 'graph.query', 'memory.read:provenance'])
+      expect(access.actions).not.toContain(action);
     const context = { access, session: { sourceMessageRef: 'telegram:-100:1', channelId: '-100' } };
     const call = (action: string, input: unknown, operationId: string) =>
       surface.dispatch({ action, input, operationId }, context);

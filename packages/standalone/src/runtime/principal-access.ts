@@ -114,7 +114,17 @@ export function resolvePrincipalAccess(
           (action) =>
             !action.startsWith('schedule.job.') &&
             !action.startsWith('memory.checkpoint.') &&
-            !['memory.share', 'records.export', 'records.erase'].includes(action)
+            // Skills include the person's own workflows, and core graph and provenance reads do
+            // not know the room's enrollment floor; the room's source reads apply it.
+            ![
+              'memory.share',
+              'records.export',
+              'records.erase',
+              'skill.list',
+              'skill.read',
+              'graph.query',
+              'memory.read:provenance',
+            ].includes(action)
         ),
         'work.create',
         'work.revise',

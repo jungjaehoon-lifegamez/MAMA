@@ -63,7 +63,11 @@ import { storedSourceFamilies } from '../connectors/framework/stored-index-read.
 import { createOwnerPolicyProvider, type OwnerPolicyProvider } from './owner-policy.js';
 import { readSessionStartInput } from './session-start-context.js';
 import { ChatSources } from '../storage/chat-sources.js';
-import type { OwnerMessageInput, OwnerHostExchangeInput } from '../gateways/turn-contract.js';
+import type {
+  OwnerMessageInput,
+  OwnerHostExchangeInput,
+  TurnIntake,
+} from '../gateways/turn-contract.js';
 import { createJevClient } from '../replay/jev-client.js';
 import { createRecordOrders, type RecordOrderEvent } from './record-orders.js';
 import { initTokenEstimator } from '@jungjaehoon/mama-core/runtime/token-estimator';
@@ -170,7 +174,11 @@ export interface OwnerRuntime {
   readonly intake: StimulusIntake;
   readonly acceptSourceDelta: StimulusIntake['acceptSourceDelta'];
   serveMember(principalId: string): Promise<StimulusIntake>;
-  memberIntake(principalId: string, roomChannel?: string): StimulusIntake;
+  /** `deferIncoming` is set while an erasure has the member retired. */
+  memberIntake(
+    principalId: string,
+    roomChannel?: string
+  ): StimulusIntake & Pick<TurnIntake, 'deferIncoming'>;
   principalPaths(
     principalId: string,
     roomChannel?: string
@@ -361,6 +369,15 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       archive.saveOwnerMessage({ ...message, senderPrincipalId: id });
       archive.saveReply({ ...reply, messageRef: message.id, author: 'host' });
     };
+    // A member's chat archive: its personal records for a DM, the common records for a room
+    // (as its room session keeps them).
+    const memberChat = (id: string, room?: string) =>
+      new ChatSources(
+        sourceStore,
+        database.adapter,
+        room === undefined ? id : options.ownerPrincipalId,
+        `member-agent:${id}`
+      );
     const storedSourceReader = createStoredSourceReader({
       adapter: database.adapter,
       rawStore: () => sourceStore,
@@ -908,24 +925,24 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
                 input?: OwnerMessageInput['payload'];
                 senderPrincipalId?: string;
                 deferredMemberMessage?: boolean;
+                roomChannel?: string;
               }
             | undefined;
           if (row.kind === 'owner_message' && payload?.deferredMemberMessage) {
             if (!intakeRuntime.servesPrincipal(row.principalId))
               await serveMemberOnLane(row.principalId);
-            const archive = new ChatSources(
-              sourceStore,
-              database.adapter,
-              row.principalId,
-              `member-agent:${row.principalId}`
-            );
+            // A room message belongs to its room session's common archive, never to the
+            // member's personal records.
+            const room = payload.roomChannel;
+            const archive = memberChat(row.principalId, room);
             const existing = database.adapter
               .prepare(
                 "SELECT current_observation_id, metadata_json FROM connector_event_index WHERE source_connector='chat' AND source_id=? AND memory_scope_id=?"
               )
-              .get(row.stimulusId, row.principalId) as
-              | { current_observation_id: string; metadata_json: string }
-              | undefined;
+              .get(
+                row.stimulusId,
+                room === undefined ? row.principalId : options.ownerPrincipalId
+              ) as { current_observation_id: string; metadata_json: string } | undefined;
             let observation: string;
             let input = payload.input;
             if (existing) {
@@ -1010,18 +1027,24 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       member?: ReturnType<typeof createMemberSession>,
       room?: string
     ) => {
-      const archive =
-        member?.chat ?? new ChatSources(sourceStore, database.adapter, id, `member-agent:${id}`);
-      const direct = createStimulusIntake(intakeRuntime, id, {
-        saveOwnerMessage: (input) => {
-          executionAccess(id);
-          if (!intakeRuntime.servesPrincipal(id))
-            throw new Error(`Member session is not served: ${id}`);
-          return archive.saveOwnerMessage(input);
+      const archive = member?.chat ?? memberChat(id, room);
+      // A room intake made while the member was retired stays a room intake after the erasure
+      // ends: its message runs in the room session and is kept in the room's common archive.
+      const direct = createStimulusIntake(
+        intakeRuntime,
+        id,
+        {
+          saveOwnerMessage: (input) => {
+            executionAccess(id);
+            if (!intakeRuntime.servesPrincipal(id))
+              throw new Error(`Member session is not served: ${id}`);
+            return archive.saveOwnerMessage(input);
+          },
+          saveReply: (input) => archive.saveReply(input),
+          hasOwnerMessage: (ref) => archive.hasOwnerMessage(ref),
         },
-        saveReply: (input) => archive.saveReply(input),
-        hasOwnerMessage: (ref) => archive.hasOwnerMessage(ref),
-      });
+        room
+      );
       const deferred = () =>
         surface.memberRecords.isBlocked(id) && !intakeRuntime.servesPrincipal(id);
       return {

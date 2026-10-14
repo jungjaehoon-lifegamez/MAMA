@@ -353,7 +353,19 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
               registration,
               options.adapter,
               options.ownerPrincipalId,
-              options.commonChannelId
+              options.commonChannelId,
+              (id, context) => {
+                if (!options.storedSourceReader) return false;
+                try {
+                  options.storedSourceReader.readObservation(id, context.access, undefined, {
+                    content_limit: 1,
+                  });
+                  return true;
+                } catch {
+                  // Any refusal (channel, enrollment floor, erased, missing) is not readable.
+                  return false;
+                }
+              }
             ),
             options.adapter,
             options.ownerPrincipalId

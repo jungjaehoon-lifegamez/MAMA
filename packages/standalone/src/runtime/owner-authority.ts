@@ -133,15 +133,15 @@ export function ownerSpeaking(
   ownerPrincipalId: string,
   commonChannelId?: string
 ): boolean {
+  const ref = context.session?.sourceMessageRef;
+  // With a common channel configured, owner policy changes come only from its messages: the
+  // common session's turn or a room session there, never another allowed group.
   return (
     (context.access.principalId === ownerPrincipalId ||
-      (commonChannelId !== undefined &&
-        roomChannel(context.access) === commonChannelId &&
-        context.session?.sourceMessageRef?.startsWith(
-          `telegram:${roomChannel(context.access)}:`
-        ) === true)) &&
+      (commonChannelId !== undefined && roomChannel(context.access) === commonChannelId)) &&
+    (commonChannelId === undefined || ref?.startsWith(`telegram:${commonChannelId}:`) === true) &&
     context.session?.replaySourceEndMs === undefined &&
-    isOwnerChatRef(context.session?.sourceMessageRef)
+    isOwnerChatRef(ref)
   );
 }
 
@@ -164,7 +164,9 @@ export function guardOwnerRules(
   registration: ActionRegistration,
   adapter: DatabaseInstance,
   ownerPrincipalId: string,
-  commonChannelId?: string
+  commonChannelId?: string,
+  /** Whether the caller's own source reads (channels, enrollment floor) reach an observation. */
+  observationVisible: (observationId: string, context: ActionContext) => boolean = () => false
 ): ActionRegistration {
   const action = registration.contract.name;
   return {
@@ -234,7 +236,32 @@ export function guardOwnerRules(
           throw error;
         }
         // Check references under the original authority before admitting the rule targets.
-        // The common scope below authorizes only the named owner rules and the new rule.
+        // The common scope below authorizes only the named owner rules and the new rule. Core
+        // checks only that an observation exists, so a linked observation, or one at either end
+        // of a linked edge, must also be readable through the caller's own source reads.
+        const linkedObservations = (command.links ?? []).flatMap((link) => {
+          if (link.target.kind === 'observation') return [link.target.id];
+          if (link.target.kind !== 'edge') return [];
+          const edge = adapter
+            .prepare(
+              'SELECT subject_kind, subject_id, object_kind, object_id FROM twin_edges WHERE edge_id = ?'
+            )
+            .get(link.target.id) as
+            | { subject_kind: string; subject_id: string; object_kind: string; object_id: string }
+            | undefined;
+          if (!edge) return [];
+          return [
+            ...(edge.subject_kind === 'observation' ? [edge.subject_id] : []),
+            ...(edge.object_kind === 'observation' ? [edge.object_id] : []),
+          ];
+        });
+        for (const id of linkedObservations) {
+          if (!observationVisible(id, context)) {
+            const error = new Error(`A judgment reference is unavailable: observation ${id}`);
+            error.name = 'denied';
+            throw error;
+          }
+        }
         for (const [refs, scopeIds] of [
           [(command.links ?? []).map((link) => link.target), readableScopeIds(context.access)],
           [

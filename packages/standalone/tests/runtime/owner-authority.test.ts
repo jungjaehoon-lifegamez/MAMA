@@ -185,5 +185,14 @@ describe('owner rules keep the owner as their only author (owner, 2026-10-01)', 
     await expect(
       guarded.exec({ memory_id: 'owner-telegram', status: 'stale', reason: 'x' }, replay)
     ).rejects.toMatchObject({ name: 'denied' });
+    // With a common channel configured, an owner turn from another allowed group is refused.
+    const common = guardOwnerRules(retire.registration, db, OWNER, '-100123');
+    await expect(
+      common.exec(
+        { memory_id: 'owner-telegram', status: 'stale', reason: 'x' },
+        turn('telegram:-100999:9003')
+      )
+    ).rejects.toMatchObject({ name: 'denied' });
+    expect(retire.calls).toHaveLength(1);
   });
 });
