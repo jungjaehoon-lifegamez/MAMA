@@ -131,7 +131,7 @@ describe('readable sources at owner session startup', () => {
       ]);
       const lines = prompt.split('\n').filter((line) => line.includes('Readable sources:'));
       expect(lines).toEqual([
-        '- Readable sources: fixture-archive (7; family-chat 3, family-feedback 1, family-mail 1, bare 2), fixture-direct (1); chats of a family are channels "<source>:<family>:<room>".',
+        '- Readable sources: fixture-archive (7; "family-chat" 3, "family-feedback" 1, "family-mail" 1, bare 2), fixture-direct (1); chats of a family are channels "<source>:<family>:<room>".',
       ]);
       for (const hidden of [
         'room-one',

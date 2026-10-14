@@ -430,7 +430,7 @@ describe('connector runtime', () => {
       });
       const prompt = ownerSystemPrompt('codex', null, families, true, 'UTC');
       for (const name of names) {
-        expect(prompt).toContain(`${name} (1; fixture-family 1)`);
+        expect(prompt).toContain(`${name} (1; "fixture-family" 1)`);
         expect(commits.get(name)).toHaveBeenCalledOnce();
       }
       for (const name of ['drive', 'sheets', 'discord', 'telegram']) {
