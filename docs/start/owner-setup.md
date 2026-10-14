@@ -83,7 +83,8 @@ person's intake.
 
 On macOS `mama init` ends by installing the document toolkit under `tools_root`; elsewhere set
 `tools_root` in `config.yaml` and run `mama tools install`. If the install fails, run
-`mama tools install` on the host and restart the daemon once
+`mama tools install` on the host. If the daemon is already running, follow the command's restart
+guidance; otherwise start it below once the install succeeds
 ([CLI reference](../reference/cli.md#install-the-document-toolkit)). To add members after the first
 start, see [People and their DMs](../guides/people.md).
 

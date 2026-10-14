@@ -15,9 +15,9 @@ common group in a session of its own. The package changelogs list every change.
   (#481, #482).
 - Event notices: the common session names a member for a change, and the member's own turn
   decides whether to tell it (#483).
-- `mama tools install` (also run by `mama init`) installs a document toolkit outside the home
-  folder for every session, and `document.render` turns a workspace document into a PDF and page
-  images (#484).
+- `mama tools install` (run by `mama init` on macOS) installs a document toolkit outside the home
+  folder for every session. On macOS `document.render` turns a workspace document into a PDF and
+  page images (#484).
 - Skills per person: saved workflows and `skills/<name>/SKILL.md` folders, plus common skills
   published from the common channel (#485).
 - Members have names, set by owners and shown to every session (#479).
@@ -41,7 +41,8 @@ common group in a session of its own. The package changelogs list every change.
 ### Upgrade
 
 - Core migrations 105 and 106 are additive and apply at the first start.
-- Run `mama tools install` once for the document toolkit; it adds `tools_root` to the config.
+- Run `mama tools install` once for the document toolkit; on macOS it adds `tools_root` to the
+  config, elsewhere set `tools_root` first. The renderer runs only on macOS.
 
 ## mama-os [0.75.0] / mama-core [8.6.0] - 2026-10-12
 

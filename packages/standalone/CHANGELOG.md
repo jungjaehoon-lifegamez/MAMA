@@ -17,24 +17,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Event notices: from a record order, the common session names a member with `member.notice`
   (refs only). The member's own stateless turn re-reads the refs under its current access and
   decides whether to tell it. Nothing returns to the common session (#483).
-- A managed document toolkit, installed by `mama tools install` (also the last step of
-  `mama init`) under `tools_root`:
+- A managed document toolkit, installed by `mama tools install` under `tools_root` (on macOS
+  also the last step of `mama init`; elsewhere set `tools_root` first):
   - a hash-pinned Python environment with python-pptx, python-docx, openpyxl, PyMuPDF,
     pdfplumber, reportlab and Pillow;
   - LibreOffice;
   - Noto Sans and Serif CJK fonts.
 
-  Every session gets it first on its shell PATH. `document.render` turns a workspace document
-  into a PDF and page images under a sandbox, with no network and with size and time limits
-  (#484).
+  Every session gets it first on its shell PATH. On macOS, `document.render` turns a workspace
+  document into a PDF and page images under a sandbox, with no network and with size and time
+  limits (#484).
 
 - Skills per person (#485):
   - A workflow record saved in a DM is that person's skill; one saved in the common channel is a
     common skill.
   - `skills/<name>/SKILL.md` folders are a person's file skills.
   - `skill.publish` and `skill.unpublish` publish common file skills from the common channel.
-  - `skill.list` and `skill.read` serve the common session and every member. Nobody reads another
-    person's skills.
+  - `skill.list` and `skill.read` serve the common session and every member's DM, not a group
+    room session. Nobody reads another person's skills.
 - `manage.member.name`: owners name members, and every session shows the names (#479).
 - Members in the common channel (#489):
   - A member without the owner role works in the group in a session of its own for that room,
