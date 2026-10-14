@@ -301,6 +301,7 @@ export class OwnerMessageLedger {
           : { idempotencyKey: existing.idempotencyKey }),
         ...(existing?.messageIds === undefined ? {} : { messageIds: existing.messageIds }),
         ...(existing?.sharedReplyKey ? { sharedReplyKey: existing.sharedReplyKey } : {}),
+        ...(existing?.principalId ? { principalId: existing.principalId } : {}),
       });
       this.enforceEntryLimit();
     });

@@ -1422,15 +1422,29 @@ function assertSourceRefsExist(
   ports: WorkPorts,
   context: ActionContext
 ): void {
-  for (const ref of Array.isArray(body.sourceRefs) ? body.sourceRefs : []) {
-    if (typeof ref === 'string' && !ports.observationExists(ref, context)) {
-      // Echo only the caller's own input, as the core reference refusal does.
-      throw new JudgmentError(
-        'REFERENCE_NOT_FOUND',
-        `sourceRefs names an unavailable observation: ${ref}`
-      );
+  const event = body.event as { evidenceRefs?: unknown } | undefined;
+  const roles = (body.set as { roles?: unknown } | undefined)?.roles;
+  const evidence: Array<[string, unknown]> = [
+    ['sourceRefs', body.sourceRefs],
+    ['event.evidenceRefs', event?.evidenceRefs],
+    ...(Array.isArray(roles) ? roles : []).map(
+      (role) =>
+        ['set.roles[].evidenceRefs', (role as { evidenceRefs?: unknown } | null)?.evidenceRefs] as [
+          string,
+          unknown,
+        ]
+    ),
+  ];
+  for (const [field, refs] of evidence)
+    for (const ref of Array.isArray(refs) ? refs : []) {
+      if (typeof ref === 'string' && !ports.observationExists(ref, context)) {
+        // Echo only the caller's own input, as the core reference refusal does.
+        throw new JudgmentError(
+          'REFERENCE_NOT_FOUND',
+          `${field} names an unavailable observation: ${ref}`
+        );
+      }
     }
-  }
   // Core checks only that a linked observation exists; the caller must also read it, and both
   // observation ends of a linked edge.
   for (const link of Array.isArray(body.links)

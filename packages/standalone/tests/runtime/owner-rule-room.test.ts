@@ -388,3 +388,51 @@ it('refuses room work evidence the room cannot read, in sources and link targets
   expect(await link(before!)).toMatchObject({ status: 'failed' });
   expect((await link(after!)).status).toBe('completed');
 });
+
+it('changes a shared record from a room only when every binding is within its grants', async () => {
+  const wide = await save({
+    kind: 'decision',
+    scopes: [PARTITION, { kind: 'user', id: OWNER }],
+  });
+  const own = await save({ kind: 'decision', scopes: [PARTITION] });
+  const retire = (id: string) =>
+    call('memory.retire', { memory_id: id, reason: 'withdrawn', status: 'stale' });
+  // Retiring changes the record for its common readers too.
+  expect(await retire(wide)).toMatchObject({ status: 'failed', error: { code: 'denied' } });
+  expect((await retire(own)).status).toBe('completed');
+});
+
+it('checks room evidence in every link and nested evidence field', async () => {
+  const [before, after] = [1999, 2001].map((at) =>
+    chat.saveOwnerMessage({
+      id: `telegram:-100:${at}`,
+      channelKey: '-100',
+      occurredAt: at,
+      text: `nested marker ${at}`,
+    })
+  );
+  // A plain partition record, not an owner-rule correction.
+  const link = (id: string) =>
+    call(
+      'memory.save',
+      input({
+        kind: 'decision',
+        scopes: [PARTITION],
+        links: [{ relation: 'derived_from', target: { kind: 'observation', id } }],
+      })
+    );
+  expect(await link(before!)).toMatchObject({ status: 'failed' });
+  expect((await link(after!)).status).toBe('completed');
+  const role = (id: string) =>
+    call('work.create', {
+      topic: 'room-work',
+      summary: 'room work',
+      scopes: [PARTITION],
+      set: {
+        title: 'room work',
+        roles: [{ personRef: 'person-a', role: 'owner', evidenceRefs: [id], confirmed: true }],
+      },
+    });
+  expect(await role(before!)).toMatchObject({ status: 'failed' });
+  expect((await role(after!)).status).toBe('completed');
+});

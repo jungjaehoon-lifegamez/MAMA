@@ -205,6 +205,35 @@ export function guardOwnerRules(
         error.name = 'denied';
         throw error;
       }
+      // Core checks only that a linked observation exists. Any caller other than the common
+      // session links an observation, or an edge with one at either end, only if its own source
+      // reads reach it.
+      if (context.access.principalId !== ownerPrincipalId) {
+        const links = (input as { links?: RecordLink[] }).links ?? [];
+        const linkedObservations = links.flatMap((link) => {
+          if (link.target.kind === 'observation') return [link.target.id];
+          if (link.target.kind !== 'edge') return [];
+          const edge = adapter
+            .prepare(
+              'SELECT subject_kind, subject_id, object_kind, object_id FROM twin_edges WHERE edge_id = ?'
+            )
+            .get(link.target.id) as
+            | { subject_kind: string; subject_id: string; object_kind: string; object_id: string }
+            | undefined;
+          if (!edge) return [];
+          return [
+            ...(edge.subject_kind === 'observation' ? [edge.subject_id] : []),
+            ...(edge.object_kind === 'observation' ? [edge.object_id] : []),
+          ];
+        });
+        for (const id of linkedObservations) {
+          if (!observationVisible(id, context)) {
+            const error = new Error(`A judgment reference is unavailable: observation ${id}`);
+            error.name = 'denied';
+            throw error;
+          }
+        }
+      }
       const owned = ownerRuleIds(adapter, ids, ownerPrincipalId);
       if (owned.size > 0 && !ownerSpeaking(context, ownerPrincipalId, commonChannelId)) {
         const error = new Error(
@@ -236,32 +265,7 @@ export function guardOwnerRules(
           throw error;
         }
         // Check references under the original authority before admitting the rule targets.
-        // The common scope below authorizes only the named owner rules and the new rule. Core
-        // checks only that an observation exists, so a linked observation, or one at either end
-        // of a linked edge, must also be readable through the caller's own source reads.
-        const linkedObservations = (command.links ?? []).flatMap((link) => {
-          if (link.target.kind === 'observation') return [link.target.id];
-          if (link.target.kind !== 'edge') return [];
-          const edge = adapter
-            .prepare(
-              'SELECT subject_kind, subject_id, object_kind, object_id FROM twin_edges WHERE edge_id = ?'
-            )
-            .get(link.target.id) as
-            | { subject_kind: string; subject_id: string; object_kind: string; object_id: string }
-            | undefined;
-          if (!edge) return [];
-          return [
-            ...(edge.subject_kind === 'observation' ? [edge.subject_id] : []),
-            ...(edge.object_kind === 'observation' ? [edge.object_id] : []),
-          ];
-        });
-        for (const id of linkedObservations) {
-          if (!observationVisible(id, context)) {
-            const error = new Error(`A judgment reference is unavailable: observation ${id}`);
-            error.name = 'denied';
-            throw error;
-          }
-        }
+        // The common scope below authorizes only the named owner rules and the new rule.
         for (const [refs, scopeIds] of [
           [(command.links ?? []).map((link) => link.target), readableScopeIds(context.access)],
           [

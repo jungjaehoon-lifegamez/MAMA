@@ -8,7 +8,12 @@ import {
   type MemoryRecord,
   type MemoryScopeRef,
 } from '@jungjaehoon/mama-core';
-import { amendedRecordIds, ownerSpeaking, holdsOwnerRole } from '../runtime/owner-authority.js';
+import {
+  amendedRecordIds,
+  ownerRuleIds,
+  ownerSpeaking,
+  holdsOwnerRole,
+} from '../runtime/owner-authority.js';
 import { roomChannel } from '../runtime/principal-access.js';
 import { invalidInput } from '../utils/invalid-input.js';
 
@@ -41,7 +46,11 @@ export function guardMemberSharedRecords(
     exec: async (input, context) => {
       const principalId = context.access.principalId;
       if (principalId !== ownerPrincipalId) {
-        for (const id of amendedRecordIds(action, input)) {
+        const ids = amendedRecordIds(action, input);
+        const room = roomChannel(context.access) !== undefined;
+        // Owner rule corrections are decided by the owner-rule guard.
+        const rules = room ? ownerRuleIds(adapter, ids, ownerPrincipalId) : new Set<string>();
+        for (const id of ids) {
           const bindings = adapter
             .prepare(
               `SELECT s.kind, s.external_id FROM decisions d
@@ -61,6 +70,20 @@ export function guardMemberSharedRecords(
             throw denied(
               `${id} is not only yours: shared records change in the common channel. ` +
                 'Save your own note instead, or ask in the common channel.'
+            );
+          // Retiring or replacing changes the record for every reader, so a room needs every
+          // binding within its grants, not just one.
+          if (
+            room &&
+            !rules.has(id) &&
+            !bindings.every((binding) =>
+              context.access.scopes.some(
+                (scope) => scope.kind === binding.kind && scope.id === binding.external_id
+              )
+            )
+          )
+            throw denied(
+              `${id} is also bound outside your granted projects; ask an owner to change it.`
             );
         }
       }

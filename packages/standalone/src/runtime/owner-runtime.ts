@@ -707,7 +707,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           person?.kind !== 'member' ||
           person.status !== 'active' ||
           !row.stimulusId.startsWith(`telegram:${row.channelKey}:`) ||
-          (options.roomChannels !== undefined && !options.roomChannels.includes(row.channelKey))
+          !options.roomChannels?.includes(row.channelKey)
         )
           return false;
         await serveMemberOnLane(sender);
