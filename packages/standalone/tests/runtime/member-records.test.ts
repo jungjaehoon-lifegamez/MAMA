@@ -1100,6 +1100,42 @@ it('writes a personal receipt from other work after the erasure and keeps later 
   );
 });
 
+it('keeps a personal receipt deferred during the erasure across a restart', async () => {
+  const f = await setup();
+  const send = f.telegram.sendFile.getMockImplementation()!;
+  const laterRef = `telegram:${f.memberDm}:fixture-restart-receipt`;
+  f.telegram.sendFile.mockImplementationOnce(async (...args) => {
+    f.runtime.recordHostExchange({
+      message: {
+        id: laterRef,
+        channelKey: f.memberDm,
+        senderPrincipalId: f.member,
+        occurredAt: Date.now(),
+        text: 'Fixture management notice',
+      },
+      reply: { text: 'Fixture restart receipt', occurredAt: Date.now(), deliveryVerified: true },
+    });
+    return send(...args);
+  });
+  // The receipt fails before its claim, so the erasure waits for a later run with the write
+  // still deferred; the restart drops everything held in memory.
+  f.telegram.sendMemberText.mockRejectedValueOnce(new Error('fixture disconnected before claim'));
+  const preview = await f.preview();
+  await f.confirm(preview.confirmationToken);
+  await f.runtime.surface.memberRecords.idle();
+  expect(f.receipts).toEqual([]);
+  await f.restart();
+  expect((await f.finish()).status).toBe('erased');
+  const left = f.runtime.database.adapter
+    .prepare(
+      "SELECT source_id FROM connector_event_index WHERE source_connector='chat' AND memory_scope_kind='user' AND memory_scope_id=?"
+    )
+    .all(f.member) as Array<{ source_id: string }>;
+  expect(left.map((row) => row.source_id)).toEqual(
+    expect.arrayContaining([laterRef, `${laterRef}:reply`])
+  );
+});
+
 it('retires P9 on its member chain while another DM keeps claiming through re-serve', async () => {
   const f = await setup();
   const preview = await f.preview();

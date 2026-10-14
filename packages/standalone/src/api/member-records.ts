@@ -13,6 +13,7 @@ import type { DatabaseInstance } from '@jungjaehoon/mama-core/db-manager';
 import type { Mailbox, MailboxRow } from '@jungjaehoon/mama-core/runtime/mailbox';
 import type { RawStore } from '../storage/source-archive.js';
 import { outboundLedgerKey, type OwnerMessageLedger } from '../gateways/telegram-message-ledger.js';
+import type { OwnerHostExchangeInput } from '../gateways/turn-contract.js';
 import type { createSerialTurnChain } from '../runtime/principal-sessions.js';
 import type { TelegramFileSender } from './file-delivery.js';
 import {
@@ -46,6 +47,8 @@ export interface MemberRecordsPorts {
     text: string,
     deliveryVerified: boolean
   ): void;
+  /** Write a member's personal copy of a host exchange (a management or enrollment receipt). */
+  writeHostExchange(id: string, exchange: OwnerHostExchangeInput): void;
 }
 
 const denied = () =>
@@ -82,6 +85,10 @@ interface ErasureState {
   /** DM ledger entries the delivered export holds. Other principals keep running during an
    * erasure, so entries written for this DM after the snapshot are left for the fresh start. */
   exported?: { ledgerKeys: string[] };
+  /** Personal writes from other work that arrived after the export snapshot. They are written
+   * when the erasure ends, so the erase never removes what the export did not hold, and they
+   * survive a restart with the rest of the erasure. */
+  afterErasure?: OwnerHostExchangeInput[];
 }
 
 function receiptText(
@@ -193,22 +200,13 @@ export function createMemberRecords(options: {
   // The confirming member alone is excluded from all claims, including host inputs.
   // Its durable erasure carrier is reconciled here, outside the mailbox claim loop.
   const erasing = new Set<string>();
-  // Personal writes by other work for a member being erased (a management or enrollment
-  // receipt) run after the erasure ends, so the erase never removes what was not exported.
-  const afterErasure = new Map<string, Array<() => void>>();
   const release = (id: string) => {
     blocked.delete(id);
     erasing.delete(id);
-    const writes = afterErasure.get(id) ?? [];
-    afterErasure.delete(id);
-    for (const write of writes) {
-      try {
-        write();
-      } catch (error) {
-        console.error('[Member records] deferred personal write failed', error);
-      }
-    }
   };
+  // The checkpoint state each running erasure holds; a write deferred into it is checkpointed
+  // with the state the erasure goes on to save.
+  const runningStates = new Map<string, { job: Scheduled; state: ErasureState }>();
   // Members with an export still uploading: their turns run, but no second export or erasure
   // starts until this one is delivered, so archives and uploads never pile up.
   const exporting = new Set<string>();
@@ -358,6 +356,7 @@ export function createMemberRecords(options: {
     const p = ports(),
       id = job.principalId;
     const state = p.mailbox().hostJobCheckpoint(job.hostInputId!) as unknown as ErasureState;
+    runningStates.set(id, { job, state });
     if (state.phase === 'done') {
       p.serve(id);
       p.mailbox().ack(job.hostInputId!);
@@ -448,6 +447,8 @@ export function createMemberRecords(options: {
         checkpoint(job, state); // Deletion may now replay each remaining store, never the upload.
       }
       if (state.phase === 'erasing') {
+        // Checked before any deletion: the ledger erase below keeps entries outside this snapshot.
+        if (!state.exported) throw new Error('The export ledger snapshot is missing');
         step = 'files';
         // No await between the delivered file check and the deletion on the first run.
         for (const tree of memberFileInventory(p.root, id).trees)
@@ -486,7 +487,7 @@ export function createMemberRecords(options: {
         for (const [name, rows] of Object.entries(rawCounts)) state.product[name] ??= rows.length;
         const ledger = p.ledger();
         if (!ledger) throw new Error('Live message ledger is not configured');
-        const exportedKeys = new Set(state.exported!.ledgerKeys);
+        const exportedKeys = new Set(state.exported.ledgerKeys);
         // Entries written for this DM after the snapshot (another principal's delivery, a
         // management receipt) were not exported, so they stay.
         const later = ledger
@@ -602,9 +603,11 @@ export function createMemberRecords(options: {
         state.receiptDelivered === true
       );
       options.adapter.transaction(() => {
+        for (const exchange of state.afterErasure ?? []) p.writeHostExchange(id, exchange);
         state.phase = 'done';
         delete state.archive;
         delete state.exported;
+        delete state.afterErasure;
         checkpoint(job, state);
         p.mailbox().ack(job.hostInputId!);
       });
@@ -619,6 +622,7 @@ export function createMemberRecords(options: {
         await runErasure(job);
       } finally {
         runningErasures.delete(job.hostInputId!);
+        runningStates.delete(job.principalId);
       }
     });
   };
@@ -793,10 +797,28 @@ export function createMemberRecords(options: {
     registrations,
     isBusy: () => erasing.size > 0,
     excludePrincipals: () => [...erasing],
-    /** Run a personal write now, or after this member's erasure ends. */
-    deferWhileErasing: (id: string, write: () => void) => {
-      if (!erasing.has(id)) return write();
-      afterErasure.set(id, [...(afterErasure.get(id) ?? []), write]);
+    /**
+     * Keep a personal write for after this member's erasure once its export snapshot is taken;
+     * false means the caller writes it now (no erasure, or one whose export will still hold it).
+     */
+    deferWhileErasing: (id: string, exchange: OwnerHostExchangeInput): boolean => {
+      const running = runningStates.get(id);
+      if (running) {
+        if (!running.state.exported) return false;
+        (running.state.afterErasure ??= []).push(exchange);
+        checkpoint(running.job, running.state);
+        return true;
+      }
+      // Not running here (a stop interrupted it, or recovery has not resumed it yet): its
+      // durable checkpoint carries the write to whichever run finishes the erasure.
+      const row = durableRows().find((candidate) => candidate.principal_id === id);
+      if (!row) return false;
+      const mailbox = ports().mailbox();
+      const state = mailbox.hostJobCheckpoint(row.id) as unknown as ErasureState;
+      if (!state.exported) return false;
+      (state.afterErasure ??= []).push(exchange);
+      mailbox.checkpointHostJob(row.id, JSON.parse(JSON.stringify(state)));
+      return true;
     },
     recover,
     startRecovery: () => {

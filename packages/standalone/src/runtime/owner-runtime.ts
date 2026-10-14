@@ -351,6 +351,12 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       options.agentId
     );
     const sourceStore = rawStore;
+    // A member's personal copy of a host exchange; the common management copy is separate.
+    const writeMemberHostExchange = (id: string, { message, reply }: OwnerHostExchangeInput) => {
+      const archive = new ChatSources(sourceStore, database.adapter, id, `member-agent:${id}`);
+      archive.saveOwnerMessage({ ...message, senderPrincipalId: id });
+      archive.saveReply({ ...reply, messageRef: message.id, author: 'host' });
+    };
     const storedSourceReader = createStoredSourceReader({
       adapter: database.adapter,
       rawStore: () => sourceStore,
@@ -487,6 +493,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
               serve: (id) => {
                 serveMember(id);
               },
+              writeHostExchange: (id, exchange) => writeMemberHostExchange(id, exchange),
               recordExchange: (id, kind, ref, text, deliveryVerified) => {
                 if (
                   database.adapter
@@ -1141,32 +1148,22 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         const person = message.id.startsWith('telegram:')
           ? principals.resolveByExternal('telegram', 'private', message.channelKey)
           : null;
-        const archive =
-          person?.kind === 'member'
-            ? new ChatSources(
-                sourceStore,
-                database.adapter,
-                person.principalId,
-                `member-agent:${person.principalId}`
-              )
-            : chat;
-        const personal = () => {
-          archive.saveOwnerMessage({
+        if (person?.kind !== 'member') {
+          chat.saveOwnerMessage({
             ...message,
             ...(person ? { senderPrincipalId: person.principalId } : {}),
           });
-          archive.saveReply({ ...reply, messageRef: message.id, author: 'host' });
-        };
-        if (archive === chat) personal();
-        // A member being erased gets its personal copy after the erasure, never inside it.
-        else surface.memberRecords.deferWhileErasing(person!.principalId, personal);
-        if (archive !== chat) {
+          chat.saveReply({ ...reply, messageRef: message.id, author: 'host' });
+        } else {
+          // A member being erased gets its personal copy after the erasure, never inside it.
+          if (!surface.memberRecords.deferWhileErasing(person.principalId, { message, reply }))
+            writeMemberHostExchange(person.principalId, { message, reply });
           const ref = `host:management:${message.id}`;
           chat.saveOwnerMessage({
             ...message,
             id: ref,
             channelKey: 'management',
-            ...(person ? { senderPrincipalId: person.principalId } : {}),
+            senderPrincipalId: person.principalId,
           });
           chat.saveReply({ ...reply, messageRef: ref, author: 'host' });
         }

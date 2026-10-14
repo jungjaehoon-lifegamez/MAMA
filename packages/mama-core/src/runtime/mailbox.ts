@@ -740,7 +740,11 @@ export class Mailbox {
     this.stmtAck.run(this.now(), id);
   }
 
-  /** Opaque consumer progress; the immutable stimulus remains the dedupe identity. */
+  /**
+   * Opaque consumer progress; the immutable stimulus remains the dedupe identity.
+   * A checkpointed pending job is never swept as stale: its consumer owns it until it acks,
+   * so the consumer must resume every checkpointed job it finds.
+   */
   checkpointHostJob(id: number, state: JsonValue): void {
     const row = this.db.prepare('SELECT kind FROM mailbox_inputs WHERE id=?').get(id) as
       | { kind: string }
