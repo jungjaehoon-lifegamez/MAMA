@@ -508,9 +508,19 @@ export function createSkillStore(ports: {
     const versionName = new RegExp(
       `^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`
     );
-    for (const entry of entries(versions)) {
-      const path = join(versions, entry);
-      if (!versionName.test(entry) || keep.has(path)) continue;
+    // The shared store holds versions of every common skill, so it is not capped like one skill:
+    // stream it and collect only this skill's versions (at most a few) before removing them.
+    const stale: string[] = [];
+    const directory = opendirSync(versions);
+    try {
+      for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
+        const path = join(versions, entry.name);
+        if (versionName.test(entry.name) && !keep.has(path)) stale.push(path);
+      }
+    } finally {
+      directory.closeSync();
+    }
+    for (const path of stale) {
       assertOwnedDirectory(path);
       removeVersion(path);
     }

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
@@ -527,9 +528,12 @@ describe('scoped skills through the product dispatcher', () => {
       expect(readFileSync(join(workspace(id), 'artifact.txt'), 'utf8')).toBe('fixture artifact');
       expect(existsSync(join(published, 'artifact.txt'))).toBe(false);
     }
+    // The shared store also holds other skills' versions; pruning one skill is not capped by them.
+    const others = Array.from({ length: 300 }, () => `other-skill-${randomUUID()}`);
+    for (const other of others) mkdirSync(join(tools(), 'skills', '.versions', other));
     data(await call('skill.unpublish', { name: 'fixture-script' }, 'common'));
     expect((await list(b)).some((entry) => entry.kind === 'file')).toBe(false);
-    expect(readdirSync(join(tools(), 'skills', '.versions'))).toEqual([]);
+    expect(readdirSync(join(tools(), 'skills', '.versions')).sort()).toEqual(others.sort());
   });
 
   it.each(['skill.publish', 'skill.unpublish'])(
