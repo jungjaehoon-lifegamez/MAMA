@@ -58,7 +58,8 @@ to the member's DM. Nothing the member cannot read is sent.
 
 A skill is a way of doing a task that MAMA should repeat. Ask your DM to remember the steps as a
 skill, or keep a `skills/<name>/SKILL.md` file in your workspace. Skills saved in a DM are yours.
-Skills saved in the common group, and file skills an owner publishes there, are shared with everyone.
+Skills saved in the common group, and file skills an owner publishes there, are shared with the
+common session and every DM; a member's session for a group has no skills.
 Nobody reads another person's skills.
 
 ## Documents
