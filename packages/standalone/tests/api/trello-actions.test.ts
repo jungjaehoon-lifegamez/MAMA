@@ -304,7 +304,12 @@ describe('trello.read', () => {
       )
     ).toMatchObject({
       status: 'failed',
-      error: { code: 'invalid_input', message: expect.stringContaining('board-key') },
+      // Names let the agent match a board it knows by name or URL to its key.
+      error: {
+        code: 'invalid_input',
+        message:
+          'trello.read board nowhere is not configured; use a board key: board-key (Board A), board-b-key (Board B)',
+      },
     });
   });
 
@@ -316,9 +321,10 @@ describe('trello.read', () => {
     );
     expect(result).toMatchObject({
       status: 'failed',
-      error: { code: 'invalid_input', message: expect.stringContaining('board-key') },
+      error: { code: 'invalid_input', message: expect.stringContaining('board-key (Board A)') },
     });
     expect(JSON.stringify(result)).not.toContain('board-b-key');
+    expect(JSON.stringify(result)).not.toContain('Board B');
   });
 
   it('refuses a list that is not on the named board', async () => {

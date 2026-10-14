@@ -6,6 +6,7 @@ import type { RawStore } from '../storage/source-archive.js';
 import { listRaw, searchRaw } from '../connectors/framework/raw-query.js';
 import {
   hasStoredConnector,
+  storedChannelKinds,
   storedConnectorOverview,
   storedObservationChannel,
 } from '../connectors/framework/stored-index-read.js';
@@ -21,6 +22,8 @@ export interface StoredSourceReaderOptions {
 
 export interface StoredSourceReader {
   has(source: string): boolean;
+  /** Channel kinds stored under each connector (e.g. platforms inside an import connector). */
+  channelKinds(connectors: readonly string[]): Record<string, string[]>;
   overview(
     source: string,
     access: Access,
@@ -142,6 +145,7 @@ export function createStoredSourceReader(options: StoredSourceReaderOptions): St
   const { adapter } = options;
   return {
     has: (source) => hasStoredConnector(adapter, source),
+    channelKinds: (connectors) => storedChannelKinds(adapter, connectors),
     overview(source, access, allowance) {
       const channels = allowedChannels(source, access);
       const row = storedConnectorOverview(adapter, source, channels, allowance?.maxSourceMs);

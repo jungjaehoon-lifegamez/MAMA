@@ -7,6 +7,7 @@ import { sourceActionRegistrations } from '../../src/api/source-actions.js';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createStoredSourceReader } from '../../src/api/stored-source-reader.js';
+import { upsertConnectorEventIndex } from '../../src/connectors/framework/event-index.js';
 
 describe('stored source reader', () => {
   it('fails source.read of erased observations through dispatch without returning content', async () => {
@@ -62,6 +63,60 @@ describe('stored source reader', () => {
         },
       });
       expect(readVersion).not.toHaveBeenCalled();
+    } finally {
+      handle.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('names the platforms an import connector holds when a search names one directly', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'stored-channel-kinds-'));
+    const handle = await openCoreDatabase({ path: join(root, 'state.db') });
+    try {
+      for (const [connector, channel] of [
+        ['import-test', 'import-test:chat-a:room-one'],
+        ['import-test', 'import-test:chat-b:room-two'],
+        ['import-test', 'import-test:chat-a:room-three'],
+        ['chat', 'telegram:room-four'],
+      ] as const) {
+        upsertConnectorEventIndex(handle.adapter, {
+          source_connector: connector,
+          source_type: 'message',
+          source_id: channel,
+          channel,
+          content: 'fixture',
+          source_timestamp_ms: 1,
+        });
+      }
+      const reader = createStoredSourceReader({ adapter: handle.adapter });
+      expect(reader.channelKinds(['chat', 'import-test'])).toEqual({
+        'import-test': ['chat-a', 'chat-b'],
+      });
+      const dispatch = createDispatcher(
+        createCatalog(
+          sourceActionRegistrations({ stored: reader, timeZone: createTimeZoneSetting('UTC') })
+        )
+      );
+      const result = await dispatch(
+        { action: 'source.search', input: { source: 'chat-a', query: 'fixture' } },
+        {
+          access: {
+            principalId: 'test-principal',
+            agentId: 'test-agent',
+            actions: ['source.search'],
+            connectors: ['import-test', 'chat'],
+            scopes: [],
+          },
+        }
+      );
+      expect(result).toMatchObject({
+        status: 'failed',
+        error: {
+          kind: 'denied',
+          message:
+            "chat-a is not one of your readable connectors: chat, import-test (channels: chat-a, chat-b). source.recent lists a connector's channels.",
+        },
+      });
     } finally {
       handle.close();
       rmSync(root, { recursive: true, force: true });

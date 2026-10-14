@@ -250,6 +250,7 @@ describe('minimal source actions', () => {
       search: vi.fn().mockReturnValue({ hits: [], next_cursor: null }),
       read: vi.fn().mockReturnValue({ content: 'source-content' }),
       has: vi.fn().mockReturnValue(true),
+      channelKinds: vi.fn().mockReturnValue({ 'connector-test': ['kind-a', 'kind-b'] }),
     };
     const dispatch = createDispatcher(
       createCatalog(sourceActionRegistrations({ stored, timeZone: createTimeZoneSetting('UTC') }))
@@ -300,9 +301,13 @@ describe('minimal source actions', () => {
       { action: 'source.search', input: { source: 'other-connector', query: 'term' } },
       { access }
     );
+    // The refusal names what each readable connector holds instead of reading as a permission
+    // problem, and says the same for an unknown name as for an ungranted one.
+    const refusal =
+      "other-connector is not one of your readable connectors: connector-test (channels: kind-a, kind-b). source.recent lists a connector's channels.";
     expect(deniedSearch).toMatchObject({
       status: 'failed',
-      error: { code: 'connector_out_of_scope' },
+      error: { code: 'denied', message: refusal },
     });
     {
       const action = 'source.read';
@@ -312,7 +317,7 @@ describe('minimal source actions', () => {
       );
       expect(denied).toMatchObject({
         status: 'failed',
-        error: { code: 'denied' },
+        error: { code: 'denied', message: refusal },
       });
     }
     expect(stored.search).toHaveBeenCalledTimes(2);

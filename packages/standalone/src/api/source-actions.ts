@@ -74,10 +74,25 @@ function storedReader(ports: SourcePorts): StoredSourceReader {
   return ports.stored;
 }
 
-function assertGrantedSource(source: string, access: ActionContext['access']): void {
+function assertGrantedSource(
+  source: string,
+  access: ActionContext['access'],
+  ports: SourcePorts
+): void {
   if (access.connectors?.includes(source)) return;
+  const readable = [...(access.connectors ?? [])].sort();
+  // Say what each readable connector holds, so a platform stored inside another connector (an
+  // import of chat apps) leads to that connector instead of reading as a permission problem.
+  // One message for unknown and ungranted names, so it never tells a member which others exist.
+  const kinds = storedReader(ports).channelKinds(readable);
+  const listing =
+    readable
+      .map((connector) =>
+        kinds[connector] ? `${connector} (channels: ${kinds[connector].join(', ')})` : connector
+      )
+      .join(', ') || '(none)';
   const error = new Error(
-    `principal ${access.principalId} may not read ${source}; readable connectors: ${(access.connectors ?? []).join(', ') || '(none)'}`
+    `${source} is not one of your readable connectors: ${listing}. source.recent lists a connector's channels.`
   );
   error.name = 'denied';
   throw error;
@@ -180,7 +195,6 @@ export function sourceActionRegistrations(ports: SourcePorts): ActionRegistratio
     {
       contract: {
         name: 'source.search',
-        readsConnector: { fromInput: 'source' },
         summary:
           'Search or page preserved source observations. Search results are bounded navigation hits; read the cited observation explicitly for the original content.',
         inputSchema: sourceSchema,
@@ -193,7 +207,7 @@ export function sourceActionRegistrations(ports: SourcePorts): ActionRegistratio
       },
       exec: (input, context) => {
         const source = sourceName(input, 'source.search');
-        assertGrantedSource(source, context.access);
+        assertGrantedSource(source, context.access, ports);
         const allowance = replayReadAllowance(context.readAllowance);
         const result =
           allowance === undefined
@@ -316,7 +330,7 @@ export function sourceActionRegistrations(ports: SourcePorts): ActionRegistratio
           return displaySourceTime(data, timeZone);
         }
         const source = sourceName(input, 'source.read');
-        assertGrantedSource(source, context.access);
+        assertGrantedSource(source, context.access, ports);
         const data =
           allowance === undefined
             ? storedReader(ports).read(source, body, context.access)

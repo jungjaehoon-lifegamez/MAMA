@@ -68,8 +68,11 @@ function boardNamed(
   if (typeof key !== 'string' || key.trim() === '') throw invalid('trello.read cards needs board');
   const configured = connector.boards();
   if (!configured.some((board) => board.key === key)) {
+    // Names let the agent match a board it knows by name or URL to its configured key.
     throw invalid(
-      `trello.read board ${key} is not configured; boards: ${permitted.map((board) => board.key).join(', ')}`
+      `trello.read board ${key} is not configured; use a board key: ${permitted
+        .map((board) => (board.name ? `${board.key} (${board.name})` : board.key))
+        .join(', ')}`
     );
   }
   const board = permitted.find((candidate) => candidate.key === key);
