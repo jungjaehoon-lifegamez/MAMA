@@ -13,6 +13,8 @@ export interface OwnerTimeZoneActionPorts {
   ownerPrincipalId: string;
   setting: TimeZoneSetting;
   isOwnerMessageTurn(sourceMessageRef: string, principalId: string): boolean;
+  /** The common channel; a common-session turn acts for a person only from there. */
+  commonChannelId?: string;
 }
 
 function denied(): Error {

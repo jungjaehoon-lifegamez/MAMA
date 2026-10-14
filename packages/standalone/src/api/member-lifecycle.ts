@@ -55,6 +55,8 @@ export function memberLifecycleRegistrations(options: {
   ownerPrincipalId: string;
   ownerAccess(): JudgmentAccess;
   isOwnerMessageTurn(sourceMessageRef: string, principalId: string): boolean;
+  /** The common channel; a common-session turn acts for a person only from there. */
+  commonChannelId?: string;
   timeZone: TimeZoneSetting;
   ports?: MemberLifecyclePorts;
   scheduleChange(name: string, input: unknown, context: MemberManagementContext): Promise<unknown>;
@@ -143,7 +145,7 @@ export function memberLifecycleRegistrations(options: {
         if (!caller) {
           throw Object.assign(
             new Error(
-              "Member management requires a registered person's message turn from an active owner-role member. Discord and Slack common turns have no registered sender; use Telegram."
+              "Member management requires a registered person's message turn from an active owner-role member, in the common channel or that person's own DM. Discord and Slack common turns have no registered sender; use Telegram."
             ),
             { name: 'denied' }
           );

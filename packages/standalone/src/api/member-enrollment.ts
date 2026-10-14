@@ -32,6 +32,8 @@ export function createMemberEnrollment(options: {
   adapter: DatabaseInstance;
   ownerPrincipalId: string;
   isOwnerMessageTurn(sourceMessageRef: string, principalId: string): boolean;
+  /** The common channel; a common-session turn acts for a person only from there. */
+  commonChannelId?: string;
   ownerAccess(): JudgmentAccess;
   ports?: MemberEnrollmentPorts;
   directoryChange?: <T>(work: () => Promise<T>) => Promise<T>;
@@ -67,7 +69,7 @@ export function createMemberEnrollment(options: {
       if (!caller) {
         throw Object.assign(
           new Error(
-            "Enrollment requires a registered person's message turn from an active owner-role member. Discord and Slack common turns have no registered sender; use Telegram."
+            "Enrollment requires a registered person's message turn from an active owner-role member, in the common channel or that person's own DM. Discord and Slack common turns have no registered sender; use Telegram."
           ),
           { name: 'denied' }
         );

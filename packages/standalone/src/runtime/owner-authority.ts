@@ -47,6 +47,8 @@ export interface OwnerMessageAuthority {
   adapter: DatabaseInstance;
   ownerPrincipalId: string;
   isOwnerMessageTurn(sourceMessageRef: string, principalId: string): boolean;
+  /** With one configured, a common-session turn speaks for a person only from this channel. */
+  commonChannelId?: string;
 }
 
 /** The host's message binding names the person; the common session itself is no person. */
@@ -63,6 +65,10 @@ export function messageTurnCaller(
   )
     return undefined;
   if (principalId !== ports.ownerPrincipalId) return principalId;
+  // Another allowed group reaches the common session too, but management, enrollment, the time
+  // zone and common skills change only from the common channel, as owner policy does.
+  if (ports.commonChannelId !== undefined && !ref!.startsWith(`telegram:${ports.commonChannelId}:`))
+    return undefined;
   const row = ports.adapter
     .prepare(
       `SELECT json_extract(payload_json, '$.senderPrincipalId') AS sender

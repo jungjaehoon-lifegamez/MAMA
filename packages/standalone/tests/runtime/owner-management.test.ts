@@ -322,6 +322,36 @@ it('sets common timezone only for the recorded active owner sender and keeps DM 
   expect(fs.readFileSync(join(f.home, 'config.yaml'), 'utf8')).toContain('Europe/Paris');
 });
 
+it('changes members, enrollment, the timezone and common skills only from the common channel', async () => {
+  const f = await fixture();
+  completed((await f.actAs(f.managingOwner, 'manage.member.list')).result);
+  fs.writeFileSync(join(f.home, 'config.yaml'), 'version: 1\ntimezone: UTC\n');
+  const call = (action: string, input: unknown, ref: string) =>
+    f.runtime.surface.hostToolCall(action, input, `fixture-${action}-${ref}`, {
+      session: { sourceMessageRef: ref },
+    });
+  const other = f.message('owner', 'fixture other group', f.managingOwner, undefined, '-101');
+  await f.settled(other);
+  for (const [action, input] of [
+    ['manage.member.suspend', { principalId: f.member }],
+    ['manage.member.enroll', {}],
+    ['owner.timezone.set', { timeZone: 'Europe/Paris' }],
+    ['skill.publish', { name: 'fixture-skill' }],
+  ] as const)
+    expect(await call(action, input, other)).toMatchObject({
+      status: 'failed',
+      error: { code: 'denied' },
+    });
+  expect(createPrincipalRepository(f.runtime.database.adapter).findById(f.member)?.status).toBe(
+    'active'
+  );
+  expect(fs.readFileSync(join(f.home, 'config.yaml'), 'utf8')).not.toContain('Europe/Paris');
+  const common = f.message('owner', 'fixture common group', f.managingOwner);
+  await f.settled(common);
+  completed(await call('owner.timezone.set', { timeZone: 'Europe/Paris' }, common));
+  expect(fs.readFileSync(join(f.home, 'config.yaml'), 'utf8')).toContain('Europe/Paris');
+});
+
 it('reads an owner DM share and its history in the next common delta turn', async () => {
   const f = await fixture();
   const input = {

@@ -290,6 +290,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     adapter: options.adapter,
     ownerPrincipalId: options.ownerPrincipalId,
     isOwnerMessageTurn: options.isOwnerMessageTurn,
+    commonChannelId: options.commonChannelId,
     ownerAccess: () => ownerAccess,
     ports: options.memberEnrollment,
     directoryChange: memberDirectoryChange,
@@ -400,6 +401,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     ownerPrincipalId: options.ownerPrincipalId,
     ownerAccess: () => ownerAccess,
     isOwnerMessageTurn: options.isOwnerMessageTurn,
+    commonChannelId: options.commonChannelId,
     timeZone: options.timeZone,
     ports: options.memberLifecycle,
     scheduleChange: async (name, input, context) => {
@@ -541,6 +543,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       setting: options.timeZone,
       adapter: options.adapter,
       isOwnerMessageTurn: options.isOwnerMessageTurn,
+      commonChannelId: options.commonChannelId,
     }),
     ...ownerPolicyActionRegistrations({
       commonChannelId: options.commonChannelId,

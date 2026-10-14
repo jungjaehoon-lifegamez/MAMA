@@ -20,7 +20,8 @@ use their own DMs, and the `owner` role admits a person in an allowed group. Reg
 with `mama register-owner <telegram id>` while the daemon is stopped. Discord and Slack use `owner_channel_id`, `allowed_channels`, and `owner_user_ids`. Discord and Slack keep their common owner intake. Messages from other senders are dropped before the owner session and the daemon logs hashed channel and sender IDs.
 
 Member management needs a registered person's message turn from an active owner-role member.
-Use that owner's Telegram DM or an allowed Telegram common channel. Discord and Slack common
+Use that owner's Telegram DM or the common channel (`owner_chat_id`); an owner's message in
+another allowed group may not manage members. Discord and Slack common
 turns do not record a registered sender, so enrollment and member-management actions are refused
 there. Management receipts are kept in the common record; every owner can list enrollment results
 from either their own Telegram DM or the common channel.

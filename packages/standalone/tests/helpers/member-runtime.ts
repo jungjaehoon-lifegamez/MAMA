@@ -327,13 +327,15 @@ export async function fixture(
     principal: string,
     text = 'fixture input',
     senderPrincipalId = managingOwner,
-    action?: { action: string; input: unknown }
+    action?: { action: string; input: unknown },
+    // Common messages come from the common channel; a member's own messages from its DM.
+    channel = principal === 'owner' ? '-100' : 'fixture'
   ) => {
-    const id = `telegram:fixture:message-${++sequence}`;
+    const id = `telegram:${channel}:message-${++sequence}`;
     if (action) commonActions.set(id, action);
     (principal === 'owner' ? runtime.intake : runtime.memberIntake(principal)).acceptOwnerMessage({
       id,
-      channelKey: 'fixture',
+      channelKey: channel,
       occurredAt: sequence,
       text,
       ...(principal === 'owner' ? { senderPrincipalId } : {}),
