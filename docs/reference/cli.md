@@ -48,7 +48,8 @@ python-pptx, python-docx, openpyxl, PyMuPDF, pdfplumber, reportlab and Pillow, p
 Noto CJK fonts. On macOS `tools_root` defaults to the Shared folder beside the home folders; set it
 elsewhere in `config.yaml` if needed, outside HOME. `mama init` runs the install last. The first
 install adds `tools_root` to `config.yaml`; restart the daemon once after it. Later installs need no
-restart. The daemon log says `document toolkit: present` at start.
+restart. The daemon log says `document toolkit: present` at start. The page renderer
+(`document.render`) runs only on macOS.
 
 ## Register owner people
 

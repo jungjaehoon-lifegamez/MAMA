@@ -93,11 +93,13 @@ absolute path under the workspace files directory: `deliver.<messenger>.file` se
 messenger's owner chat, and `deliver.drive.file` uploads it to the owner's Drive delivery folder.
 
 A person's DM uses member actions. The `owner` role adds common-record reads, `drive.read`,
-all Trello boards, `report.read` and the corresponding help topics. Unscoped saves stay personal;
-common writes, policy, time zone, wiki publishing and delivery to the common channel must be
-requested in the common channel. `manage.*` is not available from a DM yet. Enrollment is also
-unavailable in the common channel, because its Telegram selection button works only in a DM.
-Member lifecycle actions refuse owner-role targets.
+all Trello boards, `report.read`, member management with enrollment, and the corresponding help
+topics. Unscoped saves stay personal; common writes, policy, time zone, wiki publishing and
+delivery to the common channel must be requested in the common channel. Enrollment works from an
+owner's DM or the common channel and sends its Telegram selection button to that owner's DM.
+Grant, revoke and offboard refuse owner-role targets; owners suspend and resume each other. A
+member without the owner role in an allowed group works in a room session with its granted
+actions; only in the common channel does it read and change the owner policy.
 Use `help` in the current turn for its actual actions.
 
 The core catalog also registers actions that the owner runtime does not expose. In particular,

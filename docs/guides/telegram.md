@@ -8,7 +8,7 @@ nav_order: 5
 
 For setup and shared Telegram, Discord, and Slack delivery rules, see the [messengers guide](messengers.md).
 
-Telegram admits registered members in their own DMs and owners in the common group. Replies return to the input chat;
+Telegram admits registered members in their own DMs and in allowed groups: owners join the common session, other members get a session of their own for that group. Replies return to the input chat;
 reports, notifications, and security alerts use the routes in `delivery`. Set it up with
 [`mama init`](../start/owner-setup.md), using a bot token entered in your terminal.
 The daemon reads `MAMA_TELEGRAM_TOKEN` from the environment loaded by
