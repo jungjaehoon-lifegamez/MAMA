@@ -17,6 +17,8 @@ export interface OwnerMessageInput {
 }
 
 export interface TurnIntake {
+  /** Accept only the durable envelope while this person has no writable native environment. */
+  deferIncoming?(): boolean;
   acceptOwnerMessage(input: OwnerMessageInput): StimulusReceipt;
   recordOwnerReply(input: OwnerReplyInput): void;
   /** A slow intake may have a delivery claim but no stored original after a restart. */

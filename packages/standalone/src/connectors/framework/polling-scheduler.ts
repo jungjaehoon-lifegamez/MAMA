@@ -142,6 +142,19 @@ export class PollingScheduler {
   private readonly inFlight = new Set<string>();
   private readonly initialLookbackMs: number;
   private polling = false;
+  private stopped = false;
+  private readonly pending = new Set<Promise<void>>();
+
+  private track(work: () => Promise<void>): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    const result = work();
+    this.pending.add(result);
+    void result.then(
+      () => this.pending.delete(result),
+      () => this.pending.delete(result)
+    );
+    return result;
+  }
 
   constructor(rawStore: RawStore, basePath: string, options: PollingSchedulerOptions = {}) {
     this.rawStore = rawStore;
@@ -316,7 +329,18 @@ export class PollingScheduler {
     }
   }
 
-  async pollConnector(
+  pollConnector(
+    name: string,
+    registry: ConnectorRegistry,
+    channelConfigs: Record<string, Record<string, ChannelConfig>>,
+    onRawBatchCommitted: RawBatchCommittedCallback
+  ): Promise<void> {
+    return this.track(() =>
+      this.pollConnectorOnce(name, registry, channelConfigs, onRawBatchCommitted)
+    );
+  }
+
+  private async pollConnectorOnce(
     name: string,
     registry: ConnectorRegistry,
     channelConfigs: Record<string, Record<string, ChannelConfig>>,
@@ -336,7 +360,15 @@ export class PollingScheduler {
     }
   }
 
-  async pollAll(
+  pollAll(
+    registry: ConnectorRegistry,
+    channelConfigs: Record<string, Record<string, ChannelConfig>>,
+    onRawBatchCommitted: RawBatchCommittedCallback
+  ): Promise<void> {
+    return this.track(() => this.pollAllOnce(registry, channelConfigs, onRawBatchCommitted));
+  }
+
+  private async pollAllOnce(
     registry: ConnectorRegistry,
     channelConfigs: Record<string, Record<string, ChannelConfig>>,
     onRawBatchCommitted: RawBatchCommittedCallback
@@ -345,6 +377,7 @@ export class PollingScheduler {
     this.polling = true;
     try {
       for (const [name, connector] of registry.getActive()) {
+        if (this.stopped) break;
         if (this.inFlight.has(name)) continue;
         this.inFlight.add(name);
         try {
@@ -367,6 +400,7 @@ export class PollingScheduler {
     intervalMinutes: number,
     onRawBatchCommitted: RawBatchCommittedCallback
   ): void {
+    if (this.stopped) throw new Error('Cannot start a stopped polling scheduler');
     void this.pollAll(registry, channelConfigs, onRawBatchCommitted);
     this.timers.set(
       '__batch__',
@@ -377,8 +411,10 @@ export class PollingScheduler {
     );
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
+    this.stopped = true;
     for (const timer of this.timers.values()) clearInterval(timer);
     this.timers.clear();
+    await Promise.allSettled([...this.pending]);
   }
 }

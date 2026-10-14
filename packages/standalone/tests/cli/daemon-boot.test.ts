@@ -168,6 +168,105 @@ describe('daemon bootstrap', () => {
       await daemon.stop();
     }
   );
+  it('quiesces all intake before draining receipts and closes transports before the database', async () => {
+    vi.spyOn(egressProxy, 'startEgressProxy').mockResolvedValue({
+      httpProxyPort: 1,
+      socksProxyPort: 2,
+      close: async () => {},
+    } as never);
+    const root = mkdtempSync(join(tmpdir(), 'daemon-two-step-stop-'));
+    roots.push(root);
+    const order: string[] = [];
+    let databaseClosed = false,
+      releasePoll!: () => void,
+      releaseEnrollment!: () => void;
+    const poll = new Promise<void>((resolve) => {
+      releasePoll = resolve;
+    });
+    const enrollment = new Promise<void>((resolve) => {
+      releaseEnrollment = resolve;
+    });
+    const owner = {
+      ...ownerDouble([]),
+      beginStop: () => {
+        order.push('owner:quiesce');
+      },
+      drain: async () => {
+        order.push('owner:drain');
+      },
+      recordHostExchange: () => {
+        expect(databaseClosed).toBe(false);
+        order.push('enrollment:record');
+      },
+      stop: async () => {
+        databaseClosed = true;
+        order.push('database:close');
+      },
+    };
+    let record: ((input: never) => void) | undefined;
+    const daemon = await bootDaemon({
+      config: config(root),
+      home: root,
+      configPath: join(root, 'config.yaml'),
+      logger: { info: () => {}, error: () => {} },
+      dependencies: {
+        ensureIsolation: () => {},
+        createOwnerRuntime: async () => owner as never,
+        createViewerServer: () => viewerDouble([]) as never,
+        startConnectorRuntime: async () =>
+          ({
+            stop: async () => {
+              order.push('poll:quiesce');
+              await poll;
+              expect(databaseClosed).toBe(false);
+              order.push('poll:record');
+            },
+          }) as never,
+        createTelegramGateway: (options) => {
+          record = options.recordMemberSelection as typeof record;
+          return {
+            start: async () => {},
+            beginStop: () => {
+              order.push('gateway:quiesce');
+            },
+            drain: async () => {
+              await enrollment;
+              record!({} as never);
+            },
+            stop: async () => {
+              order.push('transport:close');
+            },
+          } as never;
+        },
+      },
+    });
+    const stopping = daemon.stop();
+    try {
+      expect(order).toEqual(['owner:quiesce', 'gateway:quiesce', 'poll:quiesce']);
+      expect(databaseClosed).toBe(false);
+      releasePoll();
+      await vi.waitFor(() => expect(order).toContain('owner:drain'));
+      expect(databaseClosed).toBe(false);
+      expect(order).not.toContain('transport:close');
+      releaseEnrollment();
+      await stopping;
+      expect(order).toEqual([
+        'owner:quiesce',
+        'gateway:quiesce',
+        'poll:quiesce',
+        'poll:record',
+        'owner:drain',
+        'enrollment:record',
+        'transport:close',
+        'database:close',
+      ]);
+    } finally {
+      releasePoll();
+      releaseEnrollment();
+      await stopping;
+    }
+  });
+
   it('reports a rejected personal job boot tick and keeps the daemon running', async () => {
     vi.spyOn(egressProxy, 'startEgressProxy').mockResolvedValue({
       httpProxyPort: 1,
@@ -515,8 +614,8 @@ describe('daemon bootstrap', () => {
       'telegram:start',
       'connectors:stop',
       'viewer:stop',
-      'owner:stop',
       'telegram:stop',
+      'owner:stop',
     ]);
     expect(logs.some((line) => line.includes('boot stage=owner_runtime'))).toBe(true);
     expect(logs.some((line) => line.includes('boot stage=connectors'))).toBe(true);

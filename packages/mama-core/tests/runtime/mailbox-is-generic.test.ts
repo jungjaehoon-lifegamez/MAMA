@@ -71,6 +71,29 @@ const stimulus = (over: Partial<Stimulus> = {}): Stimulus => ({
 });
 
 describe('the mailbox carries no consumer vocabulary', () => {
+  it('preserves explicitly excluded queued inputs and binds their collected observation later', () => {
+    const mailbox = new Mailbox(freshDb('deferred-collection'));
+    const old = mailbox.enqueue(stimulus({ id: 'fixture-old', kind: 'owner_message' }))!;
+    const future = mailbox.enqueue(stimulus({ id: 'fixture-future', kind: 'owner_message' }))!;
+    expect(mailbox.cancelQueued('principal-owner', 'fixture-retired', [future])).toBe(1);
+    expect(mailbox.inputStatus(old)).toBe('dead');
+    expect(mailbox.inputStatus(future)).toBe('pending');
+    mailbox.bindInputObservation(future, 'fixture-future', 'fixture-observation');
+    expect(mailbox.readInput('fixture-future', 'principal-owner')?.refs[0].observationRef).toBe(
+      'fixture-observation'
+    );
+  });
+  it('keeps consumer host checkpoints across reopening without changing the input identity', () => {
+    const db = freshDb('host-checkpoint');
+    const mailbox = new Mailbox(db);
+    const input = stimulus({ kind: 'host_job', payload: { command: 'fixture' } });
+    const id = mailbox.enqueue(input)!;
+    mailbox.checkpointHostJob(id, { step: 'fixture-delivered', count: 3 });
+    const reopened = new Mailbox(db);
+    expect(reopened.hostJobCheckpoint(id)).toEqual({ step: 'fixture-delivered', count: 3 });
+    expect(reopened.enqueue(input)).toBeNull();
+    expect(reopened.readInput(input.id, input.principalId)?.payload).toEqual(input.payload);
+  });
   it('excludes saturated principals before preferred-kind selection without cancelling their pending rows', () => {
     const mailbox = new Mailbox(freshDb('principal-window'));
     mailbox.enqueue(

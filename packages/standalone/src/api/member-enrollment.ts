@@ -25,7 +25,7 @@ export interface MemberEnrollmentPorts {
   memberRoot?: string;
   requestSelection(sourceMessageRef: string, ownerUserId: string, name?: string): Promise<void>;
   cancelSelection?(principalId: string): void;
-  serveMember?(principalId: string): void;
+  serveMember?(principalId: string): void | 'next_start';
 }
 
 export function createMemberEnrollment(options: {
@@ -120,8 +120,14 @@ export function createMemberEnrollment(options: {
           `The selected principal is ${current.status}`
         );
       if (current?.kind === 'member') {
-        ports.serveMember?.(current.principalId);
-        return receipt('exists', current.principalId);
+        const serving = ports.serveMember?.(current.principalId);
+        return receipt(
+          'exists',
+          current.principalId,
+          serving === 'next_start'
+            ? 'The member is registered and will be served at the next start'
+            : undefined
+        );
       }
       if (current && current.principalId !== options.ownerPrincipalId)
         return receipt(
@@ -152,8 +158,14 @@ export function createMemberEnrollment(options: {
         clearMemberSmokeState(ports.memberRoot!, id);
         return id;
       });
-      ports.serveMember?.(principalId);
-      return receipt('created', principalId);
+      const serving = ports.serveMember?.(principalId);
+      return receipt(
+        'created',
+        principalId,
+        serving === 'next_start'
+          ? 'The member is registered and will be served at the next start'
+          : undefined
+      );
     },
   };
   return {

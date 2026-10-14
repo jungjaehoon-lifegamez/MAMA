@@ -110,6 +110,7 @@ export class SlackGateway extends BaseGateway {
   }
 
   async start(): Promise<void> {
+    this.accepting = true;
     if (this.connected) return;
     if (!this.options.config.allowedChannels.length || !this.options.config.ownerUserIds.length)
       throw new Error('slack owner allowlist is not configured');
@@ -119,7 +120,14 @@ export class SlackGateway extends BaseGateway {
     this.connected = true;
     await this.recoverPendingResponses();
   }
+  async drain(): Promise<void> {
+    await super.drain();
+    await Promise.allSettled([...this.deliveryTails.values()]);
+  }
+
   async stop(): Promise<void> {
+    this.beginStop();
+    await this.drain();
     if (!this.connected) return;
     this.connected = false;
     await this.socket.disconnect();
@@ -202,7 +210,15 @@ export class SlackGateway extends BaseGateway {
     if (!channel) throw new Error('slack.owner_channel_id is required');
     await this.sendMessage(channel, text, key);
   }
-  async sendFile(
+  sendFile(
+    path: string,
+    caption: string | undefined,
+    operationId: string
+  ): Promise<OwnerFileDeliveryResult> {
+    return this.trackDelivery(() => this.sendFileNow(path, caption, operationId));
+  }
+
+  private async sendFileNow(
     path: string,
     caption: string | undefined,
     operationId: string
@@ -246,7 +262,11 @@ export class SlackGateway extends BaseGateway {
     }
   }
 
-  private async accept(event: SlackMessageEvent): Promise<void> {
+  private accept(event: SlackMessageEvent): Promise<void> {
+    return this.trackIntake(() => this.acceptInput(event));
+  }
+
+  private async acceptInput(event: SlackMessageEvent): Promise<void> {
     if (
       !event.channel ||
       !event.ts ||

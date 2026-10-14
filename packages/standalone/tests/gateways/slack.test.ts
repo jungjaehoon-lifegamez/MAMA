@@ -486,3 +486,42 @@ it('delivers an authorless legacy ready entry once without archiving it', async 
     await gateway.stop();
   }
 });
+
+it.each(['message', 'app_mention'])(
+  'does not ack a stopped %s intake and accepts its redelivery',
+  async (eventName) => {
+    const acceptOwnerMessage = vi.fn(() => ({ state: 'accepted' }) as never);
+    const gateway = new SlackGateway({
+      token: 'fixture-token',
+      appToken: 'fixture-app-token',
+      intake: { acceptOwnerMessage, recordOwnerReply: () => {} },
+      config: {
+        enabled: true,
+        ownerChannelId: 'channel_test',
+        allowedChannels: ['channel_test'],
+        ownerUserIds: ['user_owner'],
+      },
+      messageLedgerPath: join(root, 'ledger.json'),
+    });
+    await gateway.start();
+    gateway.beginStop();
+    const socket = mocks.sockets[0] as EventEmitter;
+    const ack = vi.fn(async () => {});
+    const event = {
+      channel: 'channel_test',
+      user: 'user_owner',
+      ts: '8.0',
+      text: 'fixture shutdown input',
+    };
+    socket.emit(eventName, { event, ack });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(ack).not.toHaveBeenCalled();
+    expect(acceptOwnerMessage).not.toHaveBeenCalled();
+    await gateway.stop();
+    await gateway.start();
+    socket.emit(eventName, { event, ack });
+    await vi.waitFor(() => expect(ack).toHaveBeenCalledOnce());
+    expect(acceptOwnerMessage).toHaveBeenCalledOnce();
+    await gateway.stop();
+  }
+);

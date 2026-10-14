@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { rmSync } from 'node:fs';
-import { relative } from 'node:path';
 import {
   createPrincipalRepository,
   exportPrincipalRecords,
@@ -13,7 +12,7 @@ import {
 import type { DatabaseInstance } from '@jungjaehoon/mama-core/db-manager';
 import type { Mailbox, MailboxRow } from '@jungjaehoon/mama-core/runtime/mailbox';
 import type { RawStore } from '../storage/source-archive.js';
-import type { OwnerMessageLedger } from '../gateways/telegram-message-ledger.js';
+import { outboundLedgerKey, type OwnerMessageLedger } from '../gateways/telegram-message-ledger.js';
 import type { createSerialTurnChain } from '../runtime/principal-sessions.js';
 import type { TelegramFileSender } from './file-delivery.js';
 import {
@@ -38,6 +37,7 @@ export interface MemberRecordsPorts {
   retire(id: string): Promise<void>;
   serve(id: string): void;
   isStopping(): boolean;
+  isReady(): boolean;
   resumeQueued(): void;
   recordExchange(
     id: string,
@@ -66,7 +66,19 @@ interface Scheduled {
   inputId: number;
   commandId: string;
   kind: 'export' | 'erase';
+  hostInputId?: number;
   release(): void;
+}
+
+interface ErasureState {
+  phase: 'confirmed' | 'exporting' | 'delivered' | 'erasing' | 'receipt' | 'done';
+  product: Record<string, number>;
+  archive?: Awaited<ReturnType<typeof buildMemberExport>>;
+  core?: PrincipalErasureReceipt;
+  text?: string;
+  receiptDelivered?: boolean;
+  exportAttempted?: boolean;
+  receiptAttempted?: boolean;
 }
 
 function receiptText(
@@ -93,7 +105,7 @@ function receiptText(
   if (failure)
     lines.push(
       uncertain
-        ? 'The export delivery is uncertain. Nothing was erased. Check whether the file arrived before asking again.'
+        ? 'The export delivery is uncertain. Nothing was erased. No file was resent. Ask again for a new preview and confirm it in a later member message.'
         : ['retire', 'export', 'export_delivery', 'file_check'].includes(step)
           ? 'Nothing was erased. Ask again for a new preview and pass its confirmationToken in a later member message.'
           : 'Earlier steps are done. Make a new erasure request and pass its preview confirmationToken in a later member message to finish the rest.'
@@ -139,6 +151,12 @@ export function createMemberRecords(options: {
       throw new Error('Member records require exactly one registered Telegram DM');
     return targets[0]!.id;
   };
+  const deferredInputs = (id: string) =>
+    options.adapter
+      .prepare(
+        "SELECT id, stimulus_id FROM mailbox_inputs WHERE principal_id=? AND kind='owner_message' AND status IN ('pending','claimed') AND json_extract(payload_json,'$.deferredMemberMessage')=1"
+      )
+      .all(id) as Array<{ id: number; stimulus_id: string }>;
   const productExport = (id: string) => {
     const p = ports();
     const ledger = p.ledger();
@@ -169,10 +187,8 @@ export function createMemberRecords(options: {
     }
     p.recordExchange(job.principalId, job.kind, `host:${job.commandId}`, text, verified);
   };
-  // Members whose erasure is scheduled or running. Only these pause claims for everyone: the
-  // member must stay unserved with its queue untouched until the export is delivered. An export
-  // deletes nothing; its member snapshot slot ends before the upload, once the archive
-  // directory (workspace/files) and snapshot are complete.
+  // The confirming member alone is excluded from all claims, including host inputs.
+  // Its durable erasure carrier is reconciled here, outside the mailbox claim loop.
   const erasing = new Set<string>();
   // Members with an export still uploading: their turns run, but no second export or erasure
   // starts until this one is delivered, so archives and uploads never pile up.
@@ -206,10 +222,28 @@ export function createMemberRecords(options: {
   const cancelConfirmation = (row: MailboxRow, outcome: 'dead' | 'uncertain', reason: string) => {
     const job = take(row);
     if (!job) return;
+    if (job.kind === 'erase' && ports().isStopping()) {
+      // Native stop can interrupt the confirming turn after the host accepted its command.
+      // The consent is durable; stopping the process is not cancellation of that consent.
+      job.release();
+      return;
+    }
+    if (job.kind === 'erase') {
+      const state = ports()
+        .mailbox()
+        .hostJobCheckpoint(job.hostInputId!) as unknown as ErasureState;
+      state.phase = 'receipt';
+      state.text = `Erasure did not run because the confirming turn did not complete (${outcome}: ${reason}).\nYour personal records and files were kept. Make a new request in a later member message.\nYour enrollment and grants are kept.`;
+      checkpoint(job, state);
+      launchErasure(job);
+      job.release();
+      return;
+    }
+    if (job.hostInputId !== undefined) ports().mailbox().ack(job.hostInputId);
     blocked.delete(job.principalId);
     erasing.delete(job.principalId);
     if (!ports().isStopping()) {
-      const label = job.kind === 'erase' ? 'Erasure' : 'Export';
+      const label = 'Export';
       enqueue(job.principalId, () =>
         sendReceipt(
           job,
@@ -232,15 +266,12 @@ export function createMemberRecords(options: {
       blocked.delete(id);
       leaveChain();
     };
-    const product: Record<string, number> = { cancelledMessages: 0 };
-    let core: PrincipalErasureReceipt | undefined;
     let archive: Awaited<ReturnType<typeof buildMemberExport>> | undefined;
-    let failedStep = job.kind === 'erase' ? 'retire' : 'export',
+    let failedStep = 'export',
       failure: unknown,
       uncertain = false;
     let delivered = false;
     try {
-      if (job.kind === 'erase') await p.retire(id);
       failedStep = 'export';
       archive = await buildMemberExport(
         p.root,
@@ -264,74 +295,13 @@ export function createMemberRecords(options: {
       } finally {
         rmSync(archive.path, { force: true });
       }
-      if (job.kind === 'erase') {
-        // Retirement removed the writers and intake before the snapshot. Check and delete
-        // synchronously after delivery, with no await between them that could admit a write.
-        failedStep = 'file_check';
-        const inventory = memberFileInventory(p.root, id);
-        if (memberInventorySnapshot(inventory) !== archive.fileSnapshot)
-          throw new Error('Your files changed while the export was being sent');
-        failedStep = 'files';
-        product.files = 0;
-        product.fileBytes = 0;
-        product.fileTrees = 0;
-        for (const tree of inventory.trees) {
-          const remaining = inventory.allFiles.filter(
-            (file) =>
-              relative(tree, file.path) !== '..' && !relative(tree, file.path).startsWith('../')
-          );
-          rmSync(tree, { recursive: true, force: true });
-          product.files += remaining.length;
-          product.fileBytes += remaining.reduce((n, file) => n + file.size, 0);
-          product.fileTrees++;
-        }
-        failedStep = 'queued_inputs';
-        // Delivered in the export and never dispatched: cancelled here, they are terminal, so
-        // the core erase below removes them with their refs.
-        product.cancelledMessages = p.mailbox().cancelQueued(id, 'member_erase');
-        failedStep = 'connector_event_index';
-        product.connector_event_index = options.adapter
-          .prepare(
-            "DELETE FROM connector_event_index WHERE source_connector='chat' AND memory_scope_kind='user' AND memory_scope_id=?"
-          )
-          .run(id).changes;
-        failedStep = 'core';
-        core = erasePrincipalRecords(options.adapter, {
-          principalId: id,
-          commandId: job.commandId,
-        });
-        failedStep = 'chat_raw';
-        Object.assign(product, p.rawStore.eraseScope('chat', 'user', id));
-        failedStep = 'message_ledger';
-        const ledger = p.ledger();
-        if (!ledger) throw new Error('Live message ledger is not configured');
-        product.message_ledger = ledger.eraseTelegramDm(dm(p.access(id)), [
-          `file:${job.commandId}:export`,
-        ]);
-      }
     } catch (error) {
       failure = error;
     }
     try {
-      try {
-        // Only erasure retired the session. Export uploads may outlive later lifecycle work;
-        // they never create or restore a session after leaving the member snapshot slot.
-        if (job.kind === 'erase') p.serve(id);
-      } catch (error) {
-        // Keep the step that stopped the job: it decides what was erased and what remains.
-        if (failure === undefined) {
-          failedStep = 'serve';
-          failure = error;
-        } else
-          failure = new Error(
-            `${failure instanceof Error ? failure.message : String(failure)}; serving the member again also failed: ${error instanceof Error ? error.message : String(error)}`
-          );
-      }
       const omittedFiles = archive?.omittedFiles ?? [];
       let text: string;
-      if (job.kind === 'erase')
-        text = receiptText(core, product, failure, failedStep, omittedFiles, uncertain);
-      else {
+      {
         text = uncertain
           ? `Export delivery is uncertain at ${failedStep}: ${failure instanceof Error ? failure.message : String(failure)}.`
           : failure
@@ -341,7 +311,7 @@ export function createMemberRecords(options: {
             : 'Export sent: your personal records and files were sent to your registered Telegram DM.';
         if (uncertain)
           text +=
-            '\nThe export delivery is uncertain. Check whether the file arrived before asking again.';
+            '\nThe export delivery is uncertain. No file was resent. Check your DM for the export before requesting another export.';
         text += `\nFiles: ${archive?.fileCount ?? 0} files, ${archive?.fileBytes ?? 0} bytes.\nYour enrollment and grants are kept.`;
         for (const name of omittedFiles)
           text += `\nLeft out of the export (a link is outside your files or in a private host directory): ${name}.`;
@@ -357,13 +327,321 @@ export function createMemberRecords(options: {
       }
     }
   };
+
+  const runningErasures = new Set<number>();
+  let recoveryTimer: ReturnType<typeof setInterval> | undefined;
+  const checkpoint = (job: Scheduled, state: ErasureState) => {
+    // Consumer progress is opaque to core; the host stimulus identity stays immutable.
+    ports()
+      .mailbox()
+      .checkpointHostJob(job.hostInputId!, JSON.parse(JSON.stringify(state)));
+  };
+  const runErasure = async (job: Scheduled) => {
+    const p = ports(),
+      id = job.principalId;
+    const state = p.mailbox().hostJobCheckpoint(job.hostInputId!) as unknown as ErasureState;
+    if (state.phase === 'done') {
+      p.mailbox().ack(job.hostInputId!);
+      blocked.delete(id);
+      erasing.delete(id);
+      p.serve(id);
+      return;
+    }
+    let step = 'retire';
+    let uncertainExport = false;
+    try {
+      if (state.phase === 'confirmed') {
+        if (p.isStopping()) return;
+        await p.retire(id);
+        if (p.isStopping()) return;
+        step = 'export';
+        state.archive = await buildMemberExport(
+          p.root,
+          id,
+          exportPrincipalRecords(options.adapter, id),
+          productExport(id)
+        );
+        state.phase = 'exporting';
+        checkpoint(job, state);
+      }
+      if (state.phase === 'exporting') {
+        if (p.isStopping()) return;
+        step = 'export_delivery';
+        // A boot recreates native directories. Retire them before checking the persisted snapshot.
+        await p.retire(id);
+        if (p.isStopping()) return;
+        // This principal remains reserved and excluded. Its native writers are gone and the
+        // archive touches only its known paths; other directory jobs need not wait for upload.
+        p.turnChain(id).releaseDirectoryWait();
+        const entry = p.ledger()?.get(`file:${job.commandId}:export`);
+        if (entry?.state !== 'delivered') {
+          // The ledger has retention. A lost/expired receipt after a persisted send boundary
+          // cannot turn an attempted upload back into a never-attempted one.
+          if (!entry && state.exportAttempted) {
+            uncertainExport = true;
+            throw new Error('The export delivery is uncertain: its receipt is missing');
+          }
+          // A persisted attempt without a definitive receipt is never permission to delete.
+          // In particular, a processing entry left by a crash may have reached Telegram.
+          if (entry && (entry.deliveryUncertain || entry.state === 'processing'))
+            throw new Error('The export delivery is uncertain');
+          if (!state.archive) throw new Error('The export snapshot is missing');
+          if (entry) throw new Error('The export delivery was not confirmed');
+          state.exportAttempted = true;
+          checkpoint(job, state);
+          await p.telegram()!.sendFile(state.archive.path, undefined, `${job.commandId}:export`, {
+            access: p.access(id),
+            filesRoot: state.archive.filesRoot,
+          });
+        }
+        state.phase = 'delivered';
+        checkpoint(job, state);
+        if (p.isStopping()) return;
+      }
+      if (state.phase === 'delivered') {
+        if (p.isStopping()) return;
+        await p.retire(id);
+        if (p.isStopping()) return;
+        if (state.archive) rmSync(state.archive.path, { force: true });
+        step = 'file_check';
+        const inventory = memberFileInventory(p.root, id);
+        if (!state.archive || memberInventorySnapshot(inventory) !== state.archive.fileSnapshot)
+          throw new Error('Your files changed while the export was being sent');
+        state.product.files = inventory.allFiles.length;
+        state.product.fileBytes = inventory.allFiles.reduce((n, file) => n + file.size, 0);
+        state.product.fileTrees = inventory.trees.length;
+        state.phase = 'erasing';
+        checkpoint(job, state); // Deletion may now replay each remaining store, never the upload.
+      }
+      if (state.phase === 'erasing') {
+        step = 'files';
+        // No await between the delivered file check and the deletion on the first run.
+        for (const tree of memberFileInventory(p.root, id).trees)
+          rmSync(tree, { recursive: true, force: true });
+        const product = { ...state.product };
+        let core = state.core;
+        options.adapter.transaction(() => {
+          product.cancelledMessages += p.mailbox().cancelQueued(
+            id,
+            'member_erase',
+            deferredInputs(id).map((row) => row.id)
+          );
+          step = 'connector_event_index';
+          product.connector_event_index =
+            (product.connector_event_index ?? 0) +
+            options.adapter
+              .prepare(
+                "DELETE FROM connector_event_index WHERE source_connector='chat' AND memory_scope_kind='user' AND memory_scope_id=?"
+              )
+              .run(id).changes;
+          step = 'core';
+          core = erasePrincipalRecords(options.adapter, {
+            principalId: id,
+            commandId: job.commandId,
+          });
+          checkpoint(job, { ...state, product, core });
+        });
+        // A rolled-back transaction must not report its attempted deletes as completed.
+        state.product = product;
+        state.core = core;
+        step = 'chat_raw';
+        // Save intended totals before crossing the independent raw database/file-ledger boundary.
+        const rawCounts = p.rawStore.exportScope('chat', 'user', id);
+        for (const [name, rows] of Object.entries(rawCounts)) state.product[name] ??= rows.length;
+        const ledger = p.ledger();
+        if (!ledger) throw new Error('Live message ledger is not configured');
+        state.product.message_ledger ??= ledger
+          .listForTelegramDm(dm(p.access(id)))
+          .filter(
+            (entry) =>
+              entry.key !== `file:${job.commandId}:export` &&
+              !deferredInputs(id).some((row) => row.stimulus_id === entry.key)
+          ).length;
+        checkpoint(job, state);
+        p.rawStore.eraseScope('chat', 'user', id);
+        step = 'message_ledger';
+        ledger.eraseTelegramDm(dm(p.access(id)), [
+          `file:${job.commandId}:export`,
+          ...deferredInputs(id).map((row) => row.stimulus_id),
+        ]);
+        state.text = receiptText(
+          state.core,
+          state.product,
+          undefined,
+          '',
+          state.archive?.omittedFiles ?? [],
+          false
+        );
+        state.phase = 'receipt';
+        delete state.archive;
+        checkpoint(job, state);
+      }
+    } catch (error) {
+      // Retirement races shutdown before any deletion. Keep the confirmed job resumable.
+      if (p.isStopping() && ['confirmed', 'exporting', 'delivered'].includes(state.phase)) return;
+      const entry = p.ledger()?.get(`file:${job.commandId}:export`);
+      const uncertain =
+        uncertainExport ||
+        (state.phase === 'exporting' &&
+          (entry?.deliveryUncertain === true || entry?.state === 'processing'));
+      state.text = receiptText(
+        state.core,
+        state.product,
+        error,
+        step,
+        state.archive?.omittedFiles ?? [],
+        uncertain
+      );
+      state.phase = 'receipt';
+      checkpoint(job, state);
+    }
+    if (state.phase === 'receipt') {
+      if (state.archive) rmSync(state.archive.path, { force: true });
+      if (p.isStopping()) return;
+      try {
+        p.serve(id);
+      } catch (error) {
+        if (!state.receiptAttempted && !state.receiptDelivered) {
+          state.text = `${state.text}\nserving the member again also failed: ${error instanceof Error ? error.message : String(error)}.`;
+          checkpoint(job, state);
+        } else {
+          // Once a receipt crossed the send boundary, its text is immutable: a later service
+          // failure cannot change what the transport delivered or what the chat records.
+          console.error('[Member records] service restoration failed after receipt attempt', error);
+        }
+      }
+      const telegram = p.telegram();
+      p.turnChain(id).releaseDirectoryWait();
+      if (!telegram) throw new Error('Member Telegram delivery is not configured');
+      const operation = `${job.commandId}:receipt`;
+      if (!state.receiptDelivered) {
+        state.receiptDelivered = telegram.memberTextDelivered(p.access(id), operation);
+        if (!state.receiptDelivered) {
+          const entry = p.ledger()?.get(outboundLedgerKey(operation));
+          if (!entry?.deliveryUncertain && !(!entry && state.receiptAttempted)) {
+            state.receiptAttempted = true;
+            checkpoint(job, state);
+            try {
+              state.receiptDelivered = await telegram.sendMemberText(
+                p.access(id),
+                state.text!,
+                operation
+              );
+              if (!state.receiptDelivered)
+                throw new Error('Erasure receipt delivery was not confirmed');
+            } catch (error) {
+              const attempted = p.ledger()?.get(outboundLedgerKey(operation));
+              // A failed pre-claim call is retryable. An uncertain send is final for this
+              // data job: record it unverified without resending or blocking later turns.
+              if (!attempted) {
+                state.receiptAttempted = false;
+                checkpoint(job, state);
+              }
+              if (!attempted?.deliveryUncertain) throw error;
+            }
+          }
+        }
+        checkpoint(job, state);
+      }
+      p.recordExchange(
+        id,
+        'erase',
+        `host:${job.commandId}`,
+        state.text!,
+        state.receiptDelivered === true
+      );
+      options.adapter.transaction(() => {
+        state.phase = 'done';
+        delete state.archive;
+        checkpoint(job, state);
+        p.mailbox().ack(job.hostInputId!);
+      });
+      blocked.delete(id);
+      erasing.delete(id);
+    }
+  };
+  const launchErasure = (job: Scheduled) => {
+    if (runningErasures.has(job.hostInputId!)) return;
+    runningErasures.add(job.hostInputId!);
+    enqueue(job.principalId, async () => {
+      try {
+        await runErasure(job);
+      } finally {
+        runningErasures.delete(job.hostInputId!);
+      }
+    });
+  };
+  const durableRows = () =>
+    options.ports
+      ? (options.adapter
+          .prepare(
+            "SELECT id, stimulus_id, principal_id, payload_json FROM mailbox_inputs WHERE kind='host_job' AND channel_key='member-erasure' AND status IN ('pending','claimed') ORDER BY id"
+          )
+          .all() as Array<{
+          id: number;
+          stimulus_id: string;
+          principal_id: string;
+          payload_json: string;
+        }>)
+      : [];
+  // Restore exclusion before any boot-time claim. A live confirmation still waits for settlement;
+  // after a crash its process no longer owns files, so recovery can take the same member slot.
+  for (const row of durableRows()) {
+    blocked.add(row.principal_id);
+    erasing.add(row.principal_id);
+  }
+  const recover = () => {
+    // An assembly without member_root has no personal-record host runner or delivery ports.
+    if (!options.ports) return;
+    if (ports().isStopping() || !ports().isReady()) return;
+    for (const row of durableRows()) {
+      const payload = JSON.parse(row.payload_json) as { inputId: number };
+      if (scheduled.has(payload.inputId)) continue;
+      // Core reconciliation owns uncertain native intake, even after its process is gone.
+      const mailbox = ports().mailbox();
+      const status = mailbox.inputStatus(payload.inputId);
+      if (status === 'acked' || status === 'dead')
+        mailbox.quarantine(payload.inputId, 'member_erasure_confirmation_recovered');
+      launchErasure({
+        principalId: row.principal_id,
+        inputId: payload.inputId,
+        commandId: row.stimulus_id,
+        kind: 'erase',
+        hostInputId: row.id,
+        release: () => {},
+      });
+    }
+  };
   const schedule = (kind: Scheduled['kind'], row: MailboxRow) => {
     const commandId = `member-${kind}:${row.principalId}:${row.id}`;
+    let hostInputId: number | undefined;
+    if (kind === 'erase')
+      options.adapter.transaction(() => {
+        hostInputId =
+          ports()
+            .mailbox()
+            .enqueue({
+              id: commandId,
+              kind: 'host_job',
+              principalId: row.principalId,
+              channelKey: 'member-erasure',
+              payload: { inputId: row.id },
+              occurredAt: Date.now(),
+            }) ?? ports().mailbox().readInput(commandId, row.principalId)!.id;
+        if (!ports().mailbox().hostJobCheckpoint(hostInputId))
+          ports()
+            .mailbox()
+            .checkpointHostJob(hostInputId, {
+              phase: 'confirmed',
+              product: { cancelledMessages: 0 },
+            });
+      });
     scheduled.set(row.id, {
       principalId: row.principalId,
       inputId: row.id,
       commandId,
       kind,
+      ...(hostInputId === undefined ? {} : { hostInputId }),
       release: ports().turnChain(row.principalId).hold(),
     });
     blocked.add(row.principalId);
@@ -451,17 +729,29 @@ export function createMemberRecords(options: {
   return {
     registrations,
     isBusy: () => erasing.size > 0,
+    excludePrincipals: () => [...erasing],
+    recover,
+    startRecovery: () => {
+      if (!options.ports) return;
+      recover();
+      recoveryTimer ??= setInterval(recover, 5_000);
+      recoveryTimer.unref();
+    },
+    stopRecovery: () => {
+      if (recoveryTimer) clearInterval(recoveryTimer);
+      recoveryTimer = undefined;
+    },
     isBlocked: (id: string) => blocked.has(id),
     onSettled: (row: MailboxRow) => {
       const job = take(row);
       if (!job) return;
       if (ports().isStopping()) {
-        blocked.delete(job.principalId);
-        erasing.delete(job.principalId);
+        if (job.kind !== 'erase') blocked.delete(job.principalId);
       } else {
         // Export writes workspace/files; erasure recreates this member's runtime/temp paths.
         // Other members already deny those paths, so both use only this member's chain.
-        enqueue(job.principalId, (leaveChain) => runJob(job, leaveChain));
+        if (job.kind === 'erase') launchErasure(job);
+        else enqueue(job.principalId, (leaveChain) => runJob(job, leaveChain));
       }
       job.release();
     },

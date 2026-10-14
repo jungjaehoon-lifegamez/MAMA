@@ -30,6 +30,51 @@ function fakeConnector(
 }
 
 describe('PollingScheduler', () => {
+  it.each(['pollConnector', 'pollAll'] as const)(
+    'awaits the in-flight %s outcome before stop returns and refuses new polls',
+    async (method) => {
+      const root = mkdtempSync(join(tmpdir(), 'poll-stop-'));
+      roots.push(root);
+      const raw = new RawStore(root);
+      let finish!: () => void;
+      const connector = fakeConnector([]);
+      connector.poll = vi.fn(
+        () =>
+          new Promise((resolve) => {
+            finish = () => resolve([]);
+          })
+      );
+      const outcomes = vi.fn();
+      const scheduler = new PollingScheduler(raw, root, { recordPollOutcome: outcomes });
+      const registry = new ConnectorRegistry();
+      registry.register('slack', connector);
+      const poll =
+        method === 'pollAll'
+          ? scheduler.pollAll(registry, {}, async () => {})
+          : scheduler.pollConnector('slack', registry, {}, async () => {});
+      await vi.waitFor(() => expect(connector.poll).toHaveBeenCalledOnce());
+      let closed = false;
+      const stop = Promise.resolve(scheduler.stop()).then(() => {
+        closed = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      try {
+        expect(closed).toBe(false);
+        finish();
+        await poll;
+        await stop;
+        expect(outcomes).toHaveBeenCalledOnce();
+        await scheduler.pollAll(registry, {}, async () => {});
+        await scheduler.pollConnector('slack', registry, {}, async () => {});
+        expect(connector.poll).toHaveBeenCalledOnce();
+      } finally {
+        finish();
+        await poll;
+        await stop;
+        raw.close();
+      }
+    }
+  );
   it('logs poll failures while leaving the source cursor unchanged', async () => {
     const root = mkdtempSync(join(tmpdir(), 'poll-error-'));
     roots.push(root);

@@ -161,6 +161,10 @@ export class TelegramGateway extends BaseGateway {
   private readonly messageLedger: TelegramMessageLedger;
   private readonly chatTails = new Map<string, Promise<void>>();
   private readonly pendingMemberIntakes = new Map<string, number>();
+  private stopIntake!: () => void;
+  private intakeStopped = new Promise<undefined>((resolve) => {
+    this.stopIntake = () => resolve(undefined);
+  });
   private readonly enrollmentCompletions = new Set<Promise<void>>();
   private readonly activePresenters = new Map<string, TelegramResponsePresenter>();
   private readonly recentMessageIds = new Map<string, number>();
@@ -217,6 +221,10 @@ export class TelegramGateway extends BaseGateway {
 
   async start(): Promise<void> {
     if (this.connected) return;
+    this.accepting = true;
+    this.intakeStopped = new Promise<undefined>((resolve) => {
+      this.stopIntake = () => resolve(undefined);
+    });
     if (!this.config.allowedChats?.some((chatId) => chatId.trim().length > 0)) {
       throw new Error('telegram gateway disabled: allowed_chats is not set. Run: mama status');
     }
@@ -258,9 +266,21 @@ export class TelegramGateway extends BaseGateway {
     }
   }
 
-  async stop(): Promise<void> {
+  async beginStop(): Promise<void> {
+    this.accepting = false;
+    this.stopIntake();
     if (this.bot) await this.bot.stop().catch(() => {});
-    await Promise.all([...this.enrollmentCompletions]);
+  }
+
+  async drain(): Promise<void> {
+    await super.drain();
+    await Promise.allSettled([...this.enrollmentCompletions]);
+    await Promise.allSettled([...this.chatTails.values()]);
+  }
+
+  async stop(): Promise<void> {
+    await this.beginStop();
+    await this.drain();
     this.pendingEnrollments.clear();
     this.bot = null;
     this.connected = false;
@@ -350,7 +370,16 @@ export class TelegramGateway extends BaseGateway {
     return this.memberTextDelivered(access, operationId);
   }
 
-  async sendFile(
+  sendFile(
+    path: string,
+    caption: string | undefined,
+    operationId: string,
+    member?: MemberFileDeliveryContext
+  ): Promise<TelegramFileDeliveryResult> {
+    return this.trackDelivery(() => this.sendFileNow(path, caption, operationId, member));
+  }
+
+  private async sendFileNow(
     path: string,
     caption: string | undefined,
     operationId: string,
@@ -638,7 +667,11 @@ export class TelegramGateway extends BaseGateway {
     }
   }
 
-  private async handleMessage(message: TelegramMessage): Promise<void> {
+  private handleMessage(message: TelegramMessage): Promise<void> {
+    return this.trackIntake(() => this.handleMessageInput(message));
+  }
+
+  private async handleMessageInput(message: TelegramMessage): Promise<void> {
     if (!message.chat || !message.from) return;
     const chatId = String(message.chat.id);
     const userId = String(message.from.id);
@@ -678,14 +711,21 @@ export class TelegramGateway extends BaseGateway {
       const ref = sourceMessageRef(chatId, message.message_id);
       const claim = this.claimMessage(message);
       this.pendingMemberIntakes.set(chatId, (this.pendingMemberIntakes.get(chatId) ?? 0) + 1);
-      void this.runInChatQueue(chatId, async () =>
-        this.acceptMessage(
+      void this.runInChatQueue(chatId, async () => {
+        const selectedIntake = await Promise.race([
+          Promise.resolve(intake ?? this.memberIntake(principalId)),
+          this.intakeStopped,
+        ]);
+        // The claimed inbound ledger already preserves this wait. Stop leaves it for startup
+        // interruption recovery rather than waiting for a directory/model slot to open.
+        if (!selectedIntake || !this.accepting) return;
+        await this.acceptMessage(
           message,
           principalId,
-          await (intake ?? this.memberIntake(principalId)),
+          selectedIntake,
           claim.claimed ? ref : undefined
-        )
-      )
+        );
+      })
         .catch((error) => {
           this.lastError = telegramErrorMessage(error);
           this.log(`telegram deferred intake failed error=${this.lastError}`);
@@ -760,6 +800,20 @@ export class TelegramGateway extends BaseGateway {
       selected.entities
     );
     const ledgerEntry = this.claimMessage(message).entry;
+    if (intake.deferIncoming?.()) {
+      intake.acceptOwnerMessage({
+        id: ref,
+        channelKey: chatId,
+        senderPrincipalId: principalId,
+        occurredAt: message.date * 1000,
+        text: selected.text,
+        payload: { pendingTelegramMessage: JSON.parse(JSON.stringify(message)) },
+      });
+      const pendingPresenter = this.createResponsePresenter(ref, Number(message.chat.id));
+      this.activePresenters.set(ref, pendingPresenter);
+      await pendingPresenter.start();
+      return;
+    }
     const presenter = this.createResponsePresenter(ref, Number(message.chat.id));
     this.activePresenters.set(ref, presenter);
     try {
@@ -800,6 +854,44 @@ export class TelegramGateway extends BaseGateway {
       this.activePresenters.delete(ref);
       throw error;
     }
+  }
+
+  /** Host preparation of a transport-verified envelope accepted while the member was retired. */
+  async prepareDeferredMemberInput(
+    principalId: string,
+    input: OwnerMessageInput
+  ): Promise<OwnerMessageInput> {
+    const payload = input.payload as unknown as { pendingTelegramMessage: TelegramMessage };
+    const message = payload.pendingTelegramMessage;
+    const person = this.registry.resolveByExternal('telegram', 'private', String(message.from!.id));
+    if (
+      person?.principalId !== principalId ||
+      person.status !== 'active' ||
+      sourceMessageRef(String(message.chat.id), message.message_id) !== input.id
+    )
+      throw new Error('Deferred Telegram input does not belong to this active person');
+    const selected = selectTelegramTextEntities(message);
+    const formatting = captureTelegramTextFormatting(
+      selected.field,
+      selected.text,
+      selected.entities
+    );
+    const attachments = await downloadTelegramFiles(telegramFiles(message), {
+      api: this.bot!.api,
+      token: this.token,
+      downloadsDir: this.principalPaths(principalId).downloadsDir,
+      messageId: message.message_id,
+    });
+    return {
+      ...input,
+      text: selected.text.trim()
+        ? selected.text
+        : attachments.map(({ name }) => `[file: ${name}]`).join('\n'),
+      payload: {
+        ...(formatting === undefined ? {} : { telegramFormatting: formatting }),
+        ...(attachments.length ? { attachments } : {}),
+      } as unknown as JsonValue,
+    };
   }
 
   private claimMessage(message: TelegramMessage) {

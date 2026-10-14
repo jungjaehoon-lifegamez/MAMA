@@ -64,7 +64,7 @@ import { storedSourceFamilies } from '../connectors/framework/stored-index-read.
 import { createOwnerPolicyProvider, type OwnerPolicyProvider } from './owner-policy.js';
 import { readSessionStartInput } from './session-start-context.js';
 import { ChatSources } from '../storage/chat-sources.js';
-import type { OwnerHostExchangeInput } from '../gateways/turn-contract.js';
+import type { OwnerMessageInput, OwnerHostExchangeInput } from '../gateways/turn-contract.js';
 import { createJevClient } from '../replay/jev-client.js';
 import { createRecordOrders, type RecordOrderEvent } from './record-orders.js';
 import { initTokenEstimator } from '@jungjaehoon/mama-core/runtime/token-estimator';
@@ -78,6 +78,7 @@ import {
 } from './stimulus-delivery.js';
 
 export interface OwnerRuntimeOptions {
+  prepareDeferredMemberInput?(id: string, input: OwnerMessageInput): Promise<OwnerMessageInput>;
   onPersonalJobError?: (error: unknown) => void;
   messageLedger?: () => OwnerMessageLedger | undefined;
   memberRecordsTelegram?: () => MemberRecordsTelegram | undefined;
@@ -172,6 +173,8 @@ export interface OwnerRuntime {
   principalPaths(principalId: string): { workspaceDir: string; downloadsDir: string };
   completeMemberEnrollment(selection: MemberSelection): Promise<ActionResult>;
   recordHostExchange(input: OwnerHostExchangeInput): void;
+  beginStop(): void;
+  drain(): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -466,6 +469,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
             memberRecords: {
               root: memberRoot,
               isStopping: () => stopping,
+              isReady: () => options.deliveryReady?.() ?? true,
               resumeQueued: () => {
                 void intakeRuntime
                   .drainOnce()
@@ -484,6 +488,14 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
                 serveMember(id);
               },
               recordExchange: (id, kind, ref, text, deliveryVerified) => {
+                if (
+                  database.adapter
+                    .prepare(
+                      "SELECT 1 FROM connector_event_index WHERE source_connector='chat' AND source_entity_id=? AND memory_scope_id=?"
+                    )
+                    .get(`${ref}:reply`, id)
+                )
+                  return;
                 const memberChat = new ChatSources(
                   sourceStore,
                   database.adapter,
@@ -549,7 +561,9 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
               ...options.memberEnrollment,
               memberRoot,
               serveMember: (id) => {
+                if (stopping) return 'next_start';
                 serveMember(id);
+                return undefined;
               },
             },
           }),
@@ -784,7 +798,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       sessions.add(principalId, member);
       return member;
     };
-    for (const member of activeMembers) prepareMember(member.principalId);
+    for (const member of activeMembers)
+      if (!surface.memberRecords.isBlocked(member.principalId)) prepareMember(member.principalId);
     const executionAccess = (principalId: string) =>
       principalId === options.ownerPrincipalId
         ? access
@@ -838,6 +853,68 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         ...sessions.delivery,
         deliverHost: surface.deliverManagement,
         prepareNative: async (row) => {
+          const payload = row.payload as
+            | {
+                text?: string;
+                input?: OwnerMessageInput['payload'];
+                senderPrincipalId?: string;
+                deferredMemberMessage?: boolean;
+              }
+            | undefined;
+          if (row.kind === 'owner_message' && payload?.deferredMemberMessage) {
+            if (!intakeRuntime.servesPrincipal(row.principalId))
+              await serveMemberOnLane(row.principalId);
+            const archive = new ChatSources(
+              sourceStore,
+              database.adapter,
+              row.principalId,
+              `member-agent:${row.principalId}`
+            );
+            const existing = database.adapter
+              .prepare(
+                "SELECT current_observation_id, metadata_json FROM connector_event_index WHERE source_connector='chat' AND source_id=? AND memory_scope_id=?"
+              )
+              .get(row.stimulusId, row.principalId) as
+              | { current_observation_id: string; metadata_json: string }
+              | undefined;
+            let observation: string;
+            let input = payload.input;
+            if (existing) {
+              observation = existing.current_observation_id;
+              input = JSON.parse(existing.metadata_json).input ?? undefined;
+            } else {
+              let message: OwnerMessageInput = {
+                id: row.stimulusId,
+                channelKey: row.channelKey,
+                occurredAt: row.occurredAt,
+                text: payload.text ?? '',
+                replyTo: row.replyTo,
+                ...(payload.input === undefined ? {} : { payload: payload.input }),
+                ...(payload.senderPrincipalId === undefined
+                  ? {}
+                  : { senderPrincipalId: payload.senderPrincipalId }),
+              };
+              if (
+                message.payload &&
+                typeof message.payload === 'object' &&
+                !Array.isArray(message.payload) &&
+                'pendingTelegramMessage' in message.payload
+              ) {
+                if (!options.prepareDeferredMemberInput)
+                  throw new Error('Deferred Telegram input requires its gateway preparer');
+                message = await options.prepareDeferredMemberInput(row.principalId, message);
+              }
+              observation = archive.saveOwnerMessage(message);
+              input = message.payload;
+            }
+            intakeRuntime.mailbox!.bindInputObservation(row.id, row.stimulusId, observation);
+            for (const ref of row.refs)
+              if (ref.refId === row.stimulusId) ref.observationRef = observation;
+            // The immutable accepted payload remains the dedupe identity. Native delivery sees
+            // the stored projection's prepared attachments rather than downloading them again.
+            row.payload = { ...payload, ...(input === undefined ? {} : { input }) };
+          }
+
           if (personalNoticePayload(row)) {
             if (principals.findById(row.principalId)?.status !== 'active')
               throw new StimulusQuarantine('Personal notice person is no longer active');
@@ -856,7 +933,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
             }
           }
         },
-        hostReady: () => !stopping && !surface.memberRecords.isBusy(),
+        hostReady: () => !stopping,
+        excludePrincipals: surface.memberRecords.excludePrincipals,
         onSettled: surface.memberRecords.onSettled,
         onDead: (row, reason) => {
           surface.onManagementDead(row, reason);
@@ -867,8 +945,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           surface.memberRecords.onUncertain(row, reason);
           return sessions.delivery.onUncertain?.(row, reason);
         },
-        ready: () =>
-          !stopping && !surface.memberRecords.isBusy() && (options.deliveryReady?.() ?? true),
+        ready: () => !stopping && (options.deliveryReady?.() ?? true),
       },
       reclaimStaleSocket: true,
     });
@@ -879,17 +956,54 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       .drainOnce()
       .catch((error) => console.error('[Member management] recovery failed', error));
     const intake = createStimulusIntake(intakeRuntime, options.ownerPrincipalId, chat);
-    const createMemberIntake = (id: string, member: ReturnType<typeof createMemberSession>) =>
-      createStimulusIntake(intakeRuntime, id, {
+    const createMemberIntake = (id: string, member?: ReturnType<typeof createMemberSession>) => {
+      const archive =
+        member?.chat ?? new ChatSources(sourceStore, database.adapter, id, `member-agent:${id}`);
+      const direct = createStimulusIntake(intakeRuntime, id, {
         saveOwnerMessage: (input) => {
           executionAccess(id);
           if (!intakeRuntime.servesPrincipal(id))
             throw new Error(`Member session is not served: ${id}`);
-          return member.chat.saveOwnerMessage(input);
+          return archive.saveOwnerMessage(input);
         },
-        saveReply: (input) => member.chat.saveReply(input),
-        hasOwnerMessage: (ref) => member.chat.hasOwnerMessage(ref),
+        saveReply: (input) => archive.saveReply(input),
+        hasOwnerMessage: (ref) => archive.hasOwnerMessage(ref),
       });
+      const deferred = () =>
+        surface.memberRecords.isBlocked(id) && !intakeRuntime.servesPrincipal(id);
+      return {
+        ...direct,
+        deferIncoming: deferred,
+        acceptOwnerMessage: (input: OwnerMessageInput) => {
+          if (stopping) throw new Error('Runtime is stopping');
+          if (!deferred()) return direct.acceptOwnerMessage(input);
+          executionAccess(id);
+          // New work received after retirement is durable, but creates no personal projection
+          // while an idempotent erasure is finishing its already exported snapshot.
+          const rowId = intakeRuntime.mailbox!.enqueue({
+            id: input.id,
+            kind: 'owner_message',
+            principalId: id,
+            channelKey: input.channelKey,
+            occurredAt: input.occurredAt,
+            refs: [{ refId: input.id, observationRef: null }],
+            replyTo: input.replyTo,
+            payload: {
+              text: input.text,
+              deferredMemberMessage: true,
+              ...(input.payload === undefined ? {} : { input: input.payload }),
+              ...(input.senderPrincipalId === undefined
+                ? {}
+                : { senderPrincipalId: input.senderPrincipalId }),
+            },
+          });
+          return {
+            inputId: rowId === null ? null : String(rowId),
+            state: rowId === null ? ('duplicate' as const) : ('accepted' as const),
+          };
+        },
+      };
+    };
     for (const [id, member] of members) memberIntakes.set(id, createMemberIntake(id, member));
     const retireMember = async (id: string, setAside = true) => {
       if (memberRoot === undefined) throw new Error('Member lifecycle requires member_root');
@@ -944,11 +1058,14 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
     // served intake needs no directory work; P9 restores its own known paths on the member chain.
     const serveMemberOnLane = (id: string): Promise<StimulusIntake> => {
       executionAccess(id);
-      if (stopped) return Promise.reject(new Error('Cannot serve a member after runtime stop'));
+      if (stopping) return Promise.reject(new Error('Cannot serve a member after runtime stop'));
+      if (surface.memberRecords.isBlocked(id) && !intakeRuntime.servesPrincipal(id))
+        return Promise.resolve(createMemberIntake(id));
       if (intakeRuntime.servesPrincipal(id)) return Promise.resolve(memberIntakes.get(id)!);
       return sessions.exclusive(async () => {
+        if (stopping) throw new Error('Cannot serve a member after runtime stop');
         if (surface.memberRecords.isBlocked(id) && !intakeRuntime.servesPrincipal(id))
-          throw new Error(`Member session is not served: ${id}`);
+          return createMemberIntake(id);
         return serveMember(id);
       });
     };
@@ -960,6 +1077,25 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       blocked: surface.memberRecords.isBlocked,
       onError: (error) => options.onPersonalJobError?.(error),
     });
+    let schedulerStop: Promise<void> | undefined;
+    const beginStop = () => {
+      if (stopping) return;
+      stopping = true;
+      schedulerStop = personalJobs.stop();
+      recordOrders.stop();
+      surface.memberRecords.stopRecovery();
+      intakeRuntime.beginStop();
+    };
+    let drainPromise: Promise<void> | undefined;
+    const drain = () =>
+      (drainPromise ??= (async () => {
+        beginStop();
+        await intakeRuntime.stop();
+        await schedulerStop;
+        await surface.memberRecords.idle();
+        await sessions.idle();
+      })());
+    surface.memberRecords.startRecovery();
     return {
       personalJobs,
       runtime: intakeRuntime,
@@ -976,7 +1112,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         // Erasure owns restoration once it unserves the member. Intake callers must not
         // recreate a writer while the host takes and delivers that member's snapshot.
         if (surface.memberRecords.isBlocked(id) && !intakeRuntime.servesPrincipal(id))
-          throw new Error(`Member session is not served: ${id}`);
+          return createMemberIntake(id);
         if (stopped) throw new Error('Cannot obtain member intake after runtime stop');
         executionAccess(id);
         const intake = memberIntakes.get(id);
@@ -1032,19 +1168,17 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       },
       stop: () => {
         if (stopPromise) return stopPromise;
-        stopping = true;
-        personalJobs.stop();
+        beginStop();
         stopPromise = (async () => {
-          await surface.memberRecords.idle();
+          await drain();
           stopped = true;
-          recordOrders.stop();
-          await intakeRuntime.stop();
-          await sessions.idle();
           rawStore?.close();
           await database.close();
         })();
         return stopPromise;
       },
+      beginStop,
+      drain,
     };
   } catch (error) {
     await sessions.native.stop();

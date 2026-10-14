@@ -193,6 +193,8 @@ export interface StimulusDelivery {
   prepareNative?(row: MailboxRow): void | Promise<void>;
   /** Host inputs may run while native producers are still opening; defaults to ready(). */
   hostReady?(): boolean;
+  /** Consumer-owned eligibility, applied to every claim, including host inputs. */
+  excludePrincipals?(): readonly string[];
   /** Reuse recorded results only. Never submit the input to a model again. */
   reconcile?(row: MailboxRow): Promise<'settled' | 'unresolved'>;
   onUncertain?(row: MailboxRow, reason: string): void | Promise<void>;
@@ -354,6 +356,8 @@ export interface RuntimeHandle {
   unservePrincipal(principalId: string): void;
   /** The harness this runtime opened, or undefined when it opened none. */
   nativeSession?: Pick<NativeSessionHandle, 'stop' | 'resetSession'>;
+  /** Stop admission/claims and interrupt native turns, retaining sockets and result writers. */
+  beginStop(): void;
   /**
    * Closes what start opened, in the order that makes each close safe: the
    * drain first so nothing new is handed out, then the harness, then the socket
@@ -799,7 +803,12 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
         reconciliationCursor =
           unresolved.length === maxPerTick ? unresolved[unresolved.length - 1].id : 0;
         for (const row of unresolved) {
-          if (activeDeliveries.has(row.id) || !servedPrincipals.has(row.principalId)) continue;
+          if (
+            activeDeliveries.has(row.id) ||
+            !servedPrincipals.has(row.principalId) ||
+            delivery.excludePrincipals?.().includes(row.principalId)
+          )
+            continue;
           try {
             if ((await delivery.reconcile?.(row)) === 'settled') {
               mailbox.nativeInputs.settle(row.id, true);
@@ -827,9 +836,12 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
           (hostReady()
             ? mailbox.claimNext({
                 onlyKinds: ['host_job'],
-                excludePrincipals: [...hostWaiting]
-                  .filter(([, count]) => count >= maxPendingInputs)
-                  .map(([id]) => id),
+                excludePrincipals: [
+                  ...(delivery.excludePrincipals?.() ?? []),
+                  ...[...hostWaiting]
+                    .filter(([, count]) => count >= maxPendingInputs)
+                    .map(([id]) => id),
+                ],
               })
             : null) ??
           (nativeReady()
@@ -840,6 +852,7 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
                 // inputs durable until that change runs (including an unserved target's resume).
                 excludePrincipals: [
                   ...new Set([
+                    ...(delivery.excludePrincipals?.() ?? []),
                     ...hostWaiting.keys(),
                     ...[...waiting]
                       .filter(([, count]) => count >= maxPendingInputs)
@@ -892,6 +905,15 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
       : undefined;
   timer?.unref?.();
 
+  let nativeStop: Promise<void> | undefined;
+  const beginStop = () => {
+    if (stopped) return;
+    stopped = true;
+    if (timer) clearInterval(timer);
+    nativeStop = Promise.resolve().then(() => options.nativeSession?.stop());
+    void nativeStop.catch(() => {}); // stop() owns and reports this failure.
+  };
+
   return {
     runNative,
     socketPath: mounted.socketPath,
@@ -911,7 +933,7 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
         throw new Error('runtime.accept requires the stimulus channel identity');
       }
       const rowId = mailbox.enqueue(stimulus);
-      if (rowId !== null && delivery) {
+      if (rowId !== null && delivery && !stopped) {
         // After the row is durable, never before: a producer's receipt must
         // mean "kept", and a drain that ran first could ack what was never
         // written.
@@ -939,12 +961,12 @@ export async function startRuntime(options: StartRuntimeOptions): Promise<Runtim
     servesPrincipal: (principalId) => servedPrincipals.has(principalId),
     servePrincipal,
     unservePrincipal,
+    beginStop,
     stop: async () => {
-      stopped = true;
-      if (timer) clearInterval(timer);
+      beginStop();
       // The harness goes before the socket: a turn still running holds action
       // calls, and closing the door under it would fail it on the way out.
-      await options.nativeSession?.stop();
+      await nativeStop;
       await currentScan;
       // Result/outbox writers still own their claims until their adapters finish.
       await Promise.allSettled([...activeDeliveries.values()].map((active) => active.result));

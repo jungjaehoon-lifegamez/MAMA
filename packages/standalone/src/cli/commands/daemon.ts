@@ -76,6 +76,9 @@ export interface DaemonLogger {
 }
 
 export interface DaemonGateway {
+  prepareDeferredMemberInput?: TelegramGateway['prepareDeferredMemberInput'];
+  beginStop?(): void | Promise<void>;
+  drain?(): Promise<void>;
   sendMemberText?: import('../../api/member-records.js').MemberRecordsTelegram['sendMemberText'];
   memberTextDelivered?: import('../../api/member-records.js').MemberRecordsTelegram['memberTextDelivered'];
   retireMemberJobText?: import('../../api/member-records.js').MemberRecordsTelegram['retireMemberJobText'];
@@ -362,15 +365,30 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
     if (stopped) return;
     stopped = true;
     const errors: unknown[] = [];
+    owner?.beginStop?.();
+    // Quiesce every producer before awaiting any one of them. Transports and the database
+    // remain available to completions that already own work.
+    const producerStops = [...gateways].map(([name, active]) =>
+      stopOne(logger, `${name}_intake`, () => active.beginStop?.(), errors)
+    );
     if (reportScheduler)
-      await stopOne(logger, 'report_scheduler', () => reportScheduler!.stop(), errors);
-    if (connectors) await stopOne(logger, 'connectors', () => connectors!.stop(), errors);
-    if (viewer) await stopOne(logger, 'viewer', () => viewer!.stop(), errors);
+      producerStops.push(
+        stopOne(logger, 'report_scheduler', () => reportScheduler!.stop(), errors)
+      );
+    if (connectors)
+      producerStops.push(stopOne(logger, 'connectors', () => connectors!.stop(), errors));
+    if (viewer) producerStops.push(stopOne(logger, 'viewer', () => viewer!.stop(), errors));
+    await Promise.all(producerStops);
+    await Promise.all([
+      ...[...gateways].map(([name, active]) =>
+        stopOne(logger, `${name}_drain`, () => active.drain?.(), errors)
+      ),
+      ...(owner?.drain ? [stopOne(logger, 'owner_drain', () => owner!.drain(), errors)] : []),
+    ]);
+    for (const [name, active] of gateways) await stopOne(logger, name, () => active.stop(), errors);
     if (owner) await stopOne(logger, 'owner_runtime', () => owner!.stop(), errors);
     // After the owner: a turn still finishing may try the network and must still be refused.
     if (egressProxy) await stopOne(logger, 'egress_proxy', () => egressProxy!.close(), errors);
-    // The owner drains active result writers before their delivery port closes.
-    for (const [name, active] of gateways) await stopOne(logger, name, () => active.stop(), errors);
     if (errors.length > 0) throw new AggregateError(errors, 'Daemon shutdown failed');
   };
 
@@ -547,6 +565,11 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
             },
           }),
       messageLedger: () => messageLedger,
+      prepareDeferredMemberInput: (id, input) => {
+        if (!gateway?.prepareDeferredMemberInput)
+          throw new Error('Deferred member input requires its Telegram gateway');
+        return gateway.prepareDeferredMemberInput(id, input);
+      },
       memberRecordsTelegram: () =>
         gateway?.sendMemberText &&
         gateway.memberTextDelivered &&

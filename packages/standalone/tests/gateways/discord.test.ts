@@ -491,3 +491,32 @@ it('delivers an authorless legacy ready entry once without archiving it', async 
     await gateway.stop();
   }
 });
+
+it('keeps intake durable after beginStop until the Discord transport closes', async () => {
+  const acceptOwnerMessage = vi.fn(() => ({ state: 'accepted' }) as never);
+  const gateway = new DiscordGateway({
+    token: 'fixture-token',
+    intake: { acceptOwnerMessage, recordOwnerReply: () => {} },
+    config: {
+      enabled: true,
+      ownerChannelId: 'channel_test',
+      allowedChannels: ['channel_test'],
+      ownerUserIds: ['user_owner'],
+    },
+    messageLedgerPath: join(root, 'ledger.json'),
+  });
+  await gateway.start();
+  const client = mocks.clients[0] as MockClient;
+  gateway.beginStop();
+  client.emit(Events.MessageCreate, ownerMessage('during_drain', 'user_owner'));
+  await gateway.drain();
+  expect(acceptOwnerMessage).toHaveBeenCalledOnce();
+  client.destroy.mockImplementationOnce(async () => {
+    client.emit(Events.MessageCreate, ownerMessage('during_close', 'user_owner'));
+  });
+  await gateway.stop();
+  expect(acceptOwnerMessage).toHaveBeenCalledTimes(2);
+  client.emit(Events.MessageCreate, ownerMessage('after_close', 'user_owner'));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(acceptOwnerMessage).toHaveBeenCalledTimes(2);
+});

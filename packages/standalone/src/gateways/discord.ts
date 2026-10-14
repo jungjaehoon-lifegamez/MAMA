@@ -73,6 +73,7 @@ export class DiscordGateway extends BaseGateway {
   }
 
   async start(): Promise<void> {
+    this.accepting = true;
     if (this.connected) return;
     if (!this.options.config.allowedChannels.length || !this.options.config.ownerUserIds.length)
       throw new Error('discord owner allowlist is not configured');
@@ -83,10 +84,24 @@ export class DiscordGateway extends BaseGateway {
     await this.recoverPendingResponses();
   }
 
+  async drain(): Promise<void> {
+    await super.drain();
+    await Promise.allSettled([...this.deliveryTails.values()]);
+  }
+
+  override beginStop(): void {
+    // Discord does not redeliver missed events. Keep them durable until destroy closes intake.
+  }
+
   async stop(): Promise<void> {
-    if (!this.connected) return;
-    this.connected = false;
-    await this.client.destroy();
+    this.beginStop();
+    await this.drain();
+    if (this.connected) {
+      this.connected = false;
+      await this.client.destroy();
+    }
+    super.beginStop();
+    await this.drain();
     this.emitEvent({ type: 'disconnected', source: this.source, timestamp: new Date() });
   }
 
@@ -170,7 +185,15 @@ export class DiscordGateway extends BaseGateway {
     await this.sendMessage(channel, text, idempotencyKey);
   }
 
-  async sendFile(
+  sendFile(
+    path: string,
+    caption: string | undefined,
+    operationId: string
+  ): Promise<OwnerFileDeliveryResult> {
+    return this.trackDelivery(() => this.sendFileNow(path, caption, operationId));
+  }
+
+  private async sendFileNow(
     path: string,
     caption: string | undefined,
     operationId: string
@@ -216,7 +239,11 @@ export class DiscordGateway extends BaseGateway {
     }
   }
 
-  private async accept(message: import('discord.js').Message): Promise<void> {
+  private accept(message: import('discord.js').Message): Promise<void> {
+    return this.trackIntake(() => this.acceptInput(message));
+  }
+
+  private async acceptInput(message: import('discord.js').Message): Promise<void> {
     const channel = message.channelId;
     const user = message.author.id;
     if (

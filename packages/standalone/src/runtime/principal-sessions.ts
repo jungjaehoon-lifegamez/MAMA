@@ -18,11 +18,19 @@ export function createSerialTurnChain() {
   let running = false;
   let holds = 0;
   let current: Promise<void> = Promise.resolve();
+  let directoryCurrent: Promise<void> = Promise.resolve();
+  let releaseDirectoryWait = () => {};
   const pump = () => {
     if (running || holds || !queue.length) return;
     running = true;
     const { work } = queue.shift()!;
+    let release!: () => void;
+    directoryCurrent = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    releaseDirectoryWait = release;
     current = work().finally(() => {
+      release();
       running = false;
       pump();
     });
@@ -61,6 +69,10 @@ export function createSerialTurnChain() {
     afterCurrent: <T>(execute: () => Promise<T>) => add(execute, 'afterCurrent'),
     isBusy: () => running || holds > 0 || queue.length > 0,
     current: () => current,
+    directoryCurrent: () => directoryCurrent,
+    // A host job whose native writers are retired can keep its principal reservation while
+    // letting unrelated member directory work pass its upload/delivery wait.
+    releaseDirectoryWait: () => releaseDirectoryWait(),
     idle: async () => {
       while (pending.size) await Promise.allSettled([...pending]);
     },
@@ -106,7 +118,7 @@ export function createPrincipalSessions(
       for (const [id, chain] of chains) if (id !== ownerPrincipalId) releases.set(id, chain.hold());
     const running = [...chains]
       .filter(([id]) => id !== ownerPrincipalId)
-      .map(([, chain]) => chain.current());
+      .map(([, chain]) => chain.directoryCurrent());
     return directoryChanges(async () => {
       try {
         await Promise.all(running);

@@ -251,7 +251,7 @@ export async function startConnectorRuntime(
         if (stopped) return;
         stopped = true;
         for (const [timer, clear] of timers) clear(timer);
-        scheduler.stop();
+        await scheduler.stop();
         await registry.disposeAll();
         if (ownsRawStore) rawStore.close();
       },

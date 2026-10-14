@@ -246,6 +246,10 @@ export class Mailbox {
         ON mailbox_inputs(status, coalesce_key);
       CREATE INDEX IF NOT EXISTS idx_mailbox_inputs_identity
         ON mailbox_inputs(principal_id, stimulus_id);
+      CREATE TABLE IF NOT EXISTS mailbox_host_checkpoints (
+        input_id INTEGER PRIMARY KEY REFERENCES mailbox_inputs(id) ON DELETE CASCADE,
+        state_json TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS mailbox_input_refs (
         input_id INTEGER NOT NULL REFERENCES mailbox_inputs(id) ON DELETE CASCADE,
         ref_id TEXT NOT NULL,
@@ -733,6 +737,27 @@ export class Mailbox {
     this.stmtAck.run(this.now(), id);
   }
 
+  /** Opaque consumer progress; the immutable stimulus remains the dedupe identity. */
+  checkpointHostJob(id: number, state: JsonValue): void {
+    const row = this.db.prepare('SELECT kind FROM mailbox_inputs WHERE id=?').get(id) as
+      | { kind: string }
+      | undefined;
+    if (row?.kind !== 'host_job') throw new Error('Host checkpoint requires a host input');
+    this.db
+      .prepare(
+        `INSERT INTO mailbox_host_checkpoints (input_id, state_json) VALUES (?, ?)
+      ON CONFLICT(input_id) DO UPDATE SET state_json=excluded.state_json`
+      )
+      .run(id, encodeStimulusPayload(state));
+  }
+
+  hostJobCheckpoint(id: number): JsonValue | undefined {
+    const row = this.db
+      .prepare('SELECT state_json FROM mailbox_host_checkpoints WHERE input_id=?')
+      .get(id) as { state_json: string } | undefined;
+    return row ? decodeStimulusPayload(row.state_json) : undefined;
+  }
+
   /**
    * Return a claim to pending, or park it dead after MAX_ATTEMPTS. Returns the
    * resulting status so the caller can be LOUD about a dead row — a permanent
@@ -765,16 +790,32 @@ export class Mailbox {
   }
 
   /** Cancel only inputs that have not reached the native transport, including leased waiters. */
-  cancelQueued(principalId: string, reason: string): number {
+  cancelQueued(
+    principalId: string,
+    reason: string,
+    excludeInputIds: readonly number[] = []
+  ): number {
     return this.db
       .prepare(
         `UPDATE mailbox_inputs SET status = 'dead', last_error = ?, claimed_at = NULL
        WHERE principal_id = ? AND status IN ('pending', 'claimed')
+         AND id NOT IN (SELECT value FROM json_each(?))
          AND (kind IS NULL OR kind != 'host_job')
          AND NOT EXISTS (SELECT 1 FROM native_input_deliveries AS native
            WHERE native.input_id = mailbox_inputs.id AND native.state <> 'prepared')`
       )
-      .run(reason.slice(0, 500), principalId).changes;
+      .run(reason.slice(0, 500), principalId, JSON.stringify(excludeInputIds)).changes;
+  }
+
+  /** A producer may bind a collected observation after durable intake, before native dispatch. */
+  bindInputObservation(inputId: number, refId: string, observationRef: string): void {
+    const changed = this.db
+      .prepare(
+        `UPDATE mailbox_input_refs SET observation_ref=?
+      WHERE input_id=? AND ref_id=?`
+      )
+      .run(observationRef, inputId, refId).changes;
+    if (changed !== 1) throw new Error('Input observation binding requires its accepted ref');
   }
 
   replayStale(olderThanMs: number, now = this.now()): number {

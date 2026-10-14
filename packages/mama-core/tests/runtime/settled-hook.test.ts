@@ -254,3 +254,85 @@ it('keeps queued inputs when readiness closes during an asynchronous reconcile',
   expect(runtime.mailbox!.readInput('fixture-queued', 'owner')?.status).toBe('pending');
   expect(delivered).not.toHaveBeenCalled();
 });
+
+it('applies consumer principal exclusion to native and host claims while independent work runs', async () => {
+  const root = fs.mkdtempSync(join(tmpdir(), 'claim-eligibility-'));
+  const db = new NodeSQLiteAdapter({ dbPath: join(root, 'db') }) as unknown as DatabaseAdapter;
+  db.connect();
+  db.runMigrations(join(__dirname, '../../db/migrations'));
+  const catalog = createCatalog([]);
+  const handled: string[] = [];
+  const runtime = await startRuntime({
+    paths: { socketPath: join(root, 'socket') },
+    catalog,
+    dispatch: createDispatcher(catalog),
+    principals: [
+      {
+        access: { principalId: 'available', agentId: 'fixture-agent', scopes: [], actions: [] },
+        credentialPath: join(root, 'credential'),
+      },
+    ],
+    mailbox: { adapter: db },
+    delivery: {
+      intervalMs: 0,
+      excludePrincipals: () => ['excluded'],
+      deliverHost: async (row) => {
+        handled.push(row.stimulusId);
+        return 'handled';
+      },
+      deliver: async (row, context) => {
+        handled.push(row.stimulusId);
+        context.onInputDispatch({
+          backend: 'codex',
+          sessionId: 'fixture-session',
+          inputId: context.nativeInputId,
+        });
+        context.onAccepted({
+          backend: 'codex',
+          sessionId: 'fixture-session',
+          turnId: 'fixture-turn',
+        });
+      },
+    },
+  });
+  cleanup.push(async () => {
+    await runtime.stop();
+    db.disconnect();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  for (const principal of ['excluded', 'available'])
+    for (const kind of ['owner_message', 'host_job', 'source_delta'] as const)
+      runtime.mailbox!.enqueue({
+        id: `${principal}:${kind}`,
+        kind,
+        principalId: principal,
+        channelKey: 'fixture',
+        occurredAt: 1,
+      });
+  await runtime.drainOnce();
+  await vi.waitFor(() => expect(handled).toHaveLength(3));
+  expect(handled.sort()).toEqual([
+    'available:host_job',
+    'available:owner_message',
+    'available:source_delta',
+  ]);
+  for (const kind of ['owner_message', 'host_job', 'source_delta']) {
+    const row = runtime.mailbox!.readInput(`excluded:${kind}`, 'excluded')!;
+    expect(row.status).toBe('pending');
+    expect(row.attempts).toBe(0);
+  }
+  runtime.beginStop();
+  expect(
+    runtime.accept({
+      id: 'late',
+      kind: 'owner_message',
+      principalId: 'available',
+      channelKey: 'fixture',
+      occurredAt: 2,
+    })
+  ).toMatchObject({ state: 'accepted' });
+  await runtime.drainOnce();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(runtime.mailbox!.readInput('late', 'available')?.status).toBe('pending');
+  expect(handled).toHaveLength(3);
+});

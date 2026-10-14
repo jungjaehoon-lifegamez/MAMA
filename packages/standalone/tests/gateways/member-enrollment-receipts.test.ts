@@ -57,7 +57,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
 });
 
-async function fixture(recordFails = false) {
+async function fixture(recordFails = false, enrollmentEnabled = false) {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'enrollment-receipt-home-')));
   const memberRoot = realpathSync(mkdtempSync(join(tmpdir(), 'enrollment-receipt-members-')));
   roots.push(home, memberRoot);
@@ -92,6 +92,7 @@ async function fixture(recordFails = false) {
     agentId: 'common-agent',
     scopes: [],
     timeZone: createTimeZoneSetting('UTC'),
+    ...(enrollmentEnabled ? { memberEnrollment: { requestSelection: async () => {} } } : {}),
     maxTurns: 5,
     timeout: 1000,
     lessons: async () => [],
@@ -99,6 +100,7 @@ async function fixture(recordFails = false) {
     createSession: (input) =>
       ({
         stop: async () => {},
+        resetSession: async () => {},
         runTurn: async (content: ContentBlock[], request: NativeSessionRequest) => {
           turns.push({
             principal: input.principal?.principalId ?? 'common',
@@ -209,6 +211,50 @@ async function fixture(recordFails = false) {
 }
 
 describe('enrollment host receipts remain in the requesting DM and the common record', () => {
+  it('drains an enrollment completed during shutdown into its common receipt before closing the database', async () => {
+    const f = await fixture(false, true);
+    await f.gateway.requestMemberEnrollment(`telegram:${ownerId}:1`, String(ownerId));
+    const requestId =
+      transport.send.mock.calls.at(-1)![2].reply_markup.keyboard[0][0].request_users.request_id;
+    const complete = f.runtime.completeMemberEnrollment.bind(f.runtime);
+    let release!: () => void, started!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    vi.spyOn(f.runtime, 'completeMemberEnrollment').mockImplementation(async (selection) => {
+      const result = await complete(selection);
+      started();
+      await pending;
+      return result;
+    });
+    const ref = await f.message({
+      users_shared: { request_id: requestId, users: [{ user_id: selectedId }] },
+    });
+    await entered;
+    f.runtime.beginStop();
+    await f.gateway.beginStop();
+    const drain = Promise.all([f.runtime.drain(), f.gateway.drain()]);
+    release();
+    await drain;
+    expect(f.completionErrors).toEqual([]);
+    expect(
+      f.runtime.database.adapter
+        .prepare(
+          'SELECT content, memory_scope_id, metadata_json FROM connector_event_index WHERE source_id=?'
+        )
+        .get(`host:management:${ref}:reply`)
+    ).toMatchObject({
+      memory_scope_id: 'common',
+      content: expect.stringMatching(/^Enrollment created:/),
+      metadata_json: expect.stringContaining('"deliveryVerified":true'),
+    });
+    await f.gateway.stop();
+    await f.runtime.stop();
+  });
+
   it('wires the receipt port through the daemon without admitting a model turn', async () => {
     const home = mkdtempSync(join(tmpdir(), 'enrollment-receipt-daemon-'));
     roots.push(home);
@@ -367,4 +413,34 @@ describe('enrollment host receipts remain in the requesting DM and the common re
       )
     );
   });
+});
+
+it('reports a committed enrollment as registered for next start when its directory lane completes after beginStop', async () => {
+  const f = await fixture(false, true);
+  await f.gateway.requestMemberEnrollment(`telegram:${ownerId}:1`, String(ownerId));
+  const requestId =
+    transport.send.mock.calls.at(-1)![2].reply_markup.keyboard[0][0].request_users.request_id;
+  const transaction = f.runtime.database.adapter.transaction.bind(f.runtime.database.adapter);
+  vi.spyOn(f.runtime.database.adapter, 'transaction').mockImplementation((work) =>
+    transaction(() => {
+      const result = work();
+      if (f.repo.resolveByExternal('telegram', 'private', String(selectedId)))
+        f.runtime.beginStop();
+      return result;
+    })
+  );
+  const ref = await f.select(requestId);
+  expect(f.repo.resolveByExternal('telegram', 'private', String(selectedId))).toMatchObject({
+    status: 'active',
+    kind: 'member',
+  });
+  expect(f.completionErrors).toEqual([]);
+  expect(
+    f.runtime.database.adapter
+      .prepare('SELECT content FROM connector_event_index WHERE source_id=?')
+      .get(`host:management:${ref}:reply`)
+  ).toMatchObject({
+    content: expect.stringMatching(/^Enrollment created:.*registered.*next start/s),
+  });
+  await f.gateway.stop();
 });

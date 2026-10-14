@@ -331,8 +331,11 @@ export function createPersonalJobScheduler(ports: {
   onError(error: unknown): void;
 }) {
   let timer: ReturnType<typeof setInterval> | undefined;
-  const tick = async (now = new Date()) => {
+  let stopped = false;
+  const pending = new Set<Promise<void>>();
+  const tickOnce = async (now: Date) => {
     for (const person of createPrincipalRepository(ports.adapter).listMembers()) {
+      if (stopped) break;
       try {
         if (person.status !== 'active' || ports.blocked(person.principalId)) continue;
         const due = ports.store.list(person.principalId).flatMap((job) => {
@@ -352,6 +355,7 @@ export function createPersonalJobScheduler(ports: {
         // An unserved person is served through the member directory lane, which may wait for
         // running member turns; the mailbox drops an occurrence an overlapping tick already took.
         const intake = await ports.intake(person.principalId);
+        if (stopped) return;
         for (const { job, at } of due)
           intake.acceptScheduled({
             id: personalJobOccurrenceId(job.jobId, at),
@@ -371,17 +375,30 @@ export function createPersonalJobScheduler(ports: {
       }
     }
   };
+  const tick = (now = new Date()) => {
+    if (stopped) return Promise.resolve();
+    const work = tickOnce(now);
+    pending.add(work);
+    void work.then(
+      () => pending.delete(work),
+      () => pending.delete(work)
+    );
+    return work;
+  };
   return {
     tick,
     start: () => {
+      if (stopped) throw new Error('Cannot start a stopped personal scheduler');
       if (timer) return;
       timer = setInterval(() => {
         tick().catch((error: unknown) => ports.onError(error));
       }, 60_000);
     },
-    stop: () => {
+    stop: async () => {
+      stopped = true;
       if (timer) clearInterval(timer);
       timer = undefined;
+      await Promise.allSettled([...pending]);
     },
   };
 }

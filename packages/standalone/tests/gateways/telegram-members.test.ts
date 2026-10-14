@@ -606,3 +606,32 @@ describe('P10.1 Telegram person routing', () => {
     expect(transport.edits).toEqual([]);
   });
 });
+
+it('keeps a retired person image as a durable envelope and downloads it only after service returns', async () => {
+  await gateway.stop();
+  let pending!: import('../../src/gateways/turn-contract.js').OwnerMessageInput;
+  gateway = createGateway(() => ({
+    ...intakes.get(member)!,
+    deferIncoming: () => true,
+    acceptOwnerMessage: (input) => {
+      pending = input;
+      return { inputId: 'fixture-pending', state: 'accepted' };
+    },
+  }));
+  await gateway.start();
+  transport.api.getFile.mockClear();
+  await send({
+    text: undefined,
+    caption: 'Inspect the deferred image',
+    photo: [{ file_id: 'file', file_unique_id: 'unique', file_size: 4 }],
+  });
+  expect(transport.api.getFile).not.toHaveBeenCalled();
+  expect(pending.payload).toHaveProperty('pendingTelegramMessage');
+  expect(rows()).toEqual([]);
+  const prepared = await gateway.prepareDeferredMemberInput(member, pending);
+  expect(transport.api.getFile).toHaveBeenCalledOnce();
+  intakes.get(member)!.acceptOwnerMessage(prepared);
+  expect(chat(member).hasOwnerMessage(pending.id)).toBe(true);
+  expect(prepared.payload).toHaveProperty('attachments');
+  expect(prepared.payload).not.toHaveProperty('pendingTelegramMessage');
+});

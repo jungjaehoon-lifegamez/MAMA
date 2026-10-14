@@ -16,6 +16,7 @@ import { createOwnerRuntime, type OwnerRuntimeOptions } from '../../src/runtime/
 import { createNativeSession, type NativeDriverOptions } from '../../src/runtime/native-session.js';
 import type { SourceDelta } from '../../src/connectors/framework/polling-scheduler.js';
 import { sourceDeltaStimulusId } from '../../src/runtime/stimulus-delivery.js';
+import Database from '../../src/storage-sqlite.js';
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
 import type { OwnerPolicyProvider } from '../../src/runtime/owner-policy.js';
@@ -127,6 +128,7 @@ export async function fixture(
   let gate: Promise<void> | undefined;
   let memberGate: Promise<void> | undefined;
   let completionGate: Promise<void> | undefined;
+  const completionGates = new Map<string, Promise<void>>();
   const principalGates = new Map<string, Promise<void>>();
   const nativeTools = new Map<string, { name: string; input: Record<string, unknown> }>();
   const outbound: import('../../src/api/security-events.js').OutboundAttemptEvent[] = [];
@@ -134,11 +136,13 @@ export async function fixture(
   const reads: ActionResult[][] = [];
   let sequence = 0;
   let deltaResponse = false;
+  let deliveryReady = true;
   let runtime: Awaited<ReturnType<typeof createOwnerRuntime>>;
   let memberResponse = 'fixture answer';
   const runtimeOptions: OwnerRuntimeOptions = {
     toolsRoot,
     backend,
+    deliveryReady: () => deliveryReady,
     model: 'fixture',
     databasePath: join(home, 'state.db'),
     rawPath: join(home, 'raw'),
@@ -250,6 +254,7 @@ export async function fixture(
             );
           }
           if (principal !== 'owner' && completionGate) await completionGate;
+          await completionGates.get(principal);
           if (failure) {
             if (failure === 'before_acceptance') {
               // Exhaust the durable retry budget for this prepared input, so the real core
@@ -374,6 +379,42 @@ export async function fixture(
     get runtime() {
       return runtime;
     },
+    snapshotCrash: (snapshot: string) => {
+      runtime.database.adapter.prepare('VACUUM INTO ?').run(snapshot);
+      const raw = new Database(join(home, 'raw', 'chat', 'raw.db'));
+      try {
+        raw.prepare('VACUUM INTO ?').run(`${snapshot}.chat`);
+      } finally {
+        raw.close();
+      }
+    },
+    blockDelivery: (blocked: boolean) => {
+      deliveryReady = !blocked;
+    },
+    crashRestart: async (release: () => void = () => {}, savedSnapshot?: string) => {
+      // Retain the exact database boundary a killed process would leave, discarding graceful
+      // settlement/cleanup writes before reopening. No native CLI is launched in this fixture.
+      const snapshot = join(home, 'crash-snapshot.db');
+      if (savedSnapshot) fs.copyFileSync(savedSnapshot, snapshot);
+      else {
+        runtime.database.adapter.prepare('VACUUM INTO ?').run(snapshot);
+        const raw = new Database(join(home, 'raw', 'chat', 'raw.db'));
+        try {
+          raw.prepare('VACUUM INTO ?').run(`${snapshot}.chat`);
+        } finally {
+          raw.close();
+        }
+      }
+      runtime.beginStop();
+      release();
+      await runtime.stop();
+      fs.copyFileSync(snapshot, join(home, 'state.db'));
+      fs.copyFileSync(`${savedSnapshot ?? snapshot}.chat`, join(home, 'raw', 'chat', 'raw.db'));
+      fs.rmSync(snapshot);
+      if (!savedSnapshot) fs.rmSync(`${snapshot}.chat`);
+      ledger = new OwnerMessageLedger(join(home, 'ledger.json'));
+      runtime = await createOwnerRuntime(runtimeOptions);
+    },
     restart: async () => {
       await runtime.stop();
       ledger = new OwnerMessageLedger(join(home, 'ledger.json'));
@@ -418,6 +459,10 @@ export async function fixture(
       } finally {
         deltaResponse = false;
       }
+    },
+    holdPrincipalCompletion: (id: string, gate?: Promise<void>) => {
+      if (gate) completionGates.set(id, gate);
+      else completionGates.delete(id);
     },
     holdMemberCompletion: (promise: Promise<void> | undefined) => {
       completionGate = promise;
