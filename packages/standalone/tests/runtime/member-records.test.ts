@@ -2693,7 +2693,9 @@ it('keeps a delivered erasure checkpoint when stop interrupts boot retirement', 
 });
 
 it.each(['uncertain ledger', 'crash before claim'] as const)(
-  'finishes erasure with an unverified receipt and unblocks intake after %s',
+  // An uncertain claimed send is final (recorded unverified); an unclaimed one never reached
+  // Telegram, so the resumed job sends it again.
+  'finishes erasure and unblocks intake after %s',
   async (outcome) => {
     const f = await setup();
     const snapshot = join(f.home, 'unverified-receipt.db');
@@ -2722,18 +2724,19 @@ it.each(['uncertain ledger', 'crash before claim'] as const)(
     }
     const host = f.runtime.runtime.mailbox!.readInput(result.commandId, f.member)!;
     expect(host.status).toBe('acked');
+    const resent = outcome === 'crash before claim';
     expect(f.runtime.runtime.mailbox!.hostJobCheckpoint(host.id)).toMatchObject({
       phase: 'done',
-      receiptDelivered: false,
+      receiptDelivered: resent,
     });
-    expect(f.telegram.sendMemberText).toHaveBeenCalledOnce();
+    expect(f.telegram.sendMemberText).toHaveBeenCalledTimes(resent ? 2 : 1);
     expect(f.runtime.surface.memberRecords.excludePrincipals()).not.toContain(f.member);
     expect(
       f.runtime.database.adapter
         .prepare(
-          "SELECT content FROM connector_event_index WHERE source_entity_id=? AND memory_scope_id=? AND json_extract(metadata_json,'$.deliveryVerified')=0"
+          "SELECT content FROM connector_event_index WHERE source_entity_id=? AND memory_scope_id=? AND json_extract(metadata_json,'$.deliveryVerified')=?"
         )
-        .all(`host:${result.commandId}:reply`, f.member)
+        .all(`host:${result.commandId}:reply`, f.member, resent ? 1 : 0)
     ).toHaveLength(1);
     const next = f.message(f.member);
     await f.settled(next, f.member);

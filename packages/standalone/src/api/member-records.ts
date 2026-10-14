@@ -390,10 +390,22 @@ export function createMemberRecords(options: {
           if (entry) throw new Error('The export delivery was not confirmed');
           state.exportAttempted = true;
           checkpoint(job, state);
-          await p.telegram()!.sendFile(state.archive.path, undefined, `${job.commandId}:export`, {
-            access: p.access(id),
-            filesRoot: state.archive.filesRoot,
-          });
+          try {
+            const telegram = p.telegram();
+            if (!telegram) throw new Error('Member Telegram delivery is not configured');
+            await telegram.sendFile(state.archive.path, undefined, `${job.commandId}:export`, {
+              access: p.access(id),
+              filesRoot: state.archive.filesRoot,
+            });
+          } catch (error) {
+            // A send that failed before the transport claimed its ledger entry never reached
+            // Telegram; clear the attempt so a resume does not report an uncertain delivery.
+            if (!p.ledger()?.get(`file:${job.commandId}:export`)) {
+              state.exportAttempted = false;
+              checkpoint(job, state);
+            }
+            throw error;
+          }
         }
         state.phase = 'delivered';
         checkpoint(job, state);
@@ -522,7 +534,10 @@ export function createMemberRecords(options: {
         state.receiptDelivered = telegram.memberTextDelivered(p.access(id), operation);
         if (!state.receiptDelivered) {
           const entry = p.ledger()?.get(outboundLedgerKey(operation));
-          if (!entry?.deliveryUncertain && !(!entry && state.receiptAttempted)) {
+          // The transport claims its ledger entry before sending, so no entry means nothing was
+          // sent: send again (a duplicate receipt is harmless; a lost one is not). Only an
+          // uncertain claimed send is final.
+          if (!entry?.deliveryUncertain) {
             state.receiptAttempted = true;
             checkpoint(job, state);
             try {
