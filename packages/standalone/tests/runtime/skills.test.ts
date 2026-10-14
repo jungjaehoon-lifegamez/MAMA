@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { createPrincipalRepository, type ActionResult } from '@jungjaehoon/mama-core';
 import { fixture, roots } from '../helpers/member-runtime.js';
 import { memberPaths } from '../../src/runtime/member-paths.js';
+import { resolvePrincipalAccess } from '../../src/runtime/principal-access.js';
 import {
   ownerDataReadPaths,
   ownerNativeDataReadPaths,
@@ -177,7 +178,7 @@ it('common workflows and published file skills reach both member roles and the c
   expect(existsSync(join(tools, 'skills', 'fixture-script'))).toBe(false);
 });
 
-it('uses one lesson search for a plain member while recalling common workflows', async () => {
+it('searches personal guidance separately from common workflows for a plain member', async () => {
   const f = await fixture();
   const common = f.message('owner', 'Save fixture workflow', f.managingOwner, {
     action: 'memory.save',
@@ -190,7 +191,109 @@ it('uses one lesson search for a plain member while recalling common workflows',
   expect(f.turns.filter((turn) => turn.principal === f.member).at(-1)!.prompt).toContain(
     workflow.topic
   );
-  expect(hostCall.mock.calls.filter(([name]) => name === 'memory.search')).toHaveLength(1);
+  const searches = hostCall.mock.calls.filter(([name]) => name === 'memory.search');
+  expect(searches).toHaveLength(2);
+  expect(searches[1]![1]).toMatchObject({
+    kind: 'workflow',
+    scopes: f.runtime.surface.ownerAccess.defaultScopes,
+  });
+});
+
+it('keeps a personal correction in lessons despite 40 more similar common records', async () => {
+  const f = await fixture();
+  const correction = {
+    ...workflow,
+    topic: 'fixture-format-rule',
+    kind: 'constraint',
+    summary: 'Check fixture artifact output before delivery',
+    appliesWhen: 'When making fixture artifacts',
+  };
+  data((await f.act('memory.save', correction)).result);
+  for (let i = 0; i < 40; i++)
+    data(
+      await f.runtime.surface.hostToolCall(
+        'memory.save',
+        {
+          ...workflow,
+          topic: `fixture-common-${i}`,
+          kind: ['fact', 'decision', 'lesson'][i % 3],
+          summary: 'Make a fixture artifact',
+          details: 'Make a fixture artifact',
+        },
+        `fixture-common-save-${i}`,
+        { access: f.runtime.surface.ownerAccess }
+      )
+    );
+  const common = f.message('owner', 'Save fixture workflow', f.managingOwner, {
+    action: 'memory.save',
+    input: workflow,
+  });
+  await f.settled(common);
+  const ref = f.message(f.member, 'Make a fixture artifact');
+  await f.settled(ref, f.member);
+  const prompt = f.turns.filter((turn) => turn.principal === f.member).at(-1)!.prompt;
+  const lessons = prompt.slice(prompt.indexOf('<lessons>'), prompt.indexOf('</lessons>'));
+  expect(lessons).toContain(correction.topic);
+  expect(lessons).toContain(workflow.topic);
+  expect(lessons).not.toContain('fixture-common-');
+});
+
+it('deduplicates owner-role shared workflows before the ten session-start decisions', async () => {
+  const f = await fixture();
+  const access = resolvePrincipalAccess(f.managingOwner, {
+    adapter: f.runtime.database.adapter,
+    ownerAccess: f.runtime.surface.ownerAccess,
+    agentId: 'fixture-agent',
+  });
+  const save = async (topic: string, kind: string) =>
+    data<{ id: string }>(
+      await f.runtime.surface.hostToolCall(
+        'memory.save',
+        {
+          ...workflow,
+          topic,
+          kind,
+          summary: 'Fixture',
+        },
+        `fixture-save-${topic}`,
+        { access }
+      )
+    ).id;
+  const correction = 'fixture-earlier-rule';
+  await save(correction, 'constraint');
+  for (let i = 0; i < 5; i++) {
+    const id = await save(`fixture-shared-${i}`, 'workflow');
+    const share = await f.actAs(f.managingOwner, 'memory.share', {
+      memory_id: id,
+      reason: 'Share fixture workflow',
+    });
+    await f.settled(share.ref, f.managingOwner);
+    const shared = data<{ id: string }>(share.result);
+    f.runtime.database.adapter
+      .prepare('UPDATE decisions SET created_at = ? WHERE id = ?')
+      .run(new Date(Date.now() + 1_000 + i).toISOString(), shared.id);
+    // Retire the original so only the shared projection occupies a decision slot.
+    data(
+      await f.runtime.surface.hostToolCall(
+        'memory.retire',
+        {
+          memory_id: id,
+          status: 'stale',
+          reason: 'Use the shared workflow',
+        },
+        `fixture-retire-${i}`,
+        { access }
+      )
+    );
+  }
+  await f.restart();
+  const ref = f.message(f.managingOwner);
+  await f.settled(ref, f.managingOwner);
+  const prompt = f.turns.filter((turn) => turn.principal === f.managingOwner).at(-1)!.prompt;
+  const start = prompt.slice(prompt.indexOf('[session_start]')).split('[skills]')[0]!;
+  expect(start).toContain(correction);
+  for (let i = 0; i < 5; i++)
+    expect(start.match(new RegExp(`fixture-shared-${i}`, 'g'))).toHaveLength(1);
 });
 
 it('refuses a publish in a replay turn through the runtime owner-message predicate', async () => {

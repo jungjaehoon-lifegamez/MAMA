@@ -1,6 +1,5 @@
 import {
   isErasedRecord,
-  readMemoryRecordById,
   readMemoryRecordsInScopes,
   type DatabaseInstance,
   type MemoryRecord,
@@ -14,7 +13,7 @@ import {
   mkdirSync,
   openSync,
   readSync,
-  readdirSync,
+  opendirSync,
   readlinkSync,
   realpathSync,
   renameSync,
@@ -76,12 +75,23 @@ function validateName(name: string): void {
 function missing(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === 'ENOENT';
 }
-function entries(path: string): string[] {
+function entries(path: string, limit = FILE_LIMIT * 2): string[] {
+  let directory;
   try {
-    return readdirSync(path).sort();
+    directory = opendirSync(path, { bufferSize: 1 });
   } catch (error) {
     if (missing(error)) return [];
     throw error;
+  }
+  try {
+    const names: string[] = [];
+    for (let entry = directory.readSync(); entry !== null; entry = directory.readSync()) {
+      if (names.length >= limit) throw invalidInput('Skill has too many file/directory entries');
+      names.push(entry.name);
+    }
+    return names.sort();
+  } finally {
+    directory.closeSync();
   }
 }
 function createOwnedDirectory(path: string): void {
@@ -128,7 +138,7 @@ function readFolder(folder: string): FileSkill {
     const meta = lstatSync(path);
     assertSourcePath(base, path);
     if (meta.isDirectory()) {
-      for (const name of entries(path)) walk(join(path, name));
+      for (const name of entries(path, FILE_LIMIT * 2 - count)) walk(join(path, name));
       return;
     }
     if (!meta.isFile() || meta.nlink !== 1)
@@ -166,7 +176,7 @@ function readFolder(folder: string): FileSkill {
       closeSync(fd);
     }
   };
-  walk(folder);
+  walk(base);
   const text = files.find((file) => file.relativePath === 'SKILL.md')?.bytes.toString('utf8');
   return { ...readMetadata(text), text: text!, files };
 }
@@ -195,18 +205,24 @@ function listFolder(
   const base = realpathSync(folder);
   const revision = createHash('sha256');
   let count = 0;
+  let files = 0;
+  let total = 0;
   const walk = (path: string) => {
     if (++count > FILE_LIMIT * 2) throw invalidInput('Skill has too many file/directory entries');
     const meta = lstatSync(path);
     assertSourcePath(base, path);
     revision.update(JSON.stringify([relative(base, path), meta.mtimeMs, meta.size]));
     if (meta.isDirectory()) {
-      for (const name of entries(path)) walk(join(path, name));
+      for (const name of entries(path, FILE_LIMIT * 2 - count)) walk(join(path, name));
     } else if (!meta.isFile() || meta.nlink !== 1) {
       throw invalidInput('Skill files must be regular files without hard links');
+    } else {
+      if (++files > FILE_LIMIT || meta.size > FILE_BYTES || total + meta.size > TOTAL_BYTES)
+        throw invalidInput('Skill exceeds 128 files, 2 MiB per file or 8 MiB total');
+      total += meta.size;
     }
   };
-  walk(folder);
+  walk(base);
   const path = join(base, 'SKILL.md');
   const before = lstatSync(path);
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -404,8 +420,8 @@ export function createSkillStore(ports: {
         })),
       };
     }
-    const record = await readMemoryRecordById(ports.adapter, skillId, workflowScopes(id));
-    if (!record || isErasedRecord(record) || record.kind !== 'workflow') throw skillDenied();
+    const record = (await workflows(id)).find((record) => record.id === skillId);
+    if (!record) throw skillDenied();
     return {
       ...record,
       name: record.topic,

@@ -231,6 +231,30 @@ describe('scoped skills through the product dispatcher', () => {
     });
   });
 
+  it.each(['stale', 'superseded', 'amendment'])(
+    'refuses reading a workflow hidden from the inventory (%s)',
+    async (state) => {
+      const id = await save();
+      const active = await save();
+      if (state === 'amendment')
+        db.adapter
+          .prepare(
+            "UPDATE decisions SET payload_json = json_set(payload_json, '$.amended', ?) WHERE id = ?"
+          )
+          .run(active, id);
+      else
+        data(
+          await call('memory.retire', { memory_id: id, status: state, reason: 'Fixture retired' })
+        );
+      expect((await list()).map((entry) => entry.id)).toEqual([active]);
+      expect(await call('skill.read', { id })).toMatchObject({
+        status: 'failed',
+        error: { kind: 'denied' },
+      });
+      expect(data<Skill>(await call('skill.read', { id: active })).id).toBe(active);
+    }
+  );
+
   it('keeps a plain member partition share as fact rather than common guidance', async () => {
     createPrincipalRepository(db.adapter).grantScope({
       targetPrincipalId: a,
@@ -362,6 +386,74 @@ describe('scoped skills through the product dispatcher', () => {
     await context(true);
     writeFileSync(join(path, 'scripts', 'run.sh'), 'printf revised fixture\n');
     expect(await context(false)).toContain('updated: fixture-script');
+  });
+
+  it.each(['count', 'file-size', 'total-size'])(
+    'reports a file skill exceeding the read limits as invalid (%s)',
+    async (limit) => {
+      const path = file(a);
+      if (limit === 'count')
+        for (let i = 0; i < 127; i++) writeFileSync(join(path, `fixture-${i}`), 'fixture');
+      else if (limit === 'file-size')
+        writeFileSync(join(path, 'large'), Buffer.alloc(2 * 1024 * 1024 + 1));
+      else
+        for (let i = 0; i < 4; i++)
+          writeFileSync(join(path, `fixture-${i}`), Buffer.alloc(2 * 1024 * 1024));
+      expect((await list())[0]?.error).toContain('128 files, 2 MiB per file or 8 MiB total');
+      expect(await call('skill.read', { id: 'file:personal:fixture-script' })).toMatchObject({
+        status: 'failed',
+        error: { message: expect.stringContaining('128 files, 2 MiB per file or 8 MiB total') },
+      });
+    }
+  );
+
+  it.each(['inventory', 'skill'])(
+    'stops directory enumeration at the entry cap (%s)',
+    async (level) => {
+      const path = file(a);
+      const parent = level === 'inventory' ? join(workspace(a), 'skills') : path;
+      for (let i = 0; i < 300; i++) mkdirSync(join(parent, `fixture-${i}`));
+      const readdir = vi.spyOn(fs, 'readdirSync');
+      const read = vi.spyOn(fs.Dir.prototype, 'readSync');
+      const close = vi.spyOn(fs.Dir.prototype, 'closeSync');
+      syncBuiltinESMExports();
+      const found = await list();
+      expect(found).toEqual([
+        expect.objectContaining({
+          error: expect.stringContaining('too many file/directory entries'),
+        }),
+      ]);
+      expect(readdir).not.toHaveBeenCalled();
+      expect(read.mock.calls.length).toBeLessThanOrEqual(260);
+      expect(close.mock.calls.length).toBeGreaterThan(0);
+      read.mockClear();
+      if (level === 'skill') {
+        expect(await call('skill.read', { id: 'file:personal:fixture-script' })).toMatchObject({
+          status: 'failed',
+          error: { message: expect.stringContaining('too many file/directory entries') },
+        });
+        expect(read.mock.calls.length).toBeLessThanOrEqual(256);
+      }
+    }
+  );
+
+  it('lists and reads common file skills through a symlinked tools_root ancestor', async () => {
+    file('common');
+    data(await call('skill.publish', { name: 'fixture-script' }, 'common'));
+    const alias = join(root, 'alias');
+    symlinkSync(root, alias);
+    surface = buildSurface(join(alias, 'tools'));
+    expect(await list()).toEqual([
+      expect.objectContaining({ name: 'fixture-script', scope: 'common' }),
+    ]);
+    expect((await list())[0]).not.toHaveProperty('error');
+    const read = data<{ text: string; files: Array<{ path: string }> }>(
+      await call('skill.read', { id: 'file:common:fixture-script' })
+    );
+    expect(read.text).toContain('Run scripts/run.sh');
+    expect(
+      read.files.every((entry) => entry.path.startsWith(join(tools(), 'skills', '.versions')))
+    ).toBe(true);
   });
 
   it('refuses publication before toolkit installation without creating skills in the unmarked root', async () => {

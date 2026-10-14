@@ -184,6 +184,31 @@ describe('host document toolkit installer', () => {
     expect(host.calls).toEqual([]);
   });
 
+  it.each(['empty', 'unrelated', 'unmanaged-link', 'wrong-name'])(
+    'refuses an unmarked root with an unmanaged skills directory (%s)',
+    async (layout) => {
+      const skills = join(tools, 'skills');
+      mkdirSync(skills, { recursive: true });
+      if (layout === 'unrelated') writeFileSync(join(skills, 'keep.txt'), 'unrelated data');
+      if (layout === 'unmanaged-link') {
+        mkdirSync(join(skills, '.versions'));
+        mkdirSync(join(skills, 'unrelated'));
+        symlinkSync('unrelated', join(skills, 'fixture-skill'));
+      }
+      if (layout === 'wrong-name') {
+        const version = `fixture-skill-extra-${randomUUID()}`;
+        mkdirSync(join(skills, '.versions', version), { recursive: true });
+        symlinkSync(`.versions/${version}`, join(skills, 'fixture-skill'));
+      }
+      const before = readdirSync(skills);
+      const host = fakeHost();
+      await expect(install(host.run)).rejects.toThrow(/unmarked.*tools_root/);
+      expect(readdirSync(tools)).toEqual(['skills']);
+      expect(readdirSync(skills)).toEqual(before);
+      expect(host.calls).toEqual([]);
+    }
+  );
+
   it('marks an empty root and adopts an unmarked root made by the previous installer', async () => {
     mkdirSync(tools);
     const first = await install(fakeHost().run);

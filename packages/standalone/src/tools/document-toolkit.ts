@@ -102,6 +102,45 @@ function isManagedVersion(path: string, name: string): boolean {
 const ROOT_MARKER = '.mama-document-toolkit';
 const ROOT_RECEIPT = 'mama-document-toolkit-v1\n';
 
+/** An unmarked root may retain only the publication layout written by the skill host. */
+function isManagedSkills(root: string): boolean {
+  const uid = process.getuid?.();
+  const ownedDirectory = (path: string) => {
+    const meta = lstatSync(path);
+    return meta.isDirectory() && meta.uid === uid && (meta.mode & 0o022) === 0;
+  };
+  const versionName =
+    /^([a-z0-9][a-z0-9._-]{0,63})-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  try {
+    const versions = join(root, '.versions');
+    if (!ownedDirectory(root) || !ownedDirectory(versions)) return false;
+    if (
+      !readdirSync(versions).every(
+        (name) => versionName.test(name) && ownedDirectory(join(versions, name))
+      )
+    )
+      return false;
+    return readdirSync(root).every((name) => {
+      if (name === '.versions') return true;
+      if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(name)) return false;
+      const pointer = join(root, name);
+      const meta = lstatSync(pointer);
+      if (!meta.isSymbolicLink() || meta.uid !== uid) return false;
+      const target = readlinkSync(pointer);
+      const parts = target.split('/');
+      return (
+        parts.length === 2 &&
+        parts[0] === '.versions' &&
+        versionName.exec(parts[1]!)?.[1] === name &&
+        ownedDirectory(join(root, target))
+      );
+    });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
 /** Adopt only the layout written by the earlier installer, before acquiring/deleting locks. */
 function claimToolkitRoot(root: string): void {
   const entries = readdirSync(root);
@@ -128,7 +167,8 @@ function claimToolkitRoot(root: string): void {
     const path = join(root, name);
     const meta = lstatSync(path);
     let managed = false;
-    if (['apps', 'fonts', '.leases', 'skills'].includes(name)) managed = meta.isDirectory();
+    if (['apps', 'fonts', '.leases'].includes(name)) managed = meta.isDirectory();
+    else if (name === 'skills') managed = isManagedSkills(path);
     else if (TOOLKIT_VERSION_NAME.test(name))
       managed = meta.isDirectory() && isManagedVersion(path, name);
     else if (
