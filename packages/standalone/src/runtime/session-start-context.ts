@@ -11,12 +11,14 @@ export async function readSessionStartInput(ports: {
   /** The latest session checkpoint the agent saved, if any; `createdAt` in epoch ms. */
   checkpoint: () => Promise<{ summary: string; nextSteps: string; createdAt: number } | null>;
   now: number;
+  sources?: string;
 }): Promise<SessionStartInput> {
   const records = [...(await ports.records())];
   const checkpoint = await ports.checkpoint();
   const createdAt = (value: number | string): number =>
     typeof value === 'number' ? value : Date.parse(value);
   return {
+    ...(ports.sources === undefined ? {} : { sources: ports.sources }),
     exchanges: [...ports.exchanges],
     decisions: records
       .sort((a, b) => createdAt(b.created_at) - createdAt(a.created_at))

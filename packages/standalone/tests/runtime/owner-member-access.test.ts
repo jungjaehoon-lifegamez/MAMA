@@ -463,6 +463,11 @@ describe('owner rules reach the personal DM session', () => {
       expect(own.fresh).toBe(true);
       expect(own.session).not.toBe(member.session);
       expect(own.standing).toContain('FIXTURE_OWNER_POLICY');
+      // Each new DM session learns where its readable sources live, outside its fingerprint.
+      for (const turn of [own, member]) {
+        expect(turn.prompt).toContain('Readable sources:');
+        expect(turn.standing).not.toContain('Readable sources:');
+      }
       expect(policyFingerprint(own)).toBe('fixture');
       expect(policyFingerprint(own)).toBe(policyFingerprint(common));
       expect(member.standing).not.toContain('FIXTURE_OWNER_POLICY');

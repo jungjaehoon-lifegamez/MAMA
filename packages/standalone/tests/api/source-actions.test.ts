@@ -250,7 +250,6 @@ describe('minimal source actions', () => {
       search: vi.fn().mockReturnValue({ hits: [], next_cursor: null }),
       read: vi.fn().mockReturnValue({ content: 'source-content' }),
       has: vi.fn().mockReturnValue(true),
-      channelKinds: vi.fn().mockReturnValue({ 'connector-test': ['kind-a', 'kind-b'] }),
     };
     const dispatch = createDispatcher(
       createCatalog(sourceActionRegistrations({ stored, timeZone: createTimeZoneSetting('UTC') }))
@@ -301,10 +300,9 @@ describe('minimal source actions', () => {
       { action: 'source.search', input: { source: 'other-connector', query: 'term' } },
       { access }
     );
-    // The refusal names what each readable connector holds instead of reading as a permission
-    // problem, and says the same for an unknown name as for an ungranted one.
+    // Not worded as a permission problem, and the same for an unknown name as for an ungranted one.
     const refusal =
-      "other-connector is not one of your readable connectors: connector-test (channels: kind-a, kind-b). source.recent lists a connector's channels.";
+      'other-connector is not one of your readable connectors: connector-test. The start of your session lists each readable source with the chat families stored inside it; name that source.';
     expect(deniedSearch).toMatchObject({
       status: 'failed',
       error: { code: 'denied', message: refusal },

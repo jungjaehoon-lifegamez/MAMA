@@ -74,25 +74,13 @@ function storedReader(ports: SourcePorts): StoredSourceReader {
   return ports.stored;
 }
 
-function assertGrantedSource(
-  source: string,
-  access: ActionContext['access'],
-  ports: SourcePorts
-): void {
+function assertGrantedSource(source: string, access: ActionContext['access']): void {
   if (access.connectors?.includes(source)) return;
-  const readable = [...(access.connectors ?? [])].sort();
-  // Say what each readable connector holds, so a platform stored inside another connector (an
-  // import of chat apps) leads to that connector instead of reading as a permission problem.
-  // One message for unknown and ungranted names, so it never tells a member which others exist.
-  const kinds = storedReader(ports).channelKinds(readable);
-  const listing =
-    readable
-      .map((connector) =>
-        kinds[connector] ? `${connector} (channels: ${kinds[connector].join(', ')})` : connector
-      )
-      .join(', ') || '(none)';
+  // Not worded as a permission problem: the usual cause is a chat platform named directly
+  // although it is stored as a family inside another source. One message for unknown and
+  // ungranted names, so it never tells a member which other connectors exist.
   const error = new Error(
-    `${source} is not one of your readable connectors: ${listing}. source.recent lists a connector's channels.`
+    `${source} is not one of your readable connectors: ${[...(access.connectors ?? [])].sort().join(', ') || '(none)'}. The start of your session lists each readable source with the chat families stored inside it; name that source.`
   );
   error.name = 'denied';
   throw error;
@@ -207,7 +195,7 @@ export function sourceActionRegistrations(ports: SourcePorts): ActionRegistratio
       },
       exec: (input, context) => {
         const source = sourceName(input, 'source.search');
-        assertGrantedSource(source, context.access, ports);
+        assertGrantedSource(source, context.access);
         const allowance = replayReadAllowance(context.readAllowance);
         const result =
           allowance === undefined
@@ -330,7 +318,7 @@ export function sourceActionRegistrations(ports: SourcePorts): ActionRegistratio
           return displaySourceTime(data, timeZone);
         }
         const source = sourceName(input, 'source.read');
-        assertGrantedSource(source, context.access, ports);
+        assertGrantedSource(source, context.access);
         const data =
           allowance === undefined
             ? storedReader(ports).read(source, body, context.access)

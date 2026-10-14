@@ -8,6 +8,8 @@ import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createStoredSourceReader } from '../../src/api/stored-source-reader.js';
 import { upsertConnectorEventIndex } from '../../src/connectors/framework/event-index.js';
+import { storedSourceFamilies } from '../../src/connectors/framework/stored-index-read.js';
+import { readableSourcesLine } from '../../src/runtime/owner-system-prompt.js';
 
 describe('stored source reader', () => {
   it('fails source.read of erased observations through dispatch without returning content', async () => {
@@ -69,15 +71,15 @@ describe('stored source reader', () => {
     }
   });
 
-  it('names the platforms an import connector holds when a search names one directly', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'stored-channel-kinds-'));
+  it('lists only the families and rows a grant reads in the sources line', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'member-readable-sources-'));
     const handle = await openCoreDatabase({ path: join(root, 'state.db') });
     try {
       for (const [connector, channel] of [
         ['import-test', 'import-test:chat-a:room-one'],
         ['import-test', 'import-test:chat-b:room-two'],
         ['import-test', 'import-test:chat-a:room-three'],
-        ['chat', 'telegram:room-four'],
+        ['other-test', 'plain-room'],
       ] as const) {
         upsertConnectorEventIndex(handle.adapter, {
           source_connector: connector,
@@ -88,35 +90,78 @@ describe('stored source reader', () => {
           source_timestamp_ms: 1,
         });
       }
-      const reader = createStoredSourceReader({ adapter: handle.adapter });
-      expect(reader.channelKinds(['chat', 'import-test'])).toEqual({
-        'import-test': ['chat-a', 'chat-b'],
+      const base = {
+        principalId: 'test-principal',
+        agentId: 'test-agent',
+        actions: [],
+        scopes: [],
+      };
+      const line = (access: Parameters<typeof storedSourceFamilies>[2]) =>
+        readableSourcesLine(storedSourceFamilies(handle.adapter, access.connectors ?? [], access));
+      expect(
+        line({
+          ...base,
+          connectors: ['import-test', 'other-test'],
+          connectorWideRead: ['import-test', 'other-test'],
+        })
+      ).toBe(
+        '- Readable sources: import-test (3; chat-a 2, chat-b 1), other-test (1); chats of a family are channels "<source>:<family>:<room>".'
+      );
+      // A member granted one room learns nothing about the connector's other families.
+      expect(
+        line({
+          ...base,
+          connectors: ['import-test'],
+          channels: { 'import-test': ['import-test:chat-a:room-one'] },
+        })
+      ).toContain('import-test (1; chat-a 1);');
+      expect(line({ ...base, connectors: ['import-test'] })).toBe(
+        '- Readable sources: none stored for this grant.'
+      );
+    } finally {
+      handle.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses an unknown and a stored but ungranted source with the same message', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'stored-source-refusal-'));
+    const handle = await openCoreDatabase({ path: join(root, 'state.db') });
+    try {
+      upsertConnectorEventIndex(handle.adapter, {
+        source_connector: 'other-test',
+        source_type: 'message',
+        source_id: 'fixture-row',
+        channel: 'plain-room',
+        content: 'fixture',
+        source_timestamp_ms: 1,
       });
       const dispatch = createDispatcher(
         createCatalog(
-          sourceActionRegistrations({ stored: reader, timeZone: createTimeZoneSetting('UTC') })
+          sourceActionRegistrations({
+            stored: createStoredSourceReader({ adapter: handle.adapter }),
+            timeZone: createTimeZoneSetting('UTC'),
+          })
         )
       );
-      const result = await dispatch(
-        { action: 'source.search', input: { source: 'chat-a', query: 'fixture' } },
-        {
-          access: {
-            principalId: 'test-principal',
-            agentId: 'test-agent',
-            actions: ['source.search'],
-            connectors: ['import-test', 'chat'],
-            scopes: [],
+      const access = {
+        principalId: 'test-principal',
+        agentId: 'test-agent',
+        actions: ['source.search'],
+        connectors: ['import-test'],
+        scopes: [],
+      };
+      const refusal = async (source: string) =>
+        dispatch({ action: 'source.search', input: { source, query: 'fixture' } }, { access });
+      for (const source of ['other-test', 'never-stored']) {
+        expect(await refusal(source)).toMatchObject({
+          status: 'failed',
+          error: {
+            kind: 'denied',
+            message: `${source} is not one of your readable connectors: import-test. The start of your session lists each readable source with the chat families stored inside it; name that source.`,
           },
-        }
-      );
-      expect(result).toMatchObject({
-        status: 'failed',
-        error: {
-          kind: 'denied',
-          message:
-            "chat-a is not one of your readable connectors: chat, import-test (channels: chat-a, chat-b). source.recent lists a connector's channels.",
-        },
-      });
+        });
+      }
     } finally {
       handle.close();
       rmSync(root, { recursive: true, force: true });

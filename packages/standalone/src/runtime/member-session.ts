@@ -17,6 +17,8 @@ import { MEMBER_SYSTEM_PROMPT } from './member-system-prompt.js';
 import { MEMBER_VOICE } from './turn-orders.js';
 import { resolvePrincipalAccess } from './principal-access.js';
 import { readSessionStartInput } from './session-start-context.js';
+import { readableSourcesLine } from './owner-system-prompt.js';
+import { storedSourceFamilies } from '../connectors/framework/stored-index-read.js';
 import { createStimulusDelivery, type StimulusDeliveryOptions } from './stimulus-delivery.js';
 import { holdsOwnerRole, ownerRuleIds, RULE_KINDS } from './owner-authority.js';
 import type { OwnerPolicyProvider } from './owner-policy.js';
@@ -218,8 +220,13 @@ export function createMemberSession(
     commonPrincipalId: options.ownerPrincipalId,
     readResult: ports.readResult,
     sessionStart: (row) => {
-      access();
+      const current = access();
       return readSessionStartInput({
+        // The common session's standing text says where sources live; a DM learns it here,
+        // under its own grant, outside the session fingerprint so new rows never rotate it.
+        sources: readableSourcesLine(
+          storedSourceFamilies(database.adapter, current.connectors ?? [], current)
+        ),
         exchanges: chat.recentExchanges(row.stimulusId),
         records: () => readRecords({ status: 'active', excludeAmendments: true }),
         checkpoint: async () => {

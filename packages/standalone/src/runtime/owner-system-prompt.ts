@@ -26,7 +26,8 @@ export function ownerAdministrationRule(): string {
   );
 }
 
-function readableSourcesLine(families: readonly StoredSourceFamily[]): string {
+/** The stored sources a grant reads, with the chat families kept inside each and their counts. */
+export function readableSourcesLine(families: readonly StoredSourceFamily[]): string {
   const sources = new Map<string, StoredSourceFamily[]>();
   for (const row of families) {
     const rows = sources.get(row.source) ?? [];

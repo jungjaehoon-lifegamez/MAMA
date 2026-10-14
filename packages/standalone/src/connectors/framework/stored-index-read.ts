@@ -83,30 +83,6 @@ export function hasStoredConnector(adapter: Reader, source: string): boolean {
   );
 }
 
-/**
- * What each connector's stored channels hold, from channel keys shaped `<connector>:<kind>:<name>`
- * (an import connector keeps several platforms apart this way). Connectors without such keys
- * report nothing.
- */
-export function storedChannelKinds(
-  adapter: Reader,
-  connectors: readonly string[]
-): Record<string, string[]> {
-  const kinds: Record<string, string[]> = {};
-  const statement = adapter.prepare(
-    'SELECT DISTINCT channel FROM connector_event_index WHERE source_connector = ? AND channel LIKE ?'
-  );
-  for (const connector of connectors) {
-    const found = new Set<string>();
-    for (const row of statement.all(connector, `${connector}:%:%`) as Array<{ channel: string }>) {
-      const kind = row.channel.slice(connector.length + 1).split(':')[0];
-      if (kind) found.add(kind);
-    }
-    if (found.size > 0) kinds[connector] = [...found].sort();
-  }
-  return kinds;
-}
-
 export function storedConnectorOverview(
   adapter: Reader,
   source: string,
