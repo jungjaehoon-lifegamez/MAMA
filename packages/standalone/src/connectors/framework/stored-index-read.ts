@@ -2,15 +2,17 @@
 import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
 import type { JudgmentAccess } from '@jungjaehoon/mama-core';
 
+import { roomChatFloor } from '../../runtime/principal-access.js';
+
 type Reader = Pick<DatabaseAdapter, 'prepare'>;
 
 /** Connector-wide reads or explicitly granted channels, applied before paging or aggregation. */
 export function storedSourceAccessFilter(
   access: JudgmentAccess,
   connectors: readonly string[]
-): { sql: string; params: string[] } {
+): { sql: string; params: Array<string | number> } {
   const clauses: string[] = [];
-  const params: string[] = [];
+  const params: Array<string | number> = [];
   const channels = access.channels;
   for (const connector of connectors) {
     if (!access.connectors?.includes(connector)) continue;
@@ -25,6 +27,11 @@ export function storedSourceAccessFilter(
     if (granted.length === 0) continue;
     clauses.push(`(source_connector = ? AND channel IN (${granted.map(() => '?').join(',')}))`);
     params.push(connector, ...granted);
+    const floor = connector === 'chat' ? roomChatFloor(access) : undefined;
+    if (floor !== undefined) {
+      clauses[clauses.length - 1] = `(${clauses.at(-1)} AND source_timestamp_ms >= ?)`;
+      params.push(floor);
+    }
   }
   return {
     sql: clauses.length ? clauses.map((clause) => `(${clause})`).join(' OR ') : '0',
@@ -87,13 +94,16 @@ export function storedConnectorOverview(
   adapter: Reader,
   source: string,
   channels: readonly string[] | null,
-  maxSourceMs?: number | null
+  maxSourceMs?: number | null,
+  minSourceMs?: number
 ): Record<string, unknown> {
   const clause = channels ? ` AND e.channel IN (${channels.map(() => '?').join(', ')})` : '';
   const sourceClause =
     maxSourceMs === undefined || maxSourceMs === null
       ? ''
       : ' AND COALESCE(e.event_datetime, e.source_timestamp_ms) <= ?';
+  const floorClause =
+    minSourceMs === undefined ? '' : ' AND COALESCE(e.event_datetime, e.source_timestamp_ms) >= ?';
   return adapter
     .prepare(
       `SELECT COUNT(*) AS count, COUNT(DISTINCT e.channel) AS channel_count,
@@ -102,12 +112,14 @@ export function storedConnectorOverview(
               MAX(o.observed_at) AS last_observed_at
        FROM connector_event_index e
        LEFT JOIN observation_versions o ON o.observation_id = e.current_observation_id
-       WHERE e.source_connector = ?${clause}${sourceClause}`
+       WHERE e.source_connector = ?${clause}${sourceClause}${floorClause}`
     )
-    .get(source, ...(channels ?? []), ...(sourceClause === '' ? [] : [maxSourceMs])) as Record<
-    string,
-    unknown
-  >;
+    .get(
+      source,
+      ...(channels ?? []),
+      ...(sourceClause === '' ? [] : [maxSourceMs]),
+      ...(floorClause === '' ? [] : [minSourceMs])
+    ) as Record<string, unknown>;
 }
 
 export function storedObservationChannel(

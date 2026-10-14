@@ -81,10 +81,18 @@ async function send(overrides: Record<string, unknown> = {}) {
 
 function createGateway(
   memberIntake: (
-    id: string
+    id: string,
+    room?: string
   ) =>
     | ReturnType<typeof createStimulusIntake>
-    | Promise<ReturnType<typeof createStimulusIntake>> = (id) => intakes.get(id)!
+    | Promise<ReturnType<typeof createStimulusIntake>> = (id, room) =>
+    room
+      ? createStimulusIntake(
+          { mailbox, accept: (input) => ({ inputId: mailbox.enqueue(input)!, state: 'accepted' }) },
+          id,
+          new ChatSources(raw, database.adapter, common, `member-agent:${id}`)
+        )
+      : intakes.get(id)!
 ) {
   return new TelegramGateway({
     token: 'fixture-token',
@@ -289,6 +297,89 @@ describe('P10.1 Telegram person routing', () => {
     }
   });
 
+  it('admits a plain member to its room mailbox and recovers and archives its group reply', async () => {
+    await send({ chat: { id: -100, type: 'supergroup' }, text: 'Partition correction' });
+    expect(mailbox.readInput('telegram:-100:11', member)).not.toBeNull();
+    expect(mailbox.readInput('telegram:-100:11', common)).toBeNull();
+    expect(ledger.get('telegram:-100:11')).toMatchObject({ principalId: member });
+    await restartGateway();
+    expect(ledger.get('telegram:-100:11')?.state).toBe('processing');
+    await gateway.deliverResponse('telegram:-100:11', 'Partition answer');
+    expect([...transport.sent, ...transport.edits]).toContainEqual({
+      chatId: -100,
+      text: 'Partition answer',
+    });
+    expect(chat(common).exchanges(0, Date.now())).toEqual([
+      { at: 1_700_000_000_000, owner: 'Partition correction', reply: 'Partition answer' },
+    ]);
+    expect(rows()).toContainEqual({
+      source_id: 'telegram:-100:11:reply',
+      author: `member-agent:${member}`,
+      content: 'Partition answer',
+      memory_scope_id: common,
+    });
+    expect(chat(member).exchanges(0, Date.now())).toEqual([]);
+  });
+
+  it('downloads plain member group files to that member directory', async () => {
+    await send({
+      chat: { id: -100, type: 'supergroup' },
+      photo: [{ file_id: 'file', file_unique_id: 'unique', file_size: 4 }],
+    });
+    expect(
+      readFileSync(join(root, 'members', member, 'downloads', 'telegram', '11_photo_unique.jpg'))
+    ).toEqual(Buffer.from([1, 2, 3, 4]));
+    expect(existsSync(join(root, 'common-downloads', 'telegram'))).toBe(false);
+  });
+
+  it('keeps the recorded room intake when a waiting sender gains the owner role', async () => {
+    await gateway.stop();
+    let open!: (value: ReturnType<typeof createStimulusIntake>) => void;
+    const waiting = new Promise<ReturnType<typeof createStimulusIntake>>((resolve) => {
+      open = resolve;
+    });
+    gateway = createGateway(() => waiting);
+    await gateway.start();
+    await send({ chat: { id: -100, type: 'supergroup' }, text: 'Waiting room request' });
+    repository.grantRole({ principalId: member, role: 'owner', now: 4 });
+    open(
+      createStimulusIntake(
+        { mailbox, accept: (input) => ({ inputId: mailbox.enqueue(input)!, state: 'accepted' }) },
+        member,
+        new ChatSources(raw, database.adapter, common, `member-agent:${member}`),
+        '-100'
+      )
+    );
+    await vi.waitFor(() => expect(mailbox.readInput('telegram:-100:11', member)).not.toBeNull());
+    expect(mailbox.readInput('telegram:-100:11', common)).toBeNull();
+    await gateway.deliverResponse('telegram:-100:11', 'Recorded room reply');
+    expect(chat(common).exchanges(0, Date.now()).at(-1)?.reply).toBe('Recorded room reply');
+  });
+
+  it('recovers a ready room reply and archives an interruption against the member mailbox', async () => {
+    await send({ chat: { id: -100, type: 'supergroup' }, text: 'Room request' });
+    ledger.markReady('telegram:-100:11', 'Ready room reply', 'html-v1');
+    await restartGateway();
+    expect([...transport.sent, ...transport.edits]).toContainEqual({
+      chatId: -100,
+      text: 'Ready room reply',
+    });
+    expect(ledger.get('telegram:-100:11')?.state).toBe('delivered');
+    await send({
+      message_id: 12,
+      chat: { id: -100, type: 'supergroup' },
+      text: 'Interrupted room request',
+    });
+    const row = mailbox.claimNext()!;
+    // Close both mailbox inputs without a native result; only the second still owes a reply.
+    mailbox.ack(row.id);
+    const next = mailbox.claimNext()!;
+    mailbox.ack(next.id);
+    await restartGateway();
+    expect(ledger.get('telegram:-100:12')?.state).toBe('delivered');
+    expect(chat(common).exchanges(0, Date.now()).at(-1)?.reply).toContain('interrupted');
+  });
+
   it('admits an active owner role in the allowed group and records the sender on common chat', async () => {
     repository.grantRole({ principalId: member, role: 'owner', now: 3 });
     await send({ chat: { id: -100, type: 'supergroup' }, text: 'Common correction' });
@@ -321,9 +412,10 @@ describe('P10.1 Telegram person routing', () => {
   });
 
   it.each([
-    ['without an owner role', -100, false, false],
+    ['with an unknown sender', -100, false, false],
     ['outside allowed groups', -101, true, false],
     ['with a suspended owner role', -100, true, true],
+    ['with a suspended plain member', -100, false, true],
   ])(
     'drops a group sender %s without a reply or download',
     async (_label, groupId, ownerRole, suspended) => {
@@ -331,6 +423,7 @@ describe('P10.1 Telegram person routing', () => {
       if (suspended) repository.suspend(member, 4);
       await send({
         chat: { id: groupId, type: 'supergroup' },
+        ...(_label === 'with an unknown sender' ? { from: { id: 99999, is_bot: false } } : {}),
         photo: [{ file_id: 'file', file_unique_id: 'unique', file_size: 4 }],
       });
       expect(rows()).toEqual([]);

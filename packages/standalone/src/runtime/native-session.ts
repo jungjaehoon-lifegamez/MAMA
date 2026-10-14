@@ -1,7 +1,7 @@
 import type { JudgmentAccess } from '@jungjaehoon/mama-core';
 import { memberSystemLayers } from './member-system-prompt.js';
 import { backendEnvironment, credentialReadPaths, normalizeReadPaths } from './backend-security.js';
-import { memberClaudeTmpDir } from './member-paths.js';
+import { memberClaudeTmpDir, ensureMemberClaudeTmpDir } from './member-paths.js';
 import { assertToolsOwnership, assertToolsReadable } from './tools-paths.js';
 import { findExecutable } from '../cli/launch-files.js';
 import { untrustedToolData } from '../utils/untrusted-content.js';
@@ -110,6 +110,8 @@ export interface NativeSessionOptions {
     sessionKey: string;
     systemPrompt: string;
     roles: readonly string[];
+    tmpDir?: string;
+    scopeFingerprint?: () => string;
     prepareAccess: () => JudgmentAccess;
   };
   claudeConfigDir?: string;
@@ -290,7 +292,7 @@ function driverOptions(
 function claudeTmpDir(options: NativeSessionOptions): string {
   return options.principal === undefined
     ? join(options.workspaceDir, '.tmp')
-    : memberClaudeTmpDir(options.principal.principalId);
+    : (options.principal.tmpDir ?? memberClaudeTmpDir(options.principal.principalId));
 }
 
 /** The shared login is not the person in this session; the CLI reads this profile at startup. */
@@ -429,6 +431,8 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
       ? [...new Set([...readPaths.map((path) => resolve(path)), ...normalizeReadPaths(readPaths)])]
       : normalizeReadPaths(readPaths);
   if (options.toolsRoot) assertToolsReadable(options.toolsRoot, deniedReadPaths);
+  if (options.backend === 'claude' && options.principal !== undefined)
+    ensureMemberClaudeTmpDir(claudeTmpDir(options));
   if (options.backend === 'claude')
     ensureClaudeCallerHook(
       options.workspaceDir,
@@ -529,6 +533,11 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
           nativeTools: nativeTools ?? null,
           systemPrompt,
           ownerPolicyFingerprint: ownerPolicy.fingerprint,
+          ...(options.principal?.scopeFingerprint === undefined
+            ? {}
+            : {
+                scopeFingerprint: options.principal.scopeFingerprint(),
+              }),
         }),
         ...(options.backend === 'codex' ? { nativeCwd: options.workspaceDir } : {}),
         ...(nativeTools === undefined ? {} : { nativeTools }),
@@ -576,7 +585,7 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
       return modelToolResult(
         name,
         await options.actionSurface.hostToolCall(name, input, facts.gatewayCallId, {
-          ...(options.principal === undefined ? {} : { access: memberAccess(context?.access) }),
+          ...(options.principal === undefined ? {} : { access: options.principal.prepareAccess() }),
           session: {
             ...(facts.modelRunId === undefined ? {} : { modelRunId: facts.modelRunId }),
             gatewayCallId: facts.gatewayCallId,

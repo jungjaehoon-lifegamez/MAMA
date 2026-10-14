@@ -35,6 +35,7 @@ export interface OwnerMessageLedgerEntry {
   chunkFormat?: TelegramChunkFormat;
   deliveryTarget?: string;
   payloadIdentity?: string;
+  principalId?: string;
   /** Readable producer identity and confirmed Telegram receipts; absent on older entries. */
   idempotencyKey?: string;
   messageIds?: Array<number | string>;
@@ -43,6 +44,7 @@ export interface OwnerMessageLedgerEntry {
 }
 
 export interface OwnerDeliveryBinding {
+  principalId?: string;
   deliveryTarget: string;
   payloadIdentity: string;
   idempotencyKey?: string;
@@ -159,7 +161,8 @@ export class OwnerMessageLedger {
       if (
         binding &&
         (existing.deliveryTarget !== binding.deliveryTarget ||
-          existing.payloadIdentity !== binding.payloadIdentity)
+          existing.payloadIdentity !== binding.payloadIdentity ||
+          (existing.principalId !== undefined && existing.principalId !== binding.principalId))
       ) {
         // A regenerated report reuses its delivered key with new wording; the first copy stands.
         if (
@@ -191,6 +194,7 @@ export class OwnerMessageLedger {
         deliveryTarget: binding.deliveryTarget,
         payloadIdentity: binding.payloadIdentity,
         idempotencyKey: binding.idempotencyKey,
+        principalId: binding.principalId,
       }),
     };
     this.commit(() => {
@@ -478,6 +482,10 @@ function isLedgerEntry(value: unknown): value is OwnerMessageLedgerEntry {
   if (!value || typeof value !== 'object') return false;
   const item = value as Record<string, unknown>;
   return (
+    (item.principalId === undefined ||
+      (typeof item.principalId === 'string' &&
+        item.principalId.length > 0 &&
+        item.principalId.length <= 256)) &&
     isKey(item.key) &&
     (item.state === 'processing' ||
       item.state === 'ready' ||

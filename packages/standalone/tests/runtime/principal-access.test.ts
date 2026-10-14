@@ -100,6 +100,7 @@ describe('P1 principal access through the product dispatcher', () => {
       runtimeRoot: root,
       configPath: join(root, 'config.yaml'),
       ownerPrincipalId: OWNER,
+      commonChannelId: '-100',
       agentId: 'agent-owner-test',
       timeZone: createTimeZoneSetting('UTC'),
       isOwnerMessageTurn: () => true,
@@ -162,6 +163,190 @@ describe('P1 principal access through the product dispatcher', () => {
     destinations: [{ kind: 'telegram', id: DM }],
     actions: ROLE,
   });
+
+  it('isolates room access and permits attributed partition work and common policy', async () => {
+    const access = resolvePrincipalAccess(member, {
+      adapter: db.adapter,
+      ownerAccess: surface.ownerAccess,
+      agentId: 'agent-member-test',
+      sessionKey: `member:${member}:room:telegram:-100`,
+    });
+    expect(access.scopes).toEqual([PARTITION]);
+    expect(access.readScopes).toEqual([PARTITION]);
+    expect(access.defaultScopes).toEqual([]);
+    expect(access.channels?.chat).toEqual(['telegram:-100']);
+    expect(access.destinations).toEqual([{ kind: 'telegram', id: '-100' }]);
+    const context = { access, session: { sourceMessageRef: 'telegram:-100:1', channelId: '-100' } };
+    const call = (action: string, input: unknown, operationId: string) =>
+      surface.dispatch({ action, input, operationId }, context);
+    expect(
+      (
+        await call(
+          'work.create',
+          { topic: 'room-work', summary: 'change', set: { title: 'room work' } },
+          'unscoped'
+        )
+      ).status
+    ).not.toBe('completed');
+    expect(
+      (
+        await call(
+          'work.create',
+          {
+            topic: 'room-work',
+            summary: 'change',
+            scopes: [{ kind: 'project', id: 'ungranted' }],
+            set: { title: 'room work' },
+          },
+          'ungranted'
+        )
+      ).status
+    ).not.toBe('completed');
+    const work = data(
+      await call(
+        'work.create',
+        { topic: 'room-work', summary: 'change', scopes: [PARTITION], set: { title: 'room work' } },
+        'room-work'
+      )
+    ) as { commitmentId: string };
+    expect(
+      data(
+        await call(
+          'work.revise',
+          {
+            commitmentId: work.commitmentId,
+            summary: 'correction',
+            set: { title: 'corrected room work' },
+          },
+          'room-revise'
+        )
+      )
+    ).toMatchObject({ revision: 2 });
+    const policy = data(await call('manage.policy.read', {}, 'policy-read')) as {
+      fingerprint: string;
+    };
+    const revision = data(
+      await call(
+        'manage.policy.update',
+        {
+          text: 'Room standing correction.',
+          reason: 'member correction',
+          fingerprint: policy.fingerprint,
+        },
+        'room-policy'
+      )
+    ) as { revisionId: string };
+    expect(
+      db.adapter
+        .prepare('SELECT principal_id FROM command_bindings WHERE receipt_key=?')
+        .all(revision.revisionId)
+    ).toContainEqual({ principal_id: member });
+    const record = db.adapter
+      .prepare('SELECT agent_id FROM decisions WHERE id=?')
+      .get(revision.revisionId);
+    expect(record).toEqual({ agent_id: 'agent-member-test' });
+    expect(
+      db.adapter
+        .prepare(
+          'SELECT s.kind, s.external_id FROM memory_scope_bindings b JOIN memory_scopes s ON s.id=b.scope_id WHERE b.memory_id=?'
+        )
+        .all(revision.revisionId)
+    ).toEqual([{ kind: 'user', external_id: OWNER }]);
+    expect(
+      (
+        await surface.dispatch(
+          {
+            action: 'manage.policy.update',
+            operationId: 'dm-policy',
+            input: { text: 'private correction', reason: 'private', fingerprint: 'any' },
+          },
+          ruleTurn(member)
+        )
+      ).status
+    ).not.toBe('completed');
+  });
+
+  it('lets a room correct an owner rule with common scope and member authorship, while its DM is refused', async () => {
+    const rule = data(await saveRule(OWNER, 'common-standing-rule')) as { id: string };
+    const access = resolvePrincipalAccess(member, {
+      adapter: db.adapter,
+      ownerAccess: surface.ownerAccess,
+      agentId: 'agent-member-test',
+      sessionKey: `member:${member}:room:telegram:-100`,
+    });
+    const result = await surface.dispatch(
+      {
+        action: 'memory.save',
+        operationId: 'room-standing-rule',
+        input: {
+          topic: 'fixture-rule',
+          kind: 'lesson',
+          summary: 'Room standing correction',
+          details: 'Room standing correction',
+          appliesWhen: 'When answering fixture messages.',
+          source: { package: 'fixture', source_type: 'fixture' },
+          replaces: [{ id: rule.id, reason: 'group correction' }],
+        },
+      },
+      { access, session: { sourceMessageRef: 'telegram:-100:1' } }
+    );
+    const revised = data(result) as { id: string };
+    expect(ownerRuleIds(db.adapter, [revised.id], OWNER).has(revised.id)).toBe(true);
+    expect(
+      db.adapter
+        .prepare('SELECT principal_id FROM command_bindings WHERE receipt_key=?')
+        .get(revised.id)
+    ).toEqual({ principal_id: member });
+    expect((await saveRule(member, 'dm-standing-rule', revised.id)).status).not.toBe('completed');
+    const retired = await surface.dispatch(
+      {
+        action: 'memory.retire',
+        operationId: 'room-retire-rule',
+        input: { memory_id: revised.id, status: 'stale', reason: 'Group withdrew the rule' },
+      },
+      { access, session: { sourceMessageRef: 'telegram:-100:2' } }
+    );
+    expect(retired.status, JSON.stringify(retired)).toBe('completed');
+  });
+
+  it.each([false, true])(
+    'refuses DM policy and owner-rule changes (owner role: %s)',
+    async (ownerRole) => {
+      if (ownerRole) repository.grantRole({ principalId: member, role: 'owner', now: 4 });
+      const context = ruleTurn(member);
+      const input = { text: 'Private correction.', reason: 'DM request', fingerprint: 'fixture' };
+      for (const action of ['manage.policy.read', 'manage.policy.update']) {
+        expect(
+          await surface.dispatch({ action, input: action.endsWith('read') ? {} : input }, context)
+        ).toMatchObject({ status: 'failed', error: { code: 'action_not_granted' } });
+      }
+      // The policy handler also refuses DM authority independently of the action grant.
+      await expect(
+        surface.catalog.entry('manage.policy.update').exec(input, context)
+      ).rejects.toMatchObject({
+        name: 'denied',
+        message: expect.stringContaining('common channel'),
+      });
+      const rule = data(await saveRule(OWNER, 'dm-protected-rule')) as { id: string };
+      expect(await saveRule(member, 'dm-replace-rule', rule.id)).toMatchObject({
+        status: 'failed',
+        error: { message: expect.stringContaining('common channel') },
+      });
+      expect(
+        await surface.dispatch(
+          {
+            action: 'memory.retire',
+            operationId: 'dm-retire-rule',
+            input: { memory_id: rule.id, status: 'stale', reason: 'DM request' },
+          },
+          context
+        )
+      ).toMatchObject({
+        status: 'failed',
+        error: { message: expect.stringContaining('common channel') },
+      });
+    }
+  );
 
   it('resolves personal writes, granted reads and the bound private Telegram DM', () => {
     expect(resolve()).toEqual(memberAccess());

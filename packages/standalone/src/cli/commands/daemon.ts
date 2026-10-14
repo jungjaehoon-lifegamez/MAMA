@@ -521,6 +521,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       ...(config.jev?.enabled ? { jev: config.jev } : {}),
       workspaceDir: paths.workspaceDir,
       ownerPrincipalId: OWNER_PRINCIPAL_ID,
+      commonChannelId: config.telegram.owner_chat_id,
+      roomChannels: config.telegram.allowed_chats,
       agentId: OWNER_AGENT_ID,
       ...(config.telegram.enabled && options.mode !== 'replay'
         ? {
@@ -782,11 +784,13 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         token,
         intake,
         registry: createPrincipalRepository(owner.database.adapter),
-        memberIntake: (principalId) =>
+        memberIntake: (principalId, room) =>
           owner!.runtime.servesPrincipal(principalId)
-            ? loggedOwnerIntake(owner!.memberIntake(principalId), logger)
-            : owner!.serveMember(principalId).then((intake) => loggedOwnerIntake(intake, logger)),
-        principalPaths: (principalId) => owner!.principalPaths(principalId),
+            ? loggedOwnerIntake(owner!.memberIntake(principalId, room), logger)
+            : owner!
+                .serveMember(principalId)
+                .then(() => loggedOwnerIntake(owner!.memberIntake(principalId, room), logger)),
+        principalPaths: (principalId, room) => owner!.principalPaths(principalId, room),
         onMemberSelection: (selection) => owner!.completeMemberEnrollment(selection),
         recordMemberSelection: (exchange) => owner!.recordHostExchange(exchange),
         config: {

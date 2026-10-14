@@ -15,6 +15,7 @@ export interface OwnerPolicyActionPorts {
   runtimeRoot: string;
   adapter: DatabaseInstance;
   ownerPrincipalId: string;
+  commonChannelId?: string;
 }
 
 function namedError(name: string, message: string): Error {
@@ -62,7 +63,11 @@ export function ownerPolicyActionRegistrations(
         source: { package: 'owner-agent', source_type: POLICY_UPDATE_ACTION },
         ...(previous === null ? {} : { replaces: [{ id: previous, reason }] }),
       },
-      context.access,
+      {
+        ...context.access,
+        scopes: [{ kind: 'user', id: ports.ownerPrincipalId }],
+        defaultScopes: [{ kind: 'user', id: ports.ownerPrincipalId }],
+      },
       commandId,
       { ...context.session, toolName: POLICY_UPDATE_ACTION }
     );
@@ -100,7 +105,7 @@ export function ownerPolicyActionRegistrations(
         name: POLICY_UPDATE_ACTION,
         recallableWrite: true,
         summary:
-          'Replace the owner policy with a standing correction. Only the owner agent in an owner chat turn may update it, using the fingerprint from manage.policy.read. Saves the reason and complete text as an owner-scoped memory revision with the source message before atomically replacing the file. A file that differs from history is recorded as a base revision first; returns revisionId, baseRevisionId and the new fingerprint.',
+          'Replace the owner policy with a standing correction. Only a common-channel message turn in the common session or a member room session in that same common channel may update it, using the fingerprint from manage.policy.read. Saves the reason and complete text as an owner-scoped memory revision with the source message before atomically replacing the file. A file that differs from history is recorded as a base revision first; returns revisionId, baseRevisionId and the new fingerprint.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -134,10 +139,10 @@ export function ownerPolicyActionRegistrations(
         ],
       },
       exec: async (input, context) => {
-        if (!ownerSpeaking(context, ports.ownerPrincipalId))
+        if (!ownerSpeaking(context, ports.ownerPrincipalId, ports.commonChannelId))
           throw namedError(
             'denied',
-            `${POLICY_UPDATE_ACTION} is available only in an owner chat turn`
+            `${POLICY_UPDATE_ACTION} is available only in a common-channel message turn; change it in the common channel`
           );
         const { text, fingerprint, reason } = input as {
           text: string;

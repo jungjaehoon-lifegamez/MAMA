@@ -189,6 +189,7 @@ export interface ActionSurfaceOptions {
   outboundAttempts?: (event: OutboundAttemptEvent) => void;
   knowledge: Knowledge;
   ownerPrincipalId: string;
+  commonChannelId?: string;
   agentId: string;
   scopes?: readonly MemoryScopeRef[];
   connectors?: readonly string[];
@@ -348,7 +349,12 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     .map((registration) =>
       registration.contract.name === 'memory.save' || registration.contract.name === 'memory.retire'
         ? guardMemberSharedRecords(
-            guardOwnerRules(registration, options.adapter, options.ownerPrincipalId),
+            guardOwnerRules(
+              registration,
+              options.adapter,
+              options.ownerPrincipalId,
+              options.commonChannelId
+            ),
             options.adapter,
             options.ownerPrincipalId
           )
@@ -523,6 +529,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       isOwnerMessageTurn: options.isOwnerMessageTurn,
     }),
     ...ownerPolicyActionRegistrations({
+      commonChannelId: options.commonChannelId,
       runtimeRoot: options.runtimeRoot,
       adapter: options.adapter,
       ownerPrincipalId: options.ownerPrincipalId,

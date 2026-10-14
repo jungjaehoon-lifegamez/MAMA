@@ -143,7 +143,8 @@ export function createPrincipalSessions(
       if (
         key === `member:${id}:runtime` ||
         key.startsWith(`member:${id}:job:`) ||
-        key.startsWith(`member:${id}:notice:`)
+        key.startsWith(`member:${id}:notice:`) ||
+        key.startsWith(`member:${id}:room:telegram:`)
       )
         return entry;
     throw new Error(`Principal session key is not served: ${key}`);

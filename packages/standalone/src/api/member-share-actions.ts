@@ -9,6 +9,7 @@ import {
   type MemoryScopeRef,
 } from '@jungjaehoon/mama-core';
 import { amendedRecordIds, ownerSpeaking, holdsOwnerRole } from '../runtime/owner-authority.js';
+import { roomChannel } from '../runtime/principal-access.js';
 import { invalidInput } from '../utils/invalid-input.js';
 
 interface MemberSharePorts {
@@ -26,9 +27,8 @@ function denied(message: string): Error {
 
 /**
  * A member changes shared records only in a group room, where the team sees it (owner decision
- * 2026-10-09). Until group-room turns exist (P10), a member turn replaces or retires only records
- * bound to its own personal scope alone; sharing one stays allowed. A record with no binding is
- * not the member's either. The owner is unchanged; a missing record is left to core.
+ * 2026-10-09). Room access carries partition authority; in a DM only personal records change.
+ * A record with no binding is not the member's either. A missing record is left to core.
  */
 export function guardMemberSharedRecords(
   registration: ActionRegistration,
@@ -52,9 +52,11 @@ export function guardMemberSharedRecords(
             .all(id) as Array<{ kind: string | null; external_id: string | null }>;
           if (
             bindings.length > 0 &&
-            !bindings.every(
-              (binding) => binding.kind === 'user' && binding.external_id === principalId
-            )
+            (bindings.some((binding) => binding.kind === null) ||
+              (roomChannel(context.access) === undefined &&
+                !bindings.every(
+                  (binding) => binding.kind === 'user' && binding.external_id === principalId
+                )))
           )
             throw denied(
               `${id} is not only yours: shared records change in the common channel. ` +

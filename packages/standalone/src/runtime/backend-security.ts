@@ -21,6 +21,8 @@ export function normalizeReadPaths(paths: readonly string[]): string[] {
 
 /** Parent of each member's short Claude temp root (member-paths.ts). */
 export const MEMBER_CLAUDE_TMP_PARENT = join('/tmp', 'mama-m');
+/** Short enough for a principal and room component plus Claude's sandbox suffix. */
+export const MEMBER_ROOM_TMP_PARENT = join('/tmp', 'm');
 
 /** Host renders contain every principal's staged input and trusted LibreOffice profile. */
 export const HOST_DOCUMENT_RENDER_ROOT = join('/tmp', `mama-office-host-${userInfo().uid}`);
@@ -38,6 +40,7 @@ export function ownerNativeDataReadPaths(options: OwnerRuntimeOptions): string[]
     options.rawPath,
     ...(options.memberRoot === undefined ? [] : [options.memberRoot]),
     MEMBER_CLAUDE_TMP_PARENT,
+    MEMBER_ROOM_TMP_PARENT,
     HOST_DOCUMENT_RENDER_ROOT,
   ];
 }

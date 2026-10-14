@@ -1,3 +1,4 @@
+import { MEMBER_CLAUDE_TMP_PARENT } from '../../src/runtime/backend-security.js';
 import { createRequire } from 'node:module';
 import {
   mkdirSync,
@@ -118,8 +119,8 @@ it.each([
         join(storage, 'product.db-shm'),
         join(alias, 'raw'),
         join(storage, 'raw'),
-        '/tmp/mama-m',
-        join(realpathSync('/tmp'), 'mama-m'),
+        MEMBER_CLAUDE_TMP_PARENT,
+        realpathSync(MEMBER_CLAUDE_TMP_PARENT),
         `/tmp/mama-office-host-${userInfo().uid}`,
         join(realpathSync('/tmp'), `mama-office-host-${userInfo().uid}`),
         ...(withMembers ? [join(alias, 'members'), join(storage, 'members')] : []),

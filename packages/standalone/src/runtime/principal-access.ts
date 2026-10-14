@@ -21,10 +21,31 @@ export function validateMemberMemoryGrant(
     );
 }
 
+export function roomChatFloor(access: JudgmentAccess): number | undefined {
+  return (access as JudgmentAccess & { roomChatFloor?: number }).roomChatFloor;
+}
+
 export interface PrincipalAccessOptions {
   adapter: DatabaseInstance;
   ownerAccess: JudgmentAccess;
   agentId: string;
+  sessionKey?: string;
+}
+
+export function memberRoomSessionKey(principalId: string, channel: string): string {
+  return `member:${principalId}:room:telegram:${channel}`;
+}
+
+export function memberRoomChannel(principalId: string, key?: string): string | undefined {
+  const prefix = `member:${principalId}:room:telegram:`;
+  return key?.startsWith(prefix) && key.length > prefix.length
+    ? key.slice(prefix.length)
+    : undefined;
+}
+
+/** Set only by the host's session-key resolver, never by action input. */
+export function roomChannel(access: JudgmentAccess): string | undefined {
+  return (access as JudgmentAccess & { roomChannel?: string }).roomChannel;
 }
 
 /** Registry-backed authority for future member turns; admission is wired separately. */
@@ -34,8 +55,10 @@ export function resolvePrincipalAccess(
 ): JudgmentAccess {
   const { adapter, ownerAccess, agentId } = options;
   const principal = adapter
-    .prepare('SELECT kind, status FROM principals WHERE principal_id = ?')
-    .get(principalId) as Pick<PrincipalRow, 'kind' | 'status'> | undefined;
+    .prepare('SELECT kind, status, created_at FROM principals WHERE principal_id = ?')
+    .get(principalId) as
+    | (Pick<PrincipalRow, 'kind' | 'status'> & { created_at: number })
+    | undefined;
   if (!principal) throw new Error(`unknown principal: ${principalId}`);
   if (principal.status !== 'active')
     throw new Error(`principal ${principalId} is ${principal.status}`);
@@ -54,6 +77,7 @@ export function resolvePrincipalAccess(
   if (identities.length !== 1)
     throw new Error(`member ${principalId} requires exactly one Telegram private identity`);
   const dmId = identities[0]!.external_id;
+  const room = memberRoomChannel(principalId, options.sessionKey);
   const repository = createPrincipalRepository(adapter);
   const ownerRole = holdsOwnerRole(repository, principalId);
   // Unscoped owner work binds its defaults; partition write authority does not make a default.
@@ -71,6 +95,37 @@ export function resolvePrincipalAccess(
       if (!granted.includes(scope.channelId)) granted.push(scope.channelId);
       channels[scope.connector] = granted;
     }
+  }
+  if (room !== undefined) {
+    const scopes = [
+      ...new Map(readScopes.map((scope) => [`${scope.kind}\0${scope.id}`, scope])).values(),
+    ];
+    return {
+      principalId,
+      agentId,
+      scopes,
+      readScopes: scopes,
+      defaultScopes: [],
+      connectors: [...connectors],
+      channels: { ...channels, chat: [`telegram:${room}`] },
+      destinations: [{ kind: 'telegram', id: room }],
+      actions: [
+        ...MEMBER_ACTIONS.filter(
+          (action) =>
+            !action.startsWith('schedule.job.') &&
+            !action.startsWith('memory.checkpoint.') &&
+            !['memory.share', 'records.export', 'records.erase'].includes(action)
+        ),
+        'work.create',
+        'work.revise',
+        'work.link',
+        'work.no_update',
+        'manage.policy.read',
+        'manage.policy.update',
+      ],
+      roomChannel: room,
+      roomChatFloor: principal.created_at,
+    } as JudgmentAccess;
   }
   if (ownerRole) {
     readScopes.push(...ownerAccess.scopes, ...(ownerAccess.readScopes ?? []));

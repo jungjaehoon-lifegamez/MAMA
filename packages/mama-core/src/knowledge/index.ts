@@ -56,6 +56,9 @@ export type {
 export { WORK_RECLASSIFY_DISPOSITIONS } from '../memory/judgment-types.js';
 export {
   JudgmentError,
+  admittedScopeIds,
+  readableScopeIds,
+  referenceExists,
   appendJudgment,
   getTwinEdge,
   listTwinEdgesForRefs,

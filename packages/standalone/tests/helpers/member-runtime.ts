@@ -48,10 +48,14 @@ export async function fixture(
   connectors: string[] = [],
   toolsRoot?: string
 ) {
+  let socketOptions: ActionIpcServerOptions;
   // Only the unavailable socket listener is replaced; dispatcher, sessions and stores are real.
-  vi.spyOn(ipc, 'createActionIpcServer').mockImplementation(async (_: ActionIpcServerOptions) => ({
-    close: async () => {},
-  }));
+  vi.spyOn(ipc, 'createActionIpcServer').mockImplementation(
+    async (options: ActionIpcServerOptions) => {
+      socketOptions = options;
+      return { close: async () => {} };
+    }
+  );
   const home = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'lifecycle-home-')));
   const root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'lifecycle-members-')));
   roots.push(home, root);
@@ -152,6 +156,8 @@ export async function fixture(
     workspaceDir: join(home, 'workspace'),
     ...(suspendedWithoutRoot ? {} : { memberRoot: root }),
     ownerPrincipalId: 'owner',
+    commonChannelId: '-100',
+    roomChannels: ['-100', '-101', '-200', 'fixture'],
     agentId: 'owner-agent',
     scopes: [],
     connectors,
@@ -227,12 +233,10 @@ export async function fixture(
               const parsed = JSON.parse(result.content);
               return parsed.success ? { status: 'completed', data: parsed.data } : parsed;
             }
-            return natives
-              .get(principal)!
-              .callAction(
-                { action, input, operationId },
-                { session_id: session!, tool_use_id: operationId }
-              );
+            return native.callAction(
+              { action, input, operationId },
+              { session_id: session!, tool_use_id: operationId }
+            );
           };
           const ref = (opts?.toolExecutionContext as { sourceMessageRef: string }).sourceMessageRef;
           const commonAction = commonActions.get(ref);
@@ -376,6 +380,25 @@ export async function fixture(
     return { result: memberResults.get(principal)!, ref };
   };
   return {
+    get socketOptions() {
+      return socketOptions;
+    },
+    roomMessage: (
+      text = 'room input',
+      action?: { action: string; input: unknown },
+      channel = '-100'
+    ) => {
+      const id = `telegram:${channel}:message-${++sequence}`;
+      if (action) commonActions.set(id, action);
+      runtime.memberIntake(member, channel).acceptOwnerMessage({
+        id,
+        channelKey: channel,
+        occurredAt: Date.now(),
+        text,
+        senderPrincipalId: member,
+      });
+      return id;
+    },
     get runtime() {
       return runtime;
     },

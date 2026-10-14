@@ -4,6 +4,7 @@ import { createHash, randomInt } from 'node:crypto';
 import type { ActionResult, JudgmentAccess, PrincipalRepository } from '@jungjaehoon/mama-core';
 import type { MemberSelection } from '../api/member-enrollment.js';
 import { holdsOwnerRole } from '../runtime/owner-authority.js';
+import { roomChannel } from '../runtime/principal-access.js';
 import { closeSync } from 'node:fs';
 import { basename } from 'node:path';
 
@@ -59,9 +60,9 @@ export interface TelegramGatewayConfig {
 export interface TelegramGatewayOptions {
   token: string;
   intake: TurnIntake;
-  registry: Pick<PrincipalRepository, 'resolveByExternal' | 'listRoles'>;
-  memberIntake: (principalId: string) => TurnIntake | Promise<TurnIntake>;
-  principalPaths: (principalId: string) => { downloadsDir: string };
+  registry: Pick<PrincipalRepository, 'resolveByExternal' | 'listRoles' | 'findById'>;
+  memberIntake: (principalId: string, roomChannel?: string) => TurnIntake | Promise<TurnIntake>;
+  principalPaths: (principalId: string, roomChannel?: string) => { downloadsDir: string };
   config?: Partial<TelegramGatewayConfig>;
   messageLedgerPath?: string;
   messageLedger?: OwnerMessageLedger;
@@ -397,6 +398,7 @@ export class TelegramGateway extends BaseGateway {
       if (destinations?.length !== 1 || !destinations[0]!.id.trim())
         throw new Error('Member file delivery requires exactly one Telegram destination');
       chatId = destinations[0]!.id;
+      if (roomChannel(member.access) !== undefined) this.requireAllowedChat(chatId);
       filesRoot = member.filesRoot;
     } else {
       const ownerChatId = this.config.ownerChatId?.trim();
@@ -658,6 +660,13 @@ export class TelegramGateway extends BaseGateway {
       return this.memberIntake(recipient.principalId);
     }
     this.requireAllowedChat(chatId);
+    const principalId = this.messageLedger.get(sourceRef)?.principalId;
+    if (principalId !== undefined) {
+      const member = this.registry.findById(principalId);
+      if (member?.kind !== 'member' || member.status !== 'active')
+        throw new Error('Telegram room response requires its recorded active member');
+      return this.memberIntake(principalId, chatId);
+    }
     return this.intake;
   }
 
@@ -680,7 +689,7 @@ export class TelegramGateway extends BaseGateway {
     const admitted =
       principal?.kind === 'member' &&
       principal.status === 'active' &&
-      (privateChat || (this.config.allowedChats?.includes(chatId) && this.ownerAllowed(userId)));
+      (privateChat || this.config.allowedChats?.includes(chatId));
     if (message.from.is_bot || !admitted) {
       if (principal?.status === 'suspended') this.cancelMemberEnrollment(principal.principalId);
       const chatHash = createHash('sha256').update(`chat\0${chatId}`).digest('hex');
@@ -704,27 +713,29 @@ export class TelegramGateway extends BaseGateway {
     }
 
     const principalId = principal!.principalId;
+    const recorded = this.messageLedger.get(sourceMessageRef(chatId, message.message_id));
+    const memberRoom =
+      !privateChat && (recorded ? recorded.principalId !== undefined : !this.ownerAllowed(userId));
+    const selectedIntake = () =>
+      privateChat || memberRoom
+        ? this.memberIntake(principalId, memberRoom ? chatId : undefined)
+        : this.intake;
     const queued = (intake?: TurnIntake | Promise<TurnIntake>) => {
       const selected = selectTelegramTextEntities(message);
       const files = telegramFiles(message);
       if (!selected.text.trim() && files.length === 0) return;
       const ref = sourceMessageRef(chatId, message.message_id);
-      const claim = this.claimMessage(message);
+      const claim = this.claimMessage(message, privateChat || memberRoom ? principalId : undefined);
       this.pendingMemberIntakes.set(chatId, (this.pendingMemberIntakes.get(chatId) ?? 0) + 1);
       void this.runInChatQueue(chatId, async () => {
-        const selectedIntake = await Promise.race([
-          Promise.resolve(intake ?? this.memberIntake(principalId)),
+        const target = await Promise.race([
+          Promise.resolve(intake ?? selectedIntake()),
           this.intakeStopped,
         ]);
         // The claimed inbound ledger already preserves this wait. Stop leaves it for startup
         // interruption recovery rather than waiting for a directory/model slot to open.
-        if (!selectedIntake || !this.accepting) return;
-        await this.acceptMessage(
-          message,
-          principalId,
-          selectedIntake,
-          claim.claimed ? ref : undefined
-        );
+        if (!target || !this.accepting) return;
+        await this.acceptMessage(message, principalId, target, claim.claimed ? ref : undefined);
       })
         .catch((error) => {
           this.lastError = telegramErrorMessage(error);
@@ -736,11 +747,11 @@ export class TelegramGateway extends BaseGateway {
           else this.pendingMemberIntakes.delete(chatId);
         });
     };
-    if (privateChat && this.pendingMemberIntakes.has(chatId)) {
+    if ((privateChat || memberRoom) && this.pendingMemberIntakes.has(chatId)) {
       queued();
       return;
     }
-    const intake = privateChat ? this.memberIntake(principalId) : this.intake;
+    const intake = selectedIntake();
     if ('then' in intake) {
       queued(intake);
       return;
@@ -799,7 +810,13 @@ export class TelegramGateway extends BaseGateway {
       selected.text,
       selected.entities
     );
-    const ledgerEntry = this.claimMessage(message).entry;
+    const memberRoom =
+      !privateChat &&
+      (durable ? durable.principalId !== undefined : !holdsOwnerRole(this.registry, principalId));
+    const ledgerEntry = this.claimMessage(
+      message,
+      privateChat || memberRoom ? principalId : undefined
+    ).entry;
     if (intake.deferIncoming?.()) {
       intake.acceptOwnerMessage({
         id: ref,
@@ -821,9 +838,11 @@ export class TelegramGateway extends BaseGateway {
       const attachments = await downloadTelegramFiles(files, {
         api: this.bot!.api,
         token: this.token,
-        downloadsDir: privateChat
-          ? this.principalPaths(principal!.principalId).downloadsDir
-          : this.downloadsDir,
+        downloadsDir:
+          privateChat || memberRoom
+            ? this.principalPaths(principal!.principalId, memberRoom ? chatId : undefined)
+                .downloadsDir
+            : this.downloadsDir,
         messageId: message.message_id,
       });
       const input: OwnerMessageInput = {
@@ -879,7 +898,11 @@ export class TelegramGateway extends BaseGateway {
     const attachments = await downloadTelegramFiles(telegramFiles(message), {
       api: this.bot!.api,
       token: this.token,
-      downloadsDir: this.principalPaths(principalId).downloadsDir,
+      // A member's room message downloads into that room session's paths.
+      downloadsDir: this.principalPaths(
+        principalId,
+        message.chat.type === 'private' ? undefined : String(message.chat.id)
+      ).downloadsDir,
       messageId: message.message_id,
     });
     return {
@@ -894,7 +917,7 @@ export class TelegramGateway extends BaseGateway {
     };
   }
 
-  private claimMessage(message: TelegramMessage) {
+  private claimMessage(message: TelegramMessage, principalId?: string) {
     const selected = selectTelegramTextEntities(message);
     const files = telegramFiles(message);
     const inputIdentity = createHash('sha256')
@@ -904,6 +927,7 @@ export class TelegramGateway extends BaseGateway {
     return this.messageLedger.claim(sourceMessageRef(chatId, message.message_id), {
       deliveryTarget: `telegram:${chatId}`,
       payloadIdentity: inputIdentity,
+      ...(principalId === undefined ? {} : { principalId }),
     });
   }
 

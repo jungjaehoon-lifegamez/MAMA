@@ -1,9 +1,19 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  lstatSync,
+  readdirSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { userInfo } from 'node:os';
 import { sessionCredentialPath } from './session-credential.js';
 import {
   MEMBER_CLAUDE_TMP_PARENT,
+  MEMBER_ROOM_TMP_PARENT,
   HOST_DOCUMENT_RENDER_ROOT,
   normalizeReadPaths,
   physicalReadPath,
@@ -27,23 +37,92 @@ export function memberClaudeTmpDir(principalId: string): string {
   return join(MEMBER_CLAUDE_TMP_PARENT, id);
 }
 
+/** Known before any room starts, so other principals deny this whole subtree. */
+export function memberRoomTmpRoot(principalId: string): string {
+  return join(
+    MEMBER_ROOM_TMP_PARENT,
+    createHash('sha256').update(principalId).digest('hex').slice(0, 8)
+  );
+}
+
+export function memberRoomClaudeTmpDir(
+  principalId: string,
+  channel: string,
+  options: { parent?: string; uid?: number } = {}
+): string {
+  const path = join(
+    options.parent === undefined
+      ? memberRoomTmpRoot(principalId)
+      : join(options.parent, createHash('sha256').update(principalId).digest('hex').slice(0, 8)),
+    createHash('sha256')
+      .update(JSON.stringify([principalId, channel]))
+      .digest('hex')
+      .slice(0, 10)
+  );
+  if (Buffer.byteLength(join(path, `claude-${options.uid ?? userInfo().uid}`)) > 44)
+    throw new Error('Room Claude temp path exceeds the 44-byte sandbox limit');
+  return path;
+}
+
+/** A shared /tmp name must never adopt another user's directory or a symlink. */
+export function ensureMemberClaudeTmpDir(path: string): void {
+  const parent = inside(MEMBER_ROOM_TMP_PARENT, path)
+    ? MEMBER_ROOM_TMP_PARENT
+    : MEMBER_CLAUDE_TMP_PARENT;
+  if (!inside(parent, path)) throw new Error('Member temp path must be under its managed parent');
+  const ensure = (directory: string) => {
+    try {
+      mkdirSync(directory, { mode: 0o700 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+    const entry = lstatSync(directory);
+    if (!entry.isDirectory() || entry.isSymbolicLink())
+      throw new Error('Member temp path must be a directory, not a symlink');
+    if (entry.uid !== userInfo().uid)
+      throw new Error('Member temp path is not owned by the current uid');
+    chmodSync(directory, 0o700);
+  };
+  ensure(parent);
+  let current = parent;
+  for (const component of relative(parent, path).split(sep).filter(Boolean)) {
+    current = join(current, component);
+    ensure(current);
+  }
+  ensure(join(path, `claude-${userInfo().uid}`));
+}
+
 /** Include inactive registrations and unregistered debris; enumerate again before each turn. */
 export function otherMemberReadPaths(
   root: string,
   principalId: string,
-  registered: readonly string[]
+  registered: readonly string[],
+  room = false
 ): string[] {
-  const own = [memberPaths(root, principalId).runtimeRoot, memberClaudeTmpDir(principalId)];
+  const own = [
+    memberPaths(root, principalId).runtimeRoot,
+    memberClaudeTmpDir(principalId),
+    memberRoomTmpRoot(principalId),
+  ];
   // The CLI creates the temp parent at a member's first Claude turn.
-  const tmpEntries = existsSync(MEMBER_CLAUDE_TMP_PARENT)
-    ? readdirSync(MEMBER_CLAUDE_TMP_PARENT).map((entry) => join(MEMBER_CLAUDE_TMP_PARENT, entry))
+  const tmpEntries =
+    !room && existsSync(MEMBER_CLAUDE_TMP_PARENT)
+      ? readdirSync(MEMBER_CLAUDE_TMP_PARENT).map((entry) => join(MEMBER_CLAUDE_TMP_PARENT, entry))
+      : [];
+  const roomEntries = existsSync(MEMBER_ROOM_TMP_PARENT)
+    ? readdirSync(MEMBER_ROOM_TMP_PARENT).map((entry) => join(MEMBER_ROOM_TMP_PARENT, entry))
     : [];
   return normalizeReadPaths(
     [
       HOST_DOCUMENT_RENDER_ROOT,
-      ...registered.flatMap((id) => [memberPaths(root, id).runtimeRoot, memberClaudeTmpDir(id)]),
+      ...registered.flatMap((id) => [
+        memberPaths(root, id).runtimeRoot,
+        memberClaudeTmpDir(id),
+        memberRoomTmpRoot(id),
+      ]),
       ...readdirSync(root).map((entry) => join(root, entry)),
       ...tmpEntries,
+      ...roomEntries,
     ].filter((path) => !own.includes(path))
   );
 }
@@ -87,7 +166,7 @@ export type MemberPaths = ReturnType<typeof memberPaths>;
 export function setAsideMemberPaths(root: string, principalId: string): void {
   const runtime = memberPaths(root, principalId).runtimeRoot;
   const temp = memberClaudeTmpDir(principalId);
-  const paths = [runtime, temp].filter((path) => existsSync(path));
+  const paths = [runtime, temp, memberRoomTmpRoot(principalId)].filter((path) => existsSync(path));
   for (const path of paths) {
     if (physical(path) !== physical(dirname(path)) + sep + path.split(sep).at(-1))
       throw new Error('Member directory to set aside must not be a symlink');

@@ -1052,6 +1052,33 @@ it('retires before snapshot and export, includes retirement writes, and queues u
   expect(order).toEqual(['reset', 'stop', 'export']);
 });
 
+it('keeps a room message received during the erasure with its room', async () => {
+  const f = await setup();
+  const send = f.telegram.sendFile.getMockImplementation()!;
+  const roomRef = 'telegram:-100:fixture-room-during-erasure';
+  f.telegram.sendFile.mockImplementationOnce(async (...args) => {
+    // The member is retired while the export uploads; a room message waits durably.
+    const intake = await f.runtime.memberIntake(f.member, '-100');
+    expect(
+      intake.acceptOwnerMessage({
+        id: roomRef,
+        channelKey: '-100',
+        senderPrincipalId: f.member,
+        occurredAt: Date.now(),
+        text: 'fixture room message',
+      }).state
+    ).toBe('accepted');
+    return send(...args);
+  });
+  const preview = await f.preview();
+  await f.confirm(preview.confirmationToken);
+  expect((await f.finish()).status).toBe('erased');
+  // It runs in that room session afterwards, not in the member's DM session.
+  expect(f.runtime.runtime.mailbox!.readInput(roomRef, f.member)?.payload).toMatchObject({
+    roomChannel: '-100',
+  });
+});
+
 it('writes a personal receipt from other work after the erasure and keeps later DM ledger entries', async () => {
   const f = await setup();
   const send = f.telegram.sendFile.getMockImplementation()!;
@@ -1990,7 +2017,7 @@ it('keeps the step that stopped an erasure when serving the member again also fa
   const prepare = f.runtime.database.adapter.prepare.bind(f.runtime.database.adapter);
   let failures = 0;
   vi.spyOn(f.runtime.database.adapter, 'prepare').mockImplementation((sql) => {
-    if (failures > 0 && /SELECT kind, status FROM principals/.test(sql)) {
+    if (failures > 0 && /SELECT kind, status(?:, created_at)? FROM principals/.test(sql)) {
       failures--;
       throw new Error('fixture serve failed');
     }
@@ -2025,7 +2052,7 @@ it('still records a serve failure receipt in the erasure job', async () => {
   const inject = () => {
     fail = true;
     vi.spyOn(f.runtime.database.adapter, 'prepare').mockImplementation((sql) => {
-      if (fail && /SELECT kind, status FROM principals/.test(sql)) {
+      if (fail && /SELECT kind, status(?:, created_at)? FROM principals/.test(sql)) {
         fail = false;
         throw new Error('fixture serve failed');
       }

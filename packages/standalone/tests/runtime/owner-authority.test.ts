@@ -23,6 +23,8 @@ function database(): DatabaseInstance {
       command_id TEXT PRIMARY KEY, principal_id TEXT, action TEXT, receipt_kind TEXT, receipt_key TEXT
     );
     CREATE TABLE judgment_commands (command_id TEXT PRIMARY KEY, record_id TEXT);
+    CREATE TABLE memory_scopes (id INTEGER PRIMARY KEY, kind TEXT, external_id TEXT);
+    CREATE TABLE memory_scope_bindings (memory_id TEXT, scope_id INTEGER);
   `);
   const insert = db.prepare('INSERT INTO decisions (id, kind, provenance_json) VALUES (?, ?, ?)');
   const rows: Array<[string, string, string | null]> = [

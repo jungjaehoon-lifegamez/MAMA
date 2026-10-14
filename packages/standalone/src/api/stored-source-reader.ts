@@ -10,6 +10,8 @@ import {
   storedObservationChannel,
 } from '../connectors/framework/stored-index-read.js';
 
+import { roomChatFloor } from '../runtime/principal-access.js';
+
 type Access = ActionContext['access'];
 
 const MAX_BATCH_SOURCE_REFS = 500;
@@ -144,7 +146,13 @@ export function createStoredSourceReader(options: StoredSourceReaderOptions): St
     has: (source) => hasStoredConnector(adapter, source),
     overview(source, access, allowance) {
       const channels = allowedChannels(source, access);
-      const row = storedConnectorOverview(adapter, source, channels, allowance?.maxSourceMs);
+      const row = storedConnectorOverview(
+        adapter,
+        source,
+        channels,
+        allowance?.maxSourceMs,
+        source === 'chat' ? roomChatFloor(access) : undefined
+      );
       return {
         source,
         mode: 'stored',
@@ -164,7 +172,9 @@ export function createStoredSourceReader(options: StoredSourceReaderOptions): St
       const query = input.query === undefined ? '' : input.query;
       if (typeof query !== 'string') throw new Error('query must be text');
       const channels = pageChannels(input, granted);
-      const fromMs = time(input.from, 'from');
+      const requestedFrom = time(input.from, 'from');
+      const floor = source === 'chat' ? roomChatFloor(access) : undefined;
+      const fromMs = floor === undefined ? requestedFrom : Math.max(floor, requestedFrom ?? floor);
       const toMs = time(input.to, 'to');
       if (fromMs !== undefined && toMs !== undefined && fromMs > toMs) {
         throw new Error('from must not be later than to');
@@ -238,6 +248,12 @@ export function createStoredSourceReader(options: StoredSourceReaderOptions): St
       const readOne = (ref: string): Record<string, unknown> => {
         const stored = getObservationVersion(adapter, ref);
         if (stored && isErasedRecord(stored)) throw erasedObservation(access, stored.scopes);
+        if (
+          source === 'chat' &&
+          roomChatFloor(access) !== undefined &&
+          (!stored || stored.sourceAt === null || stored.sourceAt < roomChatFloor(access)!)
+        )
+          throw denied();
         const channel = storedObservationChannel(adapter, ref, source, allowance?.maxSourceMs);
         if (channel === undefined) {
           if (access.connectorWideRead?.includes(source)) throw missing();

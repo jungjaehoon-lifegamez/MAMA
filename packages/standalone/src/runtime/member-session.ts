@@ -1,7 +1,8 @@
 import { deliverPersonalJobResult, type PersonalJobStore } from './personal-jobs.js';
 import { createSkillTurnContext } from './skills.js';
 import { deliverPersonalNoticeResult, personalNoticePayload } from './personal-notices.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createPrincipalRepository, type JudgmentAccess } from '@jungjaehoon/mama-core';
 import { ChatSources } from '../storage/chat-sources.js';
@@ -11,11 +12,20 @@ import type { ActionSurface } from './action-surface.js';
 import type { OwnerRuntimeOptions } from './owner-runtime.js';
 import { runtimeModelRun, guidanceInSearchOrder, readOwnerMemoryRecords } from './owner-runtime.js';
 import { createNativeSession, type NativeSession } from './native-session.js';
-import { normalizeReadPaths } from './backend-security.js';
-import { ensureMemberPaths, otherMemberReadPaths } from './member-paths.js';
-import { MEMBER_SYSTEM_PROMPT } from './member-system-prompt.js';
+import { normalizeReadPaths, MEMBER_CLAUDE_TMP_PARENT } from './backend-security.js';
+import {
+  ensureMemberPaths,
+  otherMemberReadPaths,
+  memberRoomTmpRoot,
+  memberRoomClaudeTmpDir,
+} from './member-paths.js';
+import { MEMBER_SYSTEM_PROMPT, MEMBER_ROOM_SYSTEM_PROMPT } from './member-system-prompt.js';
 import { MEMBER_VOICE } from './turn-orders.js';
-import { resolvePrincipalAccess } from './principal-access.js';
+import {
+  resolvePrincipalAccess,
+  memberRoomSessionKey,
+  memberRoomChannel,
+} from './principal-access.js';
 import { readSessionStartInput } from './session-start-context.js';
 import { readableSourcesLine } from './owner-system-prompt.js';
 import { storedSourceFamilies } from '../connectors/framework/stored-index-read.js';
@@ -24,6 +34,20 @@ import { holdsOwnerRole, ownerRuleIds, RULE_KINDS } from './owner-authority.js';
 import type { OwnerPolicyProvider } from './owner-policy.js';
 import { startMemberEgressProxy, type EgressProxy } from './egress-proxy.js';
 import { retirePersonalTurnReceipt } from '../gateways/telegram-message-ledger.js';
+
+interface MemberSession {
+  native: NativeSession;
+  delivery: ReturnType<typeof createStimulusDelivery>;
+  chat: ChatSources;
+  paths: ReturnType<typeof ensureMemberPaths>;
+  access: () => JudgmentAccess;
+  initialAccess: JudgmentAccess;
+  roomSession: (channel: string) => MemberSession;
+  activeSessionKey: () => string;
+  activeSessionFacts: () => import('@jungjaehoon/mama-core').ActionContext['session'];
+  activePaths: () => ReturnType<typeof ensureMemberPaths>;
+  activeDeniedReadPaths: () => readonly string[];
+}
 
 export function createMemberSession(
   principalId: string,
@@ -39,25 +63,52 @@ export function createMemberSession(
     surface: ActionSurface;
     turnChain: NonNullable<StimulusDeliveryOptions['turnChain']>;
     readResult: NonNullable<StimulusDeliveryOptions['readResult']>;
-  }
-) {
+  },
+  room?: string
+): MemberSession {
   const { options, database, rawStore, surface } = ports;
   const agentId = `member-agent:${principalId}`;
-  const sessionKey = `member:${principalId}:runtime`;
+  const sessionKey =
+    room === undefined ? `member:${principalId}:runtime` : memberRoomSessionKey(principalId, room);
   const access = (): JudgmentAccess =>
     resolvePrincipalAccess(principalId, {
       adapter: database.adapter,
       ownerAccess: surface.ownerAccess,
       agentId,
+      sessionKey,
     });
   const initialAccess = access(); // Unknown/inactive ids fail before creating their paths.
-  const paths = ensureMemberPaths(root, principalId);
+  const personalPaths = ensureMemberPaths(root, principalId);
+  const paths =
+    room === undefined
+      ? personalPaths
+      : {
+          ...ensureMemberPaths(
+            join(personalPaths.runtimeRoot, 'rooms'),
+            createHash('sha256').update(room).digest('hex')
+          ),
+          credentialPath: personalPaths.credentialPath,
+        };
+  const rooms = new Map<string, ReturnType<typeof createMemberSession>>();
+  const roomSession = (channel: string): ReturnType<typeof createMemberSession> => {
+    if (!options.roomChannels?.includes(channel)) throw new Error('Room channel is not configured');
+    let session = rooms.get(channel);
+    if (!session)
+      rooms.set(channel, (session = createMemberSession(principalId, root, ports, channel)));
+    return session;
+  };
+  let activeRoom: ReturnType<typeof createMemberSession> | undefined;
+  let activeRequest: Parameters<NativeSession['runTurn']>[1];
   const personalScopes = [{ kind: 'user' as const, id: principalId }];
   const principals = createPrincipalRepository(database.adapter);
   const readsOwnerRules = () => holdsOwnerRole(principals, principalId);
   const readRecords = async (readOptions: Parameters<typeof readOwnerMemoryRecords>[2]) => {
-    const records = await readOwnerMemoryRecords(database.adapter, personalScopes, readOptions);
-    if (readsOwnerRules())
+    const records = await readOwnerMemoryRecords(
+      database.adapter,
+      room === undefined ? personalScopes : [...access().scopes],
+      readOptions
+    );
+    if (room === undefined && readsOwnerRules())
       records.push(
         ...(await readOwnerMemoryRecords(database.adapter, surface.ownerAccess.scopes, {
           ...readOptions,
@@ -66,12 +117,61 @@ export function createMemberSession(
       );
     return [...new Map(records.map((record) => [record.id, record])).values()];
   };
-  const chat = new ChatSources(rawStore, database.adapter, principalId, agentId);
+  const chat = new ChatSources(
+    rawStore,
+    database.adapter,
+    room === undefined ? principalId : options.ownerPrincipalId,
+    agentId
+  );
+  // Include future configured rooms before any of them starts. Literal path denies cannot
+  // express a parent minus its own subtree; snapshot existing debris as well at room creation.
+  const siblingRooms =
+    room === undefined
+      ? []
+      : [
+          ...new Set([
+            ...readdirSync(join(personalPaths.runtimeRoot, 'rooms')).map((entry) =>
+              join(personalPaths.runtimeRoot, 'rooms', entry)
+            ),
+            ...(options.roomChannels ?? []).map((channel) =>
+              join(
+                personalPaths.runtimeRoot,
+                'rooms',
+                createHash('sha256').update(channel).digest('hex')
+              )
+            ),
+          ]),
+        ].filter((path) => path !== paths.runtimeRoot);
+  const siblingTemps =
+    room === undefined
+      ? []
+      : [
+          ...new Set([
+            ...(existsSync(memberRoomTmpRoot(principalId))
+              ? readdirSync(memberRoomTmpRoot(principalId)).map((entry) =>
+                  join(memberRoomTmpRoot(principalId), entry)
+                )
+              : []),
+            ...(options.roomChannels ?? []).map((channel) =>
+              memberRoomClaudeTmpDir(principalId, channel)
+            ),
+          ]),
+        ].filter((path) => path !== memberRoomClaudeTmpDir(principalId, room!));
   const denyPaths = () =>
     normalizeReadPaths([
       ...ports.ownerDeniedPaths,
       paths.claudeConfigDir,
-      ...otherMemberReadPaths(root, principalId, ports.registeredMemberIds()),
+      ...(room === undefined
+        ? [join(personalPaths.runtimeRoot, 'rooms'), memberRoomTmpRoot(principalId)]
+        : [
+            ...readdirSync(personalPaths.runtimeRoot)
+              .filter((entry) => entry !== 'rooms')
+              .map((entry) => join(personalPaths.runtimeRoot, entry)),
+            ...siblingRooms,
+            MEMBER_CLAUDE_TMP_PARENT,
+            ...siblingTemps,
+          ]),
+      ...otherMemberReadPaths(root, principalId, ports.registeredMemberIds(), room !== undefined),
     ]).sort();
   let deniedReadPaths = denyPaths();
   const roles = () =>
@@ -93,13 +193,15 @@ export function createMemberSession(
         principalId,
         agentId,
         sessionKey,
-        systemPrompt: MEMBER_SYSTEM_PROMPT,
+        systemPrompt: room === undefined ? MEMBER_SYSTEM_PROMPT : MEMBER_ROOM_SYSTEM_PROMPT,
+        ...(room === undefined ? {} : { tmpDir: memberRoomClaudeTmpDir(principalId, room) }),
+        ...(room === undefined ? {} : { scopeFingerprint: () => JSON.stringify(access()) }),
         roles: sessionRoles,
         prepareAccess: access,
       },
       // The host reads the common policy; the person's native tools still cannot read its file.
       ownerPolicyProvider: () =>
-        readsOwnerRules()
+        room !== undefined || readsOwnerRules()
           ? ports.ownerPolicyProvider()
           : { content: null, fingerprint: '', loaded: false },
       // Native session also denies this member's runtime and Codex credentials.
@@ -127,17 +229,40 @@ export function createMemberSession(
       return current.supportsNativeSubagents;
     },
     hostToolDefinitions: () => current.hostToolDefinitions(),
-    callAction: (call, caller) => current.callAction(call, caller),
-    resetSession: (key) => current.resetSession(key),
-    steer: (content, target, key) => current.steer(content, target, key),
+    callAction: (call, caller) => (activeRoom?.native ?? current).callAction(call, caller),
+    resetSession: async (key) => {
+      if (room === undefined && key === sessionKey)
+        for (const session of rooms.values())
+          await session.native.resetSession(session.native.sessionKey);
+      const channel = memberRoomChannel(principalId, key);
+      await (
+        room === undefined && channel !== undefined ? roomSession(channel).native : current
+      ).resetSession(key);
+    },
+    steer: (content, target, key) => {
+      const channel = memberRoomChannel(principalId, key);
+      return (
+        room === undefined && channel !== undefined ? roomSession(channel).native : current
+      ).steer(content, target, key);
+    },
     stop: async () => {
       try {
+        await Promise.all([...rooms.values()].map((session) => session.native.stop()));
         await current.stop();
       } finally {
         await proxy?.close();
       }
     },
     runTurn: async (content, request) => {
+      const channel = memberRoomChannel(principalId, request?.sessionKey);
+      if (room === undefined && channel !== undefined) {
+        activeRoom = roomSession(channel);
+        try {
+          return await activeRoom.native.runTurn(content, request);
+        } finally {
+          activeRoom = undefined;
+        }
+      }
       const next = denyPaths();
       const nextRoles = roles();
       const rolesChanged = JSON.stringify(nextRoles) !== JSON.stringify(sessionRoles);
@@ -168,32 +293,47 @@ export function createMemberSession(
         current = create();
       }
       const key = request?.sessionKey ?? sessionKey;
-      const stateless = key !== sessionKey;
+      const stateless =
+        key.startsWith(`member:${principalId}:job:`) ||
+        key.startsWith(`member:${principalId}:notice:`);
       if (stateless) await current.resetSession(key); // Includes an orphan context left by a process crash.
       try {
+        activeRequest = request;
         return await current.runTurn(content, request);
       } finally {
+        activeRequest = undefined;
         if (stateless) await current.resetSession(key);
       }
     },
   };
-  const delivery = createStimulusDelivery({
-    // The common session's standing text says where sources live; a DM is told with its full
-    // inventory, under its own grant and outside the session fingerprint, so a session resumed
-    // across a deploy learns it too and new rows never rotate it.
-    skills: createSkillTurnContext(
-      () => surface.skills.list(principalId),
-      () => {
-        const current = access();
-        return readableSourcesLine(
-          storedSourceFamilies(database.adapter, current.connectors ?? [], current)
-        );
-      }
-    ),
+  const ownDelivery = createStimulusDelivery({
+    // A room holds no personal records, so the person's skill inventory stays out of it. A DM
+    // is told where its readable sources live with its full inventory (the common session's
+    // standing text says it), under its own grant and outside the session fingerprint, so a
+    // session resumed across a deploy learns it too and new rows never rotate it.
+    ...(room === undefined
+      ? {
+          skills: createSkillTurnContext(
+            () => surface.skills.list(principalId),
+            () => {
+              const current = access();
+              return readableSourcesLine(
+                storedSourceFamilies(database.adapter, current.connectors ?? [], current)
+              );
+            }
+          ),
+        }
+      : {}),
     backend: options.backend,
     timeZone: options.timeZone,
     turnChain: ports.turnChain,
     member: { principalId, sessionKey, voice: MEMBER_VOICE },
+    ...(room === undefined
+      ? {}
+      : {
+          ownerMessageSenderActive: (id: string) =>
+            id === principalId && principals.findById(id)?.status === 'active',
+        }),
     personalJobs: ports.personalJobs,
     personalNotices: surface.personalNotices,
     readNoticeRef: (ref) => surface.readNoticeRef(ref, access()),
@@ -233,9 +373,10 @@ export function createMemberSession(
     sessionStart: (row) => {
       access();
       return readSessionStartInput({
-        exchanges: chat.recentExchanges(row.stimulusId),
+        exchanges: room === undefined ? chat.recentExchanges(row.stimulusId) : [],
         records: () => readRecords({ status: 'active', excludeAmendments: true }),
         checkpoint: async () => {
+          if (room !== undefined) return null;
           const result = await surface.hostToolCall(
             'memory.checkpoint.list',
             { limit: 1 },
@@ -261,14 +402,19 @@ export function createMemberSession(
       });
     },
     lessons: async (text) => {
-      const ownerRole = readsOwnerRules();
-      // Personal guidance is ranked on its own, so common records never take its slots.
-      const result = await surface.hostToolCall(
-        'memory.search',
-        { query: text.slice(0, 2_000), limit: 40, includeRelated: false, scopes: personalScopes },
-        `member-lessons:${randomUUID()}`,
-        { access: access() }
-      );
+      const ownerRole = room === undefined && readsOwnerRules();
+      // Personal guidance (a room: only its granted partitions) is ranked on its own, so common
+      // records never take its slots.
+      const ownScopes = room === undefined ? personalScopes : [...access().scopes];
+      const result =
+        ownScopes.length === 0
+          ? ({ status: 'completed', data: { results: [] } } as const)
+          : await surface.hostToolCall(
+              'memory.search',
+              { query: text.slice(0, 2_000), limit: 40, includeRelated: false, scopes: ownScopes },
+              `member-lessons:${randomUUID()}`,
+              { access: access() }
+            );
       if (result.status !== 'completed')
         throw new Error(`memory.search ${result.status}: ${result.error.message}`);
       const hits = (result.data as { results?: Array<{ id: string }> }).results ?? [];
@@ -291,8 +437,9 @@ export function createMemberSession(
         const commonHits = (common.data as { results?: Array<{ id: string }> }).results ?? [];
         hitIds = [...new Set([...hitIds, ...commonHits.map((hit) => hit.id)])];
       }
-      // Keep common facts and other kinds out of the personal guidance ranking.
-      if (!ownerRole) {
+      // Keep common facts and other kinds out of the personal guidance ranking. A room reads only
+      // its granted partitions, and skills.workflows includes the person's own workflows.
+      if (!ownerRole && room === undefined) {
         const common = await surface.hostToolCall(
           'memory.search',
           {
@@ -336,5 +483,46 @@ export function createMemberSession(
     onDead: options.onStimulusDead,
     closeUncertain: options.closeUncertain,
   });
-  return { native, delivery, chat, paths, access, initialAccess };
+  const rowDelivery = (
+    row: Parameters<NonNullable<typeof ownDelivery.deliver>>[0]
+  ): typeof ownDelivery => {
+    const channel =
+      row.kind === 'owner_message' &&
+      row.payload &&
+      typeof row.payload === 'object' &&
+      !Array.isArray(row.payload)
+        ? row.payload.roomChannel
+        : undefined;
+    return room === undefined && typeof channel === 'string'
+      ? roomSession(channel).delivery
+      : ownDelivery;
+  };
+  const delivery: typeof ownDelivery = {
+    ...ownDelivery,
+    deliver: (row, context) => rowDelivery(row).deliver!(row, context),
+    reconcile: (row) => rowDelivery(row).reconcile!(row),
+    onUncertain: (row, reason) => rowDelivery(row).onUncertain?.(row, reason),
+    onDead: (row, reason) => rowDelivery(row).onDead?.(row, reason),
+  };
+  return {
+    native,
+    delivery,
+    chat,
+    paths,
+    access,
+    initialAccess,
+    roomSession,
+    activeSessionKey: () => activeRoom?.native.sessionKey ?? sessionKey,
+    activePaths: () => activeRoom?.activePaths() ?? paths,
+    activeDeniedReadPaths: () => activeRoom?.activeDeniedReadPaths() ?? denyPaths(),
+    activeSessionFacts: () =>
+      activeRoom?.activeSessionFacts() ??
+      (activeRequest
+        ? {
+            sourceMessageRef: activeRequest.sourceMessageRef,
+            sourceRefs: activeRequest.sourceRefs,
+            channelId: activeRequest.channelId,
+          }
+        : undefined),
+  };
 }

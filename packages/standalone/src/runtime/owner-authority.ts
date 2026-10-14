@@ -9,6 +9,14 @@
  * the chat turn. The mailbox drops handled rows after seven days while a rule lasts. A
  * subagent's calls carry `subagent:<thread>`: the agent that heard the owner records the correction.
  */
+import {
+  referenceExists,
+  admittedScopeIds,
+  readableScopeIds,
+  type RecordLink,
+  type JudgmentAmendment,
+} from '@jungjaehoon/mama-core/knowledge';
+import { roomChannel } from './principal-access.js';
 import type { ActionContext, ActionRegistration, DatabaseInstance } from '@jungjaehoon/mama-core';
 import { createPrincipalRepository, type PrincipalRepository } from '@jungjaehoon/mama-core';
 
@@ -20,6 +28,8 @@ export function holdsOwnerRole(
 }
 
 export const RULE_KINDS = ['lesson', 'preference', 'constraint', 'workflow'] as const;
+const COMMON_RULE_TOOL = 'common-channel-rule';
+
 export const POLICY_UPDATE_ACTION = 'manage.policy.update';
 
 const OWNER_CHAT_REF = /^(?:telegram|discord|slack):[^:]+:[^:]+$/;
@@ -93,12 +103,13 @@ export function ownerRuleIds(
          AND EXISTS (
            SELECT 1 FROM judgment_commands j
            JOIN command_bindings b ON b.command_id = j.command_id
-           WHERE j.record_id = d.id AND b.principal_id = ?
+           WHERE j.record_id = d.id AND (b.principal_id = ? OR
+             json_extract(d.provenance_json, '$.tool_name') = ?)
              AND b.action = 'judgment.append' AND b.receipt_kind = 'judgment'
              AND b.receipt_key = d.id
          )`
     )
-    .all(...ids, ownerPrincipalId) as Array<{
+    .all(...ids, ownerPrincipalId, COMMON_RULE_TOOL) as Array<{
     id: string;
     kind: string;
     provenance_json: string | null;
@@ -117,9 +128,18 @@ export function ownerRuleIds(
   );
 }
 
-export function ownerSpeaking(context: ActionContext, ownerPrincipalId: string): boolean {
+export function ownerSpeaking(
+  context: ActionContext,
+  ownerPrincipalId: string,
+  commonChannelId?: string
+): boolean {
   return (
-    context.access.principalId === ownerPrincipalId &&
+    (context.access.principalId === ownerPrincipalId ||
+      (commonChannelId !== undefined &&
+        roomChannel(context.access) === commonChannelId &&
+        context.session?.sourceMessageRef?.startsWith(
+          `telegram:${roomChannel(context.access)}:`
+        ) === true)) &&
     context.session?.replaySourceEndMs === undefined &&
     isOwnerChatRef(context.session?.sourceMessageRef)
   );
@@ -143,7 +163,8 @@ export function amendedRecordIds(action: string, input: unknown): string[] {
 export function guardOwnerRules(
   registration: ActionRegistration,
   adapter: DatabaseInstance,
-  ownerPrincipalId: string
+  ownerPrincipalId: string,
+  commonChannelId?: string
 ): ActionRegistration {
   const action = registration.contract.name;
   return {
@@ -183,7 +204,7 @@ export function guardOwnerRules(
         throw error;
       }
       const owned = ownerRuleIds(adapter, ids, ownerPrincipalId);
-      if (owned.size > 0 && !ownerSpeaking(context, ownerPrincipalId)) {
+      if (owned.size > 0 && !ownerSpeaking(context, ownerPrincipalId, commonChannelId)) {
         const error = new Error(
           `${[...owned].join(', ')} ${owned.size === 1 ? 'is an owner rule' : 'are owner rules'}: ` +
             'change it in the common channel. Save what you learned as a personal lesson ' +
@@ -191,6 +212,74 @@ export function guardOwnerRules(
         );
         error.name = 'denied';
         throw error;
+      }
+      if (
+        owned.size > 0 &&
+        context.access.principalId !== ownerPrincipalId &&
+        ownerSpeaking(context, ownerPrincipalId, commonChannelId)
+      ) {
+        const command = input as {
+          kind?: string;
+          links?: RecordLink[];
+          amends?: JudgmentAmendment[];
+        };
+        if (
+          ids.some((id) => !owned.has(id)) ||
+          (action === 'memory.save' && !(RULE_KINDS as readonly unknown[]).includes(command.kind))
+        ) {
+          const error = new Error(
+            'Common rule corrections may replace or retire only owner rules and must keep a rule kind'
+          );
+          error.name = 'denied';
+          throw error;
+        }
+        // Check references under the original authority before admitting the rule targets.
+        // The common scope below authorizes only the named owner rules and the new rule.
+        for (const [refs, scopeIds] of [
+          [(command.links ?? []).map((link) => link.target), readableScopeIds(context.access)],
+          [
+            (command.amends ?? []).map((amendment) => amendment.target),
+            admittedScopeIds(context.access),
+          ],
+        ] as const) {
+          for (const ref of refs) {
+            if (!referenceExists(adapter, ref, scopeIds)) {
+              const error = new Error(`A judgment reference is unavailable: ${ref.kind} ${ref.id}`);
+              error.name = 'denied';
+              throw error;
+            }
+          }
+        }
+        const common = { kind: 'user' as const, id: ownerPrincipalId };
+        return await registration.exec(
+          action === 'memory.save' ? { ...(input as object), scopes: [common] } : input,
+          {
+            ...context,
+            session: { ...context.session, toolName: COMMON_RULE_TOOL },
+            access: {
+              ...context.access,
+              scopes: [
+                ...context.access.scopes.filter(
+                  (scope) => scope.kind !== common.kind || scope.id !== common.id
+                ),
+                common,
+              ],
+              defaultScopes: [common],
+            },
+          }
+        );
+      }
+      // Stamp the host-selected common-channel rule path, never a scope supplied by the caller.
+      const kind = (input as { kind?: unknown }).kind;
+      if (
+        action === 'memory.save' &&
+        (RULE_KINDS as readonly unknown[]).includes(kind) &&
+        ownerSpeaking(context, ownerPrincipalId, commonChannelId)
+      ) {
+        return await registration.exec(input, {
+          ...context,
+          session: { ...context.session, toolName: COMMON_RULE_TOOL },
+        });
       }
       return await registration.exec(input, context);
     },
