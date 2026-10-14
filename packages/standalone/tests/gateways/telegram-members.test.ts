@@ -297,6 +297,42 @@ describe('P10.1 Telegram person routing', () => {
     }
   });
 
+  it("keeps a group's order while a member's room intake waits", async () => {
+    await gateway.stop();
+    repository.grantRole({ principalId: second, role: 'owner', now: 3 });
+    let served!: () => void;
+    const serving = new Promise<void>((resolve) => (served = resolve));
+    gateway = createGateway(async (id, room) => {
+      await serving;
+      return createStimulusIntake(
+        { mailbox, accept: (input) => ({ inputId: mailbox.enqueue(input)!, state: 'accepted' }) },
+        id,
+        new ChatSources(raw, database.adapter, common, `member-agent:${id}`),
+        room
+      );
+    });
+    await gateway.start();
+    try {
+      await send({ message_id: 31, chat: { id: -100, type: 'supergroup' }, text: 'member first' });
+      // An owner-role sender's later message queues behind it instead of reaching the common
+      // session first.
+      await send({
+        message_id: 32,
+        chat: { id: -100, type: 'supergroup' },
+        from: { id: 20002, is_bot: false },
+        text: 'owner second',
+      });
+      expect(mailbox.readInput('telegram:-100:32', common)).toBeNull();
+      served();
+      await vi.waitFor(() => expect(mailbox.readInput('telegram:-100:32', common)).not.toBeNull());
+      expect(mailbox.readInput('telegram:-100:31', member)!.id).toBeLessThan(
+        mailbox.readInput('telegram:-100:32', common)!.id
+      );
+    } finally {
+      served();
+    }
+  });
+
   it('admits a plain member to its room mailbox and recovers and archives its group reply', async () => {
     await send({ chat: { id: -100, type: 'supergroup' }, text: 'Partition correction' });
     expect(mailbox.readInput('telegram:-100:11', member)).not.toBeNull();

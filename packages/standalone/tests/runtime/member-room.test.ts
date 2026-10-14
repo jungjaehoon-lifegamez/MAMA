@@ -357,7 +357,6 @@ it('durably reroutes a queued common message after owner role loss, once across 
       attachments: [{ path: original, name: 'queued_fixture.txt', size: 18 }],
     },
   });
-  f.ledger.claim(ref);
   f.runtime.database.adapter
     .prepare("DELETE FROM principal_roles WHERE principal_id=? AND role='owner'")
     .run(f.managingOwner);
@@ -372,8 +371,8 @@ it('durably reroutes a queued common message after owner role loss, once across 
   await f.settled(ref, f.managingOwner);
   const row = f.runtime.runtime.mailbox!.readInput(ref, f.managingOwner)!;
   expect(row.payload).toMatchObject({ roomChannel: 'fixture', senderPrincipalId: f.managingOwner });
-  // The reply follows the member's room, not the common archive.
-  expect(f.ledger.get(ref)?.principalId).toBe(f.managingOwner);
+  // The reply follows the member's room, found through the durable room input.
+  expect(f.runtime.intake.handedOffTo?.(ref)).toBe(f.managingOwner);
   // The room session reads the file from its own downloads, not the common ones.
   const [moved] = (row.payload as { input: { attachments: Array<{ path: string }> } }).input
     .attachments;

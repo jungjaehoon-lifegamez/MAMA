@@ -749,8 +749,6 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
             roomChannel: row.channelKey,
           } as unknown as JsonValue,
         });
-        // Its reply then comes back through the room session, authored by the member's agent.
-        options.messageLedger?.()?.handOff(row.stimulusId, sender);
         return true;
       },
       wikiEnabled: options.wiki?.enabled ?? false,

@@ -1422,8 +1422,7 @@ function assertSourceRefsExist(
   ports: WorkPorts,
   context: ActionContext
 ): void {
-  if (!Array.isArray(body.sourceRefs)) return;
-  for (const ref of body.sourceRefs) {
+  for (const ref of Array.isArray(body.sourceRefs) ? body.sourceRefs : []) {
     if (typeof ref === 'string' && !ports.observationExists(ref, context)) {
       // Echo only the caller's own input, as the core reference refusal does.
       throw new JudgmentError(
@@ -1431,6 +1430,26 @@ function assertSourceRefsExist(
         `sourceRefs names an unavailable observation: ${ref}`
       );
     }
+  }
+  // Core checks only that a linked observation exists; the caller must also read it, and both
+  // observation ends of a linked edge.
+  for (const link of Array.isArray(body.links)
+    ? (body.links as Array<{ target?: { kind?: unknown; id?: unknown } }>)
+    : []) {
+    const target = link?.target;
+    if (typeof target?.id !== 'string') continue;
+    const cited =
+      target.kind === 'observation'
+        ? [target.id]
+        : target.kind === 'edge'
+          ? ports.edgeObservations(target.id)
+          : [];
+    for (const ref of cited)
+      if (!ports.observationExists(ref, context))
+        throw new JudgmentError(
+          'REFERENCE_NOT_FOUND',
+          `links names an unavailable observation: ${ref}`
+        );
   }
 }
 

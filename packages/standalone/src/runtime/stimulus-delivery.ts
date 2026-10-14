@@ -75,6 +75,8 @@ export interface ScheduledInput {
 export interface StimulusIntake {
   accept(stimulus: Stimulus): StimulusReceipt;
   isPending?(sourceMessageRef: string): boolean;
+  /** The member whose room session took this common input, if one did. */
+  handedOffTo?(sourceMessageRef: string): string | undefined;
   acceptOwnerMessage(input: OwnerMessageInput): StimulusReceipt;
   recordOwnerReply(input: OwnerReplyInput): void;
   hasOwnerMessage?(sourceMessageRef: string): boolean;
@@ -241,29 +243,30 @@ export function createStimulusIntake(
       ? {}
       : { senderPrincipalId: input.senderPrincipalId }),
   });
+  // A common input handed to a member's room keeps its transport identity; the durable room
+  // input, read here, is the one record of where it went.
+  const handedOff = (sourceMessageRef: string) => {
+    const row = runtime.mailbox?.readInput(sourceMessageRef, principalId);
+    const sender =
+      row?.payload && typeof row.payload === 'object' && !Array.isArray(row.payload)
+        ? row.payload.senderPrincipalId
+        : undefined;
+    if (typeof sender !== 'string' || sender === principalId) return undefined;
+    const routed = runtime.mailbox?.readInput(sourceMessageRef, sender);
+    return routed?.payload &&
+      typeof routed.payload === 'object' &&
+      !Array.isArray(routed.payload) &&
+      routed.payload.roomChannel === row?.channelKey
+      ? routed
+      : undefined;
+  };
   return {
     accept: (stimulus) => runtime.accept({ ...stimulus, principalId }),
+    handedOffTo: (sourceMessageRef) => handedOff(sourceMessageRef)?.principalId,
     isPending: (sourceMessageRef) => {
-      let row = runtime.mailbox?.readInput(sourceMessageRef, principalId);
-      let handedOff = false;
-      // A common input handed to a member keeps its transport identity. Recovery must wait
-      // for that durable room input rather than replacing its answer with an interruption.
-      const sender =
-        row?.payload && typeof row.payload === 'object' && !Array.isArray(row.payload)
-          ? row.payload.senderPrincipalId
-          : undefined;
-      if (typeof sender === 'string' && sender !== principalId) {
-        const routed = runtime.mailbox?.readInput(sourceMessageRef, sender);
-        if (
-          routed?.payload &&
-          typeof routed.payload === 'object' &&
-          !Array.isArray(routed.payload) &&
-          routed.payload.roomChannel === row?.channelKey
-        ) {
-          row = routed;
-          handedOff = true;
-        }
-      }
+      // Recovery waits for a handed-off room input rather than replacing its answer.
+      const routed = handedOff(sourceMessageRef);
+      const row = routed ?? runtime.mailbox?.readInput(sourceMessageRef, principalId);
       // A failed accepted turn will never run again. Keep a recorded answer pending only
       // until reconciliation delivers it, so recovery cannot replace it with an interruption.
       if (row?.nativeDelivery?.state === 'uncertain') {
@@ -272,7 +275,7 @@ export function createStimulusIntake(
           receipt && runtime.mailbox!.nativeInputs.resultForReceipt(receipt, row.principalId)
         );
       }
-      return row?.status === 'pending' || (handedOff && row?.status === 'claimed');
+      return row?.status === 'pending' || (routed !== undefined && row?.status === 'claimed');
     },
     recordOwnerReply: (input) => chat.saveReply(input),
     ...(chat.hasOwnerMessage === undefined

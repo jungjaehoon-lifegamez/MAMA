@@ -368,6 +368,15 @@ it('refuses room work evidence the room cannot read, in sources and link targets
     });
   // Core stores sourceRefs that merely exist; a room cites only what its own reads reach.
   expect(await create([before!])).toMatchObject({ status: 'failed' });
+  expect(
+    await call('work.create', {
+      topic: 'room-work',
+      summary: 'room work',
+      scopes: [PARTITION],
+      set: { title: 'room work' },
+      links: [{ relation: 'derived_from', target: { kind: 'observation', id: before! } }],
+    })
+  ).toMatchObject({ status: 'failed' });
   const work = data(await create([after!])) as { commitmentId: string };
   const link = (id: string) =>
     call('work.link', {

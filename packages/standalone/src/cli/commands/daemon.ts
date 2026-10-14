@@ -328,6 +328,7 @@ export function loggedOwnerIntake(
     },
     recordOwnerReply: (input) => intake.recordOwnerReply(input),
     ...(intake.isPending === undefined ? {} : { isPending: intake.isPending }),
+    ...(intake.handedOffTo === undefined ? {} : { handedOffTo: intake.handedOffTo }),
     ...(intake.hasOwnerMessage === undefined ? {} : { hasOwnerMessage: intake.hasOwnerMessage }),
   };
 }

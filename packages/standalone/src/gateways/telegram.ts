@@ -660,7 +660,10 @@ export class TelegramGateway extends BaseGateway {
       return this.memberIntake(recipient.principalId);
     }
     this.requireAllowedChat(chatId);
-    const principalId = this.messageLedger.get(sourceRef)?.principalId;
+    // A room turn records its member on the ledger; a common message handed to a member's room
+    // is found through the durable room input, so a crash between the two cannot misroute it.
+    const principalId =
+      this.messageLedger.get(sourceRef)?.principalId ?? this.intake.handedOffTo?.(sourceRef);
     if (principalId !== undefined) {
       const member = this.registry.findById(principalId);
       if (member?.kind !== 'member' || member.status !== 'active')
@@ -747,7 +750,9 @@ export class TelegramGateway extends BaseGateway {
           else this.pendingMemberIntakes.delete(chatId);
         });
     };
-    if ((privateChat || memberRoom) && this.pendingMemberIntakes.has(chatId)) {
+    // While an intake for this chat waits, every later message queues behind it, whichever
+    // session it selects, so the group's order holds.
+    if (this.pendingMemberIntakes.has(chatId)) {
       queued();
       return;
     }

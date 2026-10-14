@@ -24,6 +24,8 @@ export interface TurnIntake {
   /** A slow intake may have a delivery claim but no stored original after a restart. */
   hasOwnerMessage?(sourceMessageRef: string): boolean;
   isPending?(sourceMessageRef: string): boolean;
+  /** The member whose room session took this common input, if one did. */
+  handedOffTo?(sourceMessageRef: string): string | undefined;
 }
 
 export interface OwnerReplyInput {

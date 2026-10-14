@@ -184,6 +184,33 @@ describe('trello.read', () => {
     });
   });
 
+  it('keeps a room to its granted boards even when its sender holds the owner role', async () => {
+    const { dispatch, owner } = await setup();
+    const repository = createPrincipalRepository(db.adapter);
+    const person = repository.registerMember({
+      connector: 'telegram',
+      namespace: 'private',
+      externalId: 'fixture-room-sender',
+      now: 1,
+    });
+    repository.grantRole({ principalId: person, role: 'owner', now: 2 });
+    const room = {
+      ...owner,
+      principalId: person,
+      channels: { trello: ['board-key'] },
+      roomChannel: '-100',
+    } as ActionContext['access'];
+    const result = await dispatch(
+      { action: 'trello.read', input: { view: 'boards' } },
+      { access: room }
+    );
+    expect(result).toMatchObject({
+      status: 'completed',
+      data: { boards: [{ board: 'board-key' }] },
+    });
+    expect(JSON.stringify(result)).not.toContain('board-b-key');
+  });
+
   it('lists the boards with their lists and open card counts', async () => {
     const { dispatch, owner } = await setup();
     const result = await dispatch(
