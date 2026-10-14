@@ -1100,6 +1100,36 @@ it('writes a personal receipt from other work after the erasure and keeps later 
   );
 });
 
+it('leaves a member under erasure unserved when an enrollment selects it during the upload', async () => {
+  const f = await setup();
+  const ref = f.message('owner');
+  await f.settled(ref);
+  const send = f.telegram.sendFile.getMockImplementation()!;
+  let enrollment: unknown;
+  f.telegram.sendFile.mockImplementationOnce(async (...args) => {
+    // The upload releases the directory wait, so this completion runs now; serving the member
+    // here would recreate the paths the delivered export was checked against.
+    enrollment = await f.runtime.completeMemberEnrollment({
+      sourceMessageRef: ref,
+      ownerUserId: 'fixture-manager',
+      userId: f.memberDm,
+    });
+    return send(...args);
+  });
+  const preview = await f.preview();
+  await f.confirm(preview.confirmationToken);
+  expect((await f.finish()).status).toBe('erased');
+  expect(enrollment).toMatchObject({
+    status: 'completed',
+    data: {
+      status: 'exists',
+      principalId: f.member,
+      message: "The member's personal records are being erased; it is served again when that ends",
+    },
+  });
+  expect(f.runtime.runtime.servesPrincipal(f.member)).toBe(true);
+});
+
 it('keeps a personal receipt deferred during the erasure across a restart', async () => {
   const f = await setup();
   const send = f.telegram.sendFile.getMockImplementation()!;

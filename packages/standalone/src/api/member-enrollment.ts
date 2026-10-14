@@ -25,7 +25,7 @@ export interface MemberEnrollmentPorts {
   memberRoot?: string;
   requestSelection(sourceMessageRef: string, ownerUserId: string, name?: string): Promise<void>;
   cancelSelection?(principalId: string): void;
-  serveMember?(principalId: string): void | 'next_start';
+  serveMember?(principalId: string): void | 'next_start' | 'after_erasure';
 }
 
 export function createMemberEnrollment(options: {
@@ -126,7 +126,9 @@ export function createMemberEnrollment(options: {
           current.principalId,
           serving === 'next_start'
             ? 'The member is registered and will be served at the next start'
-            : undefined
+            : serving === 'after_erasure'
+              ? "The member's personal records are being erased; it is served again when that ends"
+              : undefined
         );
       }
       if (current && current.principalId !== options.ownerPrincipalId)

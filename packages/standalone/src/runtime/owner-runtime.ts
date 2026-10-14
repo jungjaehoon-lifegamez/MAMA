@@ -569,6 +569,9 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
               memberRoot,
               serveMember: (id) => {
                 if (stopping) return 'next_start';
+                // Serving recreates the member's paths; an erasure checks them against the
+                // delivered export and serves the member itself when it ends.
+                if (surface.memberRecords.excludePrincipals().includes(id)) return 'after_erasure';
                 serveMember(id);
                 return undefined;
               },
