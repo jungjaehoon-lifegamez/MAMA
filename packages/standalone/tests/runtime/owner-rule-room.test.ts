@@ -514,3 +514,18 @@ it('refuses a room revision of an unbound work head and a rule in a partition it
     await call('memory.retire', { memory_id: rule, reason: 'withdrawn', status: 'stale' })
   ).toMatchObject({ status: 'failed', error: { code: 'denied' } });
 });
+
+it('refuses a room replacement of an unbound record', async () => {
+  const legacy = await save({ kind: 'decision', scopes: [PARTITION] });
+  // A legacy record with no binding is readable by everyone; a room must not replace it.
+  db.adapter.prepare('DELETE FROM memory_scope_bindings WHERE memory_id = ?').run(legacy);
+  expect(
+    await call(
+      'memory.save',
+      input({ kind: 'decision', scopes: [PARTITION], replaces: [replace(legacy)] })
+    )
+  ).toMatchObject({ status: 'failed', error: { code: 'denied' } });
+  expect(db.adapter.prepare('SELECT status FROM decisions WHERE id = ?').get(legacy)).toEqual({
+    status: 'active',
+  });
+});
