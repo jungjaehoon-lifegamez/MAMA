@@ -1003,6 +1003,10 @@ export async function runWorkListView(
     throw invalidInput('work.list ids are only valid with view=detail or view=links');
   }
   if (view === 'detail') return workListDetail(input, ctx);
+  // The links view reads the graph, whose visibility does not know a room's enrollment floor;
+  // a room (an access with roomChannel, principal-access.ts) has no graph reads.
+  if (view === 'links' && (ctx.access as { roomChannel?: string }).roomChannel !== undefined)
+    throw invalidInput('work.list view=links is not available in a group room session');
   if (view === 'links') return workListLinks(input, ctx);
   const requested = workListFilter(input);
   const filter =

@@ -17,7 +17,12 @@ import {
   type JudgmentAmendment,
 } from '@jungjaehoon/mama-core/knowledge';
 import { roomChannel } from './principal-access.js';
-import type { ActionContext, ActionRegistration, DatabaseInstance } from '@jungjaehoon/mama-core';
+import type {
+  ActionContext,
+  ActionRegistration,
+  DatabaseInstance,
+  MemoryScopeRef,
+} from '@jungjaehoon/mama-core';
 import { createPrincipalRepository, type PrincipalRepository } from '@jungjaehoon/mama-core';
 
 export function holdsOwnerRole(
@@ -281,9 +286,25 @@ export function guardOwnerRules(
             }
           }
         }
+        // A common rule's correction is common; a rule saved only in a partition keeps that
+        // partition instead of being promoted into the common records.
         const common = { kind: 'user' as const, id: ownerPrincipalId };
+        const bound = (
+          adapter
+            .prepare(
+              `SELECT DISTINCT s.kind, s.external_id FROM memory_scope_bindings b
+               JOIN memory_scopes s ON s.id = b.scope_id
+               WHERE b.memory_id IN (${[...owned].map(() => '?').join(',')})`
+            )
+            .all(...owned) as Array<{ kind: string; external_id: string }>
+        ).map((row) => ({ kind: row.kind, id: row.external_id }) as MemoryScopeRef);
+        const scopes =
+          bound.length === 0 ||
+          bound.some((scope) => scope.kind === common.kind && scope.id === common.id)
+            ? [common]
+            : bound;
         return await registration.exec(
-          action === 'memory.save' ? { ...(input as object), scopes: [common] } : input,
+          action === 'memory.save' ? { ...(input as object), scopes } : input,
           {
             ...context,
             session: { ...context.session, toolName: COMMON_RULE_TOOL },
@@ -291,11 +312,12 @@ export function guardOwnerRules(
               ...context.access,
               scopes: [
                 ...context.access.scopes.filter(
-                  (scope) => scope.kind !== common.kind || scope.id !== common.id
+                  (scope) =>
+                    !scopes.some((target) => target.kind === scope.kind && target.id === scope.id)
                 ),
-                common,
+                ...scopes,
               ],
-              defaultScopes: [common],
+              defaultScopes: scopes,
             },
           }
         );

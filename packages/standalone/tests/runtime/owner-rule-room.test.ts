@@ -436,3 +436,24 @@ it('checks room evidence in every link and nested evidence field', async () => {
   expect(await role(before!)).toMatchObject({ status: 'failed' });
   expect((await role(after!)).status).toBe('completed');
 });
+
+it('keeps a corrected partition rule in its partition and has no graph-backed link view', async () => {
+  // A lesson saved in a partition from the common channel counts as an owner rule.
+  const rule = await save({ scopes: [PARTITION] }, room());
+  expect([...ownerRuleIds(db.adapter, [rule], OWNER)]).toEqual([rule]);
+  const corrected = data(
+    await call('memory.save', input({ replaces: [replace(rule)], scopes: [PARTITION] }))
+  ).id as string;
+  // Its correction stays in the partition instead of becoming a common rule.
+  expect(
+    db.adapter
+      .prepare(
+        'SELECT s.kind, s.external_id FROM memory_scope_bindings b JOIN memory_scopes s ON s.id=b.scope_id WHERE b.memory_id=?'
+      )
+      .all(corrected)
+  ).toEqual([{ kind: 'project', external_id: PARTITION.id }]);
+  expect(await call('work.list', { view: 'links', ids: ['work-fixture'] })).toMatchObject({
+    status: 'failed',
+    error: { code: 'invalid_input' },
+  });
+});

@@ -15,7 +15,6 @@ import type { ConnectorRegistry } from '../connectors/framework/connector-regist
 import { TrelloConnector } from '../connectors/trello/index.js';
 import type { TrelloBoardChannel } from '../connectors/trello/actions.js';
 import { holdsOwnerRole } from '../runtime/owner-authority.js';
-import { roomChannel } from '../runtime/principal-access.js';
 
 export interface TrelloReadPorts {
   connectors?: () => ConnectorRegistry | null;
@@ -54,7 +53,8 @@ function permittedBoards(
   // room turn was queued.
   if (
     access.principalId === ports.ownerPrincipalId ||
-    (roomChannel(access) === undefined && holdsOwnerRole(principals(), access.principalId))
+    ((access as { roomChannel?: string }).roomChannel === undefined &&
+      holdsOwnerRole(principals(), access.principalId))
   )
     return boards;
   const granted = access.channels?.trello ?? [];
