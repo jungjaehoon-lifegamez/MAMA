@@ -180,14 +180,18 @@ async function fixture(recordFails = false) {
     });
     return `telegram:${ownerId}:${current}`;
   };
+  // The full suite runs many runtimes at once; a turn can take longer than waitFor's 1 s default.
   const settled = async (ref: string) =>
-    vi.waitFor(() => expect(runtime.runtime.mailbox!.readInput(ref, person)?.status).toBe('acked'));
+    vi.waitFor(
+      () => expect(runtime.runtime.mailbox!.readInput(ref, person)?.status).toBe('acked'),
+      { timeout: 10_000 }
+    );
   const ref = await message({ text: 'fixture first personal question' });
   await settled(ref);
   transport.send.mockClear();
   const select = async (requestId = 1, users = [{ user_id: selectedId }]) => {
     const ref = await message({ users_shared: { request_id: requestId, users } });
-    await vi.waitFor(() => expect(selectionsFinished.has(ref)).toBe(true));
+    await vi.waitFor(() => expect(selectionsFinished.has(ref)).toBe(true), { timeout: 10_000 });
     return ref;
   };
   return {

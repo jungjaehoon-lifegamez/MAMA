@@ -249,24 +249,35 @@ export function createMemberSession(
     },
     lessons: async (text) => {
       const ownerRole = readsOwnerRules();
+      // Personal guidance is ranked on its own, so common records never take its slots.
       const result = await surface.hostToolCall(
         'memory.search',
-        {
-          query: text.slice(0, 2_000),
-          limit: 40,
-          includeRelated: false,
-          ...(!ownerRole ? { scopes: personalScopes } : {}),
-        },
+        { query: text.slice(0, 2_000), limit: 40, includeRelated: false, scopes: personalScopes },
         `member-lessons:${randomUUID()}`,
-        {
-          access: ownerRole ? { ...access(), readScopes: surface.ownerAccess.scopes } : access(),
-        }
+        { access: access() }
       );
       if (result.status !== 'completed')
         throw new Error(`memory.search ${result.status}: ${result.error.message}`);
       const hits = (result.data as { results?: Array<{ id: string }> }).results ?? [];
       const records = await readRecords({ kind: [...RULE_KINDS], status: 'active' });
       let hitIds = hits.map((hit) => hit.id);
+      if (ownerRole) {
+        const common = await surface.hostToolCall(
+          'memory.search',
+          {
+            query: text.slice(0, 2_000),
+            limit: 40,
+            includeRelated: false,
+            scopes: surface.ownerAccess.scopes,
+          },
+          `member-owner-lessons:${randomUUID()}`,
+          { access: { ...access(), readScopes: surface.ownerAccess.scopes } }
+        );
+        if (common.status !== 'completed')
+          throw new Error(`memory.search ${common.status}: ${common.error.message}`);
+        const commonHits = (common.data as { results?: Array<{ id: string }> }).results ?? [];
+        hitIds = [...new Set([...hitIds, ...commonHits.map((hit) => hit.id)])];
+      }
       // Keep common facts and other kinds out of the personal guidance ranking.
       if (!ownerRole) {
         const common = await surface.hostToolCall(

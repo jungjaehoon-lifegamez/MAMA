@@ -199,44 +199,53 @@ it('searches personal guidance separately from common workflows for a plain memb
   });
 });
 
-it('keeps a personal correction in lessons despite 40 more similar common records', async () => {
-  const f = await fixture();
-  const correction = {
-    ...workflow,
-    topic: 'fixture-format-rule',
-    kind: 'constraint',
-    summary: 'Check fixture artifact output before delivery',
-    appliesWhen: 'When making fixture artifacts',
-  };
-  data((await f.act('memory.save', correction)).result);
-  for (let i = 0; i < 40; i++)
-    data(
-      await f.runtime.surface.hostToolCall(
-        'memory.save',
-        {
-          ...workflow,
-          topic: `fixture-common-${i}`,
-          kind: ['fact', 'decision', 'lesson'][i % 3],
-          summary: 'Make a fixture artifact',
-          details: 'Make a fixture artifact',
-        },
-        `fixture-common-save-${i}`,
-        { access: f.runtime.surface.ownerAccess }
-      )
-    );
-  const common = f.message('owner', 'Save fixture workflow', f.managingOwner, {
-    action: 'memory.save',
-    input: workflow,
-  });
-  await f.settled(common);
-  const ref = f.message(f.member, 'Make a fixture artifact');
-  await f.settled(ref, f.member);
-  const prompt = f.turns.filter((turn) => turn.principal === f.member).at(-1)!.prompt;
-  const lessons = prompt.slice(prompt.indexOf('<lessons>'), prompt.indexOf('</lessons>'));
-  expect(lessons).toContain(correction.topic);
-  expect(lessons).toContain(workflow.topic);
-  expect(lessons).not.toContain('fixture-common-');
-});
+it.each([false, true])(
+  'keeps a personal correction in lessons despite 40 more similar common records (owner role: %s)',
+  async (ownerRole) => {
+    const f = await fixture();
+    if (ownerRole)
+      createPrincipalRepository(f.runtime.database.adapter).grantRole({
+        principalId: f.member,
+        role: 'owner',
+      });
+    const correction = {
+      ...workflow,
+      topic: 'fixture-format-rule',
+      kind: 'constraint',
+      summary: 'Check fixture artifact output before delivery',
+      appliesWhen: 'When making fixture artifacts',
+    };
+    data((await f.act('memory.save', correction)).result);
+    for (let i = 0; i < 40; i++)
+      data(
+        await f.runtime.surface.hostToolCall(
+          'memory.save',
+          {
+            ...workflow,
+            topic: `fixture-common-${i}`,
+            kind: ['fact', 'decision', 'lesson'][i % 3],
+            summary: 'Make a fixture artifact',
+            details: 'Make a fixture artifact',
+          },
+          `fixture-common-save-${i}`,
+          { access: f.runtime.surface.ownerAccess }
+        )
+      );
+    const common = f.message('owner', 'Save fixture workflow', f.managingOwner, {
+      action: 'memory.save',
+      input: workflow,
+    });
+    await f.settled(common);
+    const ref = f.message(f.member, 'Make a fixture artifact');
+    await f.settled(ref, f.member);
+    const prompt = f.turns.filter((turn) => turn.principal === f.member).at(-1)!.prompt;
+    const lessons = prompt.slice(prompt.indexOf('<lessons>'), prompt.indexOf('</lessons>'));
+    expect(lessons).toContain(correction.topic);
+    expect(lessons).toContain(workflow.topic);
+    // A plain member sees only common workflows; an owner also reads common rule kinds.
+    if (!ownerRole) expect(lessons).not.toContain('fixture-common-');
+  }
+);
 
 it('deduplicates owner-role shared workflows before the ten session-start decisions', async () => {
   const f = await fixture();
