@@ -480,3 +480,37 @@ it('revises work from a room only when every binding of its head is within its g
   expect(await revise(wide.commitmentId)).toMatchObject({ status: 'failed' });
   expect((await revise(narrow.commitmentId)).status).toBe('completed');
 });
+
+it('refuses a room revision of an unbound work head and a rule in a partition it lost', async () => {
+  const work = data(
+    await call(
+      'work.create',
+      { topic: 'legacy-work', summary: 'work', scopes: [PARTITION], set: { title: 'legacy' } },
+      owner()
+    )
+  ) as { commitmentId: string };
+  // A legacy head with no binding is readable by everyone; a room must not narrow it.
+  db.adapter
+    .prepare(
+      'DELETE FROM memory_scope_bindings WHERE memory_id = (SELECT head_record_id FROM commitments WHERE commitment_id = ?)'
+    )
+    .run(work.commitmentId);
+  expect(
+    await call('work.revise', {
+      commitmentId: work.commitmentId,
+      summary: 'room change',
+      scopes: [PARTITION],
+      set: { title: 'room change' },
+    })
+  ).toMatchObject({ status: 'failed' });
+  const rule = await save({ scopes: [PARTITION] }, room());
+  createPrincipalRepository(db.adapter).revokeScope({
+    targetPrincipalId: member,
+    ownerPrincipalId: OWNER,
+    now: 2002,
+    scope: { kind: 'memory', scopeKind: 'project', scopeId: PARTITION.id },
+  });
+  expect(
+    await call('memory.retire', { memory_id: rule, reason: 'withdrawn', status: 'stale' })
+  ).toMatchObject({ status: 'failed', error: { code: 'denied' } });
+});

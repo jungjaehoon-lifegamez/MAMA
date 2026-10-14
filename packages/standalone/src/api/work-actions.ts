@@ -1589,17 +1589,21 @@ export function minimalWorkActionRegistrations(ports: WorkPorts): ActionRegistra
         assertReplayEventDatetime(body, context, 'work.revise');
         assertSourceRefsExist(body, ports, context);
         const commitmentId = body.commitmentId as string;
-        // A revision becomes the head every reader sees, so a room revises only work whose
-        // every binding is within its grants (an access with roomChannel, principal-access.ts).
+        // A revision becomes the head every reader sees, so a room revises only bound work whose
+        // every binding is within its grants (an access with roomChannel, principal-access.ts);
+        // an unbound head is readable by everyone.
+        const bindings =
+          (context.access as { roomChannel?: string }).roomChannel === undefined
+            ? undefined
+            : ports.workBindings(commitmentId);
         if (
-          (context.access as { roomChannel?: string }).roomChannel !== undefined &&
-          !ports
-            .workBindings(commitmentId)
-            .every((binding) =>
+          bindings !== undefined &&
+          (bindings.length === 0 ||
+            !bindings.every((binding) =>
               context.access.scopes.some(
                 (scope) => scope.kind === binding.kind && scope.id === binding.id
               )
-            )
+            ))
         )
           throw new JudgmentError(
             'SCOPE_DENIED',

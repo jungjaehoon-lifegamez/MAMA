@@ -303,6 +303,19 @@ export function guardOwnerRules(
           bound.some((scope) => scope.kind === common.kind && scope.id === common.id)
             ? [common]
             : bound;
+        // A partition rule is corrected only by a room that still holds that partition.
+        if (
+          scopes === bound &&
+          !bound.every((target) =>
+            context.access.scopes.some(
+              (scope) => scope.kind === target.kind && scope.id === target.id
+            )
+          )
+        ) {
+          const error = new Error('The rule is bound to a project outside your grants');
+          error.name = 'denied';
+          throw error;
+        }
         return await registration.exec(
           action === 'memory.save' ? { ...(input as object), scopes } : input,
           {
