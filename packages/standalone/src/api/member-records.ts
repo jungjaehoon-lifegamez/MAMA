@@ -82,6 +82,8 @@ interface ErasureState {
   receiptDelivered?: boolean;
   exportAttempted?: boolean;
   receiptAttempted?: boolean;
+  /** The receipt already names a failed re-serve; later retries do not add to it. */
+  serveFailed?: boolean;
   /** DM ledger entries the delivered export holds. Other principals keep running during an
    * erasure, so entries written for this DM after the snapshot are left for the fresh start. */
   exported?: { ledgerKeys: string[] };
@@ -547,13 +549,14 @@ export function createMemberRecords(options: {
       try {
         p.serve(id);
       } catch (error) {
-        if (!state.receiptAttempted && !state.receiptDelivered) {
+        if (!state.receiptAttempted && !state.receiptDelivered && !state.serveFailed) {
           state.text = `${state.text}\nserving the member again also failed: ${error instanceof Error ? error.message : String(error)}.`;
+          state.serveFailed = true;
           checkpoint(job, state);
         } else {
-          // Once a receipt crossed the send boundary, its text is immutable: a later service
-          // failure cannot change what the transport delivered or what the chat records.
-          console.error('[Member records] service restoration failed after receipt attempt', error);
+          // The receipt names the first failure once (the recovery tick retries every few
+          // seconds), and a text that crossed the send boundary never changes.
+          console.error('[Member records] service restoration failed again', error);
         }
         // Keep the receipt carrier and principal exclusion until service restoration succeeds.
         // The recovery tick retries this phase; deferred messages must not run unserved.

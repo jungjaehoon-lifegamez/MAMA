@@ -1988,25 +1988,31 @@ it.each(['failed', 'success'] as const)(
 it('keeps the step that stopped an erasure when serving the member again also fails', async () => {
   const f = await setup();
   const prepare = f.runtime.database.adapter.prepare.bind(f.runtime.database.adapter);
-  let fail = false;
+  let failures = 0;
   vi.spyOn(f.runtime.database.adapter, 'prepare').mockImplementation((sql) => {
-    if (fail && /SELECT kind, status FROM principals/.test(sql)) {
-      fail = false;
+    if (failures > 0 && /SELECT kind, status FROM principals/.test(sql)) {
+      failures--;
       throw new Error('fixture serve failed');
     }
     return prepare(sql);
   });
   f.telegram.sendFile.mockImplementationOnce(async () => {
-    fail = true;
+    failures = 3;
     throw new Error('fixture rejected');
   });
   const p = await f.preview();
   await f.confirm(p.confirmationToken);
   await f.runtime.surface.memberRecords.idle();
-  f.runtime.surface.memberRecords.recover();
-  await vi.waitFor(() => expect(f.receipts).toHaveLength(1));
+  // Each recovery tick retries the re-serve; the receipt names the failure once.
+  while (f.receipts.length === 0) {
+    f.runtime.surface.memberRecords.recover();
+    await f.runtime.surface.memberRecords.idle();
+  }
+  expect(failures).toBe(0);
+  expect(f.receipts).toHaveLength(1);
   expect(f.receipts[0].text).toContain('Erasure stopped at export delivery');
   expect(f.receipts[0].text).toContain('Nothing was erased.');
+  expect(f.receipts[0].text.split('serving the member again also failed').length - 1).toBe(1);
   expect(f.receipts[0].text).toContain(
     'serving the member again also failed: fixture serve failed'
   );
