@@ -1124,15 +1124,31 @@ it('keeps a personal receipt deferred during the erasure across a restart', asyn
   await f.confirm(preview.confirmationToken);
   await f.runtime.surface.memberRecords.idle();
   expect(f.receipts).toEqual([]);
+  // No run holds the erasure now: this write goes into its durable checkpoint.
+  const idleRef = `telegram:${f.memberDm}:fixture-idle-receipt`;
+  f.runtime.recordHostExchange({
+    message: {
+      id: idleRef,
+      channelKey: f.memberDm,
+      senderPrincipalId: f.member,
+      occurredAt: Date.now(),
+      text: 'Fixture management notice',
+    },
+    reply: { text: 'Fixture idle receipt', occurredAt: Date.now(), deliveryVerified: true },
+  });
+  const personal = () =>
+    (
+      f.runtime.database.adapter
+        .prepare(
+          "SELECT source_id FROM connector_event_index WHERE source_connector='chat' AND memory_scope_kind='user' AND memory_scope_id=?"
+        )
+        .all(f.member) as Array<{ source_id: string }>
+    ).map((row) => row.source_id);
+  expect(personal()).not.toContain(idleRef);
   await f.restart();
   expect((await f.finish()).status).toBe('erased');
-  const left = f.runtime.database.adapter
-    .prepare(
-      "SELECT source_id FROM connector_event_index WHERE source_connector='chat' AND memory_scope_kind='user' AND memory_scope_id=?"
-    )
-    .all(f.member) as Array<{ source_id: string }>;
-  expect(left.map((row) => row.source_id)).toEqual(
-    expect.arrayContaining([laterRef, `${laterRef}:reply`])
+  expect(personal()).toEqual(
+    expect.arrayContaining([laterRef, `${laterRef}:reply`, idleRef, `${idleRef}:reply`])
   );
 });
 

@@ -602,8 +602,10 @@ export function createMemberRecords(options: {
         state.text!,
         state.receiptDelivered === true
       );
+      // Outside the transaction: the raw store commits apart from it, and a repeated write of a
+      // saved exchange returns the stored one, so a retry after a failure here finishes.
+      for (const exchange of state.afterErasure ?? []) p.writeHostExchange(id, exchange);
       options.adapter.transaction(() => {
-        for (const exchange of state.afterErasure ?? []) p.writeHostExchange(id, exchange);
         state.phase = 'done';
         delete state.archive;
         delete state.exported;
