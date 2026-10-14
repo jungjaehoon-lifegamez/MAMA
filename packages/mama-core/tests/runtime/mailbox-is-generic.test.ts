@@ -94,6 +94,20 @@ describe('the mailbox carries no consumer vocabulary', () => {
     expect(reopened.enqueue(input)).toBeNull();
     expect(reopened.readInput(input.id, input.principalId)?.payload).toEqual(input.payload);
   });
+  it('never retires a checkpointed pending host job for age alone', () => {
+    let now = 1_000_000;
+    const mailbox = new Mailbox(freshDb('host-checkpoint-stale'), () => now);
+    const owned = mailbox.enqueue(
+      stimulus({ id: 'fixture-owned', kind: 'host_job', payload: { command: 'fixture' } })
+    )!;
+    mailbox.checkpointHostJob(owned, { step: 'fixture-in-progress' });
+    mailbox.enqueue(stimulus({ id: 'fixture-plain', kind: 'host_job', payload: { command: 'x' } }));
+    now += 30 * 24 * 60 * 60_000;
+    const { newlyDead } = mailbox.replayStaleDetailed(60_000, now);
+    expect(newlyDead.map((row) => row.stimulusId)).toEqual(['fixture-plain']);
+    expect(mailbox.readInput('fixture-owned', 'principal-owner')?.status).toBe('pending');
+    expect(mailbox.readInput('fixture-plain', 'principal-owner')?.status).toBe('dead');
+  });
   it('excludes saturated principals before preferred-kind selection without cancelling their pending rows', () => {
     const mailbox = new Mailbox(freshDb('principal-window'));
     mailbox.enqueue(

@@ -1052,6 +1052,54 @@ it('retires before snapshot and export, includes retirement writes, and queues u
   expect(order).toEqual(['reset', 'stop', 'export']);
 });
 
+it('writes a personal receipt from other work after the erasure and keeps later DM ledger entries', async () => {
+  const f = await setup();
+  const send = f.telegram.sendFile.getMockImplementation()!;
+  const laterRef = `telegram:${f.memberDm}:fixture-later-receipt`;
+  f.telegram.sendFile.mockImplementationOnce(async (...args) => {
+    // Other principals keep running during an erasure; these land after the snapshot.
+    f.runtime.recordHostExchange({
+      message: {
+        id: laterRef,
+        channelKey: f.memberDm,
+        senderPrincipalId: f.member,
+        occurredAt: Date.now(),
+        text: 'Fixture management notice',
+      },
+      reply: { text: 'Fixture later receipt', occurredAt: Date.now(), deliveryVerified: true },
+    });
+    f.ledger.claim('outbound:fixture-later', {
+      deliveryTarget: `telegram:${f.memberDm}`,
+      payloadIdentity: 'c'.repeat(64),
+    });
+    f.ledger.markDelivered('outbound:fixture-later');
+    return send(...args);
+  });
+  const preview = await f.preview();
+  const erasure = await f.confirm(preview.confirmationToken);
+  expect((await f.finish()).status).toBe('erased');
+  const left = f.runtime.database.adapter
+    .prepare(
+      "SELECT source_id FROM connector_event_index WHERE source_connector='chat' AND memory_scope_kind='user' AND memory_scope_id=? ORDER BY rowid"
+    )
+    .all(f.member) as Array<{ source_id: string }>;
+  // Only the receipt written for the member during the erasure is left; it was deferred until
+  // the erase ended, and everything the export held is gone.
+  // What is left: the erasure's own receipt and the deferred receipt, nothing exported.
+  expect(left.map((row) => row.source_id).sort()).toEqual(
+    [
+      `host:${erasure.commandId}`,
+      `host:${erasure.commandId}:reply`,
+      laterRef,
+      `${laterRef}:reply`,
+    ].sort()
+  );
+
+  expect(f.ledger.listForTelegramDm(f.memberDm).map((entry) => entry.key)).toContain(
+    'outbound:fixture-later'
+  );
+});
+
 it('retires P9 on its member chain while another DM keeps claiming through re-serve', async () => {
   const f = await setup();
   const preview = await f.preview();
@@ -2022,6 +2070,24 @@ it('keeps a completed erasure carrier excluded until boot re-serving succeeds', 
   expect(f.runtime.runtime.mailbox!.inputStatus(host.id)).toBe('acked');
   expect(f.receipts).toHaveLength(1);
   expect(f.uploads).toHaveLength(1);
+});
+
+it('tells the member an export settled during stop did not run instead of dropping it', async () => {
+  const f = await setup();
+  let release!: () => void;
+  f.holdMemberCompletion(
+    new Promise<void>((resolve) => {
+      release = resolve;
+    })
+  );
+  const request = await f.act('records.export', {});
+  f.runtime.beginStop();
+  release();
+  f.holdMemberCompletion(undefined);
+  await f.settled(request.ref, f.member);
+  await f.runtime.surface.memberRecords.idle();
+  expect(f.telegram.sendFile).not.toHaveBeenCalled();
+  expect(f.receipts.at(-1)?.text).toContain('Export did not run because MAMA was restarting');
 });
 
 it('keeps a confirmation that settles during stop and resumes the same job on boot', async () => {

@@ -79,6 +79,9 @@ interface ErasureState {
   receiptDelivered?: boolean;
   exportAttempted?: boolean;
   receiptAttempted?: boolean;
+  /** DM ledger entries the delivered export holds. Other principals keep running during an
+   * erasure, so entries written for this DM after the snapshot are left for the fresh start. */
+  exported?: { ledgerKeys: string[] };
 }
 
 function receiptText(
@@ -190,6 +193,22 @@ export function createMemberRecords(options: {
   // The confirming member alone is excluded from all claims, including host inputs.
   // Its durable erasure carrier is reconciled here, outside the mailbox claim loop.
   const erasing = new Set<string>();
+  // Personal writes by other work for a member being erased (a management or enrollment
+  // receipt) run after the erasure ends, so the erase never removes what was not exported.
+  const afterErasure = new Map<string, Array<() => void>>();
+  const release = (id: string) => {
+    blocked.delete(id);
+    erasing.delete(id);
+    const writes = afterErasure.get(id) ?? [];
+    afterErasure.delete(id);
+    for (const write of writes) {
+      try {
+        write();
+      } catch (error) {
+        console.error('[Member records] deferred personal write failed', error);
+      }
+    }
+  };
   // Members with an export still uploading: their turns run, but no second export or erasure
   // starts until this one is delivered, so archives and uploads never pile up.
   const exporting = new Set<string>();
@@ -235,8 +254,7 @@ export function createMemberRecords(options: {
       return;
     }
     if (job.hostInputId !== undefined) ports().mailbox().ack(job.hostInputId);
-    blocked.delete(job.principalId);
-    erasing.delete(job.principalId);
+    release(job.principalId);
     if (!ports().isStopping()) {
       const label = 'Export';
       enqueue(job.principalId, () =>
@@ -317,8 +335,7 @@ export function createMemberRecords(options: {
         leave();
         exporting.delete(id);
       } else {
-        blocked.delete(id);
-        erasing.delete(id);
+        release(id);
       }
     }
   };
@@ -344,8 +361,7 @@ export function createMemberRecords(options: {
     if (state.phase === 'done') {
       p.serve(id);
       p.mailbox().ack(job.hostInputId!);
-      blocked.delete(id);
-      erasing.delete(id);
+      release(id);
       return;
     }
     let step = 'retire';
@@ -356,11 +372,16 @@ export function createMemberRecords(options: {
         await p.retire(id);
         if (p.isStopping()) return;
         step = 'export';
+        const product = productExport(id);
+        const ledger = p.ledger()!;
+        state.exported = {
+          ledgerKeys: ledger.listForTelegramDm(dm(p.access(id))).map((entry) => entry.key),
+        };
         state.archive = await buildMemberExport(
           p.root,
           id,
           exportPrincipalRecords(options.adapter, id),
-          productExport(id)
+          product
         );
         state.phase = 'exporting';
         checkpoint(job, state);
@@ -440,6 +461,8 @@ export function createMemberRecords(options: {
             deferredInputs(id).map((row) => row.id)
           );
           step = 'connector_event_index';
+          // Core erases the person's scope, so its chat rows go with it; personal host receipts
+          // written during the erasure are deferred until it ends (deferWhileErasing).
           product.connector_event_index =
             (product.connector_event_index ?? 0) +
             options.adapter
@@ -463,10 +486,18 @@ export function createMemberRecords(options: {
         for (const [name, rows] of Object.entries(rawCounts)) state.product[name] ??= rows.length;
         const ledger = p.ledger();
         if (!ledger) throw new Error('Live message ledger is not configured');
+        const exportedKeys = new Set(state.exported!.ledgerKeys);
+        // Entries written for this DM after the snapshot (another principal's delivery, a
+        // management receipt) were not exported, so they stay.
+        const later = ledger
+          .listForTelegramDm(dm(p.access(id)))
+          .filter((entry) => !exportedKeys.has(entry.key))
+          .map((entry) => entry.key);
         state.product.message_ledger ??= ledger
           .listForTelegramDm(dm(p.access(id)))
           .filter(
             (entry) =>
+              exportedKeys.has(entry.key) &&
               entry.key !== `file:${job.commandId}:export` &&
               !deferredInputs(id).some((row) => row.stimulus_id === entry.key)
           ).length;
@@ -476,6 +507,7 @@ export function createMemberRecords(options: {
         ledger.eraseTelegramDm(dm(p.access(id)), [
           `file:${job.commandId}:export`,
           ...deferredInputs(id).map((row) => row.stimulus_id),
+          ...later,
         ]);
         state.text = receiptText(
           state.core,
@@ -572,11 +604,11 @@ export function createMemberRecords(options: {
       options.adapter.transaction(() => {
         state.phase = 'done';
         delete state.archive;
+        delete state.exported;
         checkpoint(job, state);
         p.mailbox().ack(job.hostInputId!);
       });
-      blocked.delete(id);
-      erasing.delete(id);
+      release(id);
     }
   };
   const launchErasure = (job: Scheduled) => {
@@ -761,6 +793,11 @@ export function createMemberRecords(options: {
     registrations,
     isBusy: () => erasing.size > 0,
     excludePrincipals: () => [...erasing],
+    /** Run a personal write now, or after this member's erasure ends. */
+    deferWhileErasing: (id: string, write: () => void) => {
+      if (!erasing.has(id)) return write();
+      afterErasure.set(id, [...(afterErasure.get(id) ?? []), write]);
+    },
     recover,
     startRecovery: () => {
       if (!options.ports) return;
@@ -777,7 +814,17 @@ export function createMemberRecords(options: {
       const job = take(row);
       if (!job) return;
       if (ports().isStopping()) {
-        if (job.kind !== 'erase') blocked.delete(job.principalId);
+        if (job.kind !== 'erase') {
+          blocked.delete(job.principalId);
+          // Exports have no durable carrier; the transports stay open through the drain, so say
+          // so instead of dropping the request silently.
+          enqueue(job.principalId, () =>
+            sendReceipt(
+              job,
+              'Export did not run because MAMA was restarting. Ask again in a later message.'
+            )
+          );
+        }
       } else {
         // Export writes workspace/files; erasure recreates this member's runtime/temp paths.
         // Other members already deny those paths, so both use only this member's chain.

@@ -338,11 +338,14 @@ export class Mailbox {
       `DELETE FROM mailbox_inputs WHERE status = 'acked' AND acked_at <= ?
           AND NOT EXISTS (SELECT 1 FROM native_input_deliveries n WHERE n.input_id=mailbox_inputs.id AND n.state IN ('dispatching','accepted','uncertain'))`
     );
+    // A checkpointed host job is in progress under its owner (reconciled outside claims), so age
+    // alone never retires it.
     this.stmtPrunePending = this.db.prepare(
       `UPDATE mailbox_inputs
           SET status = 'dead', last_error = 'stale_pending_expired'
         WHERE status = 'pending' AND created_at <= ?
-          AND NOT EXISTS (SELECT 1 FROM native_input_deliveries n WHERE n.input_id=mailbox_inputs.id AND n.state IN ('dispatching','accepted','uncertain'))`
+          AND NOT EXISTS (SELECT 1 FROM native_input_deliveries n WHERE n.input_id=mailbox_inputs.id AND n.state IN ('dispatching','accepted','uncertain'))
+          AND NOT EXISTS (SELECT 1 FROM mailbox_host_checkpoints c WHERE c.input_id=mailbox_inputs.id)`
     );
     this.stmtPruneSeen = this.db.prepare(`DELETE FROM mailbox_seen WHERE seen_at <= ?
       AND NOT EXISTS (SELECT 1 FROM mailbox_input_refs r JOIN native_input_deliveries n ON n.input_id=r.input_id
@@ -836,6 +839,7 @@ export class Mailbox {
            FROM mailbox_inputs
           WHERE status = 'pending' AND created_at <= ?
           AND NOT EXISTS (SELECT 1 FROM native_input_deliveries n WHERE n.input_id=mailbox_inputs.id AND n.state IN ('dispatching','accepted','uncertain'))
+          AND NOT EXISTS (SELECT 1 FROM mailbox_host_checkpoints c WHERE c.input_id=mailbox_inputs.id)
           ORDER BY id ASC`
       )
       .all(now - PENDING_RETENTION_MS) as StoredRow[];

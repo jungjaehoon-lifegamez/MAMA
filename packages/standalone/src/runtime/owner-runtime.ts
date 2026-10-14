@@ -1150,11 +1150,16 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
                 `member-agent:${person.principalId}`
               )
             : chat;
-        archive.saveOwnerMessage({
-          ...message,
-          ...(person ? { senderPrincipalId: person.principalId } : {}),
-        });
-        archive.saveReply({ ...reply, messageRef: message.id, author: 'host' });
+        const personal = () => {
+          archive.saveOwnerMessage({
+            ...message,
+            ...(person ? { senderPrincipalId: person.principalId } : {}),
+          });
+          archive.saveReply({ ...reply, messageRef: message.id, author: 'host' });
+        };
+        if (archive === chat) personal();
+        // A member being erased gets its personal copy after the erasure, never inside it.
+        else surface.memberRecords.deferWhileErasing(person!.principalId, personal);
         if (archive !== chat) {
           const ref = `host:management:${message.id}`;
           chat.saveOwnerMessage({
