@@ -348,3 +348,34 @@ it('refuses a common rule correction that links an observation the room cannot r
   expect(await correct(before!)).toMatchObject({ status: 'failed', error: { code: 'denied' } });
   expect((await correct(after!)).status).toBe('completed');
 });
+
+it('refuses room work evidence the room cannot read, in sources and link targets', async () => {
+  const [before, after] = [1999, 2001].map((at) =>
+    chat.saveOwnerMessage({
+      id: `telegram:-100:${at}`,
+      channelKey: '-100',
+      occurredAt: at,
+      text: `work marker ${at}`,
+    })
+  );
+  const create = (sourceRefs: string[]) =>
+    call('work.create', {
+      topic: 'room-work',
+      summary: 'room work',
+      scopes: [PARTITION],
+      set: { title: 'room work' },
+      sourceRefs,
+    });
+  // Core stores sourceRefs that merely exist; a room cites only what its own reads reach.
+  expect(await create([before!])).toMatchObject({ status: 'failed' });
+  const work = data(await create([after!])) as { commitmentId: string };
+  const link = (id: string) =>
+    call('work.link', {
+      from: work.commitmentId,
+      to: { kind: 'observation', id },
+      relation: 'mentions',
+      reason: 'cites the room message',
+    });
+  expect(await link(before!)).toMatchObject({ status: 'failed' });
+  expect((await link(after!)).status).toBe('completed');
+});

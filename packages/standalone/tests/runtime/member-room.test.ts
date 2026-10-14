@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { join } from 'node:path';
-import { mkdirSync, realpathSync, readFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, readFileSync, writeFileSync } from 'node:fs';
 import { createPrincipalRepository, type ActionResult } from '@jungjaehoon/mama-core';
 import { fixture, roots } from '../helpers/member-runtime.js';
 import { memberRoomClaudeTmpDir } from '../../src/runtime/member-paths.js';
@@ -342,7 +342,21 @@ it('durably reroutes a queued common message after owner role loss, once across 
   );
   const blocker = f.message('owner', 'block common');
   await vi.waitFor(() => expect(f.turns.at(-1)?.principal).toBe('owner'));
-  const ref = f.message('owner', 'queued before role loss', f.managingOwner);
+  // The queued common message carries a file in the common downloads.
+  const ref = 'telegram:fixture:queued-with-file';
+  const original = join(f.home, 'downloads', 'telegram', 'queued_fixture.txt');
+  mkdirSync(join(f.home, 'downloads', 'telegram'), { recursive: true });
+  writeFileSync(original, 'fixture attachment');
+  f.runtime.intake.acceptOwnerMessage({
+    id: ref,
+    channelKey: 'fixture',
+    occurredAt: Date.now(),
+    text: 'queued before role loss',
+    senderPrincipalId: f.managingOwner,
+    payload: {
+      attachments: [{ path: original, name: 'queued_fixture.txt', size: 18 }],
+    },
+  });
   f.ledger.claim(ref);
   f.runtime.database.adapter
     .prepare("DELETE FROM principal_roles WHERE principal_id=? AND role='owner'")
@@ -360,6 +374,12 @@ it('durably reroutes a queued common message after owner role loss, once across 
   expect(row.payload).toMatchObject({ roomChannel: 'fixture', senderPrincipalId: f.managingOwner });
   // The reply follows the member's room, not the common archive.
   expect(f.ledger.get(ref)?.principalId).toBe(f.managingOwner);
+  // The room session reads the file from its own downloads, not the common ones.
+  const [moved] = (row.payload as { input: { attachments: Array<{ path: string }> } }).input
+    .attachments;
+  expect(moved!.path).not.toBe(original);
+  expect(moved!.path.startsWith(join(f.root, f.managingOwner))).toBe(true);
+  expect(readFileSync(moved!.path, 'utf8')).toBe('fixture attachment');
   expect(
     f.turns
       .filter((turn) => turn.prompt.includes('queued before role loss'))

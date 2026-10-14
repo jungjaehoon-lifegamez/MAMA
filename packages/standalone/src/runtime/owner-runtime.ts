@@ -33,7 +33,10 @@ import {
   type MemoryScopeRef,
 } from '@jungjaehoon/mama-core';
 import { randomUUID } from 'node:crypto';
-import { join, isAbsolute } from 'node:path';
+import { basename, join, isAbsolute } from 'node:path';
+import { copyFileSync, mkdirSync } from 'node:fs';
+import type { OwnerAttachment } from '../gateways/telegram-attachments.js';
+import type { JsonValue } from '@jungjaehoon/mama-core/knowledge';
 import type { ServerResponse } from 'node:http';
 import type { NativeSessionHandle } from '@jungjaehoon/mama-core/runtime/runtime';
 import type { NativeModelRunPort } from '@jungjaehoon/mama-core/runtime/native-turn';
@@ -708,6 +711,27 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         )
           return false;
         await serveMemberOnLane(sender);
+        // The room session cannot read the common downloads; its files go to the room's own.
+        const payload = row.payload as {
+          input?: { attachments?: OwnerAttachment[] } & Record<string, unknown>;
+        };
+        let input = payload.input;
+        if (input?.attachments?.length) {
+          const target = join(
+            members.get(sender)!.roomSession(row.channelKey).paths.downloadsDir,
+            'telegram'
+          );
+          mkdirSync(target, { recursive: true });
+          input = {
+            ...input,
+            attachments: input.attachments.map((attachment) => {
+              if (!('path' in attachment)) return attachment;
+              const path = join(target, basename(attachment.path));
+              copyFileSync(attachment.path, path);
+              return { ...attachment, path };
+            }),
+          };
+        }
         // A deterministic handoff ref survives a crash between this append and the common
         // acknowledgement. Mailbox ref identities are global; keep the evidence handles.
         intakeRuntime.accept({
@@ -720,9 +744,10 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           replyTo: row.replyTo,
           payload: {
             ...(row.payload as object),
+            ...(input === undefined ? {} : { input }),
             senderPrincipalId: sender,
             roomChannel: row.channelKey,
-          },
+          } as unknown as JsonValue,
         });
         // Its reply then comes back through the room session, authored by the member's agent.
         options.messageLedger?.()?.handOff(row.stimulusId, sender);

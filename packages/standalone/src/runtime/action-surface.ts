@@ -266,6 +266,19 @@ export function ownerMemoryScopes(
 }
 
 export function createActionSurface(options: ActionSurfaceOptions): ActionSurface {
+  // Whether the caller's own source reads (connectors, channels, enrollment floor) reach an
+  // observation; any refusal, erased or missing included, is not readable.
+  const observationReadable = (id: string, context: ActionContext): boolean => {
+    if (!options.storedSourceReader) return false;
+    try {
+      options.storedSourceReader.readObservation(id, context.access, undefined, {
+        content_limit: 1,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
   let principals: ReturnType<typeof createPrincipalRepository> | undefined;
   const memberDirectoryChange = options.memberDirectoryChange;
   const memberRecords = createMemberRecords({
@@ -354,18 +367,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
               options.adapter,
               options.ownerPrincipalId,
               options.commonChannelId,
-              (id, context) => {
-                if (!options.storedSourceReader) return false;
-                try {
-                  options.storedSourceReader.readObservation(id, context.access, undefined, {
-                    content_limit: 1,
-                  });
-                  return true;
-                } catch {
-                  // Any refusal (channel, enrollment floor, erased, missing) is not readable.
-                  return false;
-                }
-              }
+              observationReadable
             ),
             options.adapter,
             options.ownerPrincipalId
@@ -578,10 +580,27 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     ...workListActionRegistrations({ knowledge: options.knowledge, timeZone: options.timeZone }),
     ...minimalWorkActionRegistrations({
       knowledge: options.knowledge,
-      observationExists: (observationId) =>
-        options.adapter
-          .prepare('SELECT 1 FROM observation_versions WHERE observation_id = ? LIMIT 1')
-          .get(observationId) !== undefined,
+      observationExists: (observationId, context) =>
+        context.access.principalId === options.ownerPrincipalId
+          ? options.adapter
+              .prepare('SELECT 1 FROM observation_versions WHERE observation_id = ? LIMIT 1')
+              .get(observationId) !== undefined
+          : observationReadable(observationId, context),
+      edgeObservations: (edgeId) => {
+        const edge = options.adapter
+          .prepare(
+            'SELECT subject_kind, subject_id, object_kind, object_id FROM twin_edges WHERE edge_id = ?'
+          )
+          .get(edgeId) as
+          | { subject_kind: string; subject_id: string; object_kind: string; object_id: string }
+          | undefined;
+        return edge === undefined
+          ? []
+          : [
+              ...(edge.subject_kind === 'observation' ? [edge.subject_id] : []),
+              ...(edge.object_kind === 'observation' ? [edge.object_id] : []),
+            ];
+      },
     }),
     ...reportActionRegistrations(reportPorts),
     ...wikiActionRegistrations(options.wikiPorts ?? {}),

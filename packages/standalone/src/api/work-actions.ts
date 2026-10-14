@@ -18,8 +18,13 @@ import {
 
 export interface WorkPorts {
   knowledge: Pick<Knowledge, 'createWork' | 'reviseWork' | 'readWork' | 'appendLink' | 'findLink'>;
-  /** sourceRefs are observationRef handles; core stores them unchecked, so the product checks them. */
-  observationExists: (observationId: string) => boolean;
+  /**
+   * sourceRefs are observationRef handles; core stores them unchecked, so the product checks them,
+   * under the caller's own source reads when those are narrower than the common session's.
+   */
+  observationExists: (observationId: string, context: ActionContext) => boolean;
+  /** The observations at either end of an edge, which a link to that edge also cites. */
+  edgeObservations: (edgeId: string) => string[];
 }
 
 export interface WorkListPorts {
@@ -1412,10 +1417,14 @@ function operationId(context: ActionContext, action: string): string {
   return context.operationId;
 }
 
-function assertSourceRefsExist(body: Record<string, unknown>, ports: WorkPorts): void {
+function assertSourceRefsExist(
+  body: Record<string, unknown>,
+  ports: WorkPorts,
+  context: ActionContext
+): void {
   if (!Array.isArray(body.sourceRefs)) return;
   for (const ref of body.sourceRefs) {
-    if (typeof ref === 'string' && !ports.observationExists(ref)) {
+    if (typeof ref === 'string' && !ports.observationExists(ref, context)) {
       // Echo only the caller's own input, as the core reference refusal does.
       throw new JudgmentError(
         'REFERENCE_NOT_FOUND',
@@ -1505,7 +1514,7 @@ export function minimalWorkActionRegistrations(ports: WorkPorts): ActionRegistra
       exec: (input, context) => {
         const body = withEventEpoch(input as Record<string, unknown>, 'work.create');
         assertReplayEventDatetime(body, context, 'work.create');
-        assertSourceRefsExist(body, ports);
+        assertSourceRefsExist(body, ports, context);
         return ports.knowledge.createWork(
           {
             ...body,
@@ -1539,7 +1548,7 @@ export function minimalWorkActionRegistrations(ports: WorkPorts): ActionRegistra
       exec: (input, context) => {
         const body = withEventEpoch(input as Record<string, unknown>, 'work.revise');
         assertReplayEventDatetime(body, context, 'work.revise');
-        assertSourceRefsExist(body, ports);
+        assertSourceRefsExist(body, ports, context);
         const commitmentId = body.commitmentId as string;
         return ports.knowledge.reviseWork(
           {
@@ -1660,10 +1669,24 @@ export function workLinkRegistration(ports: WorkPorts): ActionRegistration {
         evidenceRefs?: string[];
       };
       for (const ref of body.evidenceRefs ?? []) {
-        if (!ports.observationExists(ref))
+        if (!ports.observationExists(ref, context))
           throw new JudgmentError(
             'REFERENCE_NOT_FOUND',
             `evidenceRefs names an unavailable observation: ${ref}`
+          );
+      }
+      // Core checks only that a target observation exists; the caller must also read it.
+      const targetObservations =
+        body.to.kind === 'observation'
+          ? [body.to.id]
+          : body.to.kind === 'edge'
+            ? ports.edgeObservations(body.to.id)
+            : [];
+      for (const ref of targetObservations) {
+        if (!ports.observationExists(ref, context))
+          throw new JudgmentError(
+            'REFERENCE_NOT_FOUND',
+            `to names an unavailable observation: ${ref}`
           );
       }
       // A retried call finds its link before the heads are read again: the item may have been
