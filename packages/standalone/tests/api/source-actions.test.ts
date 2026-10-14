@@ -302,7 +302,7 @@ describe('minimal source actions', () => {
     );
     // Not worded as a permission problem, and the same for an unknown name as for an ungranted one.
     const refusal =
-      'other-connector is not one of your readable connectors: connector-test. The start of your session lists each readable source with the chat families stored inside it; name that source.';
+      'other-connector is not one of your readable connectors: connector-test. Your context lists each readable source with the chat families stored inside it; name that source.';
     expect(deniedSearch).toMatchObject({
       status: 'failed',
       error: { code: 'denied', message: refusal },

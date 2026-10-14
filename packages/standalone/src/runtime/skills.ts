@@ -550,8 +550,12 @@ export function createSkillStore(ports: {
 }
 export type SkillStore = ReturnType<typeof createSkillStore>;
 
-/** Full inventory is remembered locally; only capped names/descriptions reach a turn. */
-export function createSkillTurnContext(list: () => Promise<SkillEntry[]>) {
+/**
+ * Full inventory is remembered locally; only capped names/descriptions reach a turn. `sources`,
+ * a DM's readable-sources line, goes with each full inventory: a new or stateless session and the
+ * first turn of each session after the host starts.
+ */
+export function createSkillTurnContext(list: () => Promise<SkillEntry[]>, sources?: () => string) {
   const sessions = new Map<string, Map<string, { name: string; revision?: string }>>();
   return async (
     isNewSession: boolean,
@@ -582,6 +586,7 @@ export function createSkillTurnContext(list: () => Promise<SkillEntry[]>) {
         size += line.length + 1;
       }
       text = [
+        ...(sources ? [sources()] : []),
         '[skills]',
         ...lines,
         ...(skills.length > lines.length

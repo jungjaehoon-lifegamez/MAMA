@@ -178,7 +178,18 @@ export function createMemberSession(
     },
   };
   const delivery = createStimulusDelivery({
-    skills: createSkillTurnContext(() => surface.skills.list(principalId)),
+    // The common session's standing text says where sources live; a DM is told with its full
+    // inventory, under its own grant and outside the session fingerprint, so a session resumed
+    // across a deploy learns it too and new rows never rotate it.
+    skills: createSkillTurnContext(
+      () => surface.skills.list(principalId),
+      () => {
+        const current = access();
+        return readableSourcesLine(
+          storedSourceFamilies(database.adapter, current.connectors ?? [], current)
+        );
+      }
+    ),
     backend: options.backend,
     timeZone: options.timeZone,
     turnChain: ports.turnChain,
@@ -220,13 +231,8 @@ export function createMemberSession(
     commonPrincipalId: options.ownerPrincipalId,
     readResult: ports.readResult,
     sessionStart: (row) => {
-      const current = access();
+      access();
       return readSessionStartInput({
-        // The common session's standing text says where sources live; a DM learns it here,
-        // under its own grant, outside the session fingerprint so new rows never rotate it.
-        sources: readableSourcesLine(
-          storedSourceFamilies(database.adapter, current.connectors ?? [], current)
-        ),
         exchanges: chat.recentExchanges(row.stimulusId),
         records: () => readRecords({ status: 'active', excludeAmendments: true }),
         checkpoint: async () => {

@@ -80,7 +80,7 @@ function assertGrantedSource(source: string, access: ActionContext['access']): v
   // although it is stored as a family inside another source. One message for unknown and
   // ungranted names, so it never tells a member which other connectors exist.
   const error = new Error(
-    `${source} is not one of your readable connectors: ${[...(access.connectors ?? [])].sort().join(', ') || '(none)'}. The start of your session lists each readable source with the chat families stored inside it; name that source.`
+    `${source} is not one of your readable connectors: ${[...(access.connectors ?? [])].sort().join(', ') || '(none)'}. Your context lists each readable source with the chat families stored inside it; name that source.`
   );
   error.name = 'denied';
   throw error;

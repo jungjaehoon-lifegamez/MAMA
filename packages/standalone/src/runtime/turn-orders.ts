@@ -158,8 +158,6 @@ export interface SessionStartInput {
   decisions: readonly { topic: string; summary: string; ageHours: number }[];
   /** The latest session checkpoint the agent saved, if any. */
   checkpoint?: { summary: string; nextSteps: string; ageHours: number } | null;
-  /** Where this session's readable sources live, for a session whose standing text lacks it. */
-  sources?: string;
 }
 
 // Ten owner exchanges fit in 3,000 chars at one line each, the size of Kagemusha's previous-turns block;
@@ -244,12 +242,11 @@ export function sessionStartBlock(
   voice: TurnVoice = OWNER_VOICE
 ): string {
   const seen = new Set<string>();
-  // The time, the read hint and the sources come first, so a full block never drops them.
+  // The time and the read hint come first, so a full block never drops them.
   const parts = [
     '[session_start]',
     currentTime(now, options.timeZone),
     'This is history from before this session; read newer state with source.recent or work.list when a turn needs it.',
-    ...(input.sources ? [input.sources] : []),
   ];
   const append = (section: string): void => {
     const used = parts.join('\n').length;

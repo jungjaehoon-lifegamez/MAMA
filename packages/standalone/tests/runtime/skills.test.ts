@@ -95,6 +95,7 @@ it.each(['claude', 'codex'] as const)(
     await f.settled(ref, f.member);
     prompt = f.turns.filter((turn) => turn.principal === f.member).at(-1)!.prompt;
     expect(prompt).not.toContain('[skills changed]');
+    expect(prompt).not.toContain('Readable sources:');
     expect(prompt).toContain(`skill.read ${saved}`);
     ref = f.message(f.managingOwner, 'Make a fixture artifact');
     await f.settled(ref, f.managingOwner);
@@ -112,6 +113,8 @@ it.each(['claude', 'codex'] as const)(
     prompt = f.turns.filter((turn) => turn.principal === f.member).at(-1)!.prompt;
     expect(prompt).toContain('[skills]');
     expect(prompt).toContain(workflow.topic);
+    // A session resumed across a restart is told where its readable sources live again.
+    expect(prompt).toContain('Readable sources:');
   }
 );
 

@@ -172,7 +172,7 @@ describe('stored source reader', () => {
           status: 'failed',
           error: {
             kind: 'denied',
-            message: `${source} is not one of your readable connectors: import-test. The start of your session lists each readable source with the chat families stored inside it; name that source.`,
+            message: `${source} is not one of your readable connectors: import-test. Your context lists each readable source with the chat families stored inside it; name that source.`,
           },
         });
       }
