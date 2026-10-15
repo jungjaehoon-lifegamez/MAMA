@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Member management, enrollment, the time zone and common skill publishing change only from the
   common channel (`owner_chat_id`) or a person's own DM, as owner policy already did. An owner's
   message in another allowed group was accepted for them too.
+- A `code_act` script whose first call failed while another call was still running returned
+  `write EPIPE` instead of the failure. The host's answer to a worker that already finished no
+  longer replaces the script's own result.
 
 ## [0.76.0] - 2026-10-14
 
