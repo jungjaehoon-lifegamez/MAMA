@@ -369,6 +369,24 @@ describe('daemon bootstrap', () => {
     }
   );
 
+  it('refuses a workspace that is a symlink to the runtime directory', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'daemon-overlap-link-'));
+    roots.push(root);
+    mkdirSync(join(root, 'runtime'), { recursive: true });
+    symlinkSync(join(root, 'runtime'), join(root, 'linked-workspace'));
+    const options = config(root);
+    options.agent.codex_cwd = join(root, 'linked-workspace');
+    await expect(
+      bootDaemon({
+        config: options,
+        home: root,
+        configPath: join(root, 'config.yaml'),
+        logger: { info: () => {}, error: () => {} },
+        dependencies: { ensureIsolation: () => {} },
+      })
+    ).rejects.toThrow(/must not contain or sit inside/);
+  });
+
   it('refuses enabled Telegram without its environment token and never logs an injected config token', async () => {
     const root = mkdtempSync(join(tmpdir(), 'daemon-token-'));
     roots.push(root);

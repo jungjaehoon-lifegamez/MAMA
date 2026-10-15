@@ -44,6 +44,7 @@ import {
   type W1Config,
 } from '../../runtime/config.js';
 import { declareModelCache } from '../../runtime/model-cache.js';
+import { physicalReadPath } from '../../runtime/backend-security.js';
 import { sessionCredentialPath } from '../../runtime/session-credential.js';
 import { ensureMamaMcpConfig, resolveActionServerPath } from '../runtime/action-mcp-config.js';
 import type { SourceDelta } from '../../connectors/framework/polling-scheduler.js';
@@ -211,9 +212,10 @@ function stimulusDelivered(logger: DaemonLogger, row: MailboxRow, modelRunId: st
   );
 }
 
+/** Physical paths: a symlinked workspace must not reach the directories it is kept apart from. */
 function pathsOverlap(left: string, right: string): boolean {
   const inside = (parent: string, child: string): boolean => {
-    const local = relative(resolve(parent), resolve(child));
+    const local = relative(physicalReadPath(parent), physicalReadPath(child));
     return local === '' || (local !== '..' && !local.startsWith(`..${sep}`) && !isAbsolute(local));
   };
   return inside(left, right) || inside(right, left);
