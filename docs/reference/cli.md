@@ -69,11 +69,8 @@ The generated `~/.mama/start.sh` loads `auth.env`, sets the executable search pa
 Use the launchd command printed by `init` when you selected that installation method. A direct
 `mama daemon` invocation does not load `auth.env` for you.
 
-launchd uses KeepAlive. To keep its managed daemon stopped, unload the job:
-
-```bash
-launchctl bootout gui/$(id -u)/com.mama.server
-```
+`mama service install` writes the LaunchAgent or systemd user unit; both restart the daemon only
+after a failure, so `mama stop` leaves it stopped and `mama service start` starts it again.
 
 One process holds an install at a time: the daemon, a replay or backfill, or `register-owner`.
 It takes an exclusive lock on `~/.mama/runtime/daemon.lock` before it opens the database, so a

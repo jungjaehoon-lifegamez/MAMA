@@ -1,4 +1,3 @@
-import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -15,29 +14,37 @@ import { CliInputError } from '../prompt.js';
 import {
   findExecutable,
   launchAgent,
+  readStartScript,
+  startPathEntries,
   startScript,
-  startScriptExports,
   systemdUnit,
 } from '../launch-files.js';
+import {
+  defaultServiceRun,
+  SYSTEMD_UNIT,
+  systemdUnitPath,
+  systemdUnitState,
+  type ServiceRun,
+} from '../runtime/systemd-service.js';
 import { runStatus, runStop } from './control.js';
 import { launchdService } from './daemon.js';
 
 type Manager = 'launchd' | 'systemd';
-type Run = (command: string, args: string[]) => SpawnSyncReturns<string>;
 
 export interface ServiceOptions {
   home?: string;
   configPath?: string;
   platform?: NodeJS.Platform;
   write?: (line: string) => void;
-  run?: Run;
+  run?: ServiceRun;
   nodePath?: string;
   cliPath?: string;
   findExecutable?: (name: string) => string | undefined;
   now?: () => Date;
+  /** Where systemd keeps linger markers; tests point it elsewhere. */
+  lingerRoot?: string;
 }
 
-const UNIT_NAME = 'mama.service';
 const LAUNCHD_LABEL = 'com.mama.server';
 
 function managerFor(platform: NodeJS.Platform): Manager {
@@ -49,17 +56,15 @@ function managerFor(platform: NodeJS.Platform): Manager {
 function servicePath(manager: Manager, home: string): string {
   return manager === 'launchd'
     ? join(home, 'Library', 'LaunchAgents', `${LAUNCHD_LABEL}.plist`)
-    : join(home, '.config', 'systemd', 'user', UNIT_NAME);
+    : systemdUnitPath(home);
 }
 
-function defaultRun(command: string, args: string[]): SpawnSyncReturns<string> {
-  return spawnSync(command, args, { encoding: 'utf8' });
-}
-
-/** Run a service-manager command and fail loud with its own words when it fails. */
-function check(run: Run, command: string, args: string[]): string {
+/** Run a service-manager command and fail loud with its name and its own words. */
+function check(run: ServiceRun, command: string, args: string[]): string {
   const result = run(command, args);
-  if (result.error) throw result.error;
+  if (result.error) {
+    throw new CliInputError(`${command} ${args.join(' ')} could not run: ${result.error.message}`);
+  }
   if (result.status !== 0) {
     const detail = `${result.stderr ?? ''}`.trim() || `exit ${String(result.status)}`;
     throw new CliInputError(`${command} ${args.join(' ')} failed: ${detail}`);
@@ -67,19 +72,25 @@ function check(run: Run, command: string, args: string[]): string {
   return `${result.stdout ?? ''}`;
 }
 
-/** Write a file only when its content changes; the replaced start.sh is kept beside the runtime. */
-function writeIfChanged(
+/**
+ * Write a file only when its content changes, always leaving the requested mode; a replaced file
+ * is kept under runtime/, which the agents' native reads deny.
+ */
+function writeFile(
   path: string,
   content: string,
   mode: number,
-  keepPrevious?: string
+  keepAs: string
 ): 'created' | 'updated' | 'unchanged' {
   const previous = existsSync(path) ? readFileSync(path, 'utf8') : null;
-  if (previous === content) return 'unchanged';
+  if (previous === content) {
+    chmodSync(path, mode);
+    return 'unchanged';
+  }
   mkdirSync(dirname(path), { recursive: true });
-  if (previous !== null && keepPrevious !== undefined) {
-    mkdirSync(dirname(keepPrevious), { recursive: true, mode: 0o700 });
-    writeFileSync(keepPrevious, previous, { mode: 0o600, flag: 'wx' });
+  if (previous !== null) {
+    mkdirSync(dirname(keepAs), { recursive: true, mode: 0o700 });
+    writeFileSync(keepAs, previous, { mode: 0o600, flag: 'wx' });
   }
   const staged = `${path}.${process.pid}.tmp`;
   writeFileSync(staged, content, { mode });
@@ -88,73 +99,121 @@ function writeIfChanged(
   return previous === null ? 'created' : 'updated';
 }
 
-function lingerEnabled(run: Run, user: string): boolean {
-  return check(run, 'loginctl', ['show-user', user, '-p', 'Linger', '--value']).trim() === 'yes';
+function serviceRunning(manager: Manager, home: string, run: ServiceRun): boolean {
+  if (manager === 'launchd') return launchdService().pid !== null;
+  return systemdUnitState(home, run, 'linux') === 'active';
+}
+
+function unquote(value: string): string {
+  return value.replace(/^['"]|['"]$/g, '');
 }
 
 /**
- * Write the start script and the service file from the current templates. Nothing restarts: a
- * running service picks the files up at `mama service restart`.
+ * Write start.sh and the service file from the current templates. It names every change to what
+ * the daemon runs, refuses to replace a start.sh that mama did not write unless asked, and
+ * restarts nothing: a running service takes the files at `mama service restart`.
  */
 export async function installService(
   args: readonly string[],
   options: ServiceOptions = {}
 ): Promise<number> {
-  const enableLinger = args.includes('--enable-linger');
-  if (args.some((arg) => arg !== '--enable-linger')) {
-    throw new CliInputError('Usage: mama service install [--enable-linger]');
+  const flags = new Set(args);
+  for (const flag of flags) {
+    if (flag !== '--enable-linger' && flag !== '--replace') {
+      throw new CliInputError('Usage: mama service install [--enable-linger] [--replace]');
+    }
   }
   const home = options.home ?? homedir();
   const manager = managerFor(options.platform ?? process.platform);
   const write = options.write ?? ((line: string) => console.log(line));
-  const run = options.run ?? defaultRun;
+  const run = options.run ?? defaultServiceRun;
   const configPath = options.configPath ?? defaultConfigPath(home);
   const config = loadConfig({ home, path: configPath });
   const root = dirname(configPath);
   const locate = options.findExecutable ?? findExecutable;
+  const backend = locate(config.agent.backend);
+  if (!backend) {
+    throw new CliInputError(
+      `${config.agent.backend} is not on this PATH; install it or add it to PATH, then run mama service install again`
+    );
+  }
+  const gws = locate('gws');
+  const nodePath = options.nodePath ?? process.execPath;
+  const cliPath = options.cliPath ?? join(__dirname, '..', 'index.js');
+  const executablePaths = [backend, ...(gws ? [gws] : [])];
   const startPath = join(root, 'start.sh');
-  const existing = existsSync(startPath)
-    ? startScriptExports(readFileSync(startPath, 'utf8'))
-    : null;
+  const existing = existsSync(startPath) ? readFileSync(startPath, 'utf8') : null;
+  const reading = existing === null ? null : readStartScript(existing);
   const script = startScript({
     home,
-    nodePath: options.nodePath ?? process.execPath,
-    cliPath: options.cliPath ?? join(__dirname, '..', 'index.js'),
-    executablePaths: [locate(config.agent.backend), locate('gws')].filter(
-      (path): path is string => path !== undefined
-    ),
-    viewer: existing?.carried ?? {},
+    nodePath,
+    cliPath,
+    executablePaths,
+    viewer: {},
     logLevel: config.logging.level,
+    carried: reading?.carried ?? [],
   });
-  const stamp = (options.now?.() ?? new Date()).toISOString().replace(/[:.]/g, '-');
-  const kept = join(root, 'runtime', `start.sh.${stamp}.previous`);
-  const startResult = writeIfChanged(startPath, script, 0o700, kept);
-  write(`start.sh ${startResult}`);
-  if (startResult === 'updated') {
-    write(`the previous start.sh is kept at ${kept}`);
-    if (existing && existing.dropped.length > 0) {
+
+  // Only a start.sh that is about to change is reported; a matching one needs no account.
+  if (reading !== null && existing !== script) {
+    const execLine = script.split('\n').find((line) => line.startsWith('exec '));
+    if (reading.exec !== execLine) {
+      write(`the daemon will run: ${nodePath} ${cliPath}`);
+      write(`it runs now: ${reading.exec ?? '(no exec line)'}`);
+    }
+    if (reading.carried.length > 0) {
+      const names = reading.carried.map((line) => line.replace(/^export\s+/, '').split('=')[0]);
+      write(`carried over: ${names.join(', ')}`);
+    }
+    const kept = startPathEntries({ nodePath, executablePaths });
+    const lost = (reading.path === null ? [] : unquote(reading.path).split(':')).filter(
+      (entry) => entry !== '' && entry !== '$PATH' && !kept.includes(entry)
+    );
+    if (lost.length > 0) write(`PATH no longer includes: ${lost.join(', ')}`);
+    if (
+      reading.logLevel !== null &&
+      unquote(reading.logLevel).toUpperCase() !== config.logging.level.toUpperCase()
+    ) {
       write(
-        `not carried over (set them elsewhere if still needed): ${existing.dropped.join(', ')}`
+        `MAMA_LOG_LEVEL now follows config.yaml's logging.level (${config.logging.level}); it was ${reading.logLevel}`
+      );
+    }
+    for (const line of reading.notReproduced.slice(0, 20)) {
+      write(`not reproduced: ${line.slice(0, 120)}`);
+    }
+    if (reading.notReproduced.length > 20) {
+      write(`not reproduced: ${reading.notReproduced.length - 20} more lines`);
+    }
+    if (!reading.generated && !flags.has('--replace')) {
+      throw new CliInputError(
+        `${startPath} was not written by mama; check the changes above, then run mama service install --replace`
       );
     }
   }
-  if (!locate(config.agent.backend)) {
-    write(`${config.agent.backend} is not on this PATH; install it, then run this again`);
-  }
+  if (!gws) write('gws is not on this PATH; Google sources need it');
+
+  const stamp = (options.now?.() ?? new Date()).toISOString().replace(/[:.]/g, '-');
+  const keep = (name: string) => join(root, 'runtime', `${name}.${stamp}.previous`);
+  const startResult = writeFile(startPath, script, 0o700, keep('start.sh'));
+  write(
+    `start.sh ${startResult}${startResult === 'updated' ? `; the previous one is kept at ${keep('start.sh')}` : ''}`
+  );
   const path = servicePath(manager, home);
-  const content = manager === 'launchd' ? launchAgent(home) : systemdUnit(home);
-  const serviceResult = writeIfChanged(path, content, manager === 'launchd' ? 0o600 : 0o644);
+  const content = manager === 'launchd' ? launchAgent(home) : systemdUnit();
+  const serviceResult = writeFile(
+    path,
+    content,
+    manager === 'launchd' ? 0o600 : 0o644,
+    keep(manager === 'launchd' ? 'launchagent.plist' : SYSTEMD_UNIT)
+  );
   write(`${manager === 'launchd' ? 'LaunchAgent' : 'systemd user unit'} ${serviceResult}: ${path}`);
-  let running = false;
-  if (manager === 'launchd') {
-    running = launchdService().loaded;
-  } else {
+  if (manager === 'systemd') {
     check(run, 'systemctl', ['--user', 'daemon-reload']);
-    check(run, 'systemctl', ['--user', 'enable', UNIT_NAME]);
-    running = run('systemctl', ['--user', 'is-active', '--quiet', UNIT_NAME]).status === 0;
+    check(run, 'systemctl', ['--user', 'enable', SYSTEMD_UNIT]);
     const user = userInfo().username;
-    if (!lingerEnabled(run, user)) {
-      if (enableLinger) {
+    // Linger is on exactly when systemd's marker file exists; reading it needs no session.
+    if (!existsSync(join(options.lingerRoot ?? '/var/lib/systemd/linger', user))) {
+      if (flags.has('--enable-linger')) {
         check(run, 'loginctl', ['enable-linger', user]);
         write('linger enabled: the service runs after you log out');
       } else {
@@ -165,7 +224,7 @@ export async function installService(
     }
   }
   const changed = startResult !== 'unchanged' || serviceResult !== 'unchanged';
-  if (running) {
+  if (serviceRunning(manager, home, run)) {
     write(
       changed
         ? 'the service is running; mama service restart applies the new files'
@@ -181,17 +240,23 @@ export async function startService(options: ServiceOptions = {}): Promise<number
   const home = options.home ?? homedir();
   const manager = managerFor(options.platform ?? process.platform);
   const write = options.write ?? ((line: string) => console.log(line));
-  const run = options.run ?? defaultRun;
+  const run = options.run ?? defaultServiceRun;
   const path = servicePath(manager, home);
   if (!existsSync(path)) throw new CliInputError('No service file yet: run mama service install');
   if (manager === 'launchd') {
-    if (launchdService().loaded) {
-      write('the LaunchAgent is already loaded');
+    const service = launchdService();
+    if (service.pid !== null) {
+      write('already running');
       return 0;
     }
-    check(run, 'launchctl', ['bootstrap', `gui/${process.getuid!()}`, path]);
+    // A clean exit leaves the agent loaded with no process; it is started in place.
+    if (service.loaded) {
+      check(run, 'launchctl', ['kickstart', `gui/${process.getuid!()}/${LAUNCHD_LABEL}`]);
+    } else {
+      check(run, 'launchctl', ['bootstrap', `gui/${process.getuid!()}`, path]);
+    }
   } else {
-    check(run, 'systemctl', ['--user', 'start', UNIT_NAME]);
+    check(run, 'systemctl', ['--user', 'start', SYSTEMD_UNIT]);
   }
   write('started; mama status shows its boot');
   return 0;
@@ -201,13 +266,25 @@ export async function uninstallService(options: ServiceOptions = {}): Promise<nu
   const home = options.home ?? homedir();
   const manager = managerFor(options.platform ?? process.platform);
   const write = options.write ?? ((line: string) => console.log(line));
-  const run = options.run ?? defaultRun;
+  const run = options.run ?? defaultServiceRun;
   const path = servicePath(manager, home);
   if (manager === 'launchd') {
-    // mama stop unloads a loaded LaunchAgent and waits for the daemon to let go.
-    await runStop([], options);
-  } else if (existsSync(path)) {
-    check(run, 'systemctl', ['--user', 'disable', '--now', UNIT_NAME]);
+    const loaded = launchdService().loaded;
+    if (!existsSync(path) && !loaded) {
+      write('no LaunchAgent is installed');
+      return 0;
+    }
+    if (loaded) {
+      // mama stop unloads the agent and waits for its daemon to let go of the install.
+      const stopped = await runStop([], options);
+      if (stopped !== 0) return stopped;
+    }
+  } else {
+    if (!existsSync(path)) {
+      write('no systemd user unit is installed');
+      return 0;
+    }
+    check(run, 'systemctl', ['--user', 'disable', '--now', SYSTEMD_UNIT]);
   }
   rmSync(path, { force: true });
   if (manager === 'systemd') check(run, 'systemctl', ['--user', 'daemon-reload']);
@@ -225,6 +302,10 @@ export async function runService(
   if (command === 'start') return await startService(options);
   if (command === 'stop') return await runStop([], options);
   if (command === 'restart') {
+    const manager = managerFor(options.platform ?? process.platform);
+    if (!existsSync(servicePath(manager, options.home ?? homedir()))) {
+      throw new CliInputError('No service file yet: run mama service install');
+    }
     const stopped = await runStop([], options);
     return stopped === 0 ? await startService(options) : stopped;
   }

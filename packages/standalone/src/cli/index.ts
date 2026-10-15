@@ -32,8 +32,8 @@ async function main(): Promise<void> {
     try {
       await runDaemon();
     } catch (error) {
-      // Another process already holds this install: a clean exit. A service that restarts only on
-      // failure stops retrying; a KeepAlive LaunchAgent retries until the holder exits.
+      // Another process already holds this install: a clean exit, which the service files leave
+      // stopped (they restart the daemon only after a failure; any other error exits 1).
       if (!(error instanceof InstallBusyError)) throw error;
       console.error(error.message);
     }

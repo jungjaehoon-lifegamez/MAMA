@@ -16,6 +16,10 @@ export function findExecutable(name: string): string | undefined {
   return undefined;
 }
 
+/** The first comment line of every start.sh that mama writes. */
+export const START_SCRIPT_MARKER =
+  '# Written by mama init or mama service install; mama service install rewrites it.';
+
 export function startScript(options: {
   home: string;
   nodePath: string;
@@ -24,9 +28,34 @@ export function startScript(options: {
   viewer: Record<string, string>;
   /** config.yaml's logging.level; the core logger reads it only from MAMA_LOG_LEVEL. */
   logLevel: string;
+  /** `export` lines carried over verbatim from the script being replaced. */
+  carried?: readonly string[];
 }): string {
   const root = join(options.home, '.mama');
-  const path = [
+  return [
+    '#!/bin/sh',
+    START_SCRIPT_MARKER,
+    'set -eu',
+    'umask 077',
+    `export PATH=${shellQuote(startPathEntries(options).join(':'))}`,
+    `cd ${shellQuote(root)}`,
+    'set -a',
+    `. ${shellQuote(join(root, 'auth.env'))}`,
+    'set +a',
+    `export MAMA_LOG_LEVEL=${shellQuote(options.logLevel.toUpperCase())}`,
+    ...Object.entries(options.viewer).map(([name, value]) => `export ${name}=${shellQuote(value)}`),
+    ...(options.carried ?? []),
+    `exec ${shellQuote(options.nodePath)} ${shellQuote(options.cliPath)} daemon >> ${shellQuote(join(root, 'logs', 'daemon.log'))} 2>&1`,
+    '',
+  ].join('\n');
+}
+
+/** The PATH a generated start.sh sets: Node's folder, the tools' folders, then the system's. */
+export function startPathEntries(options: {
+  nodePath: string;
+  executablePaths: string[];
+}): string[] {
+  return [
     ...new Set([
       dirname(options.nodePath),
       ...options.executablePaths.map(dirname),
@@ -35,21 +64,7 @@ export function startScript(options: {
       '/usr/sbin',
       '/sbin',
     ]),
-  ].join(':');
-  return [
-    '#!/bin/sh',
-    'set -eu',
-    'umask 077',
-    `export PATH=${shellQuote(path)}`,
-    `cd ${shellQuote(root)}`,
-    'set -a',
-    `. ${shellQuote(join(root, 'auth.env'))}`,
-    'set +a',
-    `export MAMA_LOG_LEVEL=${shellQuote(options.logLevel.toUpperCase())}`,
-    ...Object.entries(options.viewer).map(([name, value]) => `export ${name}=${shellQuote(value)}`),
-    `exec ${shellQuote(options.nodePath)} ${shellQuote(options.cliPath)} daemon >> ${shellQuote(join(root, 'logs', 'daemon.log'))} 2>&1`,
-    '',
-  ].join('\n');
+  ];
 }
 
 function xml(value: string): string {
@@ -86,21 +101,25 @@ export function launchAgent(home: string): string {
 `;
 }
 
-/** The systemd user unit, with the same restart policy as the LaunchAgent. */
-export function systemdUnit(home: string): string {
-  const root = join(home, '.mama');
+/**
+ * The systemd user unit, with the same restart policy as the LaunchAgent. `%h` is the home folder,
+ * expanded by systemd per argument, so a path with spaces stays one argument. KillMode=mixed sends
+ * the stop signal to the daemon alone, which stops its children in order; anything left is killed
+ * when the stop times out.
+ */
+export function systemdUnit(): string {
   return [
     '[Unit]',
     'Description=MAMA OS daemon',
-    'After=network-online.target',
     '',
     '[Service]',
     'Type=simple',
-    `WorkingDirectory=${root}`,
-    `ExecStart=${join(root, 'start.sh')}`,
+    'WorkingDirectory=%h/.mama',
+    'ExecStart="%h/.mama/start.sh"',
     'Restart=on-failure',
     'RestartSec=10',
     `TimeoutStopSec=${SERVICE_STOP_SECONDS}`,
+    'KillMode=mixed',
     '',
     '[Install]',
     'WantedBy=default.target',
@@ -108,42 +127,58 @@ export function systemdUnit(home: string): string {
   ].join('\n');
 }
 
-/** Exported names the generated start.sh carries over from an existing one: the viewer's access. */
-export const CARRIED_START_ENV = [
-  'MAMA_CF_ACCESS_ISSUER',
-  'MAMA_CF_ACCESS_AUD',
-  'MAMA_VIEWER_HOSTNAMES',
-  'MAMA_VIEWER_OWNER_EMAILS',
-  'MAMA_API_HOST',
-  'MAMA_API_PORT',
-] as const;
-
-/**
- * Read `export NAME=value` lines from an existing start.sh: the carried names with their values,
- * and the other exported names, which the new script does not keep. PATH and MAMA_LOG_LEVEL are
- * written from the current install and config.yaml.
- */
-export function startScriptExports(script: string): {
-  carried: Record<string, string>;
-  dropped: string[];
-} {
-  const carried: Record<string, string> = {};
-  const dropped: string[] = [];
-  for (const line of script.split('\n')) {
-    const match = /^\s*export\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
-    if (!match) continue;
-    const [, name, raw] = match;
-    if ((CARRIED_START_ENV as readonly string[]).includes(name)) {
-      carried[name] = unquoteShell(raw.trim());
-    } else if (name !== 'PATH' && name !== 'MAMA_LOG_LEVEL' && !dropped.includes(name)) {
-      dropped.push(name);
-    }
-  }
-  return { carried, dropped };
+/** What an existing start.sh holds that a regenerated one would or would not reproduce. */
+export interface StartScriptReading {
+  /** Written by mama (it carries the marker line). */
+  readonly generated: boolean;
+  /** `export` lines kept verbatim, except PATH and MAMA_LOG_LEVEL, which are written anew. */
+  readonly carried: string[];
+  readonly path: string | null;
+  readonly logLevel: string | null;
+  readonly exec: string | null;
+  /** Other lines with an effect (assignments, commands) that the new script does not have. */
+  readonly notReproduced: string[];
 }
 
-/** The inverse of shellQuote for a single-quoted word; a bare word is taken as written. */
-function unquoteShell(value: string): string {
-  if (!value.startsWith("'")) return value.replace(/^"(.*)"$/, '$1');
-  return value.slice(1, -1).replace(/'"'"'/g, "'");
+const GENERATED_STRUCTURE = [
+  /^#/,
+  /^set -eu$/,
+  /^set -a$/,
+  /^set \+a$/,
+  /^umask 077$/,
+  /^cd '/,
+  /^\. '/,
+];
+
+export function readStartScript(script: string): StartScriptReading {
+  const carried: string[] = [];
+  const notReproduced: string[] = [];
+  let path: string | null = null;
+  let logLevel: string | null = null;
+  let exec: string | null = null;
+  for (const raw of script.split('\n')) {
+    const line = raw.trim();
+    if (line === '') continue;
+    const exported = /^export\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+    if (exported) {
+      if (exported[1] === 'PATH') path = exported[2];
+      else if (exported[1] === 'MAMA_LOG_LEVEL') logLevel = exported[2];
+      else carried.push(line);
+      continue;
+    }
+    if (/^exec\s/.test(line)) {
+      exec = line;
+      continue;
+    }
+    if (GENERATED_STRUCTURE.some((pattern) => pattern.test(line))) continue;
+    notReproduced.push(line);
+  }
+  return {
+    generated: script.includes(START_SCRIPT_MARKER),
+    carried,
+    path,
+    logLevel,
+    exec,
+    notReproduced,
+  };
 }

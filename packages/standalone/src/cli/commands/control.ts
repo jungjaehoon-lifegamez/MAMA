@@ -1,5 +1,12 @@
+import { homedir } from 'node:os';
 import { CliInputError } from '../prompt.js';
 import { lockHolder, type LockOwner } from '../runtime/daemon-control.js';
+import {
+  defaultServiceRun,
+  SYSTEMD_UNIT,
+  systemdUnitState,
+  type ServiceRun,
+} from '../runtime/systemd-service.js';
 import { askDaemon, bootoutLaunchdService, installControlPaths, launchdService } from './daemon.js';
 
 /** `mama status` exits 0 while the daemon runs and 3 when nothing serves the install. */
@@ -15,6 +22,8 @@ interface ControlOptions {
   timeoutMs?: number;
   /** How long a released install must stay free before `mama stop` reports it stopped. */
   settleMs?: number;
+  /** Runs systemctl; tests replace it. */
+  run?: ServiceRun;
 }
 
 function localTime(ms: unknown): string {
@@ -75,10 +84,12 @@ export async function runStatus(
     throw new CliInputError('Usage: mama status [--json]');
   }
   const write = options.write ?? ((line: string) => console.log(line));
-  // The service line is extra: a failing launchctl is reported in it, not in place of the status.
+  // The service line is extra: a failing service manager is reported in it, not in place of status.
   let service: string | null;
   try {
-    service = launchdService().loaded ? 'launchd' : null;
+    const launchd = launchdService();
+    const unit = systemdUnitState(options.home ?? homedir(), options.run ?? defaultServiceRun);
+    service = launchd.loaded ? 'launchd (loaded)' : unit !== null ? `systemd (${unit})` : null;
   } catch (error) {
     service = `unknown (${error instanceof Error ? error.message : String(error)})`;
   }
@@ -88,7 +99,7 @@ export async function runStatus(
       write(JSON.stringify({ state: 'stopped', holder: reply.holder, service }));
     } else {
       write(reply.holder ? `stopped; ${holderLine(reply.holder)}` : 'stopped');
-      if (service) write(`service: ${service === 'launchd' ? 'launchd (loaded)' : service}`);
+      if (service) write(`service: ${service}`);
     }
     return STATUS_STOPPED_EXIT;
   }
@@ -100,7 +111,7 @@ export async function runStatus(
     write(JSON.stringify({ state: 'running', status, service }));
   } else {
     for (const line of statusLines(status)) write(line);
-    if (service) write(`service: ${service === 'launchd' ? 'launchd (loaded)' : service}`);
+    if (service) write(`service: ${service}`);
   }
   return 0;
 }
@@ -167,14 +178,34 @@ export async function runStop(
 ): Promise<number> {
   if (args.length !== 0) throw new CliInputError('Usage: mama stop');
   const write = options.write ?? ((line: string) => console.log(line));
-  const holder = lockHolder(installControlPaths(options));
+  let holder = lockHolder(installControlPaths(options));
   const service = launchdService();
-  // A loaded LaunchAgent restarts its job (KeepAlive), so it is unloaded first, whichever
-  // process holds the install now.
+  const run = options.run ?? defaultServiceRun;
+  const unit = systemdUnitState(options.home ?? homedir(), run);
+  // A service manager restarts its daemon, so it is stopped first, whichever process holds the
+  // install now: a loaded LaunchAgent is unloaded, and a systemd unit that runs or waits to
+  // restart is stopped (which also cancels a pending restart).
   if (service.loaded) bootoutLaunchdService();
-  const unloaded = service.loaded ? ' (launchd service unloaded)' : '';
+  const unitStopped = unit !== null && unit !== 'inactive' && unit !== 'failed';
+  if (unitStopped) {
+    const result = run('systemctl', ['--user', 'stop', SYSTEMD_UNIT]);
+    if (result.error || result.status !== 0) {
+      write(
+        `not stopped: systemctl --user stop ${SYSTEMD_UNIT} failed: ${result.error?.message ?? (`${result.stderr ?? ''}`.trim() || `exit ${String(result.status)}`)}`
+      );
+      return 1;
+    }
+  }
+  const unloaded = service.loaded
+    ? ' (launchd service unloaded)'
+    : unitStopped
+      ? ' (systemd unit stopped)'
+      : '';
+  // systemctl stop returns once the unit's daemon has exited; what holds the install now is
+  // something else, such as a daemon started in a terminal.
+  if (unitStopped) holder = lockHolder(installControlPaths(options));
   if (holder === null) {
-    write(service.loaded ? `stopped${unloaded}` : 'already stopped');
+    write(unloaded ? `stopped${unloaded}` : 'already stopped');
     return 0;
   }
   if (holder.command !== 'daemon') {
@@ -185,7 +216,7 @@ export async function runStop(
     return finish(
       await waitForRelease(holder, options, write),
       write,
-      'stopped (launchd service unloaded; mama service start starts it again)'
+      `stopped${unloaded}; mama service start starts it again`
     );
   }
   const reply = await askDaemon('stop', options);
