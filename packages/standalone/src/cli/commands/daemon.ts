@@ -272,6 +272,11 @@ function pathsFor(configPath: string, config: W1Config): DaemonPaths {
   if (pathsOverlap(workspaceDir, connectorsRoot)) {
     throw new Error(`agent.codex_cwd must not contain or sit inside ${connectorsRoot}`);
   }
+  // The runtime directory holds the session credential and the running turn's web fetch mode;
+  // an agent that could write there could open web fetch for a turn with no person in it.
+  if (pathsOverlap(workspaceDir, runtimeRoot)) {
+    throw new Error(`agent.codex_cwd must not contain or sit inside ${runtimeRoot}`);
+  }
   return {
     mamaRoot,
     runtimeRoot,
