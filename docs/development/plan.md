@@ -203,6 +203,9 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    [check](checks.md#release-mama-os-0671-mama-server-250-and-plugin-220-2026-10-07)): the server
    and the plugin run on core 7, and mama-os carries the `work.list` input errors (#441); live from
    19:26 KST.
+10. 1.0: owner decision 2026-10-15, judged on a fresh install that anyone can use, on macOS, Linux
+    and Docker. The gate and every weakness with its done condition: [v1.md](work/v1.md); the
+    research behind it: [agent-products-1.0.md](research/agent-products-1.0.md).
 
 ## Waiting
 
