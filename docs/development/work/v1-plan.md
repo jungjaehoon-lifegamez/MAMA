@@ -66,10 +66,10 @@ live check passes.
 
 ### W1.1 Lock, control socket and service files (R1; the generator W1.5 and W1.6 need)
 
-- Boot takes `<root>/runtime/daemon.lock` with an exclusive create holding pid and start time,
-  before the config stage; an existing lock whose process is alive refuses the boot (clean exit,
-  decision 7), a dead one is replaced. The socket is unlinked and bound only by the lock holder.
-  Signal handlers are installed before boot (today after it, `daemon.ts:963-977`).
+- Boot takes the exclusive SQLite lock of decision 2 on `<root>/runtime/daemon.lock` before the
+  config stage and holds it for the process's life; a held lock refuses the boot (clean exit,
+  decision 7), and the operating system releases it when the process ends. The holder serves the
+  socket. Signal handlers are installed before boot (today after it, `daemon.ts:963-977`).
 - Ops: `status` (pid, version, started, boot stage, running turns per session, connectors' last poll
   and error, last error), `drain` (stop intake, report when no turn runs, stay up), `stop`.
 - CLI: `status` (exit 0 running, 3 stopped) plus the service manager's state; `stop` drains and
@@ -85,8 +85,8 @@ live check passes.
 - Files: new `s/cli/runtime/daemon-control.ts`, `s/cli/commands/service.ts`; `daemon.ts`;
   `index.ts`; `launch-files.ts`; `register-owner.ts`; `docs/reference/cli.md` (stale PID text and
   secret names).
-- Tests: a second boot refused before touching the database; a dead lock replaced; a slow socket
-  never unlinked by another process; stop during boot; status under no service manager.
+- Tests: a second boot refused before touching the database; a killed holder's lock free for the
+  next start; stop during boot; status under no service manager.
 - Live: `mama status` during a turn; a second `daemon` refused with no database or settings write.
 
 ### W1.2 `mama doctor` and the bug report (R2, R8, I6; the backend probe of I2)
@@ -111,7 +111,9 @@ live check passes.
   skills under `tools_root/skills` (owner-published, `s/runtime/skills.ts:446-479`), a manifest
   with versions and SHA-256, verified with `integrity_check` and the hashes. Credentials, including
   each member's copied Codex login and session credential, only with `--include-secrets`; left out:
-  `tools_root` binaries, Codex thread caches, model caches, logs unless asked.
+  `tools_root` binaries, Codex thread caches, model caches, logs unless asked. Archives are written
+  0600 to `<root>/backups/`, which joins the agents' read denies; another destination inside the
+  workspace or `member_root` is refused.
 - Poll state is written atomically (today in place, `polling-scheduler.ts:205`, and a parse failure
   is dropped silently, `:179-182`).
 - Restore writes to a staging folder, swaps, and rewrites the old prefixes of the three roots
@@ -134,7 +136,11 @@ live check passes.
 - The daemon takes over its own stdout and stderr at entry and writes them with size rotation; the
   launch files send only what comes before that to a crash log under `logs/`, capped at start.
   `daemon.log` and `security-events.jsonl` keep a fixed number of compressed files.
-  `mama logs [-n N] [--follow]`; `mama uninstall [--dry-run] [--data]`.
+  `mama logs [-n N] [--follow]`; `mama uninstall [--dry-run] [--data]`: without `--data` it stops
+  and removes the service; with `--data` and a typed confirmation it also removes the MAMA root,
+  `member_root` (every person's workspace, downloads, runtime state and copied logins) and the
+  common skills under `tools_root/skills`, keeping the toolkit binaries unless `--toolkit` is given;
+  `--dry-run` lists exactly what would go.
 
 ### W1.6 This Mac on generated launch files
 
@@ -193,7 +199,8 @@ live check passes.
 
 - `install.sh` for macOS and Linux always provisions the managed Node under the user's MAMA folder
   (a stable path the launch files use, whatever Node is already installed, I6), installs the
-  package, creates the Linux roots with `sudo` once and starts `mama init`; Docker is
+  package and the backend CLI the person picks (Claude Code or Codex, by its documented install
+  method, verified at the time), so `mama init` only signs it in, creates the Linux roots with `sudo` once and starts `mama init`; Docker is
   `docker compose run --rm mama init` once (pairing needs a person), then `docker compose up -d`.
 - Enabling a source checks the tools it needs (`gws` today); the install guide lists supported
   versions of Node, the backends, the Linux distribution and Docker.
