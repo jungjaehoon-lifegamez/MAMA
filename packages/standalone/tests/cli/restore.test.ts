@@ -375,6 +375,60 @@ describe('mama restore', () => {
     expect(readFileSync(join(b.root, 'owner-policy.md'), 'utf8')).toBe('policy from b');
   });
 
+  it('rolls back with config.yaml set aside, and puts an in-root workspace where this install keeps it', async () => {
+    const b = target();
+    mkdirSync(join(b.root, 'backups'), { recursive: true });
+    const aside = join(b.root, '.mama-restore-z-old-config.yaml');
+    renameSync(b.configPath, aside);
+    writeFileSync(
+      journalPath(b.root),
+      JSON.stringify({
+        id: 'z',
+        committed: false,
+        steps: [
+          {
+            destination: b.configPath,
+            sibling: join(b.root, '.mama-restore-z-config.yaml'),
+            aside,
+            companionEnds: [],
+            existed: true,
+            state: 'switching',
+          },
+        ],
+      })
+    );
+    await runRestore(['--rollback'], options(b));
+    expect(readFileSync(b.configPath, 'utf8')).toContain('memory.db');
+
+    const a = source();
+    const archive = await backupOf(a);
+    const external = join(temp('b-workspace'), 'workspace');
+    const config = yaml.load(readFileSync(b.configPath, 'utf8')) as Record<string, unknown>;
+    config.agent = { ...(config.agent as object), codex_cwd: external };
+    writeFileSync(b.configPath, yaml.dump(config));
+    await runRestore([archive], options(b));
+    expect(readFileSync(join(external, 'files', 'report.md'), 'utf8')).toBe('report');
+    expect(existsSync(join(b.root, 'workspace'))).toBe(false);
+  });
+
+  it("runs the archived database's trigger text only as one CREATE TRIGGER", () => {
+    const dir = temp('db-trigger');
+    const path = join(dir, 'x.db');
+    const db = new Database(path);
+    db.exec(`
+      CREATE TABLE mailbox_inputs (payload_json TEXT);
+      CREATE TRIGGER "odd""name" AFTER UPDATE ON mailbox_inputs BEGIN SELECT 1; END;
+      INSERT INTO mailbox_inputs VALUES ('{"p":"/old/x"}');
+    `);
+    db.close();
+    expect(rewriteDatabase(path, [['mailbox_inputs', 'payload_json']], [['/old', '/new']])).toBe(1);
+    const after = new Database(path, { readonly: true });
+    expect(after.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'").all()).toEqual([
+      { name: 'odd"name' },
+    ]);
+    after.close();
+  });
+
   it('reads the manifest as untrusted: links with entries beneath, names no backup keeps, credentials it did not take', () => {
     const configured = {
       root: { configured: '/h/.mama', physical: '/h/.mama' },

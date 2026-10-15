@@ -49,16 +49,13 @@ export async function runRestore(
   const home = options.home ?? homedir();
   const configPath = options.configPath ?? defaultConfigPath(home);
   const write = options.write ?? ((line: string) => console.log(line));
-  if (!existsSync(configPath)) {
-    throw new CliInputError(`Restore needs an installed target: ${configPath} does not exist`);
-  }
-  const config = loadConfig({ home, path: configPath, onIgnored: () => {} });
   const root = resolve(dirname(configPath));
   const backups = join(root, 'backups');
   // Nothing may run while files are switched under it.
   const lock = acquireInstallLock(daemonControlPaths(root), 'restore');
   let staging: string | null = null;
   try {
+    // Rollback reads only the journal: mid-switch, config.yaml can be aside or the restored one.
     if (args[0] === '--rollback') {
       const undone = rollBack(root);
       write(
@@ -75,6 +72,10 @@ export async function runRestore(
         'An earlier restore was interrupted; mama restore --rollback resolves it first'
       );
     }
+    if (!existsSync(configPath)) {
+      throw new CliInputError(`Restore needs an installed target: ${configPath} does not exist`);
+    }
+    const config = loadConfig({ home, path: configPath, onIgnored: () => {} });
     const archive = resolve(args[0]);
     if (!existsSync(archive) || !statSync(archive).isFile()) {
       throw new CliInputError(`${archive} is not a file`);
@@ -125,7 +126,7 @@ export async function runRestore(
     applyModes(staging, manifest.entries);
 
     const units = prefixes.flatMap((prefix) =>
-      unitsFor(prefix, staging!, destinationOf(prefix, target), manifest)
+      unitsFor(prefix, staging!, destinationOf(prefix, target), manifest, target.workspace!)
     );
     switchUnits(root, units, id);
     finishSwitch(root);

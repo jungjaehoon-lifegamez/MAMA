@@ -169,10 +169,7 @@ export function validateManifest(manifest: BackupManifest): void {
       throw new Error(`the archive manifest gives ${key} a relative path`);
     }
   }
-  const root = configured.root?.physical;
-  const workspace = configured.workspace?.physical;
-  const workspaceTop =
-    root && workspace && dirname(workspace) === root ? basename(workspace) : null;
+  const workspaceTop = workspaceInRoot(manifest);
   const rootNames = new Set<string>([
     ...ROOT_FILES,
     ...ROOT_DIRS,
@@ -374,7 +371,14 @@ export function rewriteDatabase(
         const triggers = db
           .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ?")
           .all(table) as { name: string; sql: string }[];
-        for (const trigger of triggers) db.exec(`DROP TRIGGER "${trigger.name}"`);
+        // The staged database came from the archive: its schema text is data, run one
+        // statement at a time and only as what it claims to be.
+        for (const trigger of triggers) {
+          if (!/^\s*CREATE\s+TRIGGER\b/i.test(trigger.sql ?? '')) {
+            throw new Error(`trigger ${JSON.stringify(trigger.name)} has no CREATE TRIGGER text`);
+          }
+          db.prepare(`DROP TRIGGER "${trigger.name.replace(/"/g, '""')}"`).run();
+        }
         const update = db.prepare(`UPDATE "${table}" SET "${column}" = ? WHERE rowid = ?`);
         const rows = db
           .prepare(
@@ -385,7 +389,8 @@ export function rewriteDatabase(
           const value = rewritePaths(row.value, pairs);
           if (value !== row.value) changed += update.run(value, row.id).changes;
         }
-        for (const trigger of triggers) db.exec(trigger.sql);
+        // prepare() compiles exactly one statement and refuses a string with more.
+        for (const trigger of triggers) db.prepare(trigger.sql).run();
       }
     })();
   } finally {
@@ -624,12 +629,20 @@ export function prefixesIn(manifest: BackupManifest): string[] {
   return found;
 }
 
+/** The workspace's folder name when the backup kept it inside the MAMA root. */
+export function workspaceInRoot(manifest: BackupManifest): string | null {
+  const root = manifest.configured?.root?.physical;
+  const workspace = manifest.configured?.workspace?.physical;
+  return root && workspace && dirname(workspace) === root ? basename(workspace) : null;
+}
+
 /** The units a prefix switches: a folder's children one by one, never the folder itself. */
 export function unitsFor(
   prefix: string,
   staging: string,
   destination: string,
-  manifest: BackupManifest
+  manifest: BackupManifest,
+  workspace?: string
 ): SwitchUnit[] {
   const staged = join(staging, ...prefix.split('/'));
   if (!FOLDER_PREFIXES.has(prefix)) {
@@ -652,6 +665,14 @@ export function unitsFor(
   for (const name of readdirSync(staged)) {
     // start.sh names this machine's Node and paths; mama service install writes it.
     if (prefix === 'root' && name === 'start.sh') continue;
+    // A workspace the backup kept inside the root goes where this install keeps its own.
+    if (prefix === 'root' && workspace && name === workspaceInRoot(manifest)) {
+      if (!lexists(workspace)) mkdirSync(workspace, { recursive: true, mode: 0o700 });
+      for (const child of readdirSync(join(staged, name))) {
+        units.push({ staged: join(staged, name, child), destination: join(workspace, child) });
+      }
+      continue;
+    }
     // runtime/ holds the install lock, so its files are switched one by one.
     if (prefix === 'root' && name === 'runtime') {
       const runtime = join(destination, 'runtime');
