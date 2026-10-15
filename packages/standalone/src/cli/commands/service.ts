@@ -15,7 +15,9 @@ import {
   findExecutable,
   launchAgent,
   readStartScript,
+  stableNodePath,
   startPathEntries,
+  startPathValue,
   startScript,
   systemdUnit,
 } from '../launch-files.js';
@@ -138,7 +140,7 @@ export async function installService(
     );
   }
   const gws = locate('gws');
-  const nodePath = options.nodePath ?? process.execPath;
+  const nodePath = options.nodePath ?? stableNodePath(process.execPath);
   const cliPath = options.cliPath ?? join(__dirname, '..', 'index.js');
   const executablePaths = [backend, ...(gws ? [gws] : [])];
   const startPath = join(root, 'start.sh');
@@ -166,9 +168,9 @@ export async function installService(
       write(`carried over: ${names.join(', ')}`);
     }
     const kept = startPathEntries({ nodePath, executablePaths });
-    const lost = (reading.path === null ? [] : unquote(reading.path).split(':')).filter(
-      (entry) => entry !== '' && entry !== '$PATH' && !kept.includes(entry)
-    );
+    // $HOME in the old PATH is the same folder the new one names in full.
+    const oldPath = reading.path === null ? [] : startPathValue(reading.path, home);
+    const lost = oldPath.filter((entry) => !kept.includes(entry));
     if (lost.length > 0) write(`PATH no longer includes: ${lost.join(', ')}`);
     if (
       reading.logLevel !== null &&

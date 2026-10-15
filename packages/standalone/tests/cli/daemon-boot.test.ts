@@ -395,20 +395,22 @@ describe('daemon bootstrap', () => {
     const options = config(root);
     Object.assign(options.telegram, { token: 'fixture-obsolete-token' });
     const logs: string[] = [];
-    await expect(
-      bootDaemon({
-        config: options,
-        home: root,
-        configPath: join(root, 'config.yaml'),
-        logger: { info: (line) => logs.push(line), error: (line) => logs.push(line) },
-        dependencies: {
-          ensureIsolation: () => {},
-          createOwnerRuntime: async () => ownerDouble([]) as never,
-          createViewerServer: () => viewerDouble([]) as never,
-          startConnectorRuntime: async () => ({ stop: async () => {} }) as never,
-        },
-      })
-    ).rejects.toThrow(/MAMA_TELEGRAM_TOKEN is required/);
+    const failure = await bootDaemon({
+      config: options,
+      home: root,
+      configPath: join(root, 'config.yaml'),
+      logger: { info: (line) => logs.push(line), error: (line) => logs.push(line) },
+      dependencies: {
+        ensureIsolation: () => {},
+        createOwnerRuntime: async () => ownerDouble([]) as never,
+        createViewerServer: () => viewerDouble([]) as never,
+        startConnectorRuntime: async () => ({ stop: async () => {} }) as never,
+      },
+    }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(/MAMA_TELEGRAM_TOKEN is required/);
+    // The CLI names this stage on the terminal; the message itself stays in daemon.log.
+    expect((failure as { bootStage?: unknown }).bootStage).toBe('messengers');
     expect(logs.join('\n').includes('fixture-obsolete-token')).toBe(false);
   });
 

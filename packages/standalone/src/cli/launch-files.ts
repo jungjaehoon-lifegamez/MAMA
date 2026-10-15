@@ -1,4 +1,4 @@
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, existsSync } from 'node:fs';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { shellQuote } from './secrets.js';
 
@@ -14,6 +14,32 @@ export function findExecutable(name: string): string | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * A Node path that survives an upgrade. Homebrew removes a version's Cellar folder when it
+ * upgrades, but keeps `<prefix>/opt/<formula>` (and `<prefix>/bin/node` for `node`) pointing at
+ * the current one, so the launch files use those when the running Node lives in the Cellar.
+ */
+export function stableNodePath(
+  execPath: string,
+  exists: (path: string) => boolean = existsSync
+): string {
+  const brew = /^(.*)\/Cellar\/(node(?:@\d+)?)\/[^/]+\/bin\/node$/.exec(execPath);
+  if (!brew) return execPath;
+  const [, prefix, formula] = brew;
+  const candidates = [
+    join(prefix, 'opt', formula, 'bin', 'node'),
+    ...(formula === 'node' ? [join(prefix, 'bin', 'node')] : []),
+  ];
+  return candidates.find((candidate) => exists(candidate)) ?? execPath;
+}
+
+/** A Node path that a version manager or an upgrade removes (I6). */
+export function versionedNodePath(path: string): boolean {
+  return /\/Cellar\/node(@\d+)?\/|\/\.nvm\/versions\/node\/|\/\.volta\/tools\/image\/node\/|\/fnm\/node-versions\//.test(
+    path
+  );
 }
 
 /** The first comment line of every start.sh that mama writes. */
@@ -138,6 +164,15 @@ export interface StartScriptReading {
   readonly exec: string | null;
   /** Other lines with an effect (assignments, commands) that the new script does not have. */
   readonly notReproduced: string[];
+}
+
+/** The PATH entries an `export PATH=` value names, with `$HOME` and `~` read as `home`. */
+export function startPathValue(value: string, home: string): string[] {
+  return value
+    .replace(/^['"]|['"]$/g, '')
+    .split(':')
+    .map((entry) => entry.replace(/^(\$HOME|\$\{HOME\}|~)(?=\/|$)/, home))
+    .filter((entry) => entry !== '' && entry !== '$PATH');
 }
 
 /**

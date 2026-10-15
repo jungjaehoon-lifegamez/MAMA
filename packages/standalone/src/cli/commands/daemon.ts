@@ -280,7 +280,7 @@ export function validateDeliveryRoutes(config: W1Config): void {
   }
 }
 
-function pathsFor(configPath: string, config: W1Config): DaemonPaths {
+export function pathsFor(configPath: string, config: W1Config): DaemonPaths {
   const mamaRoot = dirname(configPath);
   const runtimeRoot = join(mamaRoot, 'runtime');
   const workspaceDir = config.agent.codex_cwd ?? join(mamaRoot, 'workspace');
@@ -1056,6 +1056,9 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       logger.info(`boot stopped before stage=${currentStage}`);
     } else {
       stageFailed(logger, currentStage, error);
+      if (error !== null && typeof error === 'object') {
+        Object.defineProperty(error, 'bootStage', { value: currentStage, enumerable: false });
+      }
     }
     try {
       await stopResources();
