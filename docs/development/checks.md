@@ -2425,3 +2425,27 @@ The implementation writes raw/index data during import only. Replay is the owner
   - `--restart` waits for W2.3's drain op.
   - Restore and its proof are W1.3b.
   - This Mac's archive (no credentials) stays in `~/.mama/backups` as W1.3b's proof input.
+
+### W1.3b: mama restore, a backup onto a stopped install (#509, 2026-10-16)
+
+- Result: `mama restore <archive>` / `--rollback` closes v1.md R4.
+  - The manifest is untrusted:
+    - only the names a backup keeps;
+    - nothing beneath a link, and links only in workspaces and as skill pointers;
+    - tar entry types must match the manifest;
+    - credentials only when the backup says it has them.
+  - The restored config is the backup's settings with this install's paths, and every part goes where that config puts it, folder by folder.
+  - Attachment paths in `mailbox_inputs` and `connector_event_index` move to the new roots in one pass, with triggers set aside so no event is renumbered. Raw stores and evidence keep their recorded paths.
+  - The switch runs under a write-ahead journal with a commit flag. Rollback works from what is on disk and can run again. While a journal is open, boot, `register-owner` and `backup` refuse with a clean exit, and doctor fails.
+  - Credentials and `start.sh` stay with the target; the owner's Codex threads are cleared.
+  - Backup now always archives the wiki on its own.
+- Evidence:
+  - Opus reviewed three rounds. The first found four high defects (a rollback that could delete data, config/file mismatch, a symlink-chain archive, doubled paths); the third found no data-losing or out-of-place write.
+  - Codex reviewed four rounds; one finding was declined: restore trusts the archive's origin.
+  - Deployed 08:48:13 KST: eight boot stages, no errors, doctor ok.
+  - The deployed restore of the 06:51 archive onto a scratch HOME nested in the real one (separate `member_root`, `tools_root` and vault) took 12 s: 34 paths placed, 6 attachment paths moved, 3 attachments open, 0 doubled, `mailbox_inputs` 2072, `connector_event_index` 43260 and `observation_versions` 56975 equal to live, 0 renumbered. The copy was deleted.
+- Still open:
+  - W1.3c: write new attachments as root-relative paths (decision 5).
+  - Moving the path rewrite into core is a W1.4 candidate.
+  - A published skill is proven by test only (no `tools_root/skills` on this Mac).
+  - Restoring an older backup brings back data erased after it (P9, owner decision).
