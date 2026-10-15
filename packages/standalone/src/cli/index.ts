@@ -35,11 +35,11 @@ async function main(): Promise<void> {
       // Another process already holds this install: a clean exit, which the service files leave
       // stopped (they restart the daemon only after a failure; any other error exits 1).
       if (!(error instanceof InstallBusyError)) {
-        // The message stays in daemon.log; the terminal gets the stage and where to look.
+        // The log line above names the error; this names the stage and the next step.
         const stage = (error as { bootStage?: unknown }).bootStage;
         if (typeof stage === 'string') {
           console.error(
-            `mama daemon failed at boot stage ${stage}; see ~/.mama/logs/daemon.log and run mama doctor`
+            `mama daemon failed at boot stage ${stage}; mama doctor checks the install`
           );
         }
         throw error;

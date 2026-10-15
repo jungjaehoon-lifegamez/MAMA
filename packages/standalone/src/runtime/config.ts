@@ -125,7 +125,7 @@ export class ConfigError extends Error {
   }
 }
 
-const CONFIG_KEYS = [
+export const CONFIG_KEYS = [
   'version',
   'timezone',
   'member_root',

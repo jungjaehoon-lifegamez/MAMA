@@ -48,16 +48,18 @@ export interface BackendProbe {
 
 /**
  * Read a backend CLI's version and whether it is signed in, without printing anything the CLI
- * says about the account. Codex is asked about the managed home the owner runtime reads.
+ * says about the account. `env` is the environment the daemon gives the backend, so a login that
+ * only this shell's variables provide does not count; Codex is asked about the managed home.
  */
 export function probeBackend(
   backend: BackendName,
   executable: string,
-  options: { codexHome?: string; run?: ProbeRun } = {}
+  options: { codexHome?: string; run?: ProbeRun; env?: NodeJS.ProcessEnv } = {}
 ): BackendProbe {
   const run = options.run ?? defaultProbeRun;
+  const env = options.env ?? process.env;
   const minimum = MINIMUM_BACKEND_VERSIONS[backend];
-  const versionRun = run(executable, ['--version']);
+  const versionRun = run(executable, ['--version'], env);
   const version = versionRun.error
     ? null
     : (/(\d+\.\d+\.\d+)/.exec(`${versionRun.stdout ?? ''}`)?.[1] ?? null);
@@ -67,12 +69,12 @@ export function probeBackend(
       minimum,
       versionOk: false,
       loggedIn: false,
-      problem: `${executable} --version did not print a version`,
+      problem: `${backend} --version printed no version`,
     };
   }
   const versionOk = compareVersions(version, minimum) >= 0;
   if (backend === 'claude') {
-    const status = run(executable, ['auth', 'status', '--json']);
+    const status = run(executable, ['auth', 'status', '--json'], env);
     let loggedIn = false;
     try {
       loggedIn = (JSON.parse(`${status.stdout ?? ''}`) as { loggedIn?: unknown }).loggedIn === true;
@@ -87,8 +89,10 @@ export function probeBackend(
     }
     return { version, minimum, versionOk, loggedIn, problem: null };
   }
-  const env = { ...process.env, ...(options.codexHome ? { CODEX_HOME: options.codexHome } : {}) };
-  const status = run(executable, ['login', 'status'], env);
+  const status = run(executable, ['login', 'status'], {
+    ...env,
+    ...(options.codexHome ? { CODEX_HOME: options.codexHome } : {}),
+  });
   return {
     version,
     minimum,

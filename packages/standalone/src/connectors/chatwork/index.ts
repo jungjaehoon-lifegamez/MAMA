@@ -126,7 +126,7 @@ export class ChatworkConnector implements IConnector {
     return [
       {
         type: 'token',
-        tokenName: 'CHATWORK_API_TOKEN',
+        tokenName: this.config.auth.tokenName ?? 'CHATWORK_API_TOKEN',
         description:
           'Chatwork API token from https://www.chatwork.com/service/packages/chatwork/subpackages/api/token.php',
       },

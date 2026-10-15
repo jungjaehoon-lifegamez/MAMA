@@ -166,13 +166,61 @@ export interface StartScriptReading {
   readonly notReproduced: string[];
 }
 
+/**
+ * Split a start.sh line into words as sh does before expansion: single quotes are literal, double
+ * quotes keep their text (a backslash escapes `"`, `\\`, `$` and a backtick), and a backslash
+ * outside quotes escapes the next character. Variables stay as written.
+ */
+export function shellWords(line: string): string[] {
+  const words: string[] = [];
+  let word: string | null = null;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === "'") {
+      const end = line.indexOf("'", index + 1);
+      if (end < 0) throw new Error('unterminated single quote');
+      word = (word ?? '') + line.slice(index + 1, end);
+      index = end;
+    } else if (char === '"') {
+      let text = '';
+      index += 1;
+      while (index < line.length && line[index] !== '"') {
+        if (line[index] === '\\' && '"\\$`'.includes(line[index + 1] ?? '')) index += 1;
+        text += line[index];
+        index += 1;
+      }
+      if (index >= line.length) throw new Error('unterminated double quote');
+      word = (word ?? '') + text;
+    } else if (char === '\\') {
+      word = (word ?? '') + (line[index + 1] ?? '');
+      index += 1;
+    } else if (/\s/.test(char)) {
+      if (word !== null) words.push(word);
+      word = null;
+    } else {
+      word = (word ?? '') + char;
+    }
+  }
+  if (word !== null) words.push(word);
+  return words;
+}
+
 /** The PATH entries an `export PATH=` value names, with `$HOME` and `~` read as `home`. */
 export function startPathValue(value: string, home: string): string[] {
-  return value
-    .replace(/^['"]|['"]$/g, '')
+  return (shellWords(value)[0] ?? '')
     .split(':')
     .map((entry) => entry.replace(/^(\$HOME|\$\{HOME\}|~)(?=\/|$)/, home))
-    .filter((entry) => entry !== '' && entry !== '$PATH');
+    .filter((entry) => entry !== '' && entry !== '$PATH' && entry !== '${PATH}');
+}
+
+/** The values a start.sh's carried `export` lines set, unquoted. */
+export function startExports(reading: StartScriptReading): Record<string, string> {
+  return Object.fromEntries(
+    reading.carried.flatMap((line) => {
+      const match = /^export\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+      return match ? [[match[1], shellWords(match[2])[0] ?? '']] : [];
+    })
+  );
 }
 
 /**

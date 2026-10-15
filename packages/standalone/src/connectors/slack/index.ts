@@ -138,7 +138,7 @@ export class SlackConnector implements IConnector {
     return [
       {
         type: 'token',
-        tokenName: 'SLACK_BOT_TOKEN',
+        tokenName: this.config.auth.tokenName ?? 'SLACK_BOT_TOKEN',
         description: 'Slack bot token with history and user lookup access.',
       },
     ];

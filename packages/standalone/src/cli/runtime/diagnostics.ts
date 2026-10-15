@@ -1,21 +1,43 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { connect } from 'node:net';
 import { homedir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { resolveApiPort } from '../../api/viewer-server.js';
+import { loadConnector } from '../../connectors/index.js';
 import { loadConfig, type W1Config } from '../../runtime/config.js';
+import { backendEnvironment } from '../../runtime/backend-security.js';
+import { connectorLoadPaths, planConnectors } from '../../runtime/connectors.js';
+import { createTimeZoneSetting } from '../../runtime/timezone.js';
 import { readDocumentToolkit } from '../../tools/document-toolkit.js';
-import { readStartScript, startPathValue, versionedNodePath } from '../launch-files.js';
-import { askDaemon, launchdService, pathsFor, validateDeliveryRoutes } from '../commands/daemon.js';
+import {
+  readStartScript,
+  shellWords,
+  startExports,
+  startPathValue,
+  versionedNodePath,
+} from '../launch-files.js';
+import { isIcalSecret, SECRET_NAMES } from '../secrets.js';
+import {
+  askDaemon,
+  launchdService,
+  MESSENGER_SECRETS,
+  pathsFor,
+  validateDeliveryRoutes,
+} from '../commands/daemon.js';
 import { probeBackend, type BackendName, type ProbeRun, defaultProbeRun } from './backend-probe.js';
-import { systemdUnitState, type ServiceRun, defaultServiceRun } from './systemd-service.js';
 import type { DaemonControlReply } from './daemon-control.js';
+import { systemdUnitState, type ServiceRun, defaultServiceRun } from './systemd-service.js';
 
 export type CheckStatus = 'ok' | 'warn' | 'fail';
 
 export interface Check {
   readonly name: string;
   readonly status: CheckStatus;
+  /** What doctor found, in its own words; the shareable report carries only this. */
   readonly detail: string;
+  /** What doctor read from the install (paths, error messages); shown here, never reported. */
+  readonly context?: string;
   /** What to do about a warn or fail. */
   readonly fix?: string;
 }
@@ -26,7 +48,7 @@ export interface DiagnosticsOptions {
   platform?: NodeJS.Platform;
   run?: ProbeRun;
   serviceRun?: ServiceRun;
-  /** A Telegram Bot API call; tests replace it. Null skips the network check. */
+  /** A Telegram Bot API call; tests replace it. Null makes no network call. */
   telegramCall?:
     | ((
         token: string,
@@ -37,9 +59,20 @@ export interface DiagnosticsOptions {
   findIn?: (name: string, dirs: string[]) => string | undefined;
   /** Ask the install's daemon for its status; tests replace it. */
   askStatus?: () => Promise<DaemonControlReply>;
+  /** Whether something listens on a local port; tests replace it. */
+  portInUse?: (port: number) => Promise<boolean>;
 }
 
 const LOG_WARN_BYTES = 50 * 1024 * 1024;
+/** A daemon still booting after this long is stuck. */
+const BOOT_STUCK_MS = 2 * 60 * 1000;
+/** The PATH a service manager gives a unit that does not set one ($PATH in start.sh). */
+const SERVICE_DEFAULT_PATH: Record<string, string[]> = {
+  darwin: ['/usr/bin', '/bin', '/usr/sbin', '/sbin'],
+  linux: ['/usr/local/sbin', '/usr/local/bin', '/usr/sbin', '/usr/bin', '/sbin', '/bin'],
+};
+/** systemd states of an installed unit that can be started or is running. */
+const SYSTEMD_USABLE = new Set(['active', 'inactive', 'activating', 'deactivating', 'reloading']);
 
 function findIn(name: string, dirs: string[]): string | undefined {
   for (const dir of dirs) {
@@ -49,17 +82,17 @@ function findIn(name: string, dirs: string[]): string | undefined {
   return undefined;
 }
 
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** A value from auth.env (`export NAME='value'`), unquoted; never printed. */
 export function authEnvValue(root: string, name: string): string | undefined {
   const path = join(root, 'auth.env');
   if (!existsSync(path)) return undefined;
   for (const line of readFileSync(path, 'utf8').split('\n')) {
     const match = new RegExp(`^\\s*(?:export\\s+)?${name}=(.*)$`).exec(line);
-    if (!match) continue;
-    const raw = match[1].trim();
-    return raw.startsWith("'")
-      ? raw.slice(1, -1).replace(/'"'"'/g, "'")
-      : raw.replace(/^"|"$/g, '');
+    if (match) return shellWords(match[1])[0] ?? '';
   }
   return undefined;
 }
@@ -92,9 +125,16 @@ function portAnswers(port: number, host = '127.0.0.1'): Promise<boolean> {
   });
 }
 
+function secretFix(name: string): string {
+  return (SECRET_NAMES as readonly string[]).includes(name) || isIcalSecret(name)
+    ? `mama secret set ${name}`
+    : `add ${name} to auth.env`;
+}
+
 /**
- * Check an install read-only: nothing here writes a file, opens the database or starts a
- * service. Each check names what it found and, when it is not ok, what to do.
+ * Check an install as its service would run it. Nothing here writes MAMA's files, opens its
+ * database or starts a service; the backend's own status command may update the backend's config.
+ * Each check names what it found and, when it is not ok, what to do.
  */
 export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<Check[]> {
   const home = options.home ?? homedir();
@@ -110,12 +150,13 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
     config = loadConfig({ home, path: configPath });
     validateDeliveryRoutes(config);
     pathsFor(configPath, config);
-    checks.push({ name: 'config', status: 'ok', detail: configPath });
+    checks.push({ name: 'config', status: 'ok', detail: 'loads', context: configPath });
   } catch (error) {
     checks.push({
       name: 'config',
       status: 'fail',
-      detail: error instanceof Error ? error.message : String(error),
+      detail: 'does not load as boot reads it',
+      context: message(error),
       fix: `correct ${configPath}; the daemon refuses to boot until this passes`,
     });
   }
@@ -123,56 +164,67 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
   if (config) {
     checks.push(
       config.member_root
-        ? { name: 'member_root', status: 'ok', detail: config.member_root }
+        ? { name: 'member_root', status: 'ok', detail: 'set', context: config.member_root }
         : {
             name: 'member_root',
-            status: 'fail',
-            detail: 'not set',
+            status: 'warn',
+            detail: 'not set; the daemon needs it once a person is registered',
             fix: 'set member_root to an absolute folder outside HOME in config.yaml',
           }
     );
   }
 
-  // What the service runs: the start script's Node and PATH, not this shell's.
+  // What the service runs: the start script's Node, PATH and exports, not this shell's.
   const startPath = join(root, 'start.sh');
-  let servicePath = (process.env.PATH ?? '').split(delimiter).filter(Boolean);
-  if (existsSync(startPath)) {
-    const script = readFileSync(startPath, 'utf8');
-    const reading = readStartScript(script, home);
-    const node = /^exec\s+'([^']+)'/.exec(reading.exec ?? '')?.[1];
-    if (!reading.generated || node === undefined) {
-      checks.push({
-        name: 'start.sh',
-        status: 'warn',
-        detail: 'not written by mama, so its Node and PATH are not checked',
-        fix: 'mama service install shows what it would change; --replace rewrites it',
-      });
-    } else if (!existsSync(node)) {
-      checks.push({
-        name: 'node',
-        status: 'fail',
-        detail: `${node} is gone`,
-        fix: 'mama service install rewrites start.sh with a Node path that survives upgrades',
-      });
-    } else if (versionedNodePath(node)) {
-      checks.push({
-        name: 'node',
-        status: 'warn',
-        detail: `${node} belongs to one Node version; an upgrade or a version switch removes it`,
-        fix: 'mama service install rewrites start.sh with a Node path that survives upgrades',
-      });
-    } else {
-      checks.push({ name: 'node', status: 'ok', detail: node });
-    }
-    if (reading.path) servicePath = startPathValue(reading.path, home);
-  } else {
+  let servicePath = SERVICE_DEFAULT_PATH[platform] ?? [];
+  let exports: Record<string, string> = {};
+  if (!existsSync(startPath)) {
     checks.push({
       name: 'start.sh',
       status: 'fail',
-      detail: `${startPath} does not exist`,
+      detail: 'does not exist',
       fix: 'mama service install writes it',
     });
+  } else {
+    try {
+      const reading = readStartScript(readFileSync(startPath, 'utf8'), home);
+      exports = startExports(reading);
+      if (reading.path !== null) {
+        servicePath = [
+          ...startPathValue(reading.path, home),
+          ...(/\$\{?PATH\}?/.test(reading.path) ? servicePath : []),
+        ];
+      }
+      const [, node, cli] = reading.exec === null ? [] : shellWords(reading.exec);
+      if (!reading.generated) {
+        checks.push({
+          name: 'start.sh',
+          status: 'warn',
+          detail: 'not written by mama; its PATH and exports are read, its Node is not checked',
+          fix: 'mama service install shows what it would change; --replace rewrites it',
+        });
+      } else if (node === undefined || cli === undefined) {
+        checks.push({
+          name: 'start.sh',
+          status: 'fail',
+          detail: 'has no exec line naming Node and the MAMA command',
+          fix: 'mama service install --replace rewrites it',
+        });
+      } else {
+        checks.push(nodeCheck(node, cli, run));
+      }
+    } catch (error) {
+      checks.push({
+        name: 'start.sh',
+        status: 'fail',
+        detail: 'does not parse',
+        context: message(error),
+        fix: 'mama service install --replace rewrites it',
+      });
+    }
   }
+  const secret = (name: string): boolean =>
+    Boolean(authEnvValue(root, name)?.trim() || exports[name]?.trim());
 
   if (config) {
     const backend = config.agent.backend as BackendName;
@@ -185,10 +237,16 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
         fix: `install ${backend}, then run mama service install so start.sh includes it`,
       });
     } else {
-      const probe = probeBackend(backend, executable, {
-        codexHome: config.agent.codex_home ?? join(root, '.codex'),
-        run,
+      // The daemon's backend gets no credential-shaped variables (backend-security.ts).
+      const env = backendEnvironment({
+        HOME: home,
+        USER: process.env.USER,
+        LOGNAME: process.env.LOGNAME,
+        ...exports,
+        PATH: servicePath.join(':'),
       });
+      const codexHome = config.agent.codex_home ?? join(root, '.codex');
+      const probe = probeBackend(backend, executable, { codexHome, run, env });
       if (probe.problem || !probe.versionOk) {
         checks.push({
           name: 'backend',
@@ -200,11 +258,8 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
         checks.push({
           name: 'backend',
           status: 'fail',
-          detail: `${backend} ${probe.version} is not signed in`,
-          fix:
-            backend === 'claude'
-              ? 'claude auth login'
-              : `CODEX_HOME='${config.agent.codex_home ?? join(root, '.codex')}' codex login`,
+          detail: `${backend} ${probe.version} is not signed in for the service`,
+          fix: backend === 'claude' ? 'claude auth login' : `CODEX_HOME='${codexHome}' codex login`,
         });
       } else {
         checks.push({
@@ -216,193 +271,55 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
     }
 
     // The shell sandbox is required, so it must actually start, not only exist.
-    if (backend === 'claude') {
-      const sandbox =
-        platform === 'darwin'
-          ? run('/usr/bin/sandbox-exec', ['-p', '(version 1)(allow default)', '/usr/bin/true'])
-          : run('bwrap', ['--ro-bind', '/', '/', '--dev', '/dev', '/bin/true']);
-      const socat = platform === 'darwin' ? null : run('socat', ['-V']);
-      if (sandbox.error || sandbox.status !== 0) {
+    if (backend === 'claude') checks.push(sandboxCheck(platform, servicePath, locate, run));
+
+    for (const messenger of ['telegram', 'discord', 'slack'] as const) {
+      if (!config[messenger]?.enabled) continue;
+      const missing = MESSENGER_SECRETS[messenger].filter((name) => !secret(name));
+      if (missing.length > 0) {
         checks.push({
-          name: 'sandbox',
+          name: messenger,
           status: 'fail',
-          detail: `${platform === 'darwin' ? 'sandbox-exec' : 'bwrap'} could not start a sandbox`,
-          fix:
-            platform === 'darwin'
-              ? 'sandbox-exec ships with macOS; check that nothing blocks it'
-              : 'install bubblewrap and allow unprivileged user namespaces',
+          detail: `${missing.join(' and ')} not set; boot stops at the messengers stage`,
+          fix: missing.map(secretFix).join('; '),
         });
-      } else if (socat && (socat.error || socat.status !== 0)) {
-        checks.push({
-          name: 'sandbox',
-          status: 'fail',
-          detail: 'socat is missing; the Claude sandbox needs it on Linux',
-          fix: 'install socat',
-        });
+      } else if (messenger === 'telegram' && options.telegramCall !== null) {
+        checks.push(
+          await telegramCheck(
+            authEnvValue(root, 'MAMA_TELEGRAM_TOKEN') ?? exports.MAMA_TELEGRAM_TOKEN,
+            config.telegram.owner_chat_id,
+            options.telegramCall ?? defaultTelegramCall
+          )
+        );
       } else {
-        checks.push({ name: 'sandbox', status: 'ok', detail: 'starts' });
+        checks.push({ name: messenger, status: 'ok', detail: 'secrets set' });
       }
     }
 
-    if (config.telegram?.enabled) {
-      const token = authEnvValue(root, 'MAMA_TELEGRAM_TOKEN');
-      if (!token) {
-        checks.push({
-          name: 'telegram',
-          status: 'fail',
-          detail: 'MAMA_TELEGRAM_TOKEN is not in auth.env',
-          fix: 'mama secret set MAMA_TELEGRAM_TOKEN',
-        });
-      } else if (options.telegramCall !== null) {
-        const call = options.telegramCall ?? defaultTelegramCall;
-        try {
-          const reply = await call(token, 'getMe');
-          const result = reply.result as Record<string, unknown> | undefined;
-          // Privacy mode hides group messages unless the bot is an administrator there.
-          let admin = false;
-          if (
-            result &&
-            result.can_read_all_group_messages !== true &&
-            config.telegram.owner_chat_id
-          ) {
-            const member = await call(token, 'getChatMember', {
-              chat_id: String(config.telegram.owner_chat_id),
-              user_id: String(result.id),
-            });
-            const status = (member.result as { status?: unknown } | undefined)?.status;
-            admin = status === 'administrator' || status === 'creator';
-          }
-          if (reply.ok !== true || !result) {
-            checks.push({
-              name: 'telegram',
-              status: 'fail',
-              detail: 'Telegram refused the bot token',
-              fix: 'mama secret set MAMA_TELEGRAM_TOKEN with the token BotFather gave',
-            });
-          } else if (result.can_read_all_group_messages !== true && !admin) {
-            checks.push({
-              name: 'telegram',
-              status: 'warn',
-              detail: 'the bot cannot read group messages',
-              fix: 'turn privacy off for the bot in BotFather, then remove and re-add it to the group',
-            });
-          } else {
-            checks.push({
-              name: 'telegram',
-              status: 'ok',
-              detail: admin
-                ? 'token valid; an administrator of the common group, so it reads its messages'
-                : 'token valid, reads group messages',
-            });
-          }
-        } catch (error) {
-          checks.push({
-            name: 'telegram',
-            status: 'warn',
-            detail: `could not reach Telegram: ${error instanceof Error ? error.name : 'error'}`,
-          });
-        }
-      }
-    }
-
-    if (config.tools_root) {
-      let present = false;
-      try {
-        present = readDocumentToolkit(config.tools_root, () => {}) !== null;
-      } catch {
-        present = false;
-      }
-      checks.push(
-        present
-          ? { name: 'toolkit', status: 'ok', detail: config.tools_root }
-          : {
-              name: 'toolkit',
-              status: 'warn',
-              detail: `no usable toolkit under ${config.tools_root}`,
-              fix: 'mama tools install',
-            }
-      );
-    } else {
-      checks.push({
-        name: 'toolkit',
-        status: 'warn',
-        detail: 'tools_root is not set; document work has no toolkit',
-        fix: 'set tools_root outside HOME in config.yaml, then mama tools install',
-      });
-    }
+    checks.push(...(await sourceChecks(config, configPath, servicePath, locate, secret)));
+    checks.push(toolkitCheck(config));
   }
 
-  const daemon = await (options.askStatus ?? (() => askDaemon('status', { home, configPath })))();
-  const port = Number(process.env.MAMA_API_PORT ?? 3847);
-  if (daemon.state === 'running' && daemon.reply.ok !== true) {
+  let port: number | null = null;
+  try {
+    port = resolveApiPort(exports.MAMA_API_PORT ?? authEnvValue(root, 'MAMA_API_PORT'));
+  } catch (error) {
     checks.push({
-      name: 'daemon',
+      name: 'port',
       status: 'fail',
-      detail: `running, but it refused status: ${String(daemon.reply.error)}`,
-      fix: 'see daemon.log',
+      detail: 'MAMA_API_PORT is not a usable port',
+      context: message(error),
+      fix: 'set MAMA_API_PORT in start.sh to an integer between 1024 and 65535',
     });
-  } else if (daemon.state === 'running') {
-    checks.push({ name: 'daemon', status: 'ok', detail: 'running' });
-    // Each source as the running daemon last polled it.
-    const status = daemon.reply.status as { connectors?: unknown } | undefined;
-    const connectors = Array.isArray(status?.connectors) ? status.connectors : [];
-    for (const connector of connectors as {
-      name?: unknown;
-      healthy?: unknown;
-      lastPoll?: unknown;
-      error?: unknown;
-    }[]) {
-      const lastPoll = typeof connector.lastPoll === 'string' ? connector.lastPoll : 'never';
-      checks.push(
-        connector.healthy === true
-          ? { name: `source ${connector.name}`, status: 'ok', detail: `last poll ${lastPoll}` }
-          : {
-              name: `source ${connector.name}`,
-              status: 'warn',
-              detail: `last poll ${lastPoll}; ${typeof connector.error === 'string' ? connector.error : 'unhealthy'}`,
-              fix: 'see daemon.log for this source; the daemon keeps polling it',
-            }
-      );
-    }
-  } else {
-    checks.push({
-      name: 'daemon',
-      status: 'warn',
-      detail: daemon.holder ? `stopped; ${daemon.holder.command} holds the install` : 'stopped',
-      fix: 'mama service start',
-    });
-    if (await portAnswers(port)) {
-      checks.push({
-        name: 'port',
-        status: 'fail',
-        detail: `port ${port} is in use by another process`,
-        fix: `free port ${port} or set MAMA_API_PORT`,
-      });
-    }
   }
-
-  const launchd = platform === 'darwin' ? launchdService() : { loaded: false, pid: null };
-  const unit = systemdUnitState(home, options.serviceRun ?? defaultServiceRun, platform);
   checks.push(
-    launchd.loaded
-      ? {
-          name: 'service',
-          status: 'ok',
-          detail: `launchd${launchd.pid === null ? ' (loaded, not running)' : ''}`,
-        }
-      : unit !== null
-        ? {
-            name: 'service',
-            status: unit === 'failed' ? 'fail' : 'ok',
-            detail: `systemd (${unit})`,
-          }
-        : {
-            name: 'service',
-            status: 'warn',
-            detail: 'no service manager runs the daemon',
-            fix: 'mama service install, then mama service start',
-          }
+    ...(await daemonChecks(
+      options.askStatus ?? (() => askDaemon('status', { home, configPath })),
+      port,
+      options.portInUse ?? portAnswers
+    ))
   );
+  checks.push(serviceCheck(platform, home, options.serviceRun ?? defaultServiceRun));
 
   for (const name of ['daemon.log', 'security-events.jsonl']) {
     const path = join(root, 'logs', name);
@@ -420,24 +337,424 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
   return checks;
 }
 
-/**
- * Mask what a bug report must not carry: home paths, quoted text (message content), long digit
- * runs (chat and user ids), emails, URLs beyond their host, principal ids and long tokens.
- */
-export function redact(line: string, home: string = homedir()): string {
-  return (
-    line
-      .split(home)
-      .join('~')
-      .replace(/"[^"]*"/g, '"<text>"')
-      // Single quotes around text, not the apostrophe inside a word.
-      .replace(/(?<![A-Za-z])'[^']*'(?![A-Za-z])/g, "'<text>'")
-      .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '<email>')
-      .replace(/(https?:\/\/[^/\s]+)[^\s]*/g, '$1/<path>')
-      .replace(/principal_[A-Za-z0-9_]+/g, 'principal_<id>')
-      // A token mixes letters and digits; a long stage name or error code has no digit.
-      .replace(/(?=[A-Za-z_\-:]*\d)(?=[\d_\-:]*[A-Za-z])[A-Za-z0-9_\-:]{24,}/g, '<token>')
-      .replace(/-?\d{6,}/g, '<n>')
-      .slice(0, 200)
-  );
+/** start.sh's Node: still there, outside one version's folder, and able to load MAMA's SQLite. */
+function nodeCheck(node: string, cli: string, run: ProbeRun): Check {
+  const rewrite = 'mama service install rewrites start.sh with a Node path that survives upgrades';
+  if (!existsSync(node)) {
+    return {
+      name: 'node',
+      status: 'fail',
+      detail: 'the Node start.sh runs is gone',
+      context: node,
+      fix: rewrite,
+    };
+  }
+  if (!existsSync(cli)) {
+    return {
+      name: 'node',
+      status: 'fail',
+      detail: 'the MAMA command start.sh runs is gone',
+      context: cli,
+      fix: 'mama service install from the current install rewrites start.sh',
+    };
+  }
+  // A Node upgrade across a major version cannot load a native module built for the old one.
+  let binding: string;
+  try {
+    binding = dirname(createRequire(cli).resolve('better-sqlite3/package.json'));
+  } catch (error) {
+    return {
+      name: 'node',
+      status: 'fail',
+      detail: 'the MAMA command start.sh runs has no SQLite module installed',
+      context: message(error),
+      fix: 'reinstall MAMA',
+    };
+  }
+  const load = run(node, ['-e', "new (require(process.argv[1]))(':memory:').close()", binding]);
+  if (load.error || load.status !== 0) {
+    return {
+      name: 'node',
+      status: 'fail',
+      detail: 'the Node start.sh runs cannot load the SQLite module MAMA was installed with',
+      context: node,
+      fix: 'reinstall MAMA with this Node, or point start.sh at the Node it was installed with',
+    };
+  }
+  if (versionedNodePath(node)) {
+    return {
+      name: 'node',
+      status: 'warn',
+      detail: 'start.sh runs a Node inside one version folder; an upgrade or a switch removes it',
+      context: node,
+      fix: node.includes('/Cellar/')
+        ? rewrite
+        : 'run mama service install from a shell whose node is not an nvm, volta or fnm version',
+    };
+  }
+  return { name: 'node', status: 'ok', detail: 'present and loads SQLite', context: node };
+}
+
+function sandboxCheck(
+  platform: NodeJS.Platform,
+  servicePath: string[],
+  locate: (name: string, dirs: string[]) => string | undefined,
+  run: ProbeRun
+): Check {
+  if (platform === 'darwin') {
+    const result = run('/usr/bin/sandbox-exec', [
+      '-p',
+      '(version 1)(allow default)',
+      '/usr/bin/true',
+    ]);
+    return result.error || result.status !== 0
+      ? {
+          name: 'sandbox',
+          status: 'fail',
+          detail: 'sandbox-exec could not start a sandbox',
+          fix: 'sandbox-exec ships with macOS; check that nothing blocks it',
+        }
+      : { name: 'sandbox', status: 'ok', detail: 'starts' };
+  }
+  // Claude's Linux sandbox runs bwrap without network and relays through socat.
+  const bwrap = locate('bwrap', servicePath);
+  const socat = locate('socat', servicePath);
+  if (!bwrap || !socat) {
+    return {
+      name: 'sandbox',
+      status: 'fail',
+      detail: `${[!bwrap && 'bwrap', !socat && 'socat'].filter(Boolean).join(' and ')} not on the service's PATH`,
+      fix: 'install bubblewrap and socat',
+    };
+  }
+  const result = run(bwrap, ['--ro-bind', '/', '/', '--dev', '/dev', '--unshare-net', '/bin/true']);
+  return result.error || result.status !== 0
+    ? {
+        name: 'sandbox',
+        status: 'fail',
+        detail: 'bwrap could not start a sandbox without network',
+        fix: 'allow unprivileged user namespaces (kernel.unprivileged_userns_clone, or the AppArmor userns rule)',
+      }
+    : { name: 'sandbox', status: 'ok', detail: 'starts' };
+}
+
+async function telegramCheck(
+  token: string | undefined,
+  commonChat: string | number | undefined,
+  call: NonNullable<DiagnosticsOptions['telegramCall']>
+): Promise<Check> {
+  let me: Record<string, unknown> | undefined;
+  try {
+    const reply = await call(token ?? '', 'getMe');
+    me = reply.ok === true ? (reply.result as Record<string, unknown> | undefined) : undefined;
+  } catch (error) {
+    return {
+      name: 'telegram',
+      status: 'warn',
+      detail: `could not reach Telegram (${error instanceof Error ? error.name : 'error'})`,
+    };
+  }
+  if (!me) {
+    return {
+      name: 'telegram',
+      status: 'fail',
+      detail: 'Telegram refused the bot token',
+      fix: 'mama secret set MAMA_TELEGRAM_TOKEN with the token BotFather gave',
+    };
+  }
+  if (commonChat === undefined || commonChat === '') {
+    return { name: 'telegram', status: 'ok', detail: 'token valid; no common group configured' };
+  }
+  // Removed from the group, the bot hears nothing there whatever its privacy setting.
+  let status: unknown;
+  try {
+    const member = await call(token ?? '', 'getChatMember', {
+      chat_id: String(commonChat),
+      user_id: String(me.id),
+    });
+    status =
+      member.ok === true ? (member.result as { status?: unknown } | undefined)?.status : undefined;
+  } catch (error) {
+    return {
+      name: 'telegram',
+      status: 'warn',
+      detail: `token valid; could not ask about the common group (${error instanceof Error ? error.name : 'error'})`,
+    };
+  }
+  if (typeof status !== 'string' || status === 'left' || status === 'kicked') {
+    return {
+      name: 'telegram',
+      status: 'fail',
+      detail: 'the bot is not in the common group',
+      fix: 'add the bot to the group owner_chat_id names',
+    };
+  }
+  const admin = status === 'administrator' || status === 'creator';
+  if (me.can_read_all_group_messages !== true && !admin) {
+    return {
+      name: 'telegram',
+      status: 'warn',
+      detail: 'the bot cannot read group messages',
+      fix: 'turn privacy off for the bot in BotFather, then remove and re-add it to the group',
+    };
+  }
+  return {
+    name: 'telegram',
+    status: 'ok',
+    detail: admin
+      ? 'token valid; an administrator of the common group, so it reads its messages'
+      : 'token valid; a member of the common group that reads its messages',
+  };
+}
+
+/** connectors.json as the connector runtime reads it, and what each enabled source needs. */
+async function sourceChecks(
+  config: W1Config,
+  configPath: string,
+  servicePath: string[],
+  locate: (name: string, dirs: string[]) => string | undefined,
+  secret: (name: string) => boolean
+): Promise<Check[]> {
+  const paths = pathsFor(configPath, config);
+  let plan: ReturnType<typeof planConnectors>;
+  try {
+    plan = planConnectors({
+      configPath: paths.connectorsConfigPath,
+      ...(config.wiki?.enabled
+        ? { wikiRoot: resolve(config.wiki.vaultPath!, config.wiki.wikiDir!) }
+        : {}),
+    });
+  } catch (error) {
+    return [
+      {
+        name: 'sources',
+        status: 'fail',
+        detail: 'connectors.json does not load as boot reads it',
+        context: message(error),
+        fix: `correct ${paths.connectorsConfigPath}`,
+      },
+    ];
+  }
+  const checks: Check[] = [];
+  const timeZone = createTimeZoneSetting(config.timezone);
+  for (const name of plan.enabledConnectorNames) {
+    let needs: { type: string; tokenName?: string; cli?: string; cliAuthCommand?: string }[];
+    try {
+      const connector = await loadConnector(
+        name,
+        plan.config.config[name],
+        connectorLoadPaths(name, {
+          statePath: paths.connectorsRoot,
+          kagemushaDbPath: paths.kagemushaDbPath,
+          timeZone,
+        })
+      );
+      needs = connector.getAuthRequirements();
+    } catch (error) {
+      checks.push({
+        name: `source ${name}`,
+        status: 'fail',
+        detail: 'cannot be built from connectors.json; boot stops at the connectors stage',
+        context: message(error),
+      });
+      continue;
+    }
+    // A secret's name can carry an owner's channel key (iCal), so it stays out of the report.
+    const secrets = needs.flatMap((need) =>
+      need.type === 'token' && need.tokenName && !secret(need.tokenName) ? [need.tokenName] : []
+    );
+    const commands = needs.flatMap((need) =>
+      need.type === 'cli' && need.cli && !locate(need.cli, servicePath)
+        ? [{ cli: need.cli, login: need.cliAuthCommand }]
+        : []
+    );
+    if (secrets.length > 0 || commands.length > 0) {
+      checks.push({
+        name: `source ${name}`,
+        status: 'fail',
+        detail: [
+          ...(secrets.length > 0 ? [`${secrets.length} secret(s) it needs are not set`] : []),
+          ...commands.map(({ cli }) => `the ${cli} command is not on the service's PATH`),
+        ].join('; '),
+        ...(secrets.length > 0 ? { context: secrets.join(', ') } : {}),
+        fix: [
+          ...secrets.map(secretFix),
+          ...commands.map(({ cli, login }) => `install ${cli}${login ? ` and run ${login}` : ''}`),
+        ].join('; '),
+      });
+    }
+  }
+  return checks;
+}
+
+function toolkitCheck(config: W1Config): Check {
+  if (!config.tools_root) {
+    return {
+      name: 'toolkit',
+      status: 'warn',
+      detail: 'tools_root is not set; document work has no toolkit',
+      fix: 'set tools_root outside HOME in config.yaml, then mama tools install',
+    };
+  }
+  // Boot reads the toolkit the same way; an unsafe tools_root stops it at the config stage.
+  let present: boolean;
+  try {
+    present = readDocumentToolkit(config.tools_root, () => {}) !== null;
+  } catch (error) {
+    return {
+      name: 'toolkit',
+      status: 'fail',
+      detail: 'tools_root is unsafe; boot refuses it',
+      context: message(error),
+      fix: 'make tools_root and the folders above it writable only by you (or sticky), and owned by you',
+    };
+  }
+  return present
+    ? { name: 'toolkit', status: 'ok', detail: 'installed', context: config.tools_root }
+    : {
+        name: 'toolkit',
+        status: 'warn',
+        detail: 'not installed under tools_root',
+        context: config.tools_root,
+        fix: 'mama tools install',
+      };
+}
+
+async function daemonChecks(
+  ask: () => Promise<DaemonControlReply>,
+  port: number | null,
+  portInUse: (port: number) => Promise<boolean>
+): Promise<Check[]> {
+  let daemon: DaemonControlReply;
+  try {
+    daemon = await ask();
+  } catch (error) {
+    return [
+      {
+        name: 'daemon',
+        status: 'fail',
+        detail: 'holds the install but does not answer on its control socket',
+        context: message(error),
+        fix: 'mama stop, then mama service start; daemon.log shows where it stopped',
+      },
+    ];
+  }
+  if (daemon.state === 'stopped') {
+    const checks: Check[] = [
+      {
+        name: 'daemon',
+        status: 'warn',
+        detail: daemon.holder ? `stopped; ${daemon.holder.command} holds the install` : 'stopped',
+        fix: 'mama service start',
+      },
+    ];
+    if (port !== null && (await portInUse(port))) {
+      checks.push({
+        name: 'port',
+        status: 'fail',
+        detail: `port ${port} is in use by another process`,
+        fix: `free port ${port} or set MAMA_API_PORT in start.sh`,
+      });
+    }
+    return checks;
+  }
+  if (daemon.reply.ok !== true) {
+    return [
+      {
+        name: 'daemon',
+        status: 'fail',
+        detail: 'running, but it refused status',
+        context: String(daemon.reply.error),
+        fix: 'daemon.log shows why',
+      },
+    ];
+  }
+  const status = (daemon.reply.status ?? {}) as {
+    stage?: unknown;
+    startedAt?: unknown;
+    connectors?: unknown;
+  };
+  const checks: Check[] = [];
+  const stage = typeof status.stage === 'string' ? status.stage : 'unknown';
+  const startedAt = typeof status.startedAt === 'number' ? status.startedAt : Date.now();
+  if (stage === 'running') {
+    checks.push({ name: 'daemon', status: 'ok', detail: 'running' });
+  } else if (stage !== 'stopping' && Date.now() - startedAt > BOOT_STUCK_MS) {
+    checks.push({
+      name: 'daemon',
+      status: 'fail',
+      detail: `stuck at boot stage ${stage}`,
+      fix: 'daemon.log shows what that stage waits for',
+    });
+  } else {
+    checks.push({ name: 'daemon', status: 'warn', detail: `at stage ${stage}` });
+  }
+  // Each source as the running daemon last polled it.
+  for (const connector of (Array.isArray(status.connectors) ? status.connectors : []) as {
+    name?: unknown;
+    healthy?: unknown;
+    lastPoll?: unknown;
+    error?: unknown;
+  }[]) {
+    const lastPoll = typeof connector.lastPoll === 'string' ? connector.lastPoll : 'never';
+    checks.push(
+      connector.healthy === true
+        ? { name: `source ${connector.name}`, status: 'ok', detail: `last poll ${lastPoll}` }
+        : {
+            name: `source ${connector.name}`,
+            status: 'warn',
+            detail: `unhealthy; last poll ${lastPoll}`,
+            ...(typeof connector.error === 'string' ? { context: connector.error } : {}),
+            fix: 'daemon.log shows this source; the daemon keeps polling it',
+          }
+    );
+  }
+  return checks;
+}
+
+function serviceCheck(platform: NodeJS.Platform, home: string, serviceRun: ServiceRun): Check {
+  let launchd: { loaded: boolean; pid: number | null };
+  let unit: string | null;
+  try {
+    launchd = platform === 'darwin' ? launchdService() : { loaded: false, pid: null };
+    unit = systemdUnitState(home, serviceRun, platform);
+  } catch (error) {
+    return {
+      name: 'service',
+      status: 'warn',
+      detail: `could not ask ${platform === 'darwin' ? 'launchd' : 'systemd'}`,
+      context: message(error),
+    };
+  }
+  if (launchd.loaded) {
+    return {
+      name: 'service',
+      status: 'ok',
+      detail: `launchd${launchd.pid === null ? ' (loaded, not running)' : ''}`,
+    };
+  }
+  if (unit === null) {
+    return {
+      name: 'service',
+      status: 'warn',
+      detail: 'no service manager runs the daemon',
+      fix: 'mama service install, then mama service start',
+    };
+  }
+  if (unit === 'failed') {
+    return {
+      name: 'service',
+      status: 'fail',
+      detail: 'systemd (failed)',
+      fix: 'journalctl --user -u mama.service shows why',
+    };
+  }
+  return SYSTEMD_USABLE.has(unit)
+    ? { name: 'service', status: 'ok', detail: `systemd (${unit})` }
+    : {
+        name: 'service',
+        status: 'warn',
+        detail: 'systemctl --user did not answer; no user session manager is running',
+        fix: 'log in on a session, or mama service install --enable-linger',
+      };
 }
