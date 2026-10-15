@@ -124,6 +124,7 @@ export async function installService(
       (path): path is string => path !== undefined
     ),
     viewer: existing?.carried ?? {},
+    logLevel: config.logging.level,
   });
   const stamp = (options.now?.() ?? new Date()).toISOString().replace(/[:.]/g, '-');
   const kept = join(root, 'runtime', `start.sh.${stamp}.previous`);

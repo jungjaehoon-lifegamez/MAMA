@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stopped; the LaunchAgent used to restart on every exit. `install` regenerates `start.sh`, keeps the
   replaced one under `runtime/`, carries over the viewer's access settings and names the exports it
   drops.
+- The generated `start.sh` exports `MAMA_LOG_LEVEL` from `config.yaml`'s `logging.level`. The core
+  logger reads only that variable, so a fresh install logged at `ERROR` whatever the config said.
 
 ## [0.77.0] - 2026-10-15
 

@@ -77,6 +77,7 @@ describe('mama service install on macOS', () => {
         "export MAMA_VIEWER_HOSTNAMES='viewer.example.test'",
         "export MAMA_CF_ACCESS_AUD='aud-fixture'",
         'export MAMA_LEGACY_FLAG=1',
+        'export MAMA_LOG_LEVEL=ERROR',
         'export PATH="/old/bin:$PATH"',
         'exec /old/node /old/cli daemon',
       ].join('\n')
@@ -89,6 +90,8 @@ describe('mama service install on macOS', () => {
     expect(script).toContain("export MAMA_CF_ACCESS_AUD='aud-fixture'");
     expect(script).not.toContain('MAMA_LEGACY_FLAG');
     expect(script).toContain("exec '/fixture/node' '/fixture/mama/dist/cli/index.js' daemon");
+    // config.yaml's logging.level reaches the core logger only through this variable.
+    expect(script).toContain("export MAMA_LOG_LEVEL='INFO'");
     expect(statSync(join(root, 'start.sh')).mode & 0o777).toBe(0o700);
     const kept = readdirSync(join(root, 'runtime')).filter((name) => name.startsWith('start.sh.'));
     expect(kept).toHaveLength(1);

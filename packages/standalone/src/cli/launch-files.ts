@@ -22,6 +22,8 @@ export function startScript(options: {
   cliPath: string;
   executablePaths: string[];
   viewer: Record<string, string>;
+  /** config.yaml's logging.level; the core logger reads it only from MAMA_LOG_LEVEL. */
+  logLevel: string;
 }): string {
   const root = join(options.home, '.mama');
   const path = [
@@ -43,6 +45,7 @@ export function startScript(options: {
     'set -a',
     `. ${shellQuote(join(root, 'auth.env'))}`,
     'set +a',
+    `export MAMA_LOG_LEVEL=${shellQuote(options.logLevel.toUpperCase())}`,
     ...Object.entries(options.viewer).map(([name, value]) => `export ${name}=${shellQuote(value)}`),
     `exec ${shellQuote(options.nodePath)} ${shellQuote(options.cliPath)} daemon >> ${shellQuote(join(root, 'logs', 'daemon.log'))} 2>&1`,
     '',
@@ -117,7 +120,8 @@ export const CARRIED_START_ENV = [
 
 /**
  * Read `export NAME=value` lines from an existing start.sh: the carried names with their values,
- * and the other exported names, which the new script does not keep.
+ * and the other exported names, which the new script does not keep. PATH and MAMA_LOG_LEVEL are
+ * written from the current install and config.yaml.
  */
 export function startScriptExports(script: string): {
   carried: Record<string, string>;
@@ -131,7 +135,7 @@ export function startScriptExports(script: string): {
     const [, name, raw] = match;
     if ((CARRIED_START_ENV as readonly string[]).includes(name)) {
       carried[name] = unquoteShell(raw.trim());
-    } else if (name !== 'PATH' && !dropped.includes(name)) {
+    } else if (name !== 'PATH' && name !== 'MAMA_LOG_LEVEL' && !dropped.includes(name)) {
       dropped.push(name);
     }
   }

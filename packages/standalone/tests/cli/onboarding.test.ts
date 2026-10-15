@@ -241,6 +241,10 @@ describe('owner-only onboarding', () => {
         expect(statSync(join(root, file)).mode & 0o777).toBe(0o600);
       }
       expect(statSync(join(root, 'start.sh')).mode & 0o777).toBe(0o700);
+      // The core logger reads only MAMA_LOG_LEVEL, so config.yaml's level is exported for it.
+      expect(readFileSync(join(root, 'start.sh'), 'utf8')).toContain(
+        "export MAMA_LOG_LEVEL='INFO'"
+      );
       expect(existsSync(join(home, 'Library', 'LaunchAgents', 'com.mama.server.plist'))).toBe(
         false
       );

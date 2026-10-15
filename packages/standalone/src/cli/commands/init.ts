@@ -389,6 +389,7 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
   const script = startScript({
     home,
     viewer,
+    logLevel: config.logging.level,
     nodePath: options.nodePath ?? process.execPath,
     cliPath: options.cliPath ?? join(__dirname, '..', 'index.js'),
     executablePaths: [backendPath, gwsPath].filter((path): path is string => path !== undefined),
