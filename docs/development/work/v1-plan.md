@@ -113,10 +113,13 @@ live check passes.
   each member's copied Codex login and session credential, only with `--include-secrets`; left out:
   `tools_root` binaries, Codex thread caches, model caches, logs unless asked. Archives are written
   0600 to `<root>/backups/`, which joins the agents' read denies; another destination inside the
-  workspace or `member_root` is refused.
+  workspace or `member_root` is refused. A `config.yaml` that still holds a secret-shaped value
+  (older installs) counts as a credential and goes only with `--include-secrets`.
 - Poll state is written atomically (today in place, `polling-scheduler.ts:205`, and a parse failure
   is dropped silently, `:179-182`).
-- Restore writes to a staging folder, swaps, and rewrites the old prefixes of the three roots
+- Restore stages each root beside its destination (the roots may sit on different filesystems,
+  such as Docker volumes), switches them under a journal that rolls every root back if one switch
+  fails, and rewrites the old prefixes of the three roots
   (decision 5), keeping the target's credentials when the archive has none; new attachment writes
   store root-relative paths (`gateways/telegram-attachments.ts:117`).
 - Proof: back up a copy of this Mac's home, restore it under another HOME and another
@@ -218,8 +221,9 @@ live check passes.
 ## Wave 4 — Docker (D1–D5)
 
 - Image: Node 22, the toolkit with LibreOffice and Noto CJK, `gws`, `bwrap` and `socat`, the backend
-  CLIs, a non-root user, an init process (`init: true`) for orphaned children, `HEALTHCHECK` on
-  `/health`, version tags, published by the release workflow. amd64 is tested on the Steam Deck;
+  CLIs, a non-root user, an init process (`init: true`) for orphaned children, a `HEALTHCHECK` that
+  passes only when `mama status` reports boot complete (`/health` answers from the viewer stage,
+  before connectors and messengers start), version tags, published by the release workflow. amd64 is tested on the Steam Deck;
   arm64 is offered only after the same run on arm64, otherwise labelled experimental.
 - Compose volumes: the MAMA home, `member_root`, `tools_root` (common skills live there), the
   backend credentials and the `gws` credential store (`~/.config/gws`, or
@@ -228,8 +232,9 @@ live check passes.
 - Sign-in without a desktop: Codex `codex login --device-auth`; the Claude method is verified on the
   image and must be file-based or an owner decision (D3).
 - Isolation is measured first: whether the shell sandbox starts with the documented container
-  options; then a member session cannot read another member or the database and egress is refused
-  inside the container (decision D3 if not).
+  options; then, inside the container, a member session cannot read another member or the
+  database, the common session cannot read the database with its WAL and SHM, the raw stores,
+  `member_root` or the member temp root, and egress is refused for both (decision D3 if not).
 
 ## Wave 5 — everyday use, people, defects and guides
 
