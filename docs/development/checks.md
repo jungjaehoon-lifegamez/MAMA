@@ -2288,3 +2288,8 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Result: tool answers to the code_act worker are sent with a callback, so an answer that reaches a worker which already finished (one call failed, the script returned) no longer settles the run as `WorkerError: write EPIPE`; the worker's result or its exit settles it, and the timeout still bounds it.
 - Evidence: eight live `write EPIPE` results since 2026-09-29, each a `Promise.all` with one fast `invalid_input` and a slower call; the 10:38 DM turn lost "input.source is required" this way. A test with a mocked worker returned `write EPIPE` before the fix and the script's own error after it; the real-worker code_act tests and the standalone suite passed (179 files), Codex clean (CodeRabbit was out of reviews). Merged as d9a088274; deployed from main at 11:08:59 KST (idle checks clean, eight boot stages, no errors).
 - Still open: no `write EPIPE` in the next days of `tool_traces`.
+
+### Live: the owner's DM reads the Drive progress sheet (2026-10-15)
+
+- Evidence: 11:24 KST, "check the sheet again" in the owner's DM, the first turn after #492. The session read `help` for `drive.read` and `drive.download`, found the progress-management sheet, fetched it as xlsx into the person's own downloads under the member root (nothing new in the common downloads), and read it with openpyxl in eight shell calls; fourteen calls, none failed, 86 s. The answer cited the sheet: job counts per title and still type, prices, outsourcing costs, and the median days from order to deadline, and said the sheet has no man-day column, so those days stand in for it; the October restart is not in the sheet yet.
+- Still open: nothing for this question.
