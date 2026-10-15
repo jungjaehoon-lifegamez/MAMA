@@ -53,8 +53,9 @@ records and sources at that moment and sends the result to your DM. A run with n
 nothing. Jobs must be at least an hour apart, and a person can have up to ten active jobs. Ask to
 list, change, pause or delete them at any time. A job runs with no one in the conversation. For a
 person with the owner role it searches the web but opens pages only from the sites listed in
-`agent.autonomous_web_fetch` (none by default); ask in your DM when you want a page read. Other
-members have no web tools.
+`agent.autonomous_web_fetch` (none by default). With the Claude backend, ask in your DM when you
+want a page read; the Codex backend searches the web but does not open pages. Other members have no
+web tools.
 
 ## Notices
 
