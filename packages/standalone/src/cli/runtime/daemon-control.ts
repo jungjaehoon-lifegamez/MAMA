@@ -41,6 +41,11 @@ export function daemonControlPaths(mamaRoot: string): DaemonControlPaths {
   };
 }
 
+/** The journal an interrupted `mama restore` leaves; nothing may run on the install while it is there. */
+export function restoreJournalPath(mamaRoot: string): string {
+  return join(mamaRoot, 'backups', '.restore-journal.json');
+}
+
 export interface LockOwner {
   readonly pid: number;
   readonly command: string;

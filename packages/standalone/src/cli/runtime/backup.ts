@@ -72,7 +72,19 @@ export interface BackupPlan {
 }
 
 /** runtime/ files the current code reads back; the rest of runtime/ is per boot or per run. */
-const RUNTIME_FILES = new Set([
+/** Files directly in the MAMA root that a backup keeps; restore accepts no other root files. */
+export const ROOT_FILES = [
+  'config.yaml',
+  'connectors.json',
+  'owner-policy.md',
+  'report-slots.json',
+  'start.sh',
+] as const;
+/** Folders in the MAMA root that a backup keeps (logs only when asked), besides the workspace. */
+export const ROOT_DIRS = ['connectors', 'downloads', 'runtime', 'logs'] as const;
+/** Folders in runtime/ that a backup keeps. */
+export const RUNTIME_DIRS = ['backfill'] as const;
+export const RUNTIME_FILES = new Set([
   'owner-message-ledger.json',
   'report-schedule-state.json',
   'client-journal.jsonl',
@@ -254,18 +266,9 @@ export function planBackup(
     inside(root, workspace) && relative(root, workspace).split(sep).length === 1
       ? relative(root, workspace)
       : null;
-  const rootFiles = new Set([
-    'config.yaml',
-    'connectors.json',
-    'owner-policy.md',
-    'report-slots.json',
-    'start.sh',
-  ]);
-  const rootDirs = new Set([
-    'connectors',
-    'downloads',
-    'runtime',
-    ...(options.includeLogs ? ['logs'] : []),
+  const rootFiles = new Set<string>(ROOT_FILES);
+  const rootDirs = new Set<string>([
+    ...ROOT_DIRS.filter((name) => name !== 'logs' || options.includeLogs),
     ...(workspaceTop ? [workspaceTop] : []),
   ]);
   // A kept file or folder that is a link would be archived as the link alone.
@@ -288,7 +291,10 @@ export function planBackup(
     if (rest.length === 0) return rootFiles.has(top) || rootDirs.has(top);
     if (!rootDirs.has(top)) return false;
     if (top !== 'runtime') return true;
-    return rest[0] === 'backfill' || (rest.length === 1 && RUNTIME_FILES.has(rest[0]));
+    return (
+      (RUNTIME_DIRS as readonly string[]).includes(rest[0]) ||
+      (rest.length === 1 && RUNTIME_FILES.has(rest[0]))
+    );
   };
   const keepRoot = (relativePath: string, stat: Stats): boolean =>
     relativePath === '' || (keptByRoot(relativePath) && common(join(root, relativePath), stat));

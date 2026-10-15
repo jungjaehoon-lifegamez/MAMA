@@ -8,17 +8,27 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
-  readlinkSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
+import * as yaml from 'js-yaml';
 import * as tar from 'tar';
 import type { W1Config } from '../../runtime/config.js';
 import { pathsFor } from '../commands/daemon.js';
-import type { BackupEntry, BackupManifest, ConfiguredPath } from './backup.js';
+import {
+  ROOT_DIRS,
+  ROOT_FILES,
+  RUNTIME_DIRS,
+  RUNTIME_FILES,
+  type BackupEntry,
+  type BackupManifest,
+  type ConfiguredPath,
+} from './backup.js';
+import { restoreJournalPath } from './daemon-control.js';
 
 /** Every archive prefix a backup writes, and the configured key its destination comes from. */
 const PREFIX_KEYS: Record<string, string> = {
@@ -35,28 +45,44 @@ const PREFIX_KEYS: Record<string, string> = {
   'credentials/codex-auth.json': 'codex_home',
   'credentials/mcp-config.json': 'mcp_config',
 };
-
+/** Prefixes whose entry is a folder; the rest are single files. */
+const FOLDER_PREFIXES = new Set(['root', 'workspace', 'members', 'skills', 'wiki']);
 /**
- * Stored paths that MAMA reads back to open a file: attachments in mailbox payloads, the
- * connector event index and the chat raw store. Evidence (observation versions) and history
- * (tool traces) keep the paths they recorded.
+ * Stored paths MAMA reads back to open a file: attachments in mailbox payloads (turn orders) and
+ * in the connector event index (deferred deliveries). The raw stores' content hash covers their
+ * metadata, so they, observation versions (evidence) and tool traces (history) keep the paths
+ * they recorded.
  */
-export const CORE_PATH_COLUMNS: [string, string][] = [
+export const PATH_COLUMNS: [string, string][] = [
   ['mailbox_inputs', 'payload_json'],
   ['connector_event_index', 'metadata_json'],
 ];
-export const RAW_PATH_COLUMNS: [string, string][] = [
-  ['raw_items', 'metadata'],
-  ['pending_core_projections', 'payload_json'],
+/** The folder roots that stored attachment paths sit under. */
+const REWRITTEN_KEYS = ['root', 'workspace', 'member_root', 'tools_root', 'wiki'];
+/**
+ * Config keys that name a place. A restored config keeps the backup's settings with this
+ * install's values for these, so the files and the config agree.
+ */
+const PATH_KEYS: string[][] = [
+  ['member_root'],
+  ['tools_root'],
+  ['database', 'path'],
+  ['logging', 'file'],
+  ['jev', 'keyFile'],
+  ['jev', 'vocabFile'],
+  ['wiki', 'vaultPath'],
+  ['wiki', 'wikiDir'],
+  ['agent', 'codex_home'],
+  ['agent', 'codex_cwd'],
+  ['agent', 'tools', 'mcp_config'],
 ];
 
 export type TargetPaths = Record<string, string | null>;
 
-/** Where the target install keeps each configured path; destinations come only from here. */
+/** Where an install keeps each configured path. */
 export function targetPaths(config: W1Config, configPath: string, home: string): TargetPaths {
   const paths = pathsFor(configPath, config);
   return {
-    home: resolve(home),
     root: resolve(paths.mamaRoot),
     workspace: resolve(paths.workspaceDir),
     database: resolve(config.database.path),
@@ -71,12 +97,17 @@ export function targetPaths(config: W1Config, configPath: string, home: string):
       config.wiki?.enabled && config.wiki.vaultPath && config.wiki.wikiDir
         ? resolve(config.wiki.vaultPath, config.wiki.wikiDir)
         : null,
+    home: resolve(home),
   };
 }
 
-function safeArchivePath(path: string): boolean {
-  if (path === '' || isAbsolute(path) || path.includes('\0') || path.includes('\\')) return false;
-  return path.split('/').every((part) => part !== '' && part !== '.' && part !== '..');
+function lexists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function prefixOf(path: string): string | null {
@@ -84,19 +115,21 @@ function prefixOf(path: string): string | null {
   return prefixes.find((prefix) => path === prefix || path.startsWith(`${prefix}/`)) ?? null;
 }
 
-/**
- * The manifest is the archive's first entry. An archive can be replaced by anyone who can write
- * the backups folder, so it is checked as untrusted: known format, safe relative paths under
- * known prefixes, and nothing else.
- */
+function safeArchivePath(path: string): boolean {
+  if (path === '' || isAbsolute(path) || path.includes('\0') || path.includes('\\')) return false;
+  return path.split('/').every((part) => part !== '' && part !== '.' && part !== '..');
+}
+
+/** The archive reads its first entry as the manifest and checks it as untrusted. */
 export async function readManifest(archive: string): Promise<BackupManifest> {
   let first: string | null = null;
   let text = '';
   await tar.t({
     file: archive,
     onReadEntry: (entry) => {
+      const isFirst = first === null;
       first ??= entry.path;
-      if (entry.path === 'manifest.json' && first === 'manifest.json' && text === '') {
+      if (isFirst && entry.path === 'manifest.json') {
         entry.on('data', (chunk: Buffer) => (text += chunk.toString('utf8')));
       } else {
         entry.resume();
@@ -114,6 +147,12 @@ export async function readManifest(archive: string): Promise<BackupManifest> {
   return manifest;
 }
 
+/**
+ * Hold a manifest to what `mama backup` writes. Anyone who can write the backups folder can
+ * replace an archive, and an archive can come from elsewhere, so the rules are structural:
+ * known prefixes and safe relative paths, only the root names a backup keeps, nothing beneath a
+ * link (a backup never walks through one), credentials only in a backup that says it has them.
+ */
 export function validateManifest(manifest: BackupManifest): void {
   if (manifest?.format !== 'mama-backup' || manifest.version !== 1) {
     throw new Error('not a MAMA backup this version can read');
@@ -121,35 +160,180 @@ export function validateManifest(manifest: BackupManifest): void {
   if (!Array.isArray(manifest.entries) || !Array.isArray(manifest.databases)) {
     throw new Error('the archive manifest has no entry list');
   }
-  const seen = new Set<string>();
-  for (const entry of manifest.entries) {
-    if (!safeArchivePath(entry.path) || prefixOf(entry.path) === null || seen.has(entry.path)) {
-      throw new Error(
-        `the archive manifest names an entry it may not: ${JSON.stringify(entry.path)}`
-      );
-    }
-    if (!['file', 'dir', 'symlink'].includes(entry.type)) {
-      throw new Error(`the archive manifest gives ${entry.path} an unknown type`);
-    }
-    if (entry.type === 'file' && !/^[0-9a-f]{64}$/.test(entry.sha256 ?? '')) {
-      throw new Error(`the archive manifest gives ${entry.path} no hash`);
-    }
-    seen.add(entry.path);
-  }
-  for (const [key, value] of Object.entries(manifest.configured ?? {})) {
+  const refuse = (path: string, why: string): never => {
+    throw new Error(`the archive manifest names ${JSON.stringify(path)}, which ${why}`);
+  };
+  const configured = manifest.configured ?? {};
+  for (const [key, value] of Object.entries(configured)) {
     if (value !== null && (!isAbsolute(value.configured) || !isAbsolute(value.physical))) {
       throw new Error(`the archive manifest gives ${key} a relative path`);
     }
   }
+  const root = configured.root?.physical;
+  const workspace = configured.workspace?.physical;
+  const workspaceTop =
+    root && workspace && dirname(workspace) === root ? basename(workspace) : null;
+  const rootNames = new Set<string>([
+    ...ROOT_FILES,
+    ...ROOT_DIRS,
+    ...(workspaceTop ? [workspaceTop] : []),
+  ]);
+  const runtimeNames = new Set<string>([...RUNTIME_FILES, ...RUNTIME_DIRS]);
+  const links: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of manifest.entries) {
+    const path = entry.path;
+    if (typeof path !== 'string' || !safeArchivePath(path) || seen.has(path)) {
+      refuse(String(path), 'is not a safe archive path');
+    }
+    const prefix = prefixOf(path);
+    if (prefix === null) return refuse(path, 'is under no known prefix');
+    if (!['file', 'dir', 'symlink'].includes(entry.type)) refuse(path, 'has an unknown type');
+    if (entry.type === 'file' && !/^[0-9a-f]{64}$/.test(entry.sha256 ?? '')) {
+      refuse(path, 'has no hash');
+    }
+    if (prefix.startsWith('credentials/') && !manifest.includesSecrets) {
+      refuse(path, 'is a credential in a backup that says it holds none');
+    }
+    const folder = FOLDER_PREFIXES.has(prefix);
+    if (path === prefix && entry.type !== (folder ? 'dir' : 'file')) {
+      refuse(path, `is not a ${folder ? 'folder' : 'file'}`);
+    }
+    if (!folder && path !== prefix) refuse(path, 'sits beneath a single-file prefix');
+    const parts = path.split('/');
+    if (prefix === 'root' && parts.length >= 2 && !rootNames.has(parts[1])) {
+      refuse(path, 'is not a name a backup keeps in the MAMA root');
+    }
+    if (prefix === 'root' && parts[1] === 'runtime' && parts.length >= 3) {
+      if (!runtimeNames.has(parts[2])) refuse(path, 'is not a runtime file a backup keeps');
+    }
+    if (entry.type === 'symlink') {
+      if (typeof entry.target !== 'string' || entry.target === '') refuse(path, 'links nowhere');
+      if (prefix === 'root' && parts.length === 2) {
+        refuse(path, 'is a link where a backup keeps a file or folder');
+      }
+      links.push(path);
+    }
+    seen.add(path);
+  }
+  for (const link of links) {
+    if (manifest.entries.some((entry) => entry.path.startsWith(`${link}/`))) {
+      refuse(link, 'is a link with entries beneath it');
+    }
+  }
 }
 
-/** Old configured paths (both forms) and the target's, longest first, for rewriting text. */
+function hashFile(path: string): Promise<string> {
+  return new Promise((resolvePromise, reject) => {
+    const hash = createHash('sha256');
+    createReadStream(path)
+      .on('data', (chunk) => hash.update(chunk))
+      .on('end', () => resolvePromise(hash.digest('hex')))
+      .on('error', reject);
+  });
+}
+
+/**
+ * Extract the listed files and folders into a fresh folder and hold each to the manifest; links
+ * are made afterwards from the manifest itself (tar refuses absolute link targets, which a
+ * workspace can hold, and making them last means nothing is ever written through one).
+ */
+export async function extractVerified(
+  archive: string,
+  manifest: BackupManifest,
+  staging: string
+): Promise<void> {
+  const expected = new Map(manifest.entries.map((entry) => [entry.path, entry]));
+  mkdirSync(staging, { recursive: false, mode: 0o700 });
+  await tar.x({
+    file: archive,
+    cwd: staging,
+    strict: true,
+    filter: (path, entry) => {
+      const want = expected.get(path.replace(/\/+$/, ''));
+      const type = (entry as { type?: string }).type;
+      return want !== undefined && want.type !== 'symlink' && type !== 'SymbolicLink';
+    },
+  });
+  const problems: string[] = [];
+  for (const entry of manifest.entries) {
+    if (entry.type === 'symlink') continue;
+    const path = join(staging, ...entry.path.split('/'));
+    if (!lexists(path)) {
+      problems.push(`${entry.path} is missing`);
+      continue;
+    }
+    const stat = lstatSync(path);
+    const type = stat.isSymbolicLink() ? 'symlink' : stat.isDirectory() ? 'dir' : 'file';
+    if (type !== entry.type) problems.push(`${entry.path} is a ${type}, not a ${entry.type}`);
+    else if (type === 'file' && (await hashFile(path)) !== entry.sha256) {
+      problems.push(`${entry.path} does not match its hash`);
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(
+      `the archive does not match its manifest (${problems.length}: ${problems.slice(0, 5).join('; ')})`
+    );
+  }
+  for (const entry of manifest.entries) {
+    if (entry.type !== 'symlink') continue;
+    const path = join(staging, ...entry.path.split('/'));
+    // The validator refused anything beneath a link, so the parent is a real staged folder.
+    if (!lstatSync(dirname(path)).isDirectory()) throw new Error(`${entry.path} has no folder`);
+    symlinkSync(entry.target!, path);
+  }
+}
+
+/** Set every entry's recorded mode: files first, then folders from the deepest up. */
+export function applyModes(staging: string, entries: readonly BackupEntry[]): void {
+  const at = (entry: BackupEntry) => join(staging, ...entry.path.split('/'));
+  for (const entry of entries) if (entry.type === 'file') chmodSync(at(entry), entry.mode);
+  const folders = entries
+    .filter((entry) => entry.type === 'dir')
+    .sort((left, right) => right.path.split('/').length - left.path.split('/').length);
+  for (const entry of folders) chmodSync(at(entry), entry.mode);
+}
+
+/**
+ * The backup's config with this install's places: every path key takes the value this install's
+ * config gives it, or is removed so this install's default applies. Comments do not survive.
+ */
+export function restoredConfigText(backupText: string, targetText: string): string {
+  const backup = (yaml.load(backupText) ?? {}) as Record<string, unknown>;
+  const target = (yaml.load(targetText) ?? {}) as Record<string, unknown>;
+  const read = (object: Record<string, unknown>, keys: string[]): unknown =>
+    keys.reduce<unknown>(
+      (node, key) =>
+        node && typeof node === 'object' ? (node as Record<string, unknown>)[key] : undefined,
+      object
+    );
+  for (const keys of PATH_KEYS) {
+    const value = read(target, keys);
+    const last = keys[keys.length - 1];
+    if (value !== undefined) {
+      // Create the parents a target value needs (a wiki the backup did not configure).
+      let node = backup;
+      for (const key of keys.slice(0, -1)) {
+        if (!node[key] || typeof node[key] !== 'object') node[key] = {};
+        node = node[key] as Record<string, unknown>;
+      }
+      node[last] = value;
+    } else {
+      const holder = keys.length === 1 ? backup : read(backup, keys.slice(0, -1));
+      if (holder && typeof holder === 'object') delete (holder as Record<string, unknown>)[last];
+    }
+  }
+  return yaml.dump(backup, { lineWidth: -1, noRefs: true });
+}
+
+/** Old folder roots (both recorded forms) and their new places, longest first. */
 export function pathPairs(
   configured: Record<string, ConfiguredPath | null>,
   target: TargetPaths
 ): [string, string][] {
   const pairs = new Map<string, string>();
-  for (const [key, old] of Object.entries(configured)) {
+  for (const key of REWRITTEN_KEYS) {
+    const old = configured[key];
     const next = target[key];
     if (!old || !next) continue;
     for (const form of [old.configured, old.physical]) {
@@ -159,24 +343,19 @@ export function pathPairs(
   return [...pairs].sort((left, right) => right[0].length - left[0].length);
 }
 
-/** Replace each old path, where it starts a JSON or YAML string or stands alone, by its new one. */
-export function rewriteText(text: string, pairs: readonly [string, string][]): string {
-  let result = text;
-  for (const [old, next] of pairs) {
-    for (const quote of ['"', "'", ' ']) {
-      result = result.split(`${quote}${old}/`).join(`${quote}${next}/`);
-      result = result
-        .split(`${quote}${old}${quote === ' ' ? '\n' : quote}`)
-        .join(`${quote}${next}${quote === ' ' ? '\n' : quote}`);
-    }
-  }
-  return result;
+/** Replace, in one pass, each JSON string that starts with an old root by the new root. */
+export function rewritePaths(text: string, pairs: readonly [string, string][]): string {
+  if (pairs.length === 0) return text;
+  const next = new Map(pairs);
+  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`"(${pairs.map(([old]) => escape(old)).join('|')})(?=[/"])`, 'g');
+  return text.replace(pattern, (_match, old: string) => `"${next.get(old)}`);
 }
 
 /**
- * Rewrite stored file paths in one database copy. Update triggers on these tables would treat a
- * changed row as a new event (connector_event_index renumbers its ingest sequence), so they are
- * dropped and recreated from their own text around the update, in one transaction.
+ * Rewrite stored attachment paths in a staged database. Update triggers on these tables would
+ * treat a changed row as a new event (connector_event_index renumbers its ingest sequence), so
+ * they are dropped and recreated from their own text around the update, in one transaction.
  */
 export function rewriteDatabase(
   path: string,
@@ -196,13 +375,15 @@ export function rewriteDatabase(
           .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ?")
           .all(table) as { name: string; sql: string }[];
         for (const trigger of triggers) db.exec(`DROP TRIGGER "${trigger.name}"`);
-        for (const [old, next] of pairs) {
-          changed += db
-            .prepare(
-              `UPDATE "${table}" SET "${column}" = REPLACE(REPLACE("${column}", ?, ?), ?, ?)
-                WHERE instr("${column}", ?) > 0`
-            )
-            .run(`"${old}/`, `"${next}/`, `"${old}"`, `"${next}"`, `"${old}`).changes;
+        const update = db.prepare(`UPDATE "${table}" SET "${column}" = ? WHERE rowid = ?`);
+        const rows = db
+          .prepare(
+            `SELECT rowid AS id, "${column}" AS value FROM "${table}" WHERE instr("${column}", '"/') > 0`
+          )
+          .all() as { id: number; value: string }[];
+        for (const row of rows) {
+          const value = rewritePaths(row.value, pairs);
+          if (value !== row.value) changed += update.run(value, row.id).changes;
         }
         for (const trigger of triggers) db.exec(trigger.sql);
       }
@@ -213,76 +394,26 @@ export function rewriteDatabase(
   return changed;
 }
 
-function hashFile(path: string): Promise<string> {
-  return new Promise((resolvePromise, reject) => {
-    const hash = createHash('sha256');
-    createReadStream(path)
-      .on('data', (chunk) => hash.update(chunk))
-      .on('end', () => resolvePromise(hash.digest('hex')))
-      .on('error', reject);
-  });
-}
-
-/** Extract into a fresh folder and hold every entry to the manifest: types, links, contents. */
-export async function extractVerified(
-  archive: string,
-  manifest: BackupManifest,
-  staging: string
-): Promise<void> {
-  const expected = new Map(manifest.entries.map((entry) => [entry.path, entry]));
-  mkdirSync(staging, { recursive: false, mode: 0o700 });
-  await tar.x({
-    file: archive,
-    cwd: staging,
-    strict: true,
-    // Only what the manifest lists; the manifest itself is already read.
-    filter: (path) => expected.has(path.replace(/\/+$/, '')),
-  });
-  const problems: string[] = [];
-  for (const entry of manifest.entries) {
-    const path = join(staging, ...entry.path.split('/'));
-    if (!lstatExists(path)) {
-      problems.push(`${entry.path} is missing`);
-      continue;
-    }
-    const stat = lstatSync(path);
-    const type = stat.isSymbolicLink() ? 'symlink' : stat.isDirectory() ? 'dir' : 'file';
-    if (type !== entry.type) problems.push(`${entry.path} is a ${type}, not a ${entry.type}`);
-    else if (type === 'symlink' && readlinkSync(path) !== entry.target) {
-      problems.push(`${entry.path} links elsewhere`);
-    } else if (type === 'file' && (await hashFile(path)) !== entry.sha256) {
-      problems.push(`${entry.path} does not match its hash`);
-    }
-  }
-  if (problems.length > 0) {
-    throw new Error(
-      `the archive does not match its manifest (${problems.length}: ${problems.slice(0, 5).join('; ')})`
-    );
-  }
-}
-
-function lstatExists(path: string): boolean {
+/** Host jobs in flight hold absolute paths and inode snapshots that cannot survive a move. */
+export function hostJobsInFlight(path: string): number {
+  const db = new Database(path, { readonly: true, fileMustExist: true });
   try {
-    lstatSync(path);
-    return true;
-  } catch {
-    return false;
+    const exists = db
+      .prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'mailbox_host_checkpoints'"
+      )
+      .get();
+    if (!exists) return 0;
+    return (db.prepare('SELECT COUNT(*) AS n FROM mailbox_host_checkpoints').get() as { n: number })
+      .n;
+  } finally {
+    db.close();
   }
-}
-
-/** Set every entry's recorded mode: files first, then folders from the deepest up. */
-export function applyModes(staging: string, entries: readonly BackupEntry[]): void {
-  const at = (entry: BackupEntry) => join(staging, ...entry.path.split('/'));
-  for (const entry of entries) if (entry.type === 'file') chmodSync(at(entry), entry.mode);
-  const folders = entries
-    .filter((entry) => entry.type === 'dir')
-    .sort((left, right) => right.path.split('/').length - left.path.split('/').length);
-  for (const entry of folders) chmodSync(at(entry), entry.mode);
 }
 
 /** Remove a tree whose folders may be sealed read-only, without following links. */
 export function removeTree(path: string): void {
-  if (!lstatExists(path)) return;
+  if (!lexists(path)) return;
   const open = (current: string): void => {
     const stat = lstatSync(current);
     if (!stat.isDirectory()) return;
@@ -297,28 +428,33 @@ export function removeTree(path: string): void {
 export interface SwitchUnit {
   readonly staged: string;
   readonly destination: string;
-  /** Files that belong with the destination and go aside with it (a database's -wal). */
+  /** Files that belong with the destination and move with it (a database's -wal). */
   readonly companions?: string[];
 }
+
+type StepState = 'planned' | 'moving-aside' | 'switching' | 'switched';
 
 interface JournalStep {
   destination: string;
   sibling: string;
   aside: string;
-  companions: string[];
-  state: 'staged' | 'aside' | 'switched';
+  companionEnds: string[];
+  existed: boolean;
+  state: StepState;
 }
 
 export interface RestoreJournal {
   readonly id: string;
+  committed: boolean;
   readonly steps: JournalStep[];
 }
 
 export function journalPath(root: string): string {
-  return join(root, 'backups', '.restore-journal.json');
+  return restoreJournalPath(root);
 }
 
-function writeJournal(path: string, journal: RestoreJournal): void {
+function writeJournal(root: string, journal: RestoreJournal): void {
+  const path = journalPath(root);
   const staged = `${path}.${process.pid}.tmp`;
   writeFileSync(staged, `${JSON.stringify(journal)}\n`, { mode: 0o600 });
   renameSync(staged, path);
@@ -343,15 +479,25 @@ function moveBeside(staged: string, sibling: string): void {
   }
 }
 
+function moveWith(from: string, to: string, ends: readonly string[]): void {
+  for (const end of ends) if (lexists(from + end)) renameSync(from + end, to + end);
+}
+
 /**
- * Put every staged copy in place: each destination goes aside, its copy takes its name, and a
- * journal records each step so a failure, or a later `mama restore --rollback`, puts every
- * destination back.
+ * Put every staged copy in place. For each unit the copy moves beside its destination, the
+ * destination goes aside, and the copy takes its name. The journal records each step before it
+ * happens; a failure, or a later `mama restore --rollback`, puts every destination back from what
+ * is on disk. Nothing set aside is deleted until the journal says the whole switch held.
  */
-export function switchUnits(root: string, units: readonly SwitchUnit[], id: string): void {
-  const path = journalPath(root);
+export function switchUnits(
+  root: string,
+  units: readonly SwitchUnit[],
+  id: string,
+  rename: (from: string, to: string) => void = renameSync
+): void {
   const journal: RestoreJournal = {
     id,
+    committed: false,
     steps: units.map((unit) => ({
       destination: unit.destination,
       sibling: join(dirname(unit.destination), `.mama-restore-${id}-${basename(unit.destination)}`),
@@ -359,80 +505,107 @@ export function switchUnits(root: string, units: readonly SwitchUnit[], id: stri
         dirname(unit.destination),
         `.mama-restore-${id}-old-${basename(unit.destination)}`
       ),
-      companions: unit.companions ?? [],
-      state: 'staged' as const,
+      companionEnds: (unit.companions ?? []).map((path) => path.slice(unit.destination.length)),
+      existed: lexists(unit.destination),
+      state: 'planned' as const,
     })),
   };
-  writeJournal(path, journal);
+  writeJournal(root, journal);
   try {
     units.forEach((unit, index) => {
       const step = journal.steps[index];
       moveBeside(unit.staged, step.sibling);
-      if (lstatExists(step.destination)) renameSync(step.destination, step.aside);
-      // Recorded at once, so a failure from here on puts the destination back.
-      step.state = 'aside';
-      writeJournal(path, journal);
-      for (const companion of step.companions) {
-        if (lstatExists(companion)) {
-          renameSync(companion, `${step.aside}${companion.slice(step.destination.length)}`);
-        }
-      }
-      renameSync(step.sibling, step.destination);
+      step.state = 'moving-aside';
+      writeJournal(root, journal);
+      if (step.existed) rename(step.destination, step.aside);
+      moveWith(step.destination, step.aside, step.companionEnds);
+      step.state = 'switching';
+      writeJournal(root, journal);
+      rename(step.sibling, step.destination);
       step.state = 'switched';
-      writeJournal(path, journal);
+      writeJournal(root, journal);
     });
   } catch (error) {
-    rollBack(root);
+    try {
+      rollBack(root);
+    } catch (rollbackError) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}; putting it back also failed (${
+          rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+        }), so the journal at ${journalPath(root)} is kept for mama restore --rollback`
+      );
+    }
     throw error;
   }
+  journal.committed = true;
+  writeJournal(root, journal);
 }
 
-/** Undo a switch from its journal, then drop the journal; what is left aside is restored. */
-export function rollBack(root: string): number {
+/**
+ * Undo an uncommitted switch from what is on disk, then drop the journal. A committed switch
+ * held: its leftovers are cleared instead. Returns how many destinations were put back, or null
+ * when the switch had committed.
+ */
+export function rollBack(root: string): number | null {
   const path = journalPath(root);
   if (!existsSync(path)) return 0;
   const journal = JSON.parse(readFileSync(path, 'utf8')) as RestoreJournal;
+  if (journal.committed) {
+    finishSwitch(root);
+    return null;
+  }
   let undone = 0;
   for (const step of [...journal.steps].reverse()) {
-    if (step.state === 'switched') {
+    const reached = step.state === 'switching' || step.state === 'switched';
+    // The copy is in place only if it left its sibling name: move it back out first.
+    if (reached && !lexists(step.sibling) && lexists(step.destination)) {
       renameSync(step.destination, step.sibling);
-      step.state = 'aside';
+      moveWith(step.destination, step.sibling, step.companionEnds);
     }
-    if (step.state === 'aside') {
-      if (lstatExists(step.aside)) renameSync(step.aside, step.destination);
-      for (const companion of step.companions) {
-        const aside = `${step.aside}${companion.slice(step.destination.length)}`;
-        if (lstatExists(aside)) renameSync(aside, companion);
+    if (lexists(step.aside)) {
+      if (lexists(step.destination)) {
+        throw new Error(`${step.destination} and its set-aside copy both exist; resolve by hand`);
       }
-      step.state = 'staged';
+      renameSync(step.aside, step.destination);
+      moveWith(step.aside, step.destination, step.companionEnds);
       undone += 1;
+    } else if (step.existed && !lexists(step.destination)) {
+      throw new Error(`${step.destination} is missing and nothing was set aside for it`);
     }
     removeTree(step.sibling);
+    for (const end of step.companionEnds) rmSync(step.sibling + end, { force: true });
   }
   rmSync(path, { force: true });
   return undone;
 }
 
-/** After a switch that held: drop what went aside, and the journal. */
+/** After a committed switch: drop what went aside, then the journal. */
 export function finishSwitch(root: string): void {
   const path = journalPath(root);
   const journal = JSON.parse(readFileSync(path, 'utf8')) as RestoreJournal;
+  if (!journal.committed) throw new Error('the restore journal is not committed');
+  // A committed switch put every copy in place; a missing one means something moved it, and
+  // the set-aside copy may then be the only one left.
+  const missing = journal.steps.filter((step) => !lexists(step.destination) && lexists(step.aside));
+  if (missing.length > 0) {
+    throw new Error(
+      `${missing.map((step) => step.destination).join(', ')} is missing while its set-aside copy remains; resolve by hand`
+    );
+  }
   for (const step of journal.steps) {
     removeTree(step.aside);
-    for (const companion of step.companions) {
-      rmSync(`${step.aside}${companion.slice(step.destination.length)}`, { force: true });
-    }
+    for (const end of step.companionEnds) rmSync(step.aside + end, { force: true });
   }
   rmSync(path, { force: true });
 }
 
-/** Each archive prefix's destination, from the target's configuration by key. */
+/** Each archive prefix's destination, from the restored install's configuration by key. */
 export function destinationOf(prefix: string, target: TargetPaths): string {
   const key = PREFIX_KEYS[prefix];
   const base = target[key];
   if (!base) {
     throw new Error(
-      `the archive holds ${prefix}, but the target install has no ${key} configured; set it in config.yaml first`
+      `the archive holds ${prefix}, but this install has no ${key} configured; set it in config.yaml first`
     );
   }
   if (prefix === 'skills') return join(base, 'skills');
@@ -449,6 +622,48 @@ export function prefixesIn(manifest: BackupManifest): string[] {
     if (prefix && !found.includes(prefix)) found.push(prefix);
   }
   return found;
+}
+
+/** The units a prefix switches: a folder's children one by one, never the folder itself. */
+export function unitsFor(
+  prefix: string,
+  staging: string,
+  destination: string,
+  manifest: BackupManifest
+): SwitchUnit[] {
+  const staged = join(staging, ...prefix.split('/'));
+  if (!FOLDER_PREFIXES.has(prefix)) {
+    return [
+      {
+        staged,
+        destination,
+        // A WAL left beside the old database would be applied to the new one.
+        ...(prefix === 'database'
+          ? { companions: ['-wal', '-shm', '-journal'].map((end) => destination + end) }
+          : {}),
+      },
+    ];
+  }
+  const folder = manifest.entries.find((entry) => entry.path === prefix);
+  if (!lexists(destination)) {
+    mkdirSync(destination, { recursive: true, mode: folder?.mode ?? 0o700 });
+  }
+  const units: SwitchUnit[] = [];
+  for (const name of readdirSync(staged)) {
+    // start.sh names this machine's Node and paths; mama service install writes it.
+    if (prefix === 'root' && name === 'start.sh') continue;
+    // runtime/ holds the install lock, so its files are switched one by one.
+    if (prefix === 'root' && name === 'runtime') {
+      const runtime = join(destination, 'runtime');
+      if (!lexists(runtime)) mkdirSync(runtime, { recursive: true, mode: 0o700 });
+      for (const child of readdirSync(join(staged, 'runtime'))) {
+        units.push({ staged: join(staged, 'runtime', child), destination: join(runtime, child) });
+      }
+      continue;
+    }
+    units.push({ staged: join(staged, name), destination: join(destination, name) });
+  }
+  return units;
 }
 
 export function newRestoreId(): string {

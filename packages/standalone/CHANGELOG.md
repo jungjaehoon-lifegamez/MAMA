@@ -9,15 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `mama restore <archive>` puts a `mama backup` archive onto a stopped install. The archive's
-  manifest is read as untrusted (safe paths under known prefixes only), every entry is extracted
-  and checked against its hash, type and link, and modes are set as recorded. Each part goes
-  where the target's config puts it; the old install's paths are rewritten in the restored
-  config and in the stored attachment paths MAMA reads back (mailbox payloads, the connector
-  event index, the chat raw store), with the tables' update triggers set aside so no event is
-  renumbered and delivered again. Each destination goes aside while its copy takes its name,
-  under a journal that puts everything back if any step fails (`mama restore --rollback` after an
-  interruption). The target keeps its credentials when the archive has none, and its `start.sh`.
+- `mama restore <archive>` puts a `mama backup` archive onto a stopped install. The manifest is
+  read as untrusted: only the names a backup keeps, nothing beneath a link, credentials only in a
+  backup that says it holds them. Files are extracted and checked against their hashes, links
+  are made from the manifest (absolute ones too), and modes are set as recorded. The restored
+  config keeps the backup's settings with this install's paths, and each part goes where that
+  config puts it, folder by folder. Attachment paths in mailbox inputs and the connector event
+  index move to this install's roots in one pass, with the tables' update triggers set aside so
+  no event is renumbered and delivered again; raw stores and evidence keep theirs. Each
+  destination goes aside while its copy takes its name, under a write-ahead journal: a failure
+  puts everything back, and after an interruption the daemon and `mama doctor` refuse until
+  `mama restore --rollback` resolves it. The target keeps its credentials when the archive has
+  none, and its `start.sh`; the owner's Codex threads start over.
 
 - `mama backup [--include-secrets] [--logs]` writes one archive of a stopped install to
   `~/.mama/backups/` (0600), the one folder the agents cannot read: the database copied with

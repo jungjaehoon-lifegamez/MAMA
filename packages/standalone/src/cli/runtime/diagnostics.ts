@@ -27,7 +27,7 @@ import {
   validateDeliveryRoutes,
 } from '../commands/daemon.js';
 import { probeBackend, type BackendName, type ProbeRun, defaultProbeRun } from './backend-probe.js';
-import type { DaemonControlReply } from './daemon-control.js';
+import { restoreJournalPath, type DaemonControlReply } from './daemon-control.js';
 import { systemdUnitState, type ServiceRun, defaultServiceRun } from './systemd-service.js';
 
 export type CheckStatus = 'ok' | 'warn' | 'fail';
@@ -161,6 +161,14 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
   const run = options.run ?? defaultProbeRun;
   const locate = options.findIn ?? findIn;
   const checks: Check[] = [];
+  if (existsSync(restoreJournalPath(root))) {
+    checks.push({
+      name: 'restore',
+      status: 'fail',
+      detail: 'an interrupted restore is unfinished; boot refuses until it is resolved',
+      fix: 'mama restore --rollback',
+    });
+  }
 
   let config: W1Config | null = null;
   // Setting names can be anything the owner typed, so they stay out of the report.
