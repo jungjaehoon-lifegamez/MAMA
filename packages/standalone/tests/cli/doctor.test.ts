@@ -729,7 +729,7 @@ describe('mama doctor', () => {
     expect(code).toBe(1);
     const report = lines.join('\n');
     expect(report).toContain('config keys: version, member_root, agent, database, logging');
-    expect(report).toContain('and 1 it ignores');
+    expect(report).toContain('and 1 other top-level key(s) it ignores');
     expect(report).toContain('enabled sources: ical');
     expect(report).toContain('boot stage=connectors failed');
     expect(report).toContain('connector sheets');

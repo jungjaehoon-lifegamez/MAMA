@@ -53,9 +53,10 @@ function configKeys(configPath: string): string {
   const keys = Object.keys(value);
   const known = keys.filter((key) => (CONFIG_KEYS as readonly string[]).includes(key));
   const others = keys.length - known.length;
-  return [known.join(', ') || '(none)', ...(others > 0 ? [`and ${others} it ignores`] : [])].join(
-    ' '
-  );
+  return [
+    known.join(', ') || '(none)',
+    ...(others > 0 ? [`and ${others} other top-level key(s) it ignores`] : []),
+  ].join(' ');
 }
 
 function enabledSources(root: string): string {
