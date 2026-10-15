@@ -30,13 +30,13 @@ optional.
 
 The owner agent's instructions use:
 
-| Path                            | Content                                                                                                                                       |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Home.md`                       | Every page with one line on what it covers                                                                                                    |
-| Project, client and topic pages | Overview, decisions and specifications, terms, how the client works; each section rewritten when its knowledge changes, with no dated entries |
-| `daily/YYYY-MM/YYYY-MM-DD.md`   | The day in brief, what the owner decided, what was missed and learned; written at `reports.daily_hour` (23:00 by default)                     |
-| `log.md`                        | One line per wiki operation: a page created, reorganised or checked                                                                           |
-| `lessons/`                      | Reusable lessons, with process/system/client subdirectories available                                                                         |
+| Path                            | Content                                                                                                                                                                                                                                                              |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Home.md`                       | Every page with one line on what it covers                                                                                                                                                                                                                           |
+| Project, client and topic pages | Overview, decisions and specifications, terms, how the client works; each section rewritten when its knowledge changes, with no dated entries                                                                                                                        |
+| `daily/YYYY-MM/YYYY-MM-DD.md`   | The day in brief, what the owner decided, what was missed and corrected, and whether yesterday's lessons held; written at `reports.daily_hour` (23:00 by default), when the agent also fixes what it got wrong, saves lessons and settles work left open for 30 days |
+| `log.md`                        | One line per wiki operation: a page created, reorganised or checked                                                                                                                                                                                                  |
+| `lessons/`                      | Reusable lessons, with process/system/client subdirectories available                                                                                                                                                                                                |
 
 Directories are created at startup. Content and `Home.md` appear when the agent
 publishes them; an empty vault is not a completed wiki.

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The daily page closes the day: the daily turn fixes what it got wrong (a revision with its
+  evidence for a wrong or stale item, a saved or revised lesson), saves an owner correction that
+  was only promised, settles up to ten items left in progress or review for 30 days, and checks
+  whether the previous day's lessons were followed. It had listed its misses on the page only, and
+  the next day repeated one.
+
 ## [0.77.0] - 2026-10-15
 
 ### Upgrading
