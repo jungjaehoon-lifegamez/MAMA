@@ -2406,3 +2406,22 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Result: `mama doctor [--json] [--offline] [--report]` checks an install as its service runs it, read-only. It checks config and connectors.json as boot loads them, and start.sh: executable, sh quoting, still sourcing auth.env, and whose Node must load MAMA's SQLite module. The backend (minimum version and sign-in), messenger and source secrets, and each source's `init()` and `authenticate()` are all checked in the service environment, and the sandbox is actually started. It also checks Telegram group membership, the toolkit, the daemon (stage, sources), the port and host, the service manager and logs. `--report` carries only doctor's own words, setting and source names, `BOOT_STAGES` names and system error codes; anything read from the install stays in the terminal-only `context`. `init` and `service install` write Homebrew's `opt/node` link. The iMessage source no longer creates an empty `chat.db`. Closes v1.md R8.
 - Evidence: Opus (two rounds) and Codex (four rounds) reviews applied. The first design masked free text by regex, which leaked unquoted cell text, short ids and paths outside HOME, so it was replaced by the detail/context split. The suite passed (185 files, 2459 tests). Deployed at 05:07:06 KST (idle checks clean, eight boot stages, toolkit present, no errors). From the deployed checkout, `mama doctor` exited 0 with every check ok except the start.sh warning; all six sources started and authenticated; and `--report` wrote 0 bytes to stderr, its errors reading `148x connector chatwork ETIMEDOUT`, `1x connector trello HTTP 503`.
 - Still open: the live start.sh is hand-written, so the Node/SQLite check and I6 have no live evidence until W1.6. R2 waits for the schema-version check in W1.4. No live failing check was seen. Linux and a Codex sandbox probe are untested (W3/W4).
+
+### W1.3a: mama backup, one verified archive of a stopped install (#508, 2026-10-16)
+
+- Result:
+  - `mama backup [--include-secrets] [--logs]` holds the install and writes `~/.mama/backups/mama-backup-<time>.tar.gz` (0600, folder 0700). That folder is now in every agent's read denies.
+  - Contents come from what the code reads, at configured paths through links: the database copied with SQLite's backup, the raw stores, the root's state, the workspace, `member_root`, published skills, an external wiki and Jev's vocabulary.
+  - Credentials (auth.env, Jev key, Codex login, MCP config, any config holding a token) only with `--include-secrets`. Codex homes and sessions never.
+  - The manifest has modes, link targets and SHA-256 for every entry, plus every configured path in both forms. The archive is read back against it.
+  - `--out` was dropped because agents share the user. Poll state is now written atomically and quarantined when unreadable.
+  - R4 stays open until W1.3b's restore proof.
+- Evidence:
+  - Reviews: Opus twice, Codex three rounds.
+  - The first live failure was the backup's own `integrity_check` rebuilding a WAL `-shm` after hashing, not another writer. Found by review, fixed, and passed under the same condition (35 min of uptime, 4 s after stop).
+  - Deployed at 06:50:33 KST: eight boot stages, no errors, doctor ok.
+  - The deployed `mama backup` (daemon stopped about a minute) took 45 s: 1602 files, 2.9 GB read, 1.76 GB written, verified, 8 databases checked, schema 106. auth.env, jev-key and `.codex/auth.json` were left out; the legacy top-level entries were named.
+- Still open:
+  - `--restart` waits for W2.3's drain op.
+  - Restore and its proof are W1.3b.
+  - This Mac's archive (no credentials) stays in `~/.mama/backups` as W1.3b's proof input.
