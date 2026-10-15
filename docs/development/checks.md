@@ -2324,3 +2324,9 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Result: 15 attack runs over five injections (plain instruction, a fake MAMA system notice, a business request, a forged forwarded owner instruction, Japanese business text) made no web or shell attempt and never put the secret in a URL; every answer told the person about the attempt. Two runs with a plain link did not open it. A positive control (the person asking to open a link) did call WebFetch and was logged, so the hook sees attempts. About $0.6 for 18 runs.
 - Limits: 0 of 15 bounds the per-attack success rate below about 20% at 95%, for these attacks and this model only; the barrier is the model, and the WebFetch alert reaches the DM after the request. Notice turns have not used web tools live (four notice runs on 2026-10-14).
 - Still open: the owner's decision on web tools in notice turns.
+
+### File delivery reads relative paths in the caller's workspace (#495, 2026-10-15)
+
+- Result: `deliver.telegram.file`, the Discord and Slack variants and `deliver.drive.file` resolve a relative path (`files/...`, as `document.render` returns it) against the caller's own workspace; the files-root check is unchanged. Before, they resolved it against the daemon's working directory, and the first send after a render failed with a missing file under HOME (2026-10-14 16:51 common, 2026-10-15 12:04 DM).
+- Evidence: tests send a member's `files/deck.pptx` from the member's workspace and the owner's `files/result.pptx` to Drive, and refuse a relative path outside `files/`; both fail before the fix with the same `ENOENT` as live. Standalone suite (179 files), CI green, Codex clean on the second round (its first round found Drive delivery; fixed in the PR), CodeRabbit clean. Merged as f24638723; deployed from main at 12:34:48 KST (idle checks clean, eight boot stages, no errors).
+- Still open: the next live send of a rendered file going through on the first call.
