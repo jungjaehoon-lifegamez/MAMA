@@ -205,7 +205,8 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    19:26 KST.
 10. 1.0: owner decision 2026-10-15, judged on a fresh install that anyone can use, on macOS, Linux
     and Docker. The gate and every weakness with its done condition: [v1.md](work/v1.md); the
-    research behind it: [agent-products-1.0.md](research/agent-products-1.0.md).
+    research behind it: [agent-products-1.0.md](research/agent-products-1.0.md). How each row is built:
+    [v1-plan.md](work/v1-plan.md).
 
 ## Waiting
 
@@ -230,11 +231,6 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
   `scripts/`, though `tests/replay/september-verification.test.ts` runs a root script, and no MCP
   server tests for a plugin-only change, though `tests/unit/server-env.test.js` imports the
   plugin's `scripts/db-path.js` (found in the #442 review). The pre-commit hook covers the first.
-
-- Shutdown closes the database while a connector poll is in flight: `recordConnectorPollOutcome`
-  throws `Database not connected` (in 8 of the 202 boot segments in `daemon.log`, last on
-  2026-10-07 22:14). The cursor advances only after a successful handoff, so the poll repeats after
-  the restart; the scheduler should stop and settle before the database closes.
 
 ## Owner decisions still open
 
