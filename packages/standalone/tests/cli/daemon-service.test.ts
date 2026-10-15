@@ -221,7 +221,6 @@ describe('mama stop', () => {
         lock.release();
         return { status: 0, stdout: '', stderr: '', signal: null, pid: 1, output: [] };
       }
-      // `ps` for the holder's start time: unknown, so the boot time and pid decide.
       return { status: 1, stdout: '', stderr: '', signal: null, pid: 1, output: [] };
     }) as never);
     const lines: string[] = [];

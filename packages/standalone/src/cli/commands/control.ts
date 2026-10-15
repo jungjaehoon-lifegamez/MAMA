@@ -73,14 +73,20 @@ export async function runStatus(
     throw new CliInputError('Usage: mama status [--json]');
   }
   const write = options.write ?? ((line: string) => console.log(line));
-  const service = launchdService().loaded ? 'launchd' : null;
+  // The service line is extra: a failing launchctl is reported in it, not in place of the status.
+  let service: string | null;
+  try {
+    service = launchdService().loaded ? 'launchd' : null;
+  } catch (error) {
+    service = `unknown (${error instanceof Error ? error.message : String(error)})`;
+  }
   const reply = await askDaemon('status', options);
   if (reply.state === 'stopped') {
     if (json) {
       write(JSON.stringify({ state: 'stopped', holder: reply.holder, service }));
     } else {
       write(reply.holder ? `stopped; ${holderLine(reply.holder)}` : 'stopped');
-      if (service) write('service: launchd (loaded)');
+      if (service) write(`service: ${service === 'launchd' ? 'launchd (loaded)' : service}`);
     }
     return STATUS_STOPPED_EXIT;
   }
@@ -92,7 +98,7 @@ export async function runStatus(
     write(JSON.stringify({ state: 'running', status, service }));
   } else {
     for (const line of statusLines(status)) write(line);
-    if (service) write('service: launchd (loaded)');
+    if (service) write(`service: ${service === 'launchd' ? 'launchd (loaded)' : service}`);
   }
   return 0;
 }

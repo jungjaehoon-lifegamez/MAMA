@@ -483,10 +483,11 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   const stopResources = async (): Promise<void> => {
     if (stopped) return;
     stopped = true;
+    let closed = false;
     try {
       await stopOwned();
+      closed = true;
     } finally {
-      // Last, so the CLI sees the install busy until every store is closed.
       if (controlServer) {
         await controlServer
           .close()
@@ -494,7 +495,9 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
             logger.error(`shutdown stage=control failed error=${errorName(error)}`)
           );
       }
-      lock.release();
+      // Released only once every store closed: after a failed stop something may still run, so
+      // the install stays held until this process ends and the operating system lets it go.
+      if (closed) lock.release();
     }
   };
 

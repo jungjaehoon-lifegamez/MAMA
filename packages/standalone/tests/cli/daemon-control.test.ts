@@ -1,25 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as egressProxy from '../../src/runtime/egress-proxy.js';
+import { spawn } from 'node:child_process';
 import {
   acquireInstallLock,
   daemonControlPaths,
-  holderLive,
   InstallBusyError,
   lockHolder,
   requestDaemonControl,
   startDaemonControl,
-  type HolderProbe,
 } from '../../src/cli/runtime/daemon-control.js';
 import {
   bootDaemon,
@@ -46,81 +37,54 @@ afterEach(() => {
 });
 
 describe('install lock', () => {
-  it('is taken once, refused while its process lives, and released only by its holder', () => {
+  it('is held once, names its holder while held, and is free after release', () => {
     const paths = daemonControlPaths(root());
     const first = acquireInstallLock(paths, 'daemon');
     expect(statSync(paths.lockPath).mode & 0o777).toBe(0o600);
-    expect(() => acquireInstallLock(paths, 'replay')).toThrow(InstallBusyError);
-    expect(() => acquireInstallLock(paths, 'replay')).toThrow(/daemon, pid \d+.*mama stop/);
-    expect(lockHolder(paths)?.nonce).toBe(first.owner.nonce);
-
-    // A holder that is not the current owner does not remove the current lock.
-    const stale = { ...first.owner, nonce: 'other-holder' };
-    writeFileSync(paths.lockPath, JSON.stringify(stale));
-    first.release();
-    expect(existsSync(paths.lockPath)).toBe(true);
-    rmSync(paths.lockPath);
-  });
-
-  it('replaces a lock whose process is gone or whose content is unreadable', () => {
-    const paths = daemonControlPaths(root());
-    mkdirSync(join(paths.lockPath, '..'), { recursive: true });
-    writeFileSync(
-      paths.lockPath,
-      JSON.stringify({ pid: 999_999, command: 'daemon', startedAt: 1, nonce: 'dead' })
+    expect(statSync(paths.holderPath).mode & 0o777).toBe(0o600);
+    expect(() => acquireInstallLock(paths, 'replay', { busyTimeoutMs: 0 })).toThrow(
+      InstallBusyError
     );
-    const probe: HolderProbe = {
-      alive: (pid) => pid === process.pid,
-      startTime: () => null,
-      bootTime: () => 1_000_000,
-    };
-    const taken = acquireInstallLock(paths, 'daemon', probe);
-    expect(JSON.parse(readFileSync(paths.lockPath, 'utf8')).nonce).toBe(taken.owner.nonce);
-    taken.release();
-    expect(existsSync(paths.lockPath)).toBe(false);
-
-    writeFileSync(paths.lockPath, 'not json');
-    const again = acquireInstallLock(paths, 'daemon');
-    expect(again.owner.command).toBe('daemon');
-    again.release();
-  });
-});
-
-describe('a lock holder', () => {
-  const owner = {
-    pid: 77,
-    command: 'daemon',
-    startedAt: 5_000_000,
-    nonce: 'n',
-    bootTime: 1_000_000,
-  };
-  const probe = (overrides: Partial<HolderProbe> = {}): HolderProbe => ({
-    alive: () => true,
-    startTime: () => 4_000_000,
-    bootTime: () => 1_000_000,
-    ...overrides,
+    expect(() => acquireInstallLock(paths, 'replay', { busyTimeoutMs: 0 })).toThrow(
+      /daemon, pid \d+; .*daemon\.lock\).*mama stop/
+    );
+    expect(lockHolder(paths)?.nonce).toBe(first.owner.nonce);
+    first.release();
+    expect(lockHolder(paths)).toBeNull();
+    expect(existsSync(paths.holderPath)).toBe(false);
+    const second = acquireInstallLock(paths, 'replay', { busyTimeoutMs: 0 });
+    expect(lockHolder(paths)?.command).toBe('replay');
+    second.release();
   });
 
-  it('counts only the process that wrote the lock in this machine boot', () => {
-    expect(holderLive(owner, probe())).toBe(true);
-    // Unknown start time: the boot time and the pid decide.
-    expect(holderLive(owner, probe({ startTime: () => null }))).toBe(true);
-    expect(holderLive(owner, probe({ alive: () => false }))).toBe(false);
-    // A lock from before a reboot, whatever now runs under that pid.
-    expect(holderLive(owner, probe({ bootTime: () => 9_000_000 }))).toBe(false);
-    // The pid now belongs to a process that started after the lock was written.
-    expect(holderLive(owner, probe({ startTime: () => 5_000_000 + 60_000 }))).toBe(false);
-    // A lock written before boot times were recorded is judged by pid and start time.
-    const { bootTime: _bootTime, ...legacy } = owner;
-    expect(holderLive(legacy, probe({ bootTime: () => 9_000_000 }))).toBe(true);
-  });
-
-  it('replaces a lock whose pid was reused after a reboot', () => {
+  it('is let go by the operating system when its process is killed', async () => {
     const paths = daemonControlPaths(root());
     mkdirSync(join(paths.lockPath, '..'), { recursive: true });
-    writeFileSync(paths.lockPath, JSON.stringify({ ...owner, pid: process.pid }));
-    const taken = acquireInstallLock(paths, 'daemon', probe({ bootTime: () => 9_000_000 }));
-    expect(taken.owner.bootTime).toBe(9_000_000);
+    // A process that takes the lock the same way and never releases it.
+    const child = spawn(
+      process.execPath,
+      [
+        '-e',
+        `const D = require('better-sqlite3');
+         const db = new D(process.argv[1]);
+         db.pragma('locking_mode = EXCLUSIVE');
+         db.exec('BEGIN EXCLUSIVE');
+         process.stdout.write('held\\n');
+         setInterval(() => {}, 1000);`,
+        paths.lockPath,
+      ],
+      { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'inherit'] }
+    );
+    await new Promise<void>((resolve) => child.stdout!.once('data', () => resolve()));
+    expect(() => acquireInstallLock(paths, 'daemon', { busyTimeoutMs: 0 })).toThrow(
+      InstallBusyError
+    );
+    expect(lockHolder(paths)).toEqual(expect.objectContaining({ command: 'unknown' }));
+    const exited = new Promise((resolve) => child.once('exit', resolve));
+    child.kill('SIGKILL');
+    await exited;
+    const taken = acquireInstallLock(paths, 'daemon', { busyTimeoutMs: 0 });
+    expect(taken.owner.command).toBe('daemon');
     taken.release();
   });
 });

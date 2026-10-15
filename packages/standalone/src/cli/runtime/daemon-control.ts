@@ -1,32 +1,32 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import {
   chmodSync,
-  linkSync,
-  statSync,
+  existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
   rmSync,
-  unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { spawnSync } from 'node:child_process';
 import { connect, createServer, type Server } from 'node:net';
-import { uptime } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { CliInputError } from '../prompt.js';
 
 /**
  * One install runs one process that owns its stores: the daemon, or a replay or backfill booted
- * the same way, or register-owner. The lock file is that process's claim; the control socket lets
- * the CLI ask the holder for its status or a stop. The lock and the token live under
- * `<root>/runtime/`, which the agents' native reads deny, so a session that reaches the socket
- * still cannot use it. The socket sits beside `runtime.sock` at the root, so it fits the same
- * AF_UNIX path limit (104 bytes on macOS).
+ * the same way, or register-owner. Its claim is an exclusive SQLite lock on `runtime/daemon.lock`,
+ * held for the process's life and released by the operating system when the process ends, so a
+ * crash, a reboot or a reused pid never leaves a claim behind. `runtime/daemon.holder.json` names
+ * the holder for `mama status`. The token for the control socket also lives under `runtime/`,
+ * which the agents' native reads deny, so a session that reaches the socket still cannot use it.
+ * The socket sits beside `runtime.sock` at the root, so it fits the same AF_UNIX path limit
+ * (104 bytes on macOS).
  */
 
 export interface DaemonControlPaths {
   readonly lockPath: string;
+  readonly holderPath: string;
   readonly socketPath: string;
   readonly tokenPath: string;
 }
@@ -35,6 +35,7 @@ export function daemonControlPaths(mamaRoot: string): DaemonControlPaths {
   const runtimeRoot = join(mamaRoot, 'runtime');
   return {
     lockPath: join(runtimeRoot, 'daemon.lock'),
+    holderPath: join(runtimeRoot, 'daemon.holder.json'),
     socketPath: join(mamaRoot, 'daemon.sock'),
     tokenPath: join(runtimeRoot, 'daemon.token'),
   };
@@ -45,19 +46,19 @@ export interface LockOwner {
   readonly command: string;
   readonly startedAt: number;
   readonly nonce: string;
-  /** When the machine booted, so a lock left before a reboot is never mistaken for a live one. */
-  readonly bootTime?: number;
 }
 
 /** A CLI input error: the message names the holder and the fix, and carries no secret. */
 export class InstallBusyError extends CliInputError {
   readonly code = 'MAMA_INSTALL_BUSY';
   constructor(
-    readonly holder: LockOwner,
+    readonly holder: LockOwner | null,
     lockPath: string
   ) {
     super(
-      `MAMA is already running here (${holder.command}, pid ${holder.pid}; ${lockPath}); stop it first: mama stop`
+      holder === null
+        ? `MAMA is already running here (${lockPath}); stop it first: mama stop`
+        : `MAMA is already running here (${holder.command}, pid ${holder.pid}; ${lockPath}); stop it first: mama stop`
     );
     this.name = 'InstallBusyError';
   }
@@ -68,164 +69,85 @@ export interface InstallLock {
   release(): void;
 }
 
-function readOwner(path: string): LockOwner | null {
+function readHolder(path: string): LockOwner | null {
   try {
     const value = JSON.parse(readFileSync(path, 'utf8')) as Partial<LockOwner>;
-    if (
-      typeof value.pid === 'number' &&
-      Number.isSafeInteger(value.pid) &&
-      value.pid > 0 &&
+    return typeof value.pid === 'number' &&
       typeof value.command === 'string' &&
       typeof value.startedAt === 'number' &&
       typeof value.nonce === 'string'
-    ) {
-      return value as LockOwner;
-    }
-    return null;
+      ? (value as LockOwner)
+      : null;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw error;
-    return null;
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
   }
 }
 
-/** A signal of 0 tests for a process without touching it; EPERM means it exists as another user. */
-export function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
-/** The machine's boot time in milliseconds, to the second. */
-export function machineBootTime(): number {
-  return Math.round((Date.now() - uptime() * 1000) / 1000) * 1000;
+function isBusy(error: unknown): boolean {
+  return (error as { code?: unknown }).code === 'SQLITE_BUSY';
 }
 
 /**
- * When a process started: Linux exposes it as the creation time of its /proc entry; macOS through
- * `ps`. Null when neither answers, and the caller then relies on the boot time and the pid.
- */
-export function processStartTime(pid: number): number | null {
-  if (process.platform === 'linux') {
-    try {
-      return statSync(`/proc/${pid}`).ctimeMs;
-    } catch {
-      return null;
-    }
-  }
-  // C locale: ps prints the start in a fixed English form that Date.parse reads.
-  const result = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
-    encoding: 'utf8',
-    env: { ...process.env, LC_ALL: 'C' },
-  });
-  if (result.error || result.status !== 0) return null;
-  const started = Date.parse(result.stdout.trim());
-  return Number.isFinite(started) ? started : null;
-}
-
-export interface HolderProbe {
-  alive(pid: number): boolean;
-  startTime(pid: number): number | null;
-  bootTime(): number;
-}
-
-const systemProbe: HolderProbe = {
-  alive: processAlive,
-  startTime: processStartTime,
-  bootTime: machineBootTime,
-};
-
-/**
- * A lock is held only by the process that wrote it: same machine boot, pid alive, and that pid's
- * process started no later than the lock (a pid reused afterwards belongs to another process).
- */
-export function holderLive(owner: LockOwner, probe: HolderProbe = systemProbe): boolean {
-  if (owner.bootTime !== undefined && Math.abs(owner.bootTime - probe.bootTime()) > 60_000) {
-    return false;
-  }
-  if (!probe.alive(owner.pid)) return false;
-  const started = probe.startTime(owner.pid);
-  return started === null || started <= owner.startedAt + 5_000;
-}
-
-/**
- * Take the install's lock. The lock is created by a hard link of a complete file, so no reader
- * sees a half-written owner. A lock whose process is gone (or whose content is unreadable) is
- * moved aside under a unique name and re-read there before it is removed, so two processes that
- * both find the same dead lock cannot remove each other's new one.
+ * Take the install's lock: an exclusive transaction on the lock database, kept open for the
+ * process's life. A held lock refuses after `busyTimeoutMs`, which only outlasts the moment a
+ * `mama status` probe reads the file.
  */
 export function acquireInstallLock(
   paths: DaemonControlPaths,
   command: string,
-  probe: HolderProbe = systemProbe
+  options: { busyTimeoutMs?: number } = {}
 ): InstallLock {
   mkdirSync(join(paths.lockPath, '..'), { recursive: true, mode: 0o700 });
+  const db = new Database(paths.lockPath, { timeout: options.busyTimeoutMs ?? 2_000 });
+  try {
+    chmodSync(paths.lockPath, 0o600);
+    db.pragma('locking_mode = EXCLUSIVE');
+    db.exec('BEGIN EXCLUSIVE');
+  } catch (error) {
+    db.close();
+    if (isBusy(error)) throw new InstallBusyError(readHolder(paths.holderPath), paths.lockPath);
+    throw error;
+  }
   const owner: LockOwner = {
     pid: process.pid,
     command,
     startedAt: Date.now(),
     nonce: randomUUID(),
-    bootTime: probe.bootTime(),
   };
-  const staged = `${paths.lockPath}.${owner.nonce}`;
+  const staged = `${paths.holderPath}.${owner.nonce}`;
   writeFileSync(staged, `${JSON.stringify(owner)}\n`, { mode: 0o600, flag: 'wx' });
-  try {
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      try {
-        linkSync(staged, paths.lockPath);
-        return {
-          owner,
-          release: () => releaseInstallLock(paths, owner),
-        };
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      }
-      let current: LockOwner | null;
-      try {
-        current = readOwner(paths.lockPath);
-      } catch {
-        continue; // Removed between link and read; try again.
-      }
-      if (current !== null && holderLive(current, probe)) {
-        throw new InstallBusyError(current, paths.lockPath);
-      }
-      const aside = `${paths.lockPath}.stale.${randomUUID()}`;
-      try {
-        renameSync(paths.lockPath, aside);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
-        throw error;
-      }
-      let moved: LockOwner | null = null;
-      try {
-        moved = readOwner(aside);
-      } catch {
-        moved = null;
-      }
-      if (moved !== null && moved.nonce !== current?.nonce) {
-        // Another process replaced the dead lock first; give its live lock back.
-        try {
-          linkSync(aside, paths.lockPath);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-        }
-      }
-      rmSync(aside, { force: true });
-    }
-    throw new Error('Could not take the install lock: it kept changing');
-  } finally {
-    rmSync(staged, { force: true });
-  }
+  renameSync(staged, paths.holderPath);
+  let released = false;
+  return {
+    owner,
+    release: () => {
+      if (released) return;
+      released = true;
+      if (readHolder(paths.holderPath)?.nonce === owner.nonce) rmSync(paths.holderPath);
+      db.close();
+    },
+  };
 }
 
-function releaseInstallLock(paths: DaemonControlPaths, owner: LockOwner): void {
+/**
+ * The process that holds the install, or null when none does. Reading the lock database needs a
+ * shared lock, which the holder's exclusive one refuses; when nothing holds it, the read takes the
+ * shared lock for an instant only.
+ */
+export function lockHolder(paths: DaemonControlPaths): LockOwner | null {
+  if (!existsSync(paths.lockPath)) return null;
+  const db = new Database(paths.lockPath, { readonly: true, timeout: 0 });
   try {
-    const current = readOwner(paths.lockPath);
-    if (current?.nonce === owner.nonce) unlinkSync(paths.lockPath);
+    db.pragma('schema_version');
+    return null;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if (!isBusy(error)) throw error;
+    return (
+      readHolder(paths.holderPath) ?? { pid: 0, command: 'unknown', startedAt: 0, nonce: 'unknown' }
+    );
+  } finally {
+    db.close();
   }
 }
 
@@ -370,17 +292,4 @@ export async function requestDaemonControl(
       }
     });
   });
-}
-
-/** The lock's owner when it still holds the install; a dead owner's lock is not a holder. */
-export function lockHolder(
-  paths: DaemonControlPaths,
-  probe: HolderProbe = systemProbe
-): LockOwner | null {
-  try {
-    const owner = readOwner(paths.lockPath);
-    return owner !== null && holderLive(owner, probe) ? owner : null;
-  } catch {
-    return null;
-  }
 }
