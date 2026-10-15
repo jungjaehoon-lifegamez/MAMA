@@ -27,20 +27,22 @@ live check passes.
    the root defaults of decision 3), then polls the new bot itself; later people keep the in-chat
    enrollment (P7). Docker runs `docker compose run mama init` once before `up`; scripts keep
    `register-owner <id>`.
-2. **A lock file and a control socket per install.** An atomic lock file under `<root>/runtime/`
-   is the single-instance authority, taken first in boot. The control socket sits at the root
-   beside the sessions' `runtime.sock` (the same AF_UNIX path limit, 104 bytes on macOS) and
-   carries status, stop and drain; each request needs the per-boot token the daemon writes under
-   `runtime/`, which the agents' native reads deny (`s/runtime/backend-security.ts:120`).
+2. **An operating-system lock and a control socket per install.** The single-instance authority is
+   an exclusive SQLite lock on `<root>/runtime/daemon.lock`, held for the process's life and
+   released by the operating system when it ends, so no stale claim or reused pid needs handling
+   (#505). The control socket sits at the root beside `runtime.sock` (the same AF_UNIX path limit)
+   and carries status, stop and drain; each request needs the per-boot token the daemon writes
+   under `runtime/`, which the agents' native reads deny (`s/runtime/backend-security.ts:120`).
 3. **Default `member_root` and `tools_root` outside HOME, per platform and per user.** macOS:
    folders in the Shared folder beside the home folders. Linux: `/var/lib/mama/<user>/members` and
    `/var/lib/mama/<user>/tools`, created once by the installer with `sudo`. Docker: volumes.
 4. **Minimum backend versions are the versions a release was verified on** (today Claude Code
    2.1.299 and Codex 0.160.1), in one constant, raised only with a verification.
 5. **Backups are taken from a stopped install, and restore makes paths follow their roots.** New
-   writes store attachment paths relative to the root that owns them (the MAMA root, or
-   `member_root` for a person's downloads, `s/gateways/telegram.ts:846-850`); restore rewrites
-   older absolute paths in config, payloads and ledgers by both old prefixes.
+   writes store paths relative to the root that owns them (the MAMA root, `member_root` for a
+   person's downloads, `tools_root` for common skills); restore rewrites older absolute paths in
+   config, payloads and ledgers by each old prefix. A restore keeps the target's credentials when
+   the archive holds none, and refuses to start a target that has neither.
 6. **`mama update` serves npm installs.** Docker refuses and prints the pull-and-recreate steps; a
    checkout install (this Mac) updates by git, as the deploy procedure does.
 7. **Services restart on failure only.** launchd `KeepAlive` with `SuccessfulExit=false` and
@@ -76,8 +78,9 @@ live check passes.
   `register-owner.ts:62`); `replay` and `backfill` boot through `bootDaemon`, so their
   `requireDaemonStopped` calls go (`index.ts:47,53`).
 - `mama service install|uninstall|start|stop|status`, idempotent, writes the launch files from the
-  current template (LaunchAgent on macOS; systemd user unit with linger checked on Linux, verified
-  in wave 3), with decision 7's restart policy. `mama update` (W2.5) rewrites them when the
+  current template (LaunchAgent on macOS; a systemd user unit on Linux, verified in wave 3), with
+  decision 7's restart policy. On Linux it enables linger (`loginctl enable-linger`) with the
+  person's consent, so the service runs after logout, and says so when it cannot. `mama update` (W2.5) rewrites them when the
   template changes.
 - Files: new `s/cli/runtime/daemon-control.ts`, `s/cli/commands/service.ts`; `daemon.ts`;
   `index.ts`; `launch-files.ts`; `register-owner.ts`; `docs/reference/cli.md` (stale PID text and
@@ -111,8 +114,9 @@ live check passes.
   `tools_root` binaries, Codex thread caches, model caches, logs unless asked.
 - Poll state is written atomically (today in place, `polling-scheduler.ts:205`, and a parse failure
   is dropped silently, `:179-182`).
-- Restore writes to a staging folder, swaps, and rewrites the old root prefix (decision 5); new
-  attachment writes store root-relative paths (`gateways/telegram-attachments.ts:117`).
+- Restore writes to a staging folder, swaps, and rewrites the old prefixes of the three roots
+  (decision 5), keeping the target's credentials when the archive has none; new attachment writes
+  store root-relative paths (`gateways/telegram-attachments.ts:117`).
 - Proof: back up a copy of this Mac's home, restore it under another HOME and another
   `member_root`, `mama doctor` clean, `work.list` counts equal, a common skill listed, and an old
   owner and member attachment open.
@@ -142,8 +146,11 @@ live check passes.
 ### W2.1 `mama init` for anyone (B1, B2, B3, B5, B6, I2)
 
 - Order: check the bot token with `getMe` and `can_read_all_group_messages` (privacy must be off
-  before the bot joins a group); find the backend, check its version and login, make one real call;
-  write the config with the root defaults; pair; register the first owner as `register-owner` does
+  before the bot joins a group); find the backend and check its version and login; write the config
+  with the root defaults and the workspace isolation files; make one real backend call through the
+  same isolated launcher the daemon uses (workspace git boundary, empty plugin folder,
+  `project,local` settings, the managed Codex home), so no global instructions or plugins load;
+  pair; register the first owner as `register-owner` does
   (`register-owner.ts:92-185`); confirm the update offset so the daemon never sees the pairing
   messages; install the toolkit; install and start the service; wait for the boot stages and
   `/health`. Init refuses while a daemon runs (polling beside it gives a 409 that stops the
@@ -184,9 +191,10 @@ live check passes.
 
 ### W2.4 Install command (I1, I4, I5)
 
-- `install.sh` for macOS and Linux installs Node into the user's MAMA folder when missing, installs
-  the package, creates the Linux roots with `sudo` once and starts `mama init`; Docker is
-  `docker compose run mama init`, then `docker compose up -d`.
+- `install.sh` for macOS and Linux always provisions the managed Node under the user's MAMA folder
+  (a stable path the launch files use, whatever Node is already installed, I6), installs the
+  package, creates the Linux roots with `sudo` once and starts `mama init`; Docker is
+  `docker compose run --rm mama init` once (pairing needs a person), then `docker compose up -d`.
 - Enabling a source checks the tools it needs (`gws` today); the install guide lists supported
   versions of Node, the backends, the Linux distribution and Docker.
 
