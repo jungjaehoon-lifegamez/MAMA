@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The daily page closes the day: the daily turn fixes what it got wrong (a revision with its
+  evidence for a wrong or stale item, a saved or revised lesson), saves an owner correction that
+  was only promised as a lesson (a standing rule is listed for the owner to confirm in the common
+  channel), settles up to ten items in progress or review whose latest source event is over 30
+  days old, and checks the previous day's lessons against what it can read. It had listed its
+  misses on the page only, and the next day repeated one.
+- `work.list` takes `lastEventBefore`: items whose latest source event is before a time, for stale
+  work that a backfill or correction rewrote later (`changedBefore` compares write time).
+
 ## [0.77.0] - 2026-10-15
 
 ### Upgrading

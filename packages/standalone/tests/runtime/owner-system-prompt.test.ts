@@ -29,6 +29,23 @@ function ownerPrompt(
 }
 
 describe('owner standing prompt', () => {
+  it('closes the day by fixing what it got wrong, saving lessons and checking yesterday', () => {
+    const daily = ownerHelpTopics('claude', true).daily!;
+    // The page found its misses but kept them on the page only (2026-10-14), and the next day
+    // repeated one; the daily turn now fixes, saves and checks.
+    expect(daily).toContain('work.revise');
+    expect(daily).toContain('memory.save (kind lesson, with appliesWhen)');
+    expect(daily).toContain("Yesterday's lessons");
+    expect(daily).toContain('the previous daily page with manage.wiki.read');
+    // A scheduled turn cannot change the owner policy; standing rules go to the owner.
+    expect(daily).toContain('listed for the owner to confirm');
+    expect(daily).not.toContain('help topic corrections');
+    // Only what this turn can read is judged; DM-only or tool-order lessons are said to be unjudged.
+    expect(daily).toContain('cannot be judged here');
+    expect(daily).toContain('lastEventBefore');
+    expect(daily).toContain('at most ten a day');
+  });
+
   it('says the workspace .git is a boundary marker, not a repository', () => {
     // The Claude CLI reports "Is a git repository: true" for the marker (measured 2026-10-15).
     for (const backend of ['claude', 'codex'] as const)
@@ -101,7 +118,7 @@ describe('owner standing prompt', () => {
     // The wiki keeps lasting knowledge; what happened stays in the sources and the ledger.
     expect(topics.wiki).toContain('No current-state section and no dated entries.');
     expect(topics.wiki).not.toContain('a dated line per change');
-    for (const part of ['eventSince and eventBefore', 'owner.messages', 'At most 30 lines'])
+    for (const part of ['eventSince and eventBefore', 'owner.messages', 'At most 40 lines'])
       expect(topics.daily).toContain(part);
     for (const part of ['daily/<YYYY-MM>/<YYYY-MM-DD>.md', 'title', 'daily', 'manage.wiki.publish'])
       expect(topics.daily).toContain(part);

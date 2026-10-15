@@ -471,6 +471,61 @@ describe('progressive work.list views', () => {
     ).rejects.toThrow('work.list due must be one of overdue|today|upcoming|unscheduled');
   });
 
+  it('finds stale work by its latest source event, not by when the ledger was rewritten', async () => {
+    // now is 2023-11-14 22:15 UTC. Items 1 and 2 were rewritten recently (a backfill) but their
+    // last source event is old; item 3 has a recent event; item 4 has no event time at all.
+    const entry = (revision: number, eventDatetime: number | null) => ({
+      revision,
+      operation: 'revise' as const,
+      eventDatetime,
+      appliesUntil: null,
+      createdAt: 1_700_000_090_000,
+      status: 'in_progress',
+      stage: null,
+      summary: null,
+    });
+    const reader = makeReader([
+      view(1, {
+        updatedAt: 1_700_000_090_000,
+        values: { title: 'item-1', status: 'in_progress', lastEventTime: '2023-07-01T10:00:00Z' },
+        chain: [entry(1, Date.parse('2023-06-30T10:00:00Z'))],
+      }),
+      view(2, {
+        updatedAt: 1_700_000_090_000,
+        values: { title: 'item-2', status: 'in_progress' },
+        chain: [entry(1, Date.parse('2023-08-01T10:00:00Z')), entry(2, null)],
+      }),
+      view(3, {
+        updatedAt: 1_600_000_000_000,
+        values: { title: 'item-3', status: 'in_progress', lastEventTime: '2023-11-10T10:00:00Z' },
+        chain: [entry(1, Date.parse('2023-11-10T10:00:00Z'))],
+      }),
+      view(4, {
+        updatedAt: 1_600_000_000_000,
+        values: { title: 'item-4', status: 'in_progress' },
+        chain: [entry(1, null)],
+      }),
+    ]);
+    const ids = async (input: Record<string, unknown>) =>
+      (
+        (await runWorkListView({ view: 'items', ...input }, context(reader.readWork)))
+          .tasks as Array<{ commitmentId: string }>
+      ).map((task) => task.commitmentId);
+    expect(await ids({ lastEventBefore: '2023-10-15T00:00:00Z' })).toEqual([
+      'commitment-1',
+      'commitment-2',
+    ]);
+    // Write time would have picked the opposite pair.
+    expect(await ids({ changedBefore: 1_700_000_000_000 })).toEqual([
+      'commitment-3',
+      'commitment-4',
+    ]);
+    expect(reader.readWork).toHaveBeenCalledWith(
+      expect.objectContaining({ history: 'chain' }),
+      expect.anything()
+    );
+  });
+
   it('counts an exact deadline later today as today, and restarts a due page after midnight', async () => {
     // now is 2023-11-14 22:15 UTC.
     const exact = (index: number, dueAt: string) =>
