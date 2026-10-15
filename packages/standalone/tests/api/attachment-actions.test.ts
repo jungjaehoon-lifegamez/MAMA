@@ -667,4 +667,36 @@ describe('attachment actions', () => {
     expect(sender.sendFile).toHaveBeenCalledWith(realPath, 'result caption', 'op-file');
     expect(result).toMatchObject({ path: realPath, size: 6, sentAs: 'document' });
   });
+
+  it("reads a relative path in the caller's own workspace, as document.render returns it", async () => {
+    const owner = root();
+    const person = root();
+    for (const workspace of [owner, person])
+      mkdirSync(join(workspace, 'files'), { recursive: true });
+    writeFileSync(join(owner, 'files', 'deck.pptx'), 'owner deck');
+    writeFileSync(join(person, 'files', 'deck.pptx'), 'person deck');
+    writeFileSync(join(person, 'outside.txt'), 'outside');
+    const sender = {
+      sendFile: vi.fn().mockResolvedValue({ messageId: 23, sentAs: 'document', size: 11 }),
+    };
+    const deliver = action(
+      {
+        ...portsFor(owner, observation('chatwork', { roomId: '501' }), {}, sender),
+        principalPaths: () => ({ workspaceDir: person, downloadsDir: join(person, 'downloads') }),
+      },
+      'deliver.telegram.file'
+    );
+    const member = { ...access, principalId: 'person' };
+
+    await deliver({ path: 'files/deck.pptx' }, { access: member, operationId: 'op-relative' });
+    expect(sender.sendFile).toHaveBeenCalledWith(
+      realpathSync(join(person, 'files', 'deck.pptx')),
+      undefined,
+      'op-relative',
+      expect.objectContaining({ access: member })
+    );
+    await expect(
+      deliver({ path: 'outside.txt' }, { access: member, operationId: 'op-escape' })
+    ).rejects.toThrow(/under the workspace files directory/);
+  });
 });

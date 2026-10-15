@@ -1,5 +1,5 @@
 import { mkdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import type {
   ActionContext,
   ActionRegistration,
@@ -71,7 +71,8 @@ const ownerFileSchema: ActionSchemaObject = {
     path: {
       type: 'string',
       pattern: '\\S',
-      description: 'Absolute path under the workspace files directory.',
+      description:
+        'Path of a file under the workspace files directory: absolute, or relative to your workspace (files/...), as document.render returns it.',
     },
     caption: {
       type: 'string',
@@ -328,9 +329,7 @@ export function createAttachmentActionRegistrations(
           name: `deliver.${messenger}.file`,
           summary: `Send one regular file under the caller's workspace files directory through ${messenger}; images and documents use the messenger upload API.`,
           inputSchema: ownerFileSchema,
-          examples: [
-            { title: 'Send a workspace result', input: { path: '/workspace/files/result.xlsx' } },
-          ],
+          examples: [{ title: 'Send a workspace result', input: { path: 'files/result.xlsx' } }],
         },
         exec: async (input: unknown, context: ActionContext) => {
           const values = input as Record<string, unknown>;
@@ -345,14 +344,15 @@ export function createAttachmentActionRegistrations(
           // A member without its own paths must never inherit the owner's file authority.
           if (isMember && !ports.principalPaths)
             throw new Error('Member file delivery requires principal paths');
-          const filesRoot = workspaceFilesRoot(
-            ports.principalPaths
-              ? { workspaceDir: ports.principalPaths(context.access.principalId).workspaceDir }
-              : ports
-          );
+          const workspace = ports.principalPaths
+            ? { workspaceDir: ports.principalPaths(context.access.principalId).workspaceDir }
+            : ports;
+          const filesRoot = workspaceFilesRoot(workspace);
+          // A relative path names a file in the caller's workspace, as document.render returns
+          // it; the daemon's own working directory is no one's workspace.
           const validated = validateWorkspaceFile(
             filesRoot,
-            path,
+            resolve(dirname(filesRoot), path),
             OWNER_FILE_MAX_UPLOAD_BYTES,
             isMember
           );

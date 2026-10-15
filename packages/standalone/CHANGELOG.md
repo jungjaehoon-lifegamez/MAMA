@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `deliver.*.file` reads a relative path (`files/...`, as `document.render` returns it) in the
+  caller's own workspace. It resolved against the daemon's working directory, so the first send
+  of a rendered file failed with a missing file under HOME.
 - `document.render` finishes again under the daemon. Its sandbox denies the host render root, as
   every agent's does; LibreOffice stats that root and waited until the two-minute timeout, so
   every office render failed with `sandbox-exec timed out`. The render may now read the root's

@@ -149,6 +149,29 @@ describe('deliver.drive.file', () => {
     expect(readdirSync(staging)).toEqual([]);
   });
 
+  it('reads a relative path in the workspace, as document.render returns it', async () => {
+    const gws = vi.fn(async (args: string[]) => {
+      if (args[2] === 'list') return { files: [] };
+      if (args[2] === 'create' && args[1] === 'files')
+        return {
+          id: 'file_2',
+          name: 'result.pptx',
+          md5Checksum: md5,
+          webViewLink: 'https://drive/f2',
+        };
+      return { id: 'perm' };
+    });
+    expect(await action(gws).exec({ path: 'files/result.pptx' }, owner)).toMatchObject({
+      fileId: 'file_2',
+      size: content.length,
+      sha256,
+    });
+    writeFileSync(join(root, 'workspace', 'outside.txt'), 'x');
+    await expect(action(vi.fn()).exec({ path: 'outside.txt' }, owner)).rejects.toThrow(
+      /workspace files directory/
+    );
+  });
+
   it("is the owner's, and sends only files under the workspace files directory", async () => {
     const gws = vi.fn();
     await expect(
