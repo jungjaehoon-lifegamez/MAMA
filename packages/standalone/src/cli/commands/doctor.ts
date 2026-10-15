@@ -6,6 +6,7 @@ import { LOADABLE_CONNECTORS } from '../../connectors/index.js';
 import { resolvePackageVersion } from '../../package-version.js';
 import { CONFIG_KEYS } from '../../runtime/config.js';
 import { CliInputError } from '../prompt.js';
+import { BOOT_STAGES } from './daemon.js';
 import { runDiagnostics, type Check, type DiagnosticsOptions } from '../runtime/diagnostics.js';
 
 export interface DoctorOptions extends DiagnosticsOptions {
@@ -15,6 +16,7 @@ export interface DoctorOptions extends DiagnosticsOptions {
 const LOG_TAIL_BYTES = 2 * 1024 * 1024;
 const ERROR_CODES = new Set(Object.keys(constants.errno));
 const CONNECTORS = new Set<string>(LOADABLE_CONNECTORS);
+const STAGES = new Set<string>(BOOT_STAGES);
 
 function logTail(path: string): string[] {
   if (!existsSync(path)) return [];
@@ -61,13 +63,19 @@ function enabledSources(root: string): string {
   }
 }
 
+/** A boot stage record as daemon boot writes it, naming one of its stages; anything else is not. */
+function bootStage(line: string): { name: string; failed: boolean } | null {
+  const match = /\bboot stage=([a-z_:]+)(?: (failed) error=|\s*$)/.exec(line);
+  return match && STAGES.has(match[1]) ? { name: match[1], failed: match[2] === 'failed' } : null;
+}
+
 /**
  * One log line reduced to what the program itself names: a failed boot stage, a known connector,
  * system error codes and an HTTP status. Message text, ids, names and paths never pass, whatever
  * their shape; so do log tags, since a continued message line can start with a bracketed word.
  */
 function errorShape(line: string): string {
-  const stage = /\bboot stage=([a-z_:]+) failed\b/.exec(line)?.[1];
+  const stage = bootStage(line);
   const connector = /\bconnector ([a-z][a-z0-9-]*)\b/.exec(line)?.[1];
   const codes = [
     ...new Set(
@@ -78,7 +86,7 @@ function errorShape(line: string): string {
   ];
   const http = /\b(?:HTTP|status) ([1-5]\d\d)\b/.exec(line)?.[1];
   return [
-    stage && `boot stage=${stage} failed`,
+    stage?.failed && `boot stage=${stage.name} failed`,
     connector && CONNECTORS.has(connector) && `connector ${connector}`,
     ...codes,
     http && `HTTP ${http}`,
@@ -105,8 +113,8 @@ export function doctorReport(checks: readonly Check[], options: DoctorOptions = 
     lastBoot === undefined
       ? []
       : lines.slice(lastBoot).flatMap((line) => {
-          const stage = /\bboot stage=([a-z_:]+)( failed)?/.exec(line);
-          return stage ? [`boot stage=${stage[1]}${stage[2] ?? ''}`] : [];
+          const stage = bootStage(line);
+          return stage ? [`boot stage=${stage.name}${stage.failed ? ' failed' : ''}`] : [];
         });
   const errors = new Map<string, number>();
   for (const line of lines.filter((line) => /error|failed|fatal|uncaught/i.test(line))) {

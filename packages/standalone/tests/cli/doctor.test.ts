@@ -412,17 +412,22 @@ describe('mama doctor', () => {
 
   it("checks the port start.sh gives the daemon, not this shell's", async () => {
     const used: number[] = [];
-    const installed = install({ carried: ["export MAMA_API_PORT='4100'"] });
+    const hosts: string[] = [];
+    const installed = install({
+      carried: ["export MAMA_API_PORT='4100'", "export MAMA_API_HOST='::1'"],
+    });
     const by = byName(
       await runDiagnostics({
         ...base(installed),
-        portInUse: async (port) => {
+        portInUse: async (port, host) => {
           used.push(port);
+          hosts.push(host);
           return port === 4100;
         },
       })
     );
     expect(used).toEqual([4100]);
+    expect(hosts).toEqual(['::1']);
     expect(by.port).toMatchObject({
       status: 'fail',
       detail: 'port 4100 is in use by another process',
@@ -557,6 +562,7 @@ describe('mama doctor', () => {
       'principal_5b55fixture',
       'Client Project Alpha',
       'Urgent',
+      'client_name',
       'members-outside',
       installed.home,
     ];
@@ -565,7 +571,8 @@ describe('mama doctor', () => {
       [
         'boot stage=config',
         'boot stage=isolation',
-        'boot stage=connectors failed error=Error',
+        'boot stage=connectors failed error=Error: iCal feed Family Calendar has no secret',
+        'turn failed error=Error: boot stage=client_name failed earlier',
         '[PollingScheduler] poll failed for connector sheets Error: duplicate row identity Confidential Client Name',
         'iCal feed Family Calendar has no MAMA_ICAL_URL_FAMILY secret',
         'Slack file F07ABCDEF does not belong to observation room C05XYZ',

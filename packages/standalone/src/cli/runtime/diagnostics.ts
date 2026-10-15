@@ -60,8 +60,8 @@ export interface DiagnosticsOptions {
   findIn?: (name: string, dirs: string[]) => string | undefined;
   /** Ask the install's daemon for its status; tests replace it. */
   askStatus?: () => Promise<DaemonControlReply>;
-  /** Whether something listens on a local port; tests replace it. */
-  portInUse?: (port: number) => Promise<boolean>;
+  /** Whether something listens on the viewer's address; tests replace it. */
+  portInUse?: (port: number, host: string) => Promise<boolean>;
 }
 
 const LOG_WARN_BYTES = 50 * 1024 * 1024;
@@ -119,7 +119,7 @@ async function defaultTelegramCall(
   return (await response.json()) as Record<string, unknown>;
 }
 
-function portAnswers(port: number, host = '127.0.0.1'): Promise<boolean> {
+function portAnswers(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = connect({ port, host });
     socket.setTimeout(1_000, () => {
@@ -344,6 +344,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
     ...(await daemonChecks(
       options.askStatus ?? (() => askDaemon('status', { home, configPath })),
       port,
+      serviceEnv.MAMA_API_HOST ?? '127.0.0.1',
       options.portInUse ?? portAnswers
     ))
   );
@@ -696,7 +697,8 @@ function toolkitCheck(config: W1Config): Check {
 async function daemonChecks(
   ask: () => Promise<DaemonControlReply>,
   port: number | null,
-  portInUse: (port: number) => Promise<boolean>
+  host: string,
+  portInUse: (port: number, host: string) => Promise<boolean>
 ): Promise<Check[]> {
   let daemon: DaemonControlReply;
   try {
@@ -721,7 +723,7 @@ async function daemonChecks(
         fix: 'mama service start',
       },
     ];
-    if (port !== null && (await portInUse(port))) {
+    if (port !== null && (await portInUse(port, host))) {
       checks.push({
         name: 'port',
         status: 'fail',

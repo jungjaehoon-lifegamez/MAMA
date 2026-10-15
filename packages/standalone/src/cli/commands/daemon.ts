@@ -199,7 +199,26 @@ export class StopDuringBootError extends Error {
   }
 }
 
-function stage(logger: DaemonLogger, name: string, signal?: AbortSignal): void {
+/** Every stage boot logs as `boot stage=<name>`; `mama doctor` reports only these names. */
+export const BOOT_STAGES = [
+  'config',
+  'isolation',
+  'owner_runtime',
+  'viewer',
+  'replay',
+  'connectors',
+  'messengers',
+  'telegram',
+  'telegram:disabled',
+  'discord',
+  'slack',
+  'report_scheduler',
+  'report_scheduler:route_unavailable',
+  'personal_job_scheduler',
+] as const;
+export type BootStage = (typeof BOOT_STAGES)[number];
+
+function stage(logger: DaemonLogger, name: BootStage, signal?: AbortSignal): void {
   if (signal?.aborted) throw new StopDuringBootError();
   logger.info(`boot stage=${name}`);
 }
@@ -219,7 +238,7 @@ function messengerSecrets(messenger: MessengerName): string[] {
   });
 }
 
-function stageFailed(logger: DaemonLogger, name: string, error: unknown): void {
+function stageFailed(logger: DaemonLogger, name: BootStage, error: unknown): void {
   logger.error(`boot stage=${name} failed error=${errorName(error)}`);
 }
 
@@ -418,7 +437,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   let stopped = false;
   let deliveryReady = options.mode === 'replay';
   const startedAt = Date.now();
-  let currentStage = 'config';
+  let currentStage: BootStage = 'config';
   let booted = false;
   const command = options.command ?? (options.mode === 'replay' ? 'replay' : 'daemon');
   // The install's one process: taken before anything opens the database or rewrites settings.
