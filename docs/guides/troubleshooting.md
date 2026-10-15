@@ -36,17 +36,17 @@ restart through `start.sh`. The bare `mama daemon` command does not load
 
 ## Restart or stop a launchd service
 
-A launchd service with `KeepAlive` returns after `mama stop` or a killed process.
-For a restart that reloads configuration and secrets:
+`mama stop` unloads the LaunchAgent and waits until the daemon has let go of the install, so the
+service stays stopped. Start it again, which also reloads configuration and secrets, with:
 
 ```bash
-launchctl bootout gui/$(id -u)/com.mama.server
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mama.server.plist
 ```
 
-To leave it stopped, run only `bootout`, then confirm `mama status` is `stopped`.
-For an unsupervised daemon, `mama stop` sends SIGTERM. Do not start a foreground
-copy alongside launchd. If port 3847 is occupied, inspect its owner with
+A killed process comes back through `KeepAlive` while the agent is loaded. For a daemon that no
+service manager runs, `mama stop` asks it to stop through its control socket. `mama status` names
+whatever holds the install; a second daemon is refused while one runs, so a foreground copy beside
+launchd exits at once. If port 3847 is occupied, inspect its owner with
 `lsof -nP -iTCP:3847 -sTCP:LISTEN` before stopping anything.
 
 Check the executable paths in `~/.mama/start.sh` after moving a checkout or Node
