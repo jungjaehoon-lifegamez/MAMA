@@ -2341,3 +2341,15 @@ The implementation writes raw/index data during import only. Replay is the owner
 
 - Evidence: 14:05 KST, "look up the KOSPI and the exchange rate and tell me this week's change" in the owner's DM. While the turn ran, the person's mode file read `autonomous: false`; ten web searches and seven web fetches followed, each fetch recorded as a security event for that person. Five news pages were read; two quote pages were refused by the Claude Code client itself ("unable to fetch from" that domain), not by MAMA's hook. The answer (80 s) gave the last close, intraday range, foreign selling, the exchange rate close and today's range, named its sources, and said which figures it could not confirm.
 - Still open: none for #496 in person-spoken turns; an autonomous refusal will show only if such a turn tries a page.
+
+### Sessions told what they are: the owner policy in a DM and the workspace .git (#497, 2026-10-15)
+
+- Result: an owner-role DM reads the owner policy after a note that it is the common session's working rules, read-only there, with work items, reports, the board, the wiki and the policy left to the common channel; the owner and member prompts say the workspace `.git` only bounds settings lookup. Live trigger: asked what it could do (14:11, 14:13 KST), the owner's DM listed creating and closing work items and committing to a git repository. Measured: the Claude CLI injects "Is a git repository: true" for the `.git/HEAD` marker even under a custom system prompt.
+- Evidence: tests on both backends (the note before the policy in a DM's standing text, none for the common session or a plain member; the `.git` sentence in both prompts); Codex clean (CodeRabbit out of reviews). Merged as 61c4d062e; deployed with #498 at 15:03:03 KST (idle checks clean, eight boot stages, no errors). Sessions start a new thread on their next turn because the standing text changed.
+- Still open: the owner asking the DM what it can do again.
+
+### The document toolkit adds numpy, pandas and matplotlib (#498, 2026-10-15)
+
+- Result: `toolkit/requirements.in` lists the top-level packages and `requirements.lock` is generated from it with the command in its header (uv 0.12.20, universal for Python 3.10 and newer, releases before 2026-10-01); the seventeen earlier pins are unchanged. The installer's import check and both prompts cover the three, with chart guidance (Agg, `MPLCONFIGDIR` in the workspace, the Noto CJK collection added with `addfont`).
+- Evidence: installed the installer's way (`--only-binary=:all: --no-deps --require-hashes`) on Python 3.10.21, 3.11.16 and 3.14.7 with `pip check` clean and all twenty imports; a Korean and Japanese chart rendered with the toolkit font under an unwritable HOME. Codex found a Python 3.10 host could not install pandas 3 (fixed with the universal lock); clean on the last commit. Merged as aa9c2d05b; deployed at 15:03:03 KST; `mama tools install` on the live host built and switched to a new version at 15:04:49 (no cask upgrades pending; numpy 2.5.3, pandas 3.0.6, matplotlib 3.11.2 present; its render smoke test passed).
+- Still open: a session drawing a chart in a live turn.
