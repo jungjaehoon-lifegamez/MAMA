@@ -417,18 +417,20 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       command,
       version: resolvePackageVersion(),
       startedAt,
-      stage: booted ? 'running' : currentStage,
+      stage: stopped ? 'stopping' : booted ? 'running' : currentStage,
       lastError,
     };
+    // Stores close during a stop; what it reports then is that it is stopping.
+    if (stopped) return report;
     if (owner) {
       const adapter = owner.database.adapter;
       report.runningTurns = adapter
         .prepare(
           `SELECT COALESCE(json_extract(input_refs_json, '$.sessionKey'), 'unknown') AS session,
                   COUNT(*) AS count
-             FROM model_runs WHERE status = 'running' GROUP BY 1 ORDER BY 1`
+             FROM model_runs WHERE status = 'running' AND created_at >= ? GROUP BY 1 ORDER BY 1`
         )
-        .all();
+        .all(startedAt);
       report.inputs = adapter
         .prepare(
           `SELECT status, COUNT(*) AS count FROM mailbox_inputs
@@ -1047,7 +1049,11 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       stop: stopResources,
     };
   } catch (error) {
-    stageFailed(logger, currentStage, error);
+    if (error instanceof StopDuringBootError) {
+      logger.info(`boot stopped before stage=${currentStage}`);
+    } else {
+      stageFailed(logger, currentStage, error);
+    }
     try {
       await stopResources();
     } catch {
@@ -1064,6 +1070,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
 export async function runDaemon(options: DaemonBootOptions = {}): Promise<void> {
   const controller = new AbortController();
   const requestStop = (): void => controller.abort();
+  // Once each: a second signal falls to Node's default and ends the process at once, a force stop;
+  // the next start replaces the lock it leaves.
   process.once('SIGTERM', requestStop);
   process.once('SIGINT', requestStop);
   try {
@@ -1099,18 +1107,27 @@ export async function askDaemon(
   return await requestDaemonControl(installControlPaths(options), op);
 }
 
-/** macOS only: whether this user's LaunchAgent is loaded (`launchctl print` exits 113 if not). */
-export function launchdServiceLoaded(): boolean {
-  if (process.platform !== 'darwin') return false;
+export interface LaunchdService {
+  readonly loaded: boolean;
+  /** The pid launchd reports for the running job, or null when it runs nothing. */
+  readonly pid: number | null;
+}
+
+/** macOS only: this user's LaunchAgent (`launchctl print` exits 113 when it is not loaded). */
+export function launchdService(): LaunchdService {
+  if (process.platform !== 'darwin') return { loaded: false, pid: null };
   const result = spawnSync('launchctl', ['print', `gui/${process.getuid!()}/com.mama.server`], {
     encoding: 'utf8',
   });
   if (result.error) throw result.error;
-  if (result.status === 0) return true;
-  if (result.status === 113) return false;
-  throw Object.assign(new Error('launchctl print failed'), {
-    code: `LAUNCHCTL_${result.status ?? result.signal ?? 'UNKNOWN'}`,
-  });
+  if (result.status === 113) return { loaded: false, pid: null };
+  if (result.status !== 0) {
+    throw Object.assign(new Error('launchctl print failed'), {
+      code: `LAUNCHCTL_${result.status ?? result.signal ?? 'UNKNOWN'}`,
+    });
+  }
+  const pid = /^\s*pid = (\d+)\s*$/m.exec(result.stdout)?.[1];
+  return { loaded: true, pid: pid === undefined ? null : Number(pid) };
 }
 
 /** Unload the LaunchAgent so KeepAlive cannot restart it; launchd sends the stop signal. */

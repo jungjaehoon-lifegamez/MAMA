@@ -14,12 +14,19 @@ import * as egressProxy from '../../src/runtime/egress-proxy.js';
 import {
   acquireInstallLock,
   daemonControlPaths,
+  holderLive,
   InstallBusyError,
   lockHolder,
   requestDaemonControl,
   startDaemonControl,
+  type HolderProbe,
 } from '../../src/cli/runtime/daemon-control.js';
-import { bootDaemon, StopDuringBootError, askDaemon } from '../../src/cli/commands/daemon.js';
+import {
+  bootDaemon,
+  StopDuringBootError,
+  askDaemon,
+  runDaemon,
+} from '../../src/cli/commands/daemon.js';
 import type { W1Config } from '../../src/runtime/config.js';
 
 const roots: string[] = [];
@@ -62,7 +69,12 @@ describe('install lock', () => {
       paths.lockPath,
       JSON.stringify({ pid: 999_999, command: 'daemon', startedAt: 1, nonce: 'dead' })
     );
-    const taken = acquireInstallLock(paths, 'daemon', (pid) => pid === process.pid);
+    const probe: HolderProbe = {
+      alive: (pid) => pid === process.pid,
+      startTime: () => null,
+      bootTime: () => 1_000_000,
+    };
+    const taken = acquireInstallLock(paths, 'daemon', probe);
     expect(JSON.parse(readFileSync(paths.lockPath, 'utf8')).nonce).toBe(taken.owner.nonce);
     taken.release();
     expect(existsSync(paths.lockPath)).toBe(false);
@@ -71,6 +83,45 @@ describe('install lock', () => {
     const again = acquireInstallLock(paths, 'daemon');
     expect(again.owner.command).toBe('daemon');
     again.release();
+  });
+});
+
+describe('a lock holder', () => {
+  const owner = {
+    pid: 77,
+    command: 'daemon',
+    startedAt: 5_000_000,
+    nonce: 'n',
+    bootTime: 1_000_000,
+  };
+  const probe = (overrides: Partial<HolderProbe> = {}): HolderProbe => ({
+    alive: () => true,
+    startTime: () => 4_000_000,
+    bootTime: () => 1_000_000,
+    ...overrides,
+  });
+
+  it('counts only the process that wrote the lock in this machine boot', () => {
+    expect(holderLive(owner, probe())).toBe(true);
+    // Unknown start time: the boot time and the pid decide.
+    expect(holderLive(owner, probe({ startTime: () => null }))).toBe(true);
+    expect(holderLive(owner, probe({ alive: () => false }))).toBe(false);
+    // A lock from before a reboot, whatever now runs under that pid.
+    expect(holderLive(owner, probe({ bootTime: () => 9_000_000 }))).toBe(false);
+    // The pid now belongs to a process that started after the lock was written.
+    expect(holderLive(owner, probe({ startTime: () => 5_000_000 + 60_000 }))).toBe(false);
+    // A lock written before boot times were recorded is judged by pid and start time.
+    const { bootTime: _bootTime, ...legacy } = owner;
+    expect(holderLive(legacy, probe({ bootTime: () => 9_000_000 }))).toBe(true);
+  });
+
+  it('replaces a lock whose pid was reused after a reboot', () => {
+    const paths = daemonControlPaths(root());
+    mkdirSync(join(paths.lockPath, '..'), { recursive: true });
+    writeFileSync(paths.lockPath, JSON.stringify({ ...owner, pid: process.pid }));
+    const taken = acquireInstallLock(paths, 'daemon', probe({ bootTime: () => 9_000_000 }));
+    expect(taken.owner.bootTime).toBe(9_000_000);
+    taken.release();
   });
 });
 
@@ -249,6 +300,71 @@ describe('daemon boot holds the install', () => {
       reply: { ok: false, error: 'replay stops when it finishes' },
     });
     await daemon.stop();
+  });
+
+  it('stops on a signal after boot and on one during boot, releasing the install each time', async () => {
+    const home = root('mama-run-signal-');
+    const configPath = join(home, 'config.yaml');
+    const owner = () => ({
+      database: { adapter: { prepare: () => ({ all: () => [] }) } },
+      intake: { recordOwnerReply: () => {}, acceptOwnerMessage: vi.fn() },
+      surface: { dispatch: vi.fn(), ownerAccess: { scopes: [] } },
+      acceptSourceDelta: vi.fn(),
+      stop: async () => {},
+    });
+    const options = (createOwnerRuntime: () => Promise<unknown>) => ({
+      home,
+      configPath,
+      config: config(home),
+      logger: { info: () => {}, error: () => {} },
+      dependencies: {
+        ensureIsolation: () => {},
+        createOwnerRuntime: createOwnerRuntime as never,
+        createViewerServer: () =>
+          ({ port: 3847, server: null, start: async () => {}, stop: async () => {} }) as never,
+        startConnectorRuntime: async () =>
+          ({
+            stop: async () => {},
+            enabledConnectorNames: [],
+            channelCounts: {},
+            registry: { healthCheckAll: async () => ({}) },
+          }) as never,
+        createTelegramGateway: () =>
+          ({
+            start: async () => {},
+            stop: async () => {},
+            deliverResponse: async () => {},
+            sendToOwner: async () => {},
+            sendFile: async () => ({ sentAs: 'document', size: 0 }),
+          }) as never,
+      },
+    });
+
+    const running = runDaemon(options(async () => owner()));
+    await vi.waitFor(async () =>
+      expect((await askDaemon('status', { configPath })).state).toBe('running')
+    );
+    process.emit('SIGTERM');
+    await running;
+    expect(lockHolder(daemonControlPaths(home))).toBeNull();
+
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const during = runDaemon(
+      options(async () => {
+        await held;
+        return owner();
+      })
+    );
+    await vi.waitFor(async () =>
+      expect((await askDaemon('status', { configPath })).state).toBe('running')
+    );
+    process.emit('SIGINT');
+    release();
+    await expect(during).resolves.toBeUndefined();
+    expect(lockHolder(daemonControlPaths(home))).toBeNull();
   });
 
   it('unwinds a boot stopped before its first stage and releases the install', async () => {

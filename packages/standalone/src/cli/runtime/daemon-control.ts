@@ -2,6 +2,7 @@ import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import {
   chmodSync,
   linkSync,
+  statSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -9,7 +10,9 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { connect, createServer, type Server } from 'node:net';
+import { uptime } from 'node:os';
 import { join } from 'node:path';
 import { CliInputError } from '../prompt.js';
 
@@ -42,14 +45,19 @@ export interface LockOwner {
   readonly command: string;
   readonly startedAt: number;
   readonly nonce: string;
+  /** When the machine booted, so a lock left before a reboot is never mistaken for a live one. */
+  readonly bootTime?: number;
 }
 
 /** A CLI input error: the message names the holder and the fix, and carries no secret. */
 export class InstallBusyError extends CliInputError {
   readonly code = 'MAMA_INSTALL_BUSY';
-  constructor(readonly holder: LockOwner) {
+  constructor(
+    readonly holder: LockOwner,
+    lockPath: string
+  ) {
     super(
-      `MAMA is already running here (${holder.command}, pid ${holder.pid}); stop it first: mama stop`
+      `MAMA is already running here (${holder.command}, pid ${holder.pid}; ${lockPath}); stop it first: mama stop`
     );
     this.name = 'InstallBusyError';
   }
@@ -90,6 +98,58 @@ export function processAlive(pid: number): boolean {
   }
 }
 
+/** The machine's boot time in milliseconds, to the second. */
+export function machineBootTime(): number {
+  return Math.round((Date.now() - uptime() * 1000) / 1000) * 1000;
+}
+
+/**
+ * When a process started: Linux exposes it as the creation time of its /proc entry; macOS through
+ * `ps`. Null when neither answers, and the caller then relies on the boot time and the pid.
+ */
+export function processStartTime(pid: number): number | null {
+  if (process.platform === 'linux') {
+    try {
+      return statSync(`/proc/${pid}`).ctimeMs;
+    } catch {
+      return null;
+    }
+  }
+  // C locale: ps prints the start in a fixed English form that Date.parse reads.
+  const result = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+    encoding: 'utf8',
+    env: { ...process.env, LC_ALL: 'C' },
+  });
+  if (result.error || result.status !== 0) return null;
+  const started = Date.parse(result.stdout.trim());
+  return Number.isFinite(started) ? started : null;
+}
+
+export interface HolderProbe {
+  alive(pid: number): boolean;
+  startTime(pid: number): number | null;
+  bootTime(): number;
+}
+
+const systemProbe: HolderProbe = {
+  alive: processAlive,
+  startTime: processStartTime,
+  bootTime: machineBootTime,
+};
+
+/**
+ * A lock is held only by the process that wrote it: same machine boot, pid alive, and that pid's
+ * process started no later than the lock (a pid reused afterwards belongs to another process).
+ */
+export function holderLive(owner: LockOwner, probe: HolderProbe = systemProbe): boolean {
+  if (owner.bootTime !== undefined && Math.abs(owner.bootTime - probe.bootTime()) > 60_000) {
+    return false;
+  }
+  if (!probe.alive(owner.pid)) return false;
+  const started = probe.startTime(owner.pid);
+  return started === null || started <= owner.startedAt + 5_000;
+}
+
 /**
  * Take the install's lock. The lock is created by a hard link of a complete file, so no reader
  * sees a half-written owner. A lock whose process is gone (or whose content is unreadable) is
@@ -99,7 +159,7 @@ export function processAlive(pid: number): boolean {
 export function acquireInstallLock(
   paths: DaemonControlPaths,
   command: string,
-  alive: (pid: number) => boolean = processAlive
+  probe: HolderProbe = systemProbe
 ): InstallLock {
   mkdirSync(join(paths.lockPath, '..'), { recursive: true, mode: 0o700 });
   const owner: LockOwner = {
@@ -107,6 +167,7 @@ export function acquireInstallLock(
     command,
     startedAt: Date.now(),
     nonce: randomUUID(),
+    bootTime: probe.bootTime(),
   };
   const staged = `${paths.lockPath}.${owner.nonce}`;
   writeFileSync(staged, `${JSON.stringify(owner)}\n`, { mode: 0o600, flag: 'wx' });
@@ -127,7 +188,9 @@ export function acquireInstallLock(
       } catch {
         continue; // Removed between link and read; try again.
       }
-      if (current !== null && alive(current.pid)) throw new InstallBusyError(current);
+      if (current !== null && holderLive(current, probe)) {
+        throw new InstallBusyError(current, paths.lockPath);
+      }
       const aside = `${paths.lockPath}.stale.${randomUUID()}`;
       try {
         renameSync(paths.lockPath, aside);
@@ -141,7 +204,7 @@ export function acquireInstallLock(
       } catch {
         moved = null;
       }
-      if (moved !== null && current !== null && moved.nonce !== current.nonce) {
+      if (moved !== null && moved.nonce !== current?.nonce) {
         // Another process replaced the dead lock first; give its live lock back.
         try {
           linkSync(aside, paths.lockPath);
@@ -235,13 +298,18 @@ export async function startDaemonControl(
     }
     return { ok: false, error: 'unknown op' };
   }
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(paths.socketPath, () => {
-      server.off('error', reject);
-      resolve();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(paths.socketPath, () => {
+        server.off('error', reject);
+        resolve();
+      });
     });
-  });
+  } catch (error) {
+    rmSync(paths.tokenPath, { force: true });
+    throw error;
+  }
   chmodSync(paths.socketPath, 0o600);
   return {
     close: () =>
@@ -304,14 +372,14 @@ export async function requestDaemonControl(
   });
 }
 
-/** The lock's owner when its process still runs; a dead owner's lock is not a holder. */
+/** The lock's owner when it still holds the install; a dead owner's lock is not a holder. */
 export function lockHolder(
   paths: DaemonControlPaths,
-  alive: (pid: number) => boolean = processAlive
+  probe: HolderProbe = systemProbe
 ): LockOwner | null {
   try {
     const owner = readOwner(paths.lockPath);
-    return owner !== null && alive(owner.pid) ? owner : null;
+    return owner !== null && holderLive(owner, probe) ? owner : null;
   } catch {
     return null;
   }

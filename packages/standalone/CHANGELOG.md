@@ -24,8 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mama status` asks the running daemon through `~/.mama/daemon.sock` and shows its version,
   boot stage, running turns, waiting inputs, connectors and last error (`--json` for scripts); it
   exits 0 when running and 3 when stopped, and it works on Linux, where it used to fail because it
-  called `launchctl`. `mama stop` unloads a loaded LaunchAgent or asks the daemon to stop, and waits
-  until the install is released.
+  called `launchctl`. `mama stop` unloads the LaunchAgent that runs the daemon or asks the daemon to stop, waits up to
+  two minutes until the install is released, and says when something else holds it or started in
+  its place.
 - A stop during boot unwinds what has started; signals were handled only after boot.
 
 ## [0.77.0] - 2026-10-15

@@ -1,11 +1,6 @@
 import { CliInputError } from '../prompt.js';
 import { lockHolder, type LockOwner } from '../runtime/daemon-control.js';
-import {
-  askDaemon,
-  bootoutLaunchdService,
-  installControlPaths,
-  launchdServiceLoaded,
-} from './daemon.js';
+import { askDaemon, bootoutLaunchdService, installControlPaths, launchdService } from './daemon.js';
 
 /** `mama status` exits 0 while the daemon runs and 3 when nothing serves the install. */
 export const STATUS_STOPPED_EXIT = 3;
@@ -16,6 +11,8 @@ interface ControlOptions {
   write?: (line: string) => void;
   /** Milliseconds between checks while waiting for a stop; tests shorten it. */
   pollMs?: number;
+  /** How long `mama stop` waits for the install to be released. */
+  timeoutMs?: number;
 }
 
 function localTime(ms: unknown): string {
@@ -76,7 +73,7 @@ export async function runStatus(
     throw new CliInputError('Usage: mama status [--json]');
   }
   const write = options.write ?? ((line: string) => console.log(line));
-  const service = launchdServiceLoaded() ? 'launchd' : null;
+  const service = launchdService().loaded ? 'launchd' : null;
   const reply = await askDaemon('status', options);
   if (reply.state === 'stopped') {
     if (json) {
@@ -100,26 +97,56 @@ export async function runStatus(
   return 0;
 }
 
-async function waitUntilReleased(
+type StopOutcome =
+  | { kind: 'released' }
+  | { kind: 'replaced'; holder: LockOwner }
+  | { kind: 'timeout'; holder: LockOwner };
+
+/**
+ * Wait until the stopped holder's lock is gone. A different holder appearing means something
+ * started in its place, such as a service manager restarting the daemon; that is not a stop.
+ */
+async function waitForRelease(
+  stopping: LockOwner,
   options: ControlOptions,
   write: (line: string) => void
-): Promise<void> {
+): Promise<StopOutcome> {
   const paths = installControlPaths(options);
   const pollMs = options.pollMs ?? 500;
-  let waited = 0;
+  const timeoutMs = options.timeoutMs ?? 120_000;
+  const started = Date.now();
+  let reported = started;
   for (;;) {
     const holder = lockHolder(paths);
-    if (holder === null) return;
+    if (holder === null) return { kind: 'released' };
+    if (holder.nonce !== stopping.nonce) return { kind: 'replaced', holder };
+    if (Date.now() - started >= timeoutMs) return { kind: 'timeout', holder };
+    if (Date.now() - reported >= 30_000) {
+      write(`still stopping: ${holderLine(holder)}`);
+      reported = Date.now();
+    }
     await new Promise((resolve) => setTimeout(resolve, pollMs));
-    waited += pollMs;
-    if (waited % 30_000 < pollMs) write(`still stopping: ${holderLine(holder)}`);
   }
 }
 
+function finish(outcome: StopOutcome, write: (line: string) => void, done: string): number {
+  if (outcome.kind === 'released') {
+    write(done);
+    return 0;
+  }
+  if (outcome.kind === 'replaced') {
+    write(`stopped, but ${holderLine(outcome.holder)} now: something started it again`);
+    return 1;
+  }
+  write(`not stopped yet: ${holderLine(outcome.holder)}; check mama status`);
+  return 1;
+}
+
 /**
- * Stop the install's daemon. A loaded LaunchAgent is unloaded, so KeepAlive does not restart it;
- * otherwise the control socket asks the daemon to stop. A running turn ends with the stop and its
- * input is requeued at the next start.
+ * Stop the install's daemon. A daemon run by a loaded LaunchAgent is unloaded, so KeepAlive does
+ * not restart it; any other daemon is asked through the control socket. A replay, backfill or
+ * register-owner is left to finish. A running turn is interrupted; at the next start MAMA delivers
+ * its stored result or tells its sender that it was interrupted.
  */
 export async function runStop(
   args: readonly string[],
@@ -127,35 +154,39 @@ export async function runStop(
 ): Promise<number> {
   if (args.length !== 0) throw new CliInputError('Usage: mama stop');
   const write = options.write ?? ((line: string) => console.log(line));
-  const status = await askDaemon('status', options);
-  if (status.state === 'running' && status.reply.ok === true) {
-    const turns = (status.reply.status as { runningTurns?: Array<{ count: number }> }).runningTurns;
-    const count = (turns ?? []).reduce((sum, turn) => sum + turn.count, 0);
-    if (count > 0) {
-      write(`${count} turn(s) running; they end with the stop and are requeued at the next start`);
-    }
-  }
-  if (launchdServiceLoaded()) {
-    bootoutLaunchdService();
-    await waitUntilReleased(options, write);
-    write('stopped (launchd service unloaded; launchctl bootstrap starts it again)');
-    return 0;
-  }
-  const reply = await askDaemon('stop', options);
-  if (reply.state === 'stopped') {
-    if (reply.holder) {
-      write(`not stopped: ${holderLine(reply.holder)} and stops when it finishes`);
-      return 1;
+  const holder = lockHolder(installControlPaths(options));
+  const service = launchdService();
+  if (holder === null) {
+    if (service.loaded) {
+      // Loaded but holding nothing: unload it so it does not start again.
+      bootoutLaunchdService();
+      write('stopped (launchd service unloaded)');
+      return 0;
     }
     write('already stopped');
     return 0;
+  }
+  if (holder.command !== 'daemon') {
+    write(`not stopped: ${holderLine(holder)} and stops when it finishes`);
+    return 1;
+  }
+  if (service.loaded && service.pid === holder.pid) {
+    bootoutLaunchdService();
+    return finish(
+      await waitForRelease(holder, options, write),
+      write,
+      'stopped (launchd service unloaded; launchctl bootstrap starts it again)'
+    );
+  }
+  const reply = await askDaemon('stop', options);
+  if (reply.state === 'stopped') {
+    write(`not stopped: ${holderLine(holder)} does not answer on its control socket`);
+    return 1;
   }
   if (reply.reply.ok !== true) {
     write(`not stopped: ${String(reply.reply.error)}`);
     return 1;
   }
   write('stopping');
-  await waitUntilReleased(options, write);
-  write('stopped');
-  return 0;
+  return finish(await waitForRelease(holder, options, write), write, 'stopped');
 }
