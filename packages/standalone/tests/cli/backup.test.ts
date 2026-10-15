@@ -189,10 +189,11 @@ describe('mama backup', () => {
       },
     });
     expect(manifest.databases).toEqual(['database', 'root/connectors/chat/raw.db']);
+    // As written and as they really are: restore rewrites both.
     expect(manifest.configured).toMatchObject({
-      root,
-      member_root: realpathSync(installed.members),
-      tools_root: realpathSync(installed.tools),
+      root: { configured: installed.root, physical: root },
+      member_root: { physical: realpathSync(installed.members) },
+      tools_root: { physical: realpathSync(installed.tools) },
     });
     expect(lines.join('\n')).toContain('left out, not read by this version: legacy-notes');
     expect(lines.join('\n')).toContain('left out as credentials: auth.env');
@@ -341,21 +342,30 @@ describe('mama backup', () => {
     file(join(elsewhere, 'one.txt'), 'same');
     linkSync(join(elsewhere, 'one.txt'), join(elsewhere, 'two.txt'));
     const lines: string[] = [];
-    const archive = await runBackup([], {
-      home: installed.home,
-      configPath: installed.configPath,
-      write: (line) => lines.push(line),
-    });
-    const names = await entries(archive);
-    for (const kept of [
-      'workspace/files/moved.md',
-      'workspace/one.txt',
-      'workspace/two.txt',
-      'mcp-config',
-      'jev-vocab',
-    ]) {
+    // tar names a hard link by the first name it saw, relative to where it runs: run from above
+    // the temp tree, where it would otherwise write a link entry.
+    const cwd = process.cwd();
+    process.chdir(realpathSync(tmpdir()));
+    let archive: string;
+    try {
+      archive = await runBackup([], {
+        home: installed.home,
+        configPath: installed.configPath,
+        write: (line) => lines.push(line),
+      });
+    } finally {
+      process.chdir(cwd);
+    }
+    const types = new Map<string, string>();
+    await tar.t({ file: archive, onReadEntry: (entry) => types.set(entry.path, entry.type) });
+    expect(types.get('workspace/one.txt')).toBe('File');
+    expect(types.get('workspace/two.txt')).toBe('File');
+    const names = [...types.keys()].map((name) => name.replace(/\/$/, ''));
+    for (const kept of ['workspace/files/moved.md', 'jev-vocab']) {
       expect(names).toContain(kept);
     }
+    // MAMA's own MCP entry is written again at boot; the file goes only with credentials.
+    expect(names).not.toContain('root/mama-mcp-config.json');
     expect(names).not.toContain('root/connectors/jev-key');
     expect(names).not.toContain('root/workspace');
     expect(lines.join('\n')).not.toMatch(/not read by this version: .*(workspace|mama-mcp-config)/);
@@ -367,7 +377,8 @@ describe('mama backup', () => {
       join(installed.root, 'runtime', 'mama-mcp-config.json'),
       JSON.stringify({ mcpServers: { other: { env: { SERVICE_TOKEN: 'fixture-inline' } } } })
     );
-    file(join(installed.root, 'start.sh'), "#!/bin/sh\nexport MAMA_AUTH_TOKEN='fixture'\n", 0o700);
+    // Assigned under the script's set -a, without export, it still reaches the daemon.
+    file(join(installed.root, 'start.sh'), "#!/bin/sh\nMAMA_TELEGRAM_TOKEN='fixture'\n", 0o700);
     file(join(installed.members, 'person-a', 'claude-config', '.credentials.json'), '{}', 0o600);
     const lines: string[] = [];
     const archive = await runBackup([], {
@@ -376,10 +387,24 @@ describe('mama backup', () => {
       write: (line) => lines.push(line),
     });
     const names = await entries(archive);
-    expect(names).not.toContain('mcp-config');
+    expect(names).not.toContain('credentials/mcp-config.json');
     expect(names).not.toContain('root/start.sh');
+    expect(lines.join('\n')).toMatch(/mama-mcp-config\.json \(servers besides MAMA's\)/);
     expect(names).not.toContain('members/person-a/claude-config/.credentials.json');
     expect(lines.join('\n')).toMatch(/start\.sh \(it holds a credential\)/);
+  });
+
+  it('refuses a kept file or source folder that is a link, and says why a config file is unreadable', async () => {
+    const installed = install();
+    const options = { home: installed.home, configPath: installed.configPath, write: () => {} };
+    const elsewhere = mkdtempSync(join(tmpdir(), 'mama-backup-linked-'));
+    roots.push(elsewhere);
+    file(join(elsewhere, 'raw.db'), '');
+    symlinkSync(elsewhere, join(installed.root, 'connectors', 'linked'));
+    await expect(runBackup([], options)).rejects.toThrow(/linked is a symlink/);
+    rmSync(join(installed.root, 'connectors', 'linked'));
+    file(join(installed.root, 'connectors.json'), '{ "chatwork": ');
+    await expect(runBackup([], options)).rejects.toThrow(/connectors\.json cannot be parsed/);
   });
 
   it('tightens an existing folder and clears what an interrupted backup left', async () => {

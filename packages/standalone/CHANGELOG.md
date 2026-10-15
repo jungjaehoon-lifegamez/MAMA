@@ -13,13 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `~/.mama/backups/` (0600), the one folder the agents cannot read: the database copied with
   SQLite's backup and checked with `integrity_check`, the raw stores checked too, the MAMA home's
   state, the workspace, every person's folder under `member_root`, the published common skills,
-  the wiki MAMA writes, Jev's vocabulary and the MCP configuration, each from where config puts it
-  and through any link. A manifest records each entry's mode, symlink target and SHA-256, and the
-  archive is read back against it before it is kept. Credentials (auth.env, the Codex login, the
-  Jev key, and a config, MCP or start.sh file that holds a token) go in only with
-  `--include-secrets`, logs only with `--logs`; the backends' sessions and logins never (sessions
-  start over after a restore). It names everything it left out, and it is refused beside a
-  running daemon.
+  the wiki MAMA writes and Jev's vocabulary, each where config puts it. A manifest records each
+  entry's mode, symlink target and SHA-256 and every configured path as written and as it really
+  is, and the archive is read back against it before it is kept. Credentials (auth.env, the Codex
+  login, the Jev key, an MCP configuration with servers besides MAMA's, and a config or start.sh
+  that holds a token) go in only with `--include-secrets`, logs only with `--logs`; Codex homes
+  and their sessions never (sessions start over after a restore). It names everything it left out,
+  and it is refused beside a running daemon and for a kept file or folder that is a link.
 
 - `mama doctor` checks an install as its service would run it, without changing it: config and
   `connectors.json` as boot loads them, `member_root`, the Node in `start.sh` (present, outside one

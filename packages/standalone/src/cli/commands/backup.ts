@@ -74,7 +74,6 @@ export async function runBackup(
       `Refused: ${folder} is a symlink; the agents' deny covers the folder only`
     );
   }
-  const plan = planBackup(config, configPath, { ...flags, home });
   // Nothing may write the install while it is read, so a running daemon refuses the backup here.
   const lock = acquireInstallLock(daemonControlPaths(root), 'backup');
   const now = options.now?.() ?? new Date();
@@ -82,6 +81,7 @@ export async function runBackup(
   const staging = join(folder, `.staging-${process.pid}-${now.getTime()}`);
   const partial = `${final}.partial`;
   try {
+    const plan = planBackup(config, configPath, { ...flags, home });
     mkdirSync(folder, { recursive: true, mode: 0o700 });
     chmodSync(folder, 0o700);
     // An interrupted backup leaves these; holding the install, nothing else is using them.
@@ -145,11 +145,12 @@ export async function runBackup(
     if (plan.leftOut.length > 0) {
       write(`  left out, not read by this version: ${plan.leftOut.join(', ')}`);
     }
-    write('  backend sessions and their logins left out; sessions start over after a restore');
+    write('  Codex homes and their sessions left out; sessions start over after a restore');
     if (!flags.includeLogs) write('  logs left out (--logs adds them)');
     write('The install is still stopped; mama service start starts it.');
     return final;
   } catch (error) {
+    if (error instanceof CliInputError) throw error;
     // The reason goes to the terminal: a file that changed, a database that failed its check.
     throw new CliInputError(
       `Backup failed and nothing was kept: ${error instanceof Error ? error.message : String(error)}`
