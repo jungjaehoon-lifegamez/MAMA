@@ -285,10 +285,15 @@ export async function requestDaemonControl(
       }
     });
     socket.on('error', (error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT' || error.code === 'ECONNREFUSED') {
-        resolve({ state: 'stopped', holder: lockHolder(paths) });
-      } else {
+      if (error.code !== 'ENOENT' && error.code !== 'ECONNREFUSED') {
         reject(error);
+        return;
+      }
+      // Inside an event handler a throw would be uncaught; the caller gets it instead.
+      try {
+        resolve({ state: 'stopped', holder: lockHolder(paths) });
+      } catch (holderError) {
+        reject(holderError);
       }
     });
   });

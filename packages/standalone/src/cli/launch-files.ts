@@ -1,4 +1,4 @@
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, existsSync } from 'node:fs';
 import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { shellQuote } from './secrets.js';
 
@@ -14,6 +14,32 @@ export function findExecutable(name: string): string | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * A Node path that survives an upgrade. Homebrew removes a version's Cellar folder when it
+ * upgrades, but keeps `<prefix>/opt/<formula>` (and `<prefix>/bin/node` for `node`) pointing at
+ * the current one, so the launch files use those when the running Node lives in the Cellar.
+ */
+export function stableNodePath(
+  execPath: string,
+  exists: (path: string) => boolean = existsSync
+): string {
+  const brew = /^(.*)\/Cellar\/(node(?:@\d+)?)\/[^/]+\/bin\/node$/.exec(execPath);
+  if (!brew) return execPath;
+  const [, prefix, formula] = brew;
+  const candidates = [
+    join(prefix, 'opt', formula, 'bin', 'node'),
+    ...(formula === 'node' ? [join(prefix, 'bin', 'node')] : []),
+  ];
+  return candidates.find((candidate) => exists(candidate)) ?? execPath;
+}
+
+/** A Node path that a version manager or an upgrade removes (I6). */
+export function versionedNodePath(path: string): boolean {
+  return /\/Cellar\/node(@\d+)?\/|\/\.nvm\/versions\/node\/|\/\.volta\/tools\/image\/node\/|\/fnm\/node-versions\//.test(
+    path
+  );
 }
 
 /** The first comment line of every start.sh that mama writes. */
@@ -138,6 +164,69 @@ export interface StartScriptReading {
   readonly exec: string | null;
   /** Other lines with an effect (assignments, commands) that the new script does not have. */
   readonly notReproduced: string[];
+  /** It sources this install's auth.env with the generated line. */
+  readonly loadsAuthEnv: boolean;
+}
+
+/**
+ * Split a start.sh line into words as sh does before expansion: a `#` starting a word ends the
+ * line, single quotes are literal, double
+ * quotes keep their text (a backslash escapes `"`, `\\`, `$` and a backtick), and a backslash
+ * outside quotes escapes the next character. Variables stay as written.
+ */
+export function shellWords(line: string): string[] {
+  const words: string[] = [];
+  let word: string | null = null;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === "'") {
+      const end = line.indexOf("'", index + 1);
+      if (end < 0) throw new Error('unterminated single quote');
+      word = (word ?? '') + line.slice(index + 1, end);
+      index = end;
+    } else if (char === '"') {
+      let text = '';
+      index += 1;
+      while (index < line.length && line[index] !== '"') {
+        if (line[index] === '\\' && '"\\$`'.includes(line[index + 1] ?? '')) index += 1;
+        text += line[index];
+        index += 1;
+      }
+      if (index >= line.length) throw new Error('unterminated double quote');
+      word = (word ?? '') + text;
+    } else if (char === '\\') {
+      word = (word ?? '') + (line[index + 1] ?? '');
+      index += 1;
+    } else if (/\s/.test(char)) {
+      if (word !== null) words.push(word);
+      word = null;
+    } else if (char === '#' && word === null) {
+      // A # that starts a word starts a comment.
+      break;
+    } else {
+      word = (word ?? '') + char;
+    }
+  }
+  if (word !== null) words.push(word);
+  return words;
+}
+
+/** The PATH entries an `export PATH=` value names, with `$HOME` and `~` read as `home`. */
+export function startPathValue(value: string, home: string): string[] {
+  return (shellWords(value)[0] ?? '')
+    .split(':')
+    .map((entry) => entry.replace(/^(\$HOME|\$\{HOME\}|~)(?=\/|$)/, home))
+    .filter((entry) => entry !== '' && entry !== '$PATH' && entry !== '${PATH}');
+}
+
+/** The values a start.sh's carried `export` lines set, unquoted. */
+export function startExports(reading: StartScriptReading): Record<string, string> {
+  return Object.fromEntries(
+    reading.carried.flatMap((line) => {
+      const match = /^export\s+([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+      return match ? [[match[1], shellWords(match[2])[0] ?? '']] : [];
+    })
+  );
 }
 
 /**
@@ -176,8 +265,10 @@ export function readStartScript(script: string, home: string): StartScriptReadin
     if (line.startsWith('#') || generatedLines.has(line)) continue;
     notReproduced.push(line);
   }
+  const authLine = `. ${shellQuote(join(root, 'auth.env'))}`;
   return {
     generated: script.includes(START_SCRIPT_MARKER),
+    loadsAuthEnv: script.split('\n').some((line) => line.trim() === authLine),
     carried,
     path,
     logLevel,

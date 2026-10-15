@@ -229,7 +229,11 @@ function failure(
   };
 }
 
-export function loadConnectorConfig(path: string): ConnectorConfigLoadResult {
+/** `onIgnored` receives the setting names MAMA ignores; the default prints them on stderr. */
+export function loadConnectorConfig(
+  path: string,
+  onIgnored: (names: readonly string[]) => void = warnIgnored
+): ConnectorConfigLoadResult {
   if (typeof path !== 'string' || path.trim() === '') {
     return failure(
       'read_error',
@@ -267,7 +271,7 @@ export function loadConnectorConfig(path: string): ConnectorConfigLoadResult {
   try {
     const validated = validate(parsed);
     const config = validated.config;
-    warnIgnored(validated.ignored);
+    onIgnored(validated.ignored);
     return {
       ok: true,
       config,

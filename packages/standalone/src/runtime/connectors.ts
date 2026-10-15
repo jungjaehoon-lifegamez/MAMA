@@ -11,7 +11,11 @@ import {
 } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { DatabaseInstance } from '@jungjaehoon/mama-core/db-manager';
-import { loadConnector, LOADABLE_CONNECTORS } from '../connectors/index.js';
+import {
+  loadConnector,
+  LOADABLE_CONNECTORS,
+  type ConnectorLoadPaths,
+} from '../connectors/index.js';
 import {
   loadConnectorConfig,
   type ConnectorConfigLoadResult,
@@ -137,11 +141,21 @@ function configurationOrThrow(
   return result;
 }
 
-export async function startConnectorRuntime(
-  options: ConnectorRuntimeOptions
-): Promise<ConnectorRuntime> {
+export interface ConnectorPlan {
+  readonly config: Extract<ConnectorConfigLoadResult, { ok: true }>;
+  readonly enabledConnectorNames: string[];
+  readonly pollIntervals: Map<string, number>;
+}
+
+/** What the connector runtime starts from connectors.json; it throws what boot would. */
+export function planConnectors(options: {
+  configPath: string;
+  configResult?: ConnectorConfigLoadResult;
+  wikiRoot?: string;
+  onIgnored?: (names: readonly string[]) => void;
+}): ConnectorPlan {
   const config = configurationOrThrow(
-    options.configResult ?? loadConnectorConfig(options.configPath)
+    options.configResult ?? loadConnectorConfig(options.configPath, options.onIgnored)
   );
   const supported = new Set<string>(LOADABLE_CONNECTORS);
   const enabledConnectorNames = config.enabledNames.filter((name) => supported.has(name));
@@ -172,6 +186,35 @@ export async function startConnectorRuntime(
     }
     pollIntervals.set(name, interval * 60_000);
   }
+  return { config, enabledConnectorNames, pollIntervals };
+}
+
+/** The paths a connector is built with: its own state file where it keeps one. */
+export function connectorLoadPaths(
+  name: string,
+  options: { statePath: string; kagemushaDbPath?: string; timeZone: TimeZoneSetting }
+): ConnectorLoadPaths {
+  const connectorStatePath = [
+    'calendar',
+    'ical',
+    'drive',
+    'sheets',
+    'discord',
+    'telegram',
+  ].includes(name)
+    ? join(options.statePath, `${name}-state.json`)
+    : undefined;
+  return {
+    kagemushaDbPath: options.kagemushaDbPath,
+    ...(connectorStatePath === undefined ? {} : { connectorStatePath }),
+    timeZone: options.timeZone,
+  };
+}
+
+export async function startConnectorRuntime(
+  options: ConnectorRuntimeOptions
+): Promise<ConnectorRuntime> {
+  const { config, enabledConnectorNames, pollIntervals } = planConnectors(options);
   const channelConfigs = Object.fromEntries(
     enabledConnectorNames.map((name) => [name, config.config[name]?.channels ?? {}])
   );
@@ -191,21 +234,7 @@ export async function startConnectorRuntime(
 
   try {
     for (const name of enabledConnectorNames) {
-      const connectorStatePath = [
-        'calendar',
-        'ical',
-        'drive',
-        'sheets',
-        'discord',
-        'telegram',
-      ].includes(name)
-        ? join(options.statePath, `${name}-state.json`)
-        : undefined;
-      const connector = await load(name, config.config[name], {
-        kagemushaDbPath: options.kagemushaDbPath,
-        ...(connectorStatePath === undefined ? {} : { connectorStatePath }),
-        timeZone: options.timeZone,
-      });
+      const connector = await load(name, config.config[name], connectorLoadPaths(name, options));
       await connector.init();
       registry.register(name, connector);
     }

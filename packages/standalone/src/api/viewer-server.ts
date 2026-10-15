@@ -153,7 +153,7 @@ function viewerDirectory(): string {
   throw new Error('Viewer assets are not installed');
 }
 
-function resolveApiPort(value: string | undefined): number {
+export function resolveApiPort(value: string | undefined): number {
   if (value === undefined) return 3847;
   const port = Number(value);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) {

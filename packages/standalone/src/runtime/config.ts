@@ -108,6 +108,8 @@ export interface LoadConfigOptions {
   path?: string;
   configPath?: string;
   home?: string;
+  /** Receives the setting names MAMA ignores; the default prints them on stderr. */
+  onIgnored?: (names: readonly string[]) => void;
 }
 
 export interface ParseConfigOptions {
@@ -125,7 +127,7 @@ export class ConfigError extends Error {
   }
 }
 
-const CONFIG_KEYS = [
+export const CONFIG_KEYS = [
   'version',
   'timezone',
   'member_root',
@@ -597,6 +599,6 @@ export function loadConfig(options: LoadConfigOptions = {}): W1Config {
     throw new ConfigError(`Cannot load config ${path}: check file access and YAML syntax`);
   }
   const loaded = parseConfigValue(parsed, { home: options.home });
-  warnIgnored(loaded.ignored);
+  (options.onIgnored ?? warnIgnored)(loaded.ignored);
   return loaded.config;
 }

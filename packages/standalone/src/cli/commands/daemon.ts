@@ -199,12 +199,46 @@ export class StopDuringBootError extends Error {
   }
 }
 
-function stage(logger: DaemonLogger, name: string, signal?: AbortSignal): void {
+/** Every stage boot logs as `boot stage=<name>`; `mama doctor` reports only these names. */
+export const BOOT_STAGES = [
+  'config',
+  'isolation',
+  'owner_runtime',
+  'viewer',
+  'replay',
+  'connectors',
+  'messengers',
+  'telegram',
+  'telegram:disabled',
+  'discord',
+  'slack',
+  'report_scheduler',
+  'report_scheduler:route_unavailable',
+  'personal_job_scheduler',
+] as const;
+export type BootStage = (typeof BOOT_STAGES)[number];
+
+function stage(logger: DaemonLogger, name: BootStage, signal?: AbortSignal): void {
   if (signal?.aborted) throw new StopDuringBootError();
   logger.info(`boot stage=${name}`);
 }
 
-function stageFailed(logger: DaemonLogger, name: string, error: unknown): void {
+/** The auth.env names each messenger needs before it starts; `mama doctor` checks the same. */
+export const MESSENGER_SECRETS = {
+  telegram: ['MAMA_TELEGRAM_TOKEN'],
+  discord: ['MAMA_DISCORD_TOKEN'],
+  slack: ['MAMA_SLACK_TOKEN', 'MAMA_SLACK_APP_TOKEN'],
+} as const satisfies Record<MessengerName, readonly string[]>;
+
+function messengerSecrets(messenger: MessengerName): string[] {
+  return MESSENGER_SECRETS[messenger].map((name) => {
+    const value = process.env[name];
+    if (!value?.trim()) throw new Error(`${name} is required`);
+    return value;
+  });
+}
+
+function stageFailed(logger: DaemonLogger, name: BootStage, error: unknown): void {
   logger.error(`boot stage=${name} failed error=${errorName(error)}`);
 }
 
@@ -280,7 +314,7 @@ export function validateDeliveryRoutes(config: W1Config): void {
   }
 }
 
-function pathsFor(configPath: string, config: W1Config): DaemonPaths {
+export function pathsFor(configPath: string, config: W1Config): DaemonPaths {
   const mamaRoot = dirname(configPath);
   const runtimeRoot = join(mamaRoot, 'runtime');
   const workspaceDir = config.agent.codex_cwd ?? join(mamaRoot, 'workspace');
@@ -403,7 +437,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   let stopped = false;
   let deliveryReady = options.mode === 'replay';
   const startedAt = Date.now();
-  let currentStage = 'config';
+  let currentStage: BootStage = 'config';
   let booted = false;
   const command = options.command ?? (options.mode === 'replay' ? 'replay' : 'daemon');
   // The install's one process: taken before anything opens the database or rewrites settings.
@@ -893,8 +927,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
     messageLedger = new OwnerMessageLedger(ledgerPath, { log: (line) => logger.info(line) });
     const filesRoot = join(paths.workspaceDir, 'files');
     if (config.telegram.enabled) {
-      const token = process.env.MAMA_TELEGRAM_TOKEN;
-      if (!token?.trim()) throw new Error('MAMA_TELEGRAM_TOKEN is required');
+      const [token] = messengerSecrets('telegram');
       const factory =
         dependencies.createTelegramGateway ?? ((options) => new TelegramGateway(options));
       gateway = factory({
@@ -934,8 +967,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       stage(logger, 'telegram', options.signal);
     } else stage(logger, 'telegram:disabled', options.signal);
     if (config.discord?.enabled) {
-      const token = process.env.MAMA_DISCORD_TOKEN;
-      if (!token?.trim()) throw new Error('MAMA_DISCORD_TOKEN is required');
+      const [token] = messengerSecrets('discord');
       const factory =
         dependencies.createDiscordGateway ?? ((options) => new DiscordGateway(options));
       const active = factory({
@@ -961,10 +993,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       stage(logger, 'discord', options.signal);
     }
     if (config.slack?.enabled) {
-      const token = process.env.MAMA_SLACK_TOKEN;
-      const appToken = process.env.MAMA_SLACK_APP_TOKEN;
-      if (!token?.trim()) throw new Error('MAMA_SLACK_TOKEN is required');
-      if (!appToken?.trim()) throw new Error('MAMA_SLACK_APP_TOKEN is required');
+      const [token, appToken] = messengerSecrets('slack');
       const factory = dependencies.createSlackGateway ?? ((options) => new SlackGateway(options));
       const active = factory({
         token,
@@ -1056,6 +1085,10 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       logger.info(`boot stopped before stage=${currentStage}`);
     } else {
       stageFailed(logger, currentStage, error);
+      // A frozen error keeps its own shape; the stage is still in the log line above.
+      if (error !== null && typeof error === 'object' && Object.isExtensible(error)) {
+        Object.defineProperty(error, 'bootStage', { value: currentStage, enumerable: false });
+      }
     }
     try {
       await stopResources();

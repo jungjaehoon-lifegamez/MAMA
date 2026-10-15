@@ -34,7 +34,16 @@ async function main(): Promise<void> {
     } catch (error) {
       // Another process already holds this install: a clean exit, which the service files leave
       // stopped (they restart the daemon only after a failure; any other error exits 1).
-      if (!(error instanceof InstallBusyError)) throw error;
+      if (!(error instanceof InstallBusyError)) {
+        // The log line above names the error; this names the stage and the next step.
+        const stage = (error as { bootStage?: unknown }).bootStage;
+        if (typeof stage === 'string') {
+          console.error(
+            `mama daemon failed at boot stage ${stage}; mama doctor checks the install`
+          );
+        }
+        throw error;
+      }
       console.error(error.message);
     }
     return;
@@ -47,6 +56,13 @@ async function main(): Promise<void> {
   if (command === 'backfill') {
     const { runBackfill } = await import('./commands/backfill.js');
     await runBackfill(process.argv.slice(3));
+    return;
+  }
+  if (command === 'doctor') {
+    const { runDoctor } = await import('./commands/doctor.js');
+    process.exitCode = await runDoctor(process.argv.slice(3));
+    // A source probe that timed out may still hold a socket; once the output has drained, leave.
+    setTimeout(() => process.exit(), 1_000).unref();
     return;
   }
   if (command === 'service') {
@@ -65,7 +81,7 @@ async function main(): Promise<void> {
     return;
   }
   console.log(
-    'Usage: mama init | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop | service install|start|stop|restart|status|uninstall'
+    'Usage: mama init | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop | service install|start|stop|restart|status|uninstall | doctor [--json] [--offline] [--report]'
   );
 }
 

@@ -7,7 +7,7 @@ import type { ConnectorsConfig } from '../../connectors/framework/types.js';
 import { parseConfig, type W1Config } from '../../runtime/config.js';
 import { installDocumentToolkit } from '../../tools/document-toolkit.js';
 import { defaultToolsRoot } from './tools.js';
-import { findExecutable, launchAgent, startScript } from '../launch-files.js';
+import { findExecutable, launchAgent, startScript, stableNodePath } from '../launch-files.js';
 import {
   CliInputError,
   createTerminalPrompt,
@@ -390,7 +390,7 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
     home,
     viewer,
     logLevel: config.logging.level,
-    nodePath: options.nodePath ?? process.execPath,
+    nodePath: options.nodePath ?? stableNodePath(process.execPath),
     cliPath: options.cliPath ?? join(__dirname, '..', 'index.js'),
     executablePaths: [backendPath, gwsPath].filter((path): path is string => path !== undefined),
   });
