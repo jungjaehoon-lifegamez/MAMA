@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.77.0] - 2026-10-15
+
+An owner's DM opens Google Drive sheets and checks rendered documents before sending them, work
+that runs with no one in the conversation no longer opens web pages unless you list the sites, and
+the document toolkit gains numpy, pandas and matplotlib. The package changelog lists every change.
+
+### Upgrading
+
+- Run `mama tools install` again to get the new toolkit packages.
+- Turns with no person in them (source changes, record orders, reports, notices, personal jobs)
+  open web pages only from the hosts in `agent.autonomous_web_fetch` (none by default). Web search
+  still works there, and turns where a person speaks keep web fetch.
+- After the restart each session starts a new thread.
+
+### Added
+
+- `agent.autonomous_web_fetch` (#496).
+- numpy, pandas and matplotlib in the document toolkit, with charts in Korean and Japanese (#498).
+
+### Changed
+
+- An owner's DM fetches Google Drive files into that person's own downloads (#492).
+- Member management, enrollment, the time zone and common skill publishing change only from the
+  common channel or a person's own DM (#491).
+- An owner's DM reads the owner policy as the common session's working rules, read-only, and
+  sessions know their workspace `.git` is not a repository (#497).
+
+### Fixed
+
+- `document.render` no longer times out under the daemon (#494).
+- File delivery reads `files/...` paths in the caller's own workspace (#495).
+- `code_act` reports a script's own failure instead of `write EPIPE` (#493).
+
 ## mama-os [0.76.0] / mama-core [8.7.0] - 2026-10-14
 
 Each person, owners included, now works from its own DM with personal jobs, notices, skills and a

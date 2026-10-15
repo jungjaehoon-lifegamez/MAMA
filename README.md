@@ -166,7 +166,7 @@ These are the current package versions.
 
 | Package                                                     | Role                             | Version |
 | ----------------------------------------------------------- | -------------------------------- | ------- |
-| [MAMA OS](packages/standalone/README.md)                    | Owner agent and `mama` command   | 0.76.0  |
+| [MAMA OS](packages/standalone/README.md)                    | Owner agent and `mama` command   | 0.77.0  |
 | [mama-core](packages/mama-core/README.md)                   | Shared engine and public exports | 8.7.0   |
 | [Public MCP server](packages/mcp-server/README.md)          | Development memory over stdio    | 2.5.0   |
 | [Claude Code plugin](packages/claude-code-plugin/README.md) | Development commands and hooks   | 2.2.0   |

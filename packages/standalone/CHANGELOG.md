@@ -5,7 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.77.0] - 2026-10-15
+
+### Upgrading
+
+- Run `mama tools install` again to get numpy, pandas and matplotlib in the document toolkit.
+- Turns with no person in them stop opening web pages. If a report or job needs a site, list its
+  host in `agent.autonomous_web_fetch`.
+- After the restart each session starts a new thread, because its standing text changed.
 
 ### Added
 
