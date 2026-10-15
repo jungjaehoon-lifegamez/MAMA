@@ -2293,3 +2293,9 @@ The implementation writes raw/index data during import only. Replay is the owner
 
 - Evidence: 11:24 KST, "check the sheet again" in the owner's DM, the first turn after #492. The session read `help` for `drive.read` and `drive.download`, found the progress-management sheet, fetched it as xlsx into the person's own downloads under the member root (nothing new in the common downloads), and read it with openpyxl in eight shell calls; fourteen calls, none failed, 86 s. The answer cited the sheet: job counts per title and still type, prices, outsourcing costs, and the median days from order to deadline, and said the sheet has no man-day column, so those days stand in for it; the October restart is not in the sheet yet.
 - Still open: nothing for this question.
+
+### C1 live in the owner's DM: who is doing what (2026-10-15)
+
+- Evidence: 11:54 KST, "who is doing what now?" in the owner's DM, answered in 30 s from one `work.list` pipeline read (one self-corrected input before it). The answer said it covered production work from the ledger without re-reading Trello, and listed by project each item's person, step, time and due date, then the assignments waiting on the owner. Of the 62 ledger items in progress or in review, 42 are in the answer; a spot check of nine (persons, times, due dates) matched the ledger.
+- Not in the answer: four current non-production items (two estimate reviews, two guesthouse repairs, one accepted by a cleaner on 10/14), outside the stated scope; and fourteen items still in progress or review with no event since April to July (monthly delivery rows, old stills, a closed consultation), which the ledger never closed.
+- Still open: the owner's acceptance; closing the stale items is a correction for the common channel (a C5 candidate).
