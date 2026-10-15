@@ -27,7 +27,11 @@ import {
   writeArchive,
   type BackupManifest,
 } from '../runtime/backup.js';
-import { acquireInstallLock, daemonControlPaths } from '../runtime/daemon-control.js';
+import {
+  acquireInstallLock,
+  daemonControlPaths,
+  refuseWhileRestoring,
+} from '../runtime/daemon-control.js';
 import { pathsFor } from './daemon.js';
 
 export interface BackupOptions {
@@ -76,6 +80,12 @@ export async function runBackup(
   }
   // Nothing may write the install while it is read, so a running daemon refuses the backup here.
   const lock = acquireInstallLock(daemonControlPaths(root), 'backup');
+  try {
+    refuseWhileRestoring(root);
+  } catch (error) {
+    lock.release();
+    throw error;
+  }
   const now = options.now?.() ?? new Date();
   const final = join(folder, archiveName(now));
   const staging = join(folder, `.staging-${process.pid}-${now.getTime()}`);

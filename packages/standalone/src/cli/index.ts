@@ -28,13 +28,13 @@ async function main(): Promise<void> {
   }
   if (command === 'daemon') {
     const { runDaemon } = await import('./commands/daemon.js');
-    const { InstallBusyError } = await import('./runtime/daemon-control.js');
+    const { InstallBusyError, RestorePendingError } = await import('./runtime/daemon-control.js');
     try {
       await runDaemon();
     } catch (error) {
-      // Another process already holds this install: a clean exit, which the service files leave
-      // stopped (they restart the daemon only after a failure; any other error exits 1).
-      if (!(error instanceof InstallBusyError)) {
+      // Another process already holds this install, or a restore is unfinished: a clean exit,
+      // which the service files leave stopped (they restart only after a failure).
+      if (!(error instanceof InstallBusyError) && !(error instanceof RestorePendingError)) {
         // The log line above names the error; this names the stage and the next step.
         const stage = (error as { bootStage?: unknown }).bootStage;
         if (typeof stage === 'string') {
@@ -56,6 +56,11 @@ async function main(): Promise<void> {
   if (command === 'backfill') {
     const { runBackfill } = await import('./commands/backfill.js');
     await runBackfill(process.argv.slice(3));
+    return;
+  }
+  if (command === 'restore') {
+    const { runRestore } = await import('./commands/restore.js');
+    await runRestore(process.argv.slice(3));
     return;
   }
   if (command === 'backup') {
@@ -86,7 +91,7 @@ async function main(): Promise<void> {
     return;
   }
   console.log(
-    'Usage: mama init | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop | service install|start|stop|restart|status|uninstall | doctor [--json] [--offline] [--report] | backup [--include-secrets] [--logs]'
+    'Usage: mama init | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop | service install|start|stop|restart|status|uninstall | doctor [--json] [--offline] [--report] | backup [--include-secrets] [--logs] | restore <archive> | restore --rollback'
   );
 }
 

@@ -68,6 +68,7 @@ import { createOutboundEventRecorder } from '../../api/security-events.js';
 import { startEgressProxy, type EgressProxy } from '../../runtime/egress-proxy.js';
 import {
   acquireInstallLock,
+  refuseWhileRestoring,
   daemonControlPaths,
   requestDaemonControl,
   startDaemonControl,
@@ -542,6 +543,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
 
   try {
     currentStage = 'config';
+    // A half-switched install is neither the old one nor the restored one.
+    refuseWhileRestoring(dirname(configPath));
     controlServer = await startDaemonControl(control, {
       status: statusReport,
       stop: () => {
