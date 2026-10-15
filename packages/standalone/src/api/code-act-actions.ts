@@ -203,16 +203,22 @@ export function runCodeAct(
           // A call that arrives after a timeout must not start an action nobody will see.
           if (settled) return;
           hostCallCount += 1;
+          // A worker that finished after another call failed has its result in the pipe still;
+          // the closed channel is no worker error, and the result or the exit settles the run.
+          const answered = () => {};
           try {
             const result = await host.call(msg.name!, msg.params);
-            if (child.connected) child.send({ type: 'toolResult', id: msg.id, result });
+            if (child.connected) child.send({ type: 'toolResult', id: msg.id, result }, answered);
           } catch (error) {
             if (child.connected)
-              child.send({
-                type: 'toolResult',
-                id: msg.id,
-                error: error instanceof Error ? error.message : String(error),
-              });
+              child.send(
+                {
+                  type: 'toolResult',
+                  id: msg.id,
+                  error: error instanceof Error ? error.message : String(error),
+                },
+                answered
+              );
           }
           return;
         }
