@@ -167,7 +167,8 @@ export interface StartScriptReading {
 }
 
 /**
- * Split a start.sh line into words as sh does before expansion: single quotes are literal, double
+ * Split a start.sh line into words as sh does before expansion: a `#` starting a word ends the
+ * line, single quotes are literal, double
  * quotes keep their text (a backslash escapes `"`, `\\`, `$` and a backtick), and a backslash
  * outside quotes escapes the next character. Variables stay as written.
  */
@@ -197,6 +198,9 @@ export function shellWords(line: string): string[] {
     } else if (/\s/.test(char)) {
       if (word !== null) words.push(word);
       word = null;
+    } else if (char === '#' && word === null) {
+      // A # that starts a word starts a comment.
+      break;
     } else {
       word = (word ?? '') + char;
     }

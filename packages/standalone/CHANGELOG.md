@@ -10,17 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `mama doctor` checks an install as its service would run it, without changing it: config and
-  `connectors.json` as boot loads them, `member_root`, the Node in `start.sh` (present, outside one
-  version's folder, and able to load MAMA's SQLite module), the backend on that script's `PATH`
-  with the daemon's environment (its version against the oldest one MAMA was verified on, Claude
-  Code 2.1.299 and Codex 0.160.1, and whether it is signed in), the shell sandbox (it starts one),
-  the secrets each enabled messenger and source needs, the Telegram token and whether the bot is in
-  the common group and reads it, the toolkit, the daemon (answering, booted, each source's last
-  poll) or the port it would bind, the service manager and logs over 50 MB. Each problem names
-  what to do, and it exits 1 when a check fails. `--json` for scripts, `--offline` makes no network
-  call, and `--report` prints a summary for a bug report: versions, platform, setting and source
-  names, the checks in doctor's own words, the last boot's stages and recent errors reduced to log
-  tags, connector names and error codes. Paths, values, ids and message text never enter it.
+  `connectors.json` as boot loads them, `member_root`, the Node in `start.sh` (present, outside
+  one version's folder, and able to load MAMA's SQLite module), the backend on that script's
+  `PATH` with the daemon's environment (its version against the oldest one MAMA was verified on,
+  Claude Code 2.1.299 and Codex 0.160.1, and whether it is signed in), the shell sandbox (it
+  starts one), the secrets each enabled messenger and source needs and each source started as boot
+  starts it, the Telegram token and whether the bot is in the common group and reads it, the
+  toolkit, the daemon (answering, booted, each source's last poll) or the port it would bind, the
+  service manager and logs over 50 MB. Each problem names what to do, and it exits 1 when a check
+  fails. `--json` for scripts, `--offline` makes no network call (Telegram is not asked and
+  sources are not started), and `--report` prints a summary for a bug report: versions, platform,
+  setting and source names, the checks in doctor's own words, the last boot's stages and recent
+  errors reduced to failed stages, connector names and error codes. Paths, values, ids and message text
+  never enter it.
 
 ### Changed
 

@@ -116,7 +116,7 @@ function host(
     if (args[0] === 'auth') {
       return result(0, JSON.stringify({ loggedIn: options.loggedIn ?? true, email: 'a@b.test' }));
     }
-    if (args[0] === '-e') return result(options.sqlite === false ? 1 : 0);
+    if (args[0] === '-e') return options.sqlite === false ? result(1) : result(0, 'v22.13.0');
     if (command === '/usr/bin/sandbox-exec' || command.endsWith('/bwrap')) {
       return result(options.sandbox === false ? 1 : 0);
     }
@@ -129,7 +129,7 @@ const getMe = (overrides: Record<string, unknown> = {}, member: unknown = 'membe
     method === 'getMe'
       ? { ok: true, result: { id: 7, can_read_all_group_messages: true, ...overrides } }
       : member === null
-        ? { ok: false, description: 'Bad Request: chat not found' }
+        ? { ok: false, error_code: 400, description: 'Bad Request: chat not found' }
         : { ok: true, result: { status: member } }
   );
 
@@ -214,6 +214,8 @@ describe('Node path and start.sh reading', () => {
     expect(
       startPathValue(`"$HOME/.local/bin:\${HOME}/bin:~/x:/usr/bin:$PATH:$HOMEX/y"`, '/h')
     ).toEqual(['/h/.local/bin', '/h/bin', '/h/x', '/usr/bin', '$HOMEX/y']);
+    expect(shellWords("export A='x'  # the owner's note")).toEqual(['export', 'A=x']);
+    expect(shellWords('a#b')).toEqual(['a#b']);
     const reading = readStartScript("export MAMA_API_PORT='4000'\nexport X=\"a'b\"\n", '/h');
     expect(startExports(reading)).toEqual({ MAMA_API_PORT: '4000', X: "a'b" });
   });
@@ -231,7 +233,7 @@ describe('mama doctor', () => {
     const by = byName(await runDiagnostics(base(installed)));
     expect(by.config.status).toBe('ok');
     expect(by.member_root.status).toBe('ok');
-    expect(by.node).toMatchObject({ status: 'ok', detail: 'present and loads SQLite' });
+    expect(by.node).toMatchObject({ status: 'ok', detail: 'v22.13.0 loads SQLite' });
     expect(by.backend).toMatchObject({ status: 'ok', detail: 'claude 2.1.299, signed in' });
     expect(by.sandbox.status).toBe('ok');
     expect(by.telegram.status).toBe('ok');
@@ -268,6 +270,12 @@ describe('mama doctor', () => {
     expect(await telegram(getMe({}, 'member'))).toMatchObject({ status: 'ok' });
     expect(await telegram(getMe({}, 'left'))).toMatchObject({ status: 'fail' });
     expect(await telegram(getMe({}, null))).toMatchObject({ status: 'fail' });
+    const limited = vi.fn(async (_token: string, method: string) =>
+      method === 'getMe'
+        ? { ok: true, result: { id: 7, can_read_all_group_messages: true } }
+        : { ok: false, error_code: 429 }
+    );
+    expect(await telegram(limited)).toMatchObject({ status: 'warn' });
     expect(await telegram(getMe({ can_read_all_group_messages: false }, 'member'))).toMatchObject({
       status: 'warn',
     });
@@ -451,6 +459,68 @@ describe('mama doctor', () => {
     expect(by.sandbox).toMatchObject({ status: 'fail', detail: "socat not on the service's PATH" });
   });
 
+  it('starts each source in the service environment, as boot does, unless offline', async () => {
+    const installed = install({
+      auth: { MAMA_CHATWORK_TOKEN: 'from-auth-env' },
+      connectors: {
+        chatwork: {
+          enabled: true,
+          pollIntervalMinutes: 5,
+          channels: {},
+          auth: { type: 'token', tokenName: 'MAMA_CHATWORK_TOKEN' },
+        },
+        kagemusha: { enabled: true, pollIntervalMinutes: 5, channels: {}, auth: { type: 'none' } },
+      },
+    });
+    expect(process.env.MAMA_CHATWORK_TOKEN).toBeUndefined();
+    let by = byName(await runDiagnostics(base(installed)));
+    // Chatwork reads its token from the daemon's environment, which auth.env provides.
+    expect(by['source chatwork']).toBeUndefined();
+    expect(by['source kagemusha']).toMatchObject({
+      status: 'fail',
+      detail: 'does not start; boot stops at the connectors stage',
+    });
+    expect(process.env.MAMA_CHATWORK_TOKEN).toBeUndefined();
+    by = byName(await runDiagnostics({ ...base(installed), offline: true }));
+    expect(by['source kagemusha']).toBeUndefined();
+  });
+
+  it('reads auth.env as sh does: comments pass, broken quoting is a failure, not a crash', async () => {
+    const installed = install();
+    writeFileSync(
+      join(installed.root, 'auth.env'),
+      `export MAMA_TELEGRAM_TOKEN='${TOKEN}'  # the owner's bot\n`
+    );
+    expect(byName(await runDiagnostics(base(installed))).telegram.status).toBe('ok');
+    writeFileSync(join(installed.root, 'auth.env'), `export MAMA_TELEGRAM_TOKEN='${TOKEN}\n`);
+    const by = byName(await runDiagnostics(base(installed)));
+    expect(by['auth.env']).toMatchObject({
+      status: 'fail',
+      context: 'line 1: unterminated single quote',
+    });
+    expect(by.telegram.status).toBe('fail');
+  });
+
+  it('reports a replay or backfill holding the install, not a stuck daemon', async () => {
+    const installed = install();
+    const by = byName(
+      await runDiagnostics({
+        ...base(installed),
+        askStatus: async () => ({
+          state: 'running',
+          reply: {
+            ok: true,
+            status: { command: 'backfill', stage: 'replay', startedAt: Date.now() - 3_600_000 },
+          },
+        }),
+      })
+    );
+    expect(by.daemon).toMatchObject({
+      status: 'warn',
+      detail: 'stopped; backfill holds the install (stage replay)',
+    });
+  });
+
   it('warns about a log past 50 MB', async () => {
     const installed = install();
     writeFileSync(join(installed.root, 'logs', 'daemon.log'), '');
@@ -486,6 +556,7 @@ describe('mama doctor', () => {
       'user:pass',
       'principal_5b55fixture',
       'Client Project Alpha',
+      'Urgent',
       'members-outside',
       installed.home,
     ];
@@ -501,6 +572,7 @@ describe('mama doctor', () => {
         'turn failed reason=Claude CLI exited 1: /Volumes/ClientDrive/plan.pdf ENOENT',
         `[Telegram] send failed to ${CHAT} with token ${TOKEN} via https://user:pass@api.example.test/x status 502`,
         'principal_5b55fixture claimed input failed',
+        '[Urgent] continued message line that failed',
       ].join('\n')
     );
     const lines: string[] = [];
@@ -515,9 +587,9 @@ describe('mama doctor', () => {
     expect(report).toContain('and 1 it ignores');
     expect(report).toContain('enabled sources: ical');
     expect(report).toContain('boot stage=connectors failed');
-    expect(report).toContain('[PollingScheduler] connector sheets');
+    expect(report).toContain('connector sheets');
     expect(report).toContain('ENOENT');
-    expect(report).toContain('[Telegram] HTTP 502');
+    expect(report).toContain('HTTP 502');
     expect(report).toContain('fail source ical: 1 secret(s) it needs are not set');
     for (const secret of secrets) expect(report).not.toContain(secret);
   });

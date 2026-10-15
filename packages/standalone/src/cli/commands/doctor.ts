@@ -62,12 +62,11 @@ function enabledSources(root: string): string {
 }
 
 /**
- * One log line reduced to what the program itself names: letter-only tags such as
- * `[PollingScheduler]`, a failed boot stage, a known connector and system error codes. Message
- * text, ids, names and paths never pass, whatever their shape.
+ * One log line reduced to what the program itself names: a failed boot stage, a known connector,
+ * system error codes and an HTTP status. Message text, ids, names and paths never pass, whatever
+ * their shape; so do log tags, since a continued message line can start with a bracketed word.
  */
 function errorShape(line: string): string {
-  const tags = (/^(\s*\[[A-Za-z]+\])+/.exec(line)?.[0] ?? '').replace(/\s+/g, '');
   const stage = /\bboot stage=([a-z_:]+) failed\b/.exec(line)?.[1];
   const connector = /\bconnector ([a-z][a-z0-9-]*)\b/.exec(line)?.[1];
   const codes = [
@@ -79,7 +78,6 @@ function errorShape(line: string): string {
   ];
   const http = /\b(?:HTTP|status) ([1-5]\d\d)\b/.exec(line)?.[1];
   return [
-    tags,
     stage && `boot stage=${stage} failed`,
     connector && CONNECTORS.has(connector) && `connector ${connector}`,
     ...codes,
@@ -117,7 +115,7 @@ export function doctorReport(checks: readonly Check[], options: DoctorOptions = 
   }
   return [
     "MAMA doctor report (doctor's own words only; no paths, values, ids or message text)",
-    `mama-os ${resolvePackageVersion()}, node ${process.version}, ${process.platform} ${process.arch}`,
+    `mama-os ${resolvePackageVersion()} on ${process.platform} ${process.arch}; doctor ran on node ${process.version} (the service's Node is in the node check)`,
     `config keys: ${configKeys(configPath)}`,
     `enabled sources: ${enabledSources(root)}`,
     '',
@@ -149,7 +147,7 @@ export async function runDoctor(
   const write = options.write ?? ((line: string) => console.log(line));
   const checks = await runDiagnostics({
     ...options,
-    ...(flags.has('--offline') ? { telegramCall: null } : {}),
+    offline: flags.has('--offline'),
   });
   if (flags.has('--report')) {
     write(doctorReport(checks, options));

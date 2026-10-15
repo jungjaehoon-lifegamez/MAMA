@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { resolveApiPort } from '../../api/viewer-server.js';
 import { loadConnector } from '../../connectors/index.js';
+import type { IConnector } from '../../connectors/framework/types.js';
 import { loadConfig, type W1Config } from '../../runtime/config.js';
 import { backendEnvironment } from '../../runtime/backend-security.js';
 import { connectorLoadPaths, planConnectors } from '../../runtime/connectors.js';
@@ -48,14 +49,14 @@ export interface DiagnosticsOptions {
   platform?: NodeJS.Platform;
   run?: ProbeRun;
   serviceRun?: ServiceRun;
-  /** A Telegram Bot API call; tests replace it. Null makes no network call. */
-  telegramCall?:
-    | ((
-        token: string,
-        method: string,
-        params?: Record<string, string>
-      ) => Promise<Record<string, unknown>>)
-    | null;
+  /** No network call: Telegram is not asked and sources are not started. */
+  offline?: boolean;
+  /** A Telegram Bot API call; tests replace it. */
+  telegramCall?: (
+    token: string,
+    method: string,
+    params?: Record<string, string>
+  ) => Promise<Record<string, unknown>>;
   findIn?: (name: string, dirs: string[]) => string | undefined;
   /** Ask the install's daemon for its status; tests replace it. */
   askStatus?: () => Promise<DaemonControlReply>;
@@ -86,15 +87,23 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** A value from auth.env (`export NAME='value'`), unquoted; never printed. */
-export function authEnvValue(root: string, name: string): string | undefined {
+/** auth.env's assignments, unquoted as sh reads them; values are never printed. */
+function readAuthEnv(root: string): Record<string, string> {
   const path = join(root, 'auth.env');
-  if (!existsSync(path)) return undefined;
-  for (const line of readFileSync(path, 'utf8').split('\n')) {
-    const match = new RegExp(`^\\s*(?:export\\s+)?${name}=(.*)$`).exec(line);
-    if (match) return shellWords(match[1])[0] ?? '';
-  }
-  return undefined;
+  if (!existsSync(path)) return {};
+  const values: Record<string, string> = {};
+  readFileSync(path, 'utf8')
+    .split('\n')
+    .forEach((line, index) => {
+      const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+      if (!match) return;
+      try {
+        values[match[1]] = shellWords(match[2])[0] ?? '';
+      } catch (error) {
+        throw new Error(`line ${index + 1}: ${message(error)}`);
+      }
+    });
+  return values;
 }
 
 async function defaultTelegramCall(
@@ -223,8 +232,28 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
       });
     }
   }
-  const secret = (name: string): boolean =>
-    Boolean(authEnvValue(root, name)?.trim() || exports[name]?.trim());
+  // start.sh loads auth.env with `set -a`, then its own exports override it.
+  let auth: Record<string, string> = {};
+  try {
+    auth = readAuthEnv(root);
+  } catch (error) {
+    checks.push({
+      name: 'auth.env',
+      status: 'fail',
+      detail: 'does not parse; start.sh stops when it loads it',
+      context: message(error),
+      fix: `correct the quoting in ${join(root, 'auth.env')}`,
+    });
+  }
+  const serviceEnv: NodeJS.ProcessEnv = {
+    HOME: home,
+    USER: process.env.USER,
+    LOGNAME: process.env.LOGNAME,
+    ...auth,
+    ...exports,
+    PATH: servicePath.join(':'),
+  };
+  const secret = (name: string): boolean => Boolean(serviceEnv[name]?.trim());
 
   if (config) {
     const backend = config.agent.backend as BackendName;
@@ -237,14 +266,8 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
         fix: `install ${backend}, then run mama service install so start.sh includes it`,
       });
     } else {
-      // The daemon's backend gets no credential-shaped variables (backend-security.ts).
-      const env = backendEnvironment({
-        HOME: home,
-        USER: process.env.USER,
-        LOGNAME: process.env.LOGNAME,
-        ...exports,
-        PATH: servicePath.join(':'),
-      });
+      // The daemon's backend gets its environment without credential-shaped variables.
+      const env = backendEnvironment(serviceEnv);
       const codexHome = config.agent.codex_home ?? join(root, '.codex');
       const probe = probeBackend(backend, executable, { codexHome, run, env });
       if (probe.problem || !probe.versionOk) {
@@ -283,10 +306,10 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
           detail: `${missing.join(' and ')} not set; boot stops at the messengers stage`,
           fix: missing.map(secretFix).join('; '),
         });
-      } else if (messenger === 'telegram' && options.telegramCall !== null) {
+      } else if (messenger === 'telegram' && !options.offline) {
         checks.push(
           await telegramCheck(
-            authEnvValue(root, 'MAMA_TELEGRAM_TOKEN') ?? exports.MAMA_TELEGRAM_TOKEN,
+            serviceEnv.MAMA_TELEGRAM_TOKEN,
             config.telegram.owner_chat_id,
             options.telegramCall ?? defaultTelegramCall
           )
@@ -296,13 +319,18 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
       }
     }
 
-    checks.push(...(await sourceChecks(config, configPath, servicePath, locate, secret)));
+    checks.push(
+      ...(await sourceChecks(config, configPath, servicePath, locate, secret, {
+        env: serviceEnv,
+        online: !options.offline,
+      }))
+    );
     checks.push(toolkitCheck(config));
   }
 
   let port: number | null = null;
   try {
-    port = resolveApiPort(exports.MAMA_API_PORT ?? authEnvValue(root, 'MAMA_API_PORT'));
+    port = resolveApiPort(serviceEnv.MAMA_API_PORT);
   } catch (error) {
     checks.push({
       name: 'port',
@@ -371,7 +399,12 @@ function nodeCheck(node: string, cli: string, run: ProbeRun): Check {
       fix: 'reinstall MAMA',
     };
   }
-  const load = run(node, ['-e', "new (require(process.argv[1]))(':memory:').close()", binding]);
+  const load = run(node, [
+    '-e',
+    "new (require(process.argv[1]))(':memory:').close(); process.stdout.write(process.version)",
+    binding,
+  ]);
+  const version = /^v\d+\.\d+\.\d+$/.test(`${load.stdout ?? ''}`) ? `${load.stdout}` : 'Node';
   if (load.error || load.status !== 0) {
     return {
       name: 'node',
@@ -385,14 +418,14 @@ function nodeCheck(node: string, cli: string, run: ProbeRun): Check {
     return {
       name: 'node',
       status: 'warn',
-      detail: 'start.sh runs a Node inside one version folder; an upgrade or a switch removes it',
+      detail: `start.sh runs ${version} from one version's folder; an upgrade or a switch removes it`,
       context: node,
       fix: node.includes('/Cellar/')
         ? rewrite
         : 'run mama service install from a shell whose node is not an nvm, volta or fnm version',
     };
   }
-  return { name: 'node', status: 'ok', detail: 'present and loads SQLite', context: node };
+  return { name: 'node', status: 'ok', detail: `${version} loads SQLite`, context: node };
 }
 
 function sandboxCheck(
@@ -472,6 +505,13 @@ async function telegramCheck(
       chat_id: String(commonChat),
       user_id: String(me.id),
     });
+    if (member.ok !== true && member.error_code !== 400 && member.error_code !== 403) {
+      return {
+        name: 'telegram',
+        status: 'warn',
+        detail: `token valid; Telegram did not answer about the common group (${String(member.error_code)})`,
+      };
+    }
     status =
       member.ok === true ? (member.result as { status?: unknown } | undefined)?.status : undefined;
   } catch (error) {
@@ -513,7 +553,8 @@ async function sourceChecks(
   configPath: string,
   servicePath: string[],
   locate: (name: string, dirs: string[]) => string | undefined,
-  secret: (name: string) => boolean
+  secret: (name: string) => boolean,
+  start: { env: NodeJS.ProcessEnv; online: boolean }
 ): Promise<Check[]> {
   const paths = pathsFor(configPath, config);
   let plan: ReturnType<typeof planConnectors>;
@@ -538,9 +579,9 @@ async function sourceChecks(
   const checks: Check[] = [];
   const timeZone = createTimeZoneSetting(config.timezone);
   for (const name of plan.enabledConnectorNames) {
-    let needs: { type: string; tokenName?: string; cli?: string; cliAuthCommand?: string }[];
+    let connector: IConnector;
     try {
-      const connector = await loadConnector(
+      connector = await loadConnector(
         name,
         plan.config.config[name],
         connectorLoadPaths(name, {
@@ -549,7 +590,6 @@ async function sourceChecks(
           timeZone,
         })
       );
-      needs = connector.getAuthRequirements();
     } catch (error) {
       checks.push({
         name: `source ${name}`,
@@ -559,6 +599,7 @@ async function sourceChecks(
       });
       continue;
     }
+    const needs = connector.getAuthRequirements();
     // A secret's name can carry an owner's channel key (iCal), so it stays out of the report.
     const secrets = needs.flatMap((need) =>
       need.type === 'token' && need.tokenName && !secret(need.tokenName) ? [need.tokenName] : []
@@ -582,9 +623,41 @@ async function sourceChecks(
           ...commands.map(({ cli, login }) => `install ${cli}${login ? ` and run ${login}` : ''}`),
         ].join('; '),
       });
+      continue;
+    }
+    if (!start.online) continue;
+    // Boot starts each source in the daemon's environment; no source's start writes anything.
+    try {
+      await withEnvironment(start.env, () => connector.init());
+    } catch (error) {
+      checks.push({
+        name: `source ${name}`,
+        status: 'fail',
+        detail: 'does not start; boot stops at the connectors stage',
+        context: message(error),
+      });
+    } finally {
+      await connector.dispose();
     }
   }
   return checks;
+}
+
+/** Run with process.env as the daemon's process has it, then put this shell's back. */
+async function withEnvironment<T>(env: NodeJS.ProcessEnv, run: () => Promise<T>): Promise<T> {
+  const saved = { ...process.env };
+  const replace = (next: NodeJS.ProcessEnv): void => {
+    for (const name of Object.keys(process.env)) delete process.env[name];
+    for (const [name, value] of Object.entries(next)) {
+      if (value !== undefined) process.env[name] = value;
+    }
+  };
+  replace(env);
+  try {
+    return await run();
+  } finally {
+    replace(saved);
+  }
 }
 
 function toolkitCheck(config: W1Config): Check {
@@ -635,7 +708,7 @@ async function daemonChecks(
         status: 'fail',
         detail: 'holds the install but does not answer on its control socket',
         context: message(error),
-        fix: 'mama stop, then mama service start; daemon.log shows where it stopped',
+        fix: 'daemon.log shows what it is doing (a migration can hold it); if it stays silent, mama stop and mama service start',
       },
     ];
   }
@@ -670,6 +743,7 @@ async function daemonChecks(
     ];
   }
   const status = (daemon.reply.status ?? {}) as {
+    command?: unknown;
     stage?: unknown;
     startedAt?: unknown;
     connectors?: unknown;
@@ -677,6 +751,17 @@ async function daemonChecks(
   const checks: Check[] = [];
   const stage = typeof status.stage === 'string' ? status.stage : 'unknown';
   const startedAt = typeof status.startedAt === 'number' ? status.startedAt : Date.now();
+  // A replay or backfill does its work inside the boot, for as long as it takes.
+  if (status.command === 'replay' || status.command === 'backfill') {
+    return [
+      {
+        name: 'daemon',
+        status: 'warn',
+        detail: `stopped; ${status.command} holds the install (stage ${stage})`,
+        fix: `mama service start after the ${status.command} ends`,
+      },
+    ];
+  }
   if (stage === 'running') {
     checks.push({ name: 'daemon', status: 'ok', detail: 'running' });
   } else if (stage !== 'stopping' && Date.now() - startedAt > BOOT_STUCK_MS) {
