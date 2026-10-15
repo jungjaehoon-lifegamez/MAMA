@@ -7,7 +7,7 @@
  */
 import { createHash } from 'node:crypto';
 import { closeSync, mkdirSync, openSync, rmSync, writeSync } from 'node:fs';
-import { basename, extname, join } from 'node:path';
+import { basename, extname, join, resolve } from 'node:path';
 import type { ActionContext, ActionRegistration } from '@jungjaehoon/mama-core';
 
 import { execGwsAsync } from '../connectors/framework/gws-utils.js';
@@ -71,9 +71,10 @@ export function driveDeliveryActionRegistrations(ports: DriveDeliveryPorts): Act
   // uploading waits for it instead of passing the lookup and uploading a second copy.
   const inFlight = new Map<string, Promise<unknown>>();
   const send = async (values: { path: string; name?: unknown }, operationId: string) => {
+    // A relative path names a file in the workspace, as document.render returns it.
     const file = openWorkspaceFile(
       join(ports.workspaceDir, 'files'),
-      values.path,
+      resolve(ports.workspaceDir, values.path),
       DRIVE_DELIVERY_MAX_BYTES
     );
     const name = typeof values.name === 'string' ? values.name : basename(file.path);
@@ -186,7 +187,12 @@ export function driveDeliveryActionRegistrations(ports: DriveDeliveryPorts): Act
           required: ['path'],
           additionalProperties: false,
           properties: {
-            path: { type: 'string', minLength: 1 },
+            path: {
+              type: 'string',
+              minLength: 1,
+              description:
+                'Path of a file under the workspace files directory: absolute, or relative to the workspace (files/...).',
+            },
             name: {
               type: 'string',
               minLength: 1,
@@ -197,7 +203,7 @@ export function driveDeliveryActionRegistrations(ports: DriveDeliveryPorts): Act
         examples: [
           {
             title: 'Send a large result',
-            input: { path: '/workspace/files/translated.pptx' },
+            input: { path: 'files/translated.pptx' },
           },
         ],
       },
