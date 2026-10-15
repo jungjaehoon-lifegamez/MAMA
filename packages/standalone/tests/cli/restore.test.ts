@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   chmodSync,
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -17,9 +18,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import Database from 'better-sqlite3';
 import * as yaml from 'js-yaml';
+import * as tar from 'tar';
 import { runBackup } from '../../src/cli/commands/backup.js';
 import { runRestore } from '../../src/cli/commands/restore.js';
 import {
+  extractVerified,
   hostJobsInFlight,
   journalPath,
   removeTree,
@@ -503,6 +506,37 @@ describe('mama restore', () => {
     expect(existsSync(journalPath(b.root))).toBe(false);
     writeFileSync(journalPath(b.root), JSON.stringify({ id: 'x', committed: false, steps: [] }));
     await expect(backupOf(b)).rejects.toThrow(/restore --rollback/);
+  });
+
+  it('refuses an entry whose tar type is not what the manifest says', async () => {
+    const dir = temp('hardlink');
+    const archive = join(dir, 'crafted.tar.gz');
+    const manifest = {
+      format: 'mama-backup',
+      version: 1,
+      databases: [],
+      includesSecrets: false,
+      configured: {},
+      entries: [
+        { path: 'workspace', type: 'dir', mode: 0o755 },
+        { path: 'workspace/x', type: 'file', mode: 0o644, sha256: '0'.repeat(64) },
+      ],
+    };
+    file(join(dir, 'src', 'manifest.json'), JSON.stringify(manifest));
+    mkdirSync(join(dir, 'src', 'workspace'));
+    file(join(dir, 'src', 'outside'), 'outside');
+    linkSync(join(dir, 'src', 'outside'), join(dir, 'src', 'workspace', 'x'));
+    linkSync(join(dir, 'src', 'outside'), join(dir, 'src', 'other'));
+    // tar stores the second name of one file as a hard-link entry.
+    await tar.c({ file: archive, gzip: true, cwd: join(dir, 'src') }, [
+      'manifest.json',
+      'other',
+      'workspace',
+    ]);
+    const staging = join(dir, 'staging');
+    await expect(extractVerified(archive, manifest as never, staging)).rejects.toThrow(
+      /workspace\/x is missing/
+    );
   });
 
   it('counts only host jobs still open', () => {

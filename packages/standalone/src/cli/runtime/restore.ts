@@ -265,10 +265,14 @@ export async function extractVerified(
     file: archive,
     cwd: staging,
     strict: true,
+    // Each entry's tar type must be what the manifest says: a hard link listed as a file could
+    // tie a restored path to a file outside the archive.
     filter: (path, entry) => {
       const want = expected.get(path.replace(/\/+$/, ''));
       const type = (entry as { type?: string }).type;
-      return want !== undefined && want.type !== 'symlink' && type !== 'SymbolicLink';
+      if (want?.type === 'file') return type === 'File' || type === 'OldFile';
+      if (want?.type === 'dir') return type === 'Directory';
+      return false;
     },
   });
   const problems: string[] = [];
