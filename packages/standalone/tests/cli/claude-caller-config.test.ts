@@ -127,4 +127,22 @@ describe('owner Claude workspace settings', () => {
     expect(permitted('nested/../../outside.txt')).toBe(false);
     expect(permitted(`${workspace}-other/report.txt`)).toBe(false);
   });
+
+  it('gates WebFetch through the caller hook with the mode path only when one is given', () => {
+    const { workspace, path, root } = fixture();
+    ensureClaudeCallerHook(workspace);
+    expect(
+      JSON.parse(readFileSync(path, 'utf8')).hooks.PreToolUse.map(
+        (entry: { matcher: string }) => entry.matcher
+      )
+    ).toEqual(['mcp__mama__.*']);
+    const modePath = join(root, "runtime's", 'web-fetch-turn.json');
+    ensureClaudeCallerHook(workspace, [], undefined, undefined, modePath);
+    const hooks = JSON.parse(readFileSync(path, 'utf8')).hooks.PreToolUse;
+    expect(hooks.map((entry: { matcher: string }) => entry.matcher)).toEqual([
+      'mcp__mama__.*',
+      'WebFetch',
+    ]);
+    expect(hooks[1].hooks[0].command).toContain(`'${modePath.replaceAll("'", "'\\''")}'`);
+  });
 });

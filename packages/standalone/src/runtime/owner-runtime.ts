@@ -116,6 +116,8 @@ export interface OwnerRuntimeOptions {
   nativeSession?: NativeSessionHandle & Partial<Pick<NativeSession, 'callAction'>>;
   modelRun?: NativeModelRunPort;
   effort?: RuntimeEffort;
+  /** Hosts a turn with no person in it may WebFetch (`agent.autonomous_web_fetch`). */
+  autonomousWebFetch?: readonly string[];
   timeout: number;
   maxTurnMs?: number;
   runTokenBudget?: number;
@@ -666,6 +668,9 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         ownerSystemPrompt: standingText,
         ownerPolicyProvider,
         ...(options.effort === undefined ? {} : { effort: options.effort }),
+        ...(options.autonomousWebFetch === undefined
+          ? {}
+          : { autonomousWebFetch: options.autonomousWebFetch }),
         timeout: options.timeout,
         ...(options.maxTurnMs === undefined ? {} : { maxTurnMs: options.maxTurnMs }),
         maxTurns: options.maxTurns,

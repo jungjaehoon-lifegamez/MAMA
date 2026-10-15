@@ -211,6 +211,7 @@ export function createMemberSession(
       sandboxNetworkProxy: proxy,
       mcpServerPath: options.mcpServerPath,
       effort: options.effort,
+      autonomousWebFetch: options.autonomousWebFetch,
       timeout: options.timeout,
       maxTurnMs: options.maxTurnMs,
       maxTurns: options.maxTurns,

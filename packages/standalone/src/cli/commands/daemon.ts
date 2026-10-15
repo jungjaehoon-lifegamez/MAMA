@@ -44,6 +44,7 @@ import {
   type W1Config,
 } from '../../runtime/config.js';
 import { declareModelCache } from '../../runtime/model-cache.js';
+import { physicalReadPath } from '../../runtime/backend-security.js';
 import { sessionCredentialPath } from '../../runtime/session-credential.js';
 import { ensureMamaMcpConfig, resolveActionServerPath } from '../runtime/action-mcp-config.js';
 import type { SourceDelta } from '../../connectors/framework/polling-scheduler.js';
@@ -211,9 +212,10 @@ function stimulusDelivered(logger: DaemonLogger, row: MailboxRow, modelRunId: st
   );
 }
 
+/** Physical paths: a symlinked workspace must not reach the directories it is kept apart from. */
 function pathsOverlap(left: string, right: string): boolean {
   const inside = (parent: string, child: string): boolean => {
-    const local = relative(resolve(parent), resolve(child));
+    const local = relative(physicalReadPath(parent), physicalReadPath(child));
     return local === '' || (local !== '..' && !local.startsWith(`..${sep}`) && !isAbsolute(local));
   };
   return inside(left, right) || inside(right, left);
@@ -271,6 +273,11 @@ function pathsFor(configPath: string, config: W1Config): DaemonPaths {
   // The owner's native reads deny the raw stores (P6); a workspace there would be unreadable.
   if (pathsOverlap(workspaceDir, connectorsRoot)) {
     throw new Error(`agent.codex_cwd must not contain or sit inside ${connectorsRoot}`);
+  }
+  // The runtime directory holds the session credential and the running turn's web fetch mode;
+  // an agent that could write there could open web fetch for a turn with no person in it.
+  if (pathsOverlap(workspaceDir, runtimeRoot)) {
+    throw new Error(`agent.codex_cwd must not contain or sit inside ${runtimeRoot}`);
   }
   return {
     mamaRoot,
@@ -556,6 +563,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       connectors: OWNER_CONNECTORS,
       rawPath: paths.connectorsRoot,
       effort: config.agent.effort,
+      autonomousWebFetch: config.agent.autonomous_web_fetch ?? [],
       maxTurns: config.agent.max_turns,
       timeout: config.agent.timeout,
       maxTurnMs: config.agent.max_turn_ms,

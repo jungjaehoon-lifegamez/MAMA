@@ -16,7 +16,9 @@ export function ensureClaudeCallerHook(
   workspaceDir: string,
   deniedReadPaths: readonly string[] = [],
   networkProxy?: SandboxNetworkProxy,
-  tmpDir = join(resolve(workspaceDir), '.tmp')
+  tmpDir = join(resolve(workspaceDir), '.tmp'),
+  /** The running turn's WebFetch mode, outside the workspace; without it WebFetch is not gated. */
+  webFetchModePath?: string
 ): void {
   workspaceDir = resolve(workspaceDir);
   const directory = join(workspaceDir, '.claude');
@@ -24,7 +26,17 @@ export function ensureClaudeCallerHook(
   const command = `${quote(process.execPath)} ${quote(resolveCallerHookPath())}`;
   const settings = {
     hooks: {
-      PreToolUse: [{ matcher: 'mcp__mama__.*', hooks: [{ type: 'command', command }] }],
+      PreToolUse: [
+        { matcher: 'mcp__mama__.*', hooks: [{ type: 'command', command }] },
+        ...(webFetchModePath === undefined
+          ? []
+          : [
+              {
+                matcher: 'WebFetch',
+                hooks: [{ type: 'command', command: `${command} ${quote(webFetchModePath)}` }],
+              },
+            ]),
+      ],
     },
     sandbox: {
       enabled: true,

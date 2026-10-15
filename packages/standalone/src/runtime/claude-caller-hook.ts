@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import type { NativeToolCaller } from '@jungjaehoon/mama-core/action-contracts';
+import { readWebFetchTurnMode, webFetchDecision } from './web-fetch-scope.js';
 
 export const CLAUDE_CALLER_FIELD = '__mama_caller';
 
@@ -33,10 +34,31 @@ export function callerHookOutput(
   };
 }
 
+/** WebFetch in a turn with no person in it reaches only configured hosts (owner, 2026-10-15). */
+export function webFetchHookOutput(input: { tool_input?: { url?: unknown } }, modePath: string) {
+  const decision = webFetchDecision(readWebFetchTurnMode(modePath), input.tool_input?.url);
+  return decision.allow
+    ? {}
+    : {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: decision.reason,
+        },
+      };
+}
+
 if (require.main === module) {
   try {
+    const input = JSON.parse(readFileSync(0, 'utf8'));
+    const modePath = process.argv[2];
     process.stdout.write(
-      `${JSON.stringify(callerHookOutput(JSON.parse(readFileSync(0, 'utf8'))))}\n`
+      `${JSON.stringify(
+        input.tool_name === 'WebFetch'
+          ? // Without its mode file the hook cannot tell the turn, so it refuses.
+            webFetchHookOutput(input, modePath ?? '')
+          : callerHookOutput(input)
+      )}\n`
     );
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

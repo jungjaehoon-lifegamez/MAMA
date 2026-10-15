@@ -166,7 +166,10 @@ What can leave the machine from an owner turn, checked on the Claude backend on
 - Native web fetch and web search stay available; the owner's work needs them. They
   run outside the shell sandbox, so a requested URL and a search query leave the
   machine. Web fetch reads a page and sends no body, but text placed in a URL travels
-  with it, so each web fetch is a security event with its URL: appended to
+  with it. Choosing a page is a judgment, so a turn with no person in it (source changes,
+  record orders, reports, notices, personal jobs) may fetch only the hosts listed in
+  `agent.autonomous_web_fetch` (none by default); it keeps web search, and a turn where a
+  person speaks keeps web fetch (owner, 2026-10-15). Each web fetch is a security event with its URL: appended to
   `security-events.jsonl` and sent to the owner through `delivery.security_alerts`,
   grouped per host within a minute (owner, 2026-10-05). A search query goes to the search
   provider only and stays in `tool_traces`.
@@ -200,7 +203,8 @@ Each path out of the shell, and what sees it:
 | A script that connects through the proxy     | The proxy                             | A connection alert with its destination                            |
 | A subagent shell connection                  | The same sandbox and proxy            | The same alerts and the child run's tool trace                     |
 | An unrecognised client using a direct socket | The operating system sandbox          | The kernel log only                                                |
-| Native web fetch                             | The shell sandbox does not apply      | An alert with its URL, grouped by host, and a tool trace           |
+| Native web fetch in a turn a person speaks   | The shell sandbox does not apply      | An alert with its URL, grouped by host, and a tool trace           |
+| Native web fetch in a turn no person speaks  | Refused unless the host is configured | The refusal reason to the agent; a configured host as above        |
 | Native web search                            | The shell sandbox does not apply      | A tool trace; the query reaches the search provider                |
 
 The proxy sees a script's connection only when the client uses the proxy settings, and it does not

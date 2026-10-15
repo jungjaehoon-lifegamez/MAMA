@@ -5,6 +5,7 @@ import { memberClaudeTmpDir, ensureMemberClaudeTmpDir } from './member-paths.js'
 import { assertToolsOwnership, assertToolsReadable } from './tools-paths.js';
 import { findExecutable } from '../cli/launch-files.js';
 import { untrustedToolData } from '../utils/untrusted-content.js';
+import { webFetchTurnMode, writeWebFetchTurnMode } from './web-fetch-scope.js';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -136,6 +137,8 @@ export interface NativeSessionOptions {
   replayKeyFile?: string;
   /** The host's logging proxy for the Claude shell sandbox's network (W35.4). */
   sandboxNetworkProxy?: SandboxNetworkProxy;
+  /** Hosts a turn with no person in it may WebFetch (`agent.autonomous_web_fetch`). */
+  autonomousWebFetch?: readonly string[];
   pluginDir?: string;
   codexSandbox?: RuntimeSandbox;
   mcpConfigPath?: string;
@@ -433,12 +436,21 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
   if (options.toolsRoot) assertToolsReadable(options.toolsRoot, deniedReadPaths);
   if (options.backend === 'claude' && options.principal !== undefined)
     ensureMemberClaudeTmpDir(claudeTmpDir(options));
+  // Claude's WebFetch follows the running turn's mode; Codex has web search only.
+  const webFetchModePath =
+    options.backend === 'claude'
+      ? join(options.runtimeRoot, 'runtime', 'web-fetch-turn.json')
+      : undefined;
+  const fetchHosts = options.autonomousWebFetch ?? [];
+  if (webFetchModePath !== undefined)
+    writeWebFetchTurnMode(webFetchModePath, webFetchTurnMode(undefined, fetchHosts));
   if (options.backend === 'claude')
     ensureClaudeCallerHook(
       options.workspaceDir,
       deniedReadPaths,
       options.sandboxNetworkProxy,
-      claudeTmpDir(options)
+      claudeTmpDir(options),
+      webFetchModePath
     );
   const sessionKey = options.principal?.sessionKey ?? OWNER_RUNTIME_SESSION_KEY;
   const prepareAccess =
@@ -621,14 +633,30 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
         });
       }),
     resetSession: (sessionKey) => runnerRef.current!.resetSession(sessionKey),
-    runTurn: (content, request) => {
+    runTurn: async (content, request) => {
+      const access = request?.prepareAccess ?? prepareAccess;
       const nativeRequest = {
         ...(request ?? {}),
         sessionKey: request?.sessionKey ?? sessionKey,
         access: options.principal === undefined ? options.actionSurface.ownerAccess : undefined,
-        prepareAccess: request?.prepareAccess ?? prepareAccess,
+        // Access is prepared after the queue waits, when this turn is the workspace's running one.
+        prepareAccess:
+          webFetchModePath === undefined
+            ? access
+            : () => {
+                writeWebFetchTurnMode(
+                  webFetchModePath,
+                  webFetchTurnMode(request?.source, fetchHosts)
+                );
+                return access();
+              },
       } as NativeTurnRequest;
-      return runnerRef.current!.runTurn(content, nativeRequest);
+      try {
+        return await runnerRef.current!.runTurn(content, nativeRequest);
+      } finally {
+        if (webFetchModePath !== undefined)
+          writeWebFetchTurnMode(webFetchModePath, webFetchTurnMode(undefined, fetchHosts));
+      }
     },
     steer: (content, target, sessionKey) => runnerRef.current!.steer(content, target, sessionKey),
     stop: () => runnerRef.current!.stop(),

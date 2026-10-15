@@ -23,6 +23,11 @@ export interface W1AgentConfig {
   codex_cwd?: string;
   codex_sandbox?: RuntimeSandbox;
   tools?: { mcp_config?: string };
+  /**
+   * Hosts a turn with no person in it may WebFetch; `*` allows every host (owner, 2026-10-15).
+   * Turns where a person speaks keep WebFetch; every turn keeps WebSearch.
+   */
+  autonomous_web_fetch?: string[];
 }
 
 export interface W1TelegramConfig {
@@ -148,6 +153,7 @@ const AGENT_KEYS = [
   'codex_cwd',
   'codex_sandbox',
   'tools',
+  'autonomous_web_fetch',
 ] as const;
 
 function object(value: unknown, path: string): Record<string, unknown> {
@@ -285,6 +291,19 @@ function parseAgent(value: unknown, home: string, state: ParseState): W1AgentCon
   }
   const codexHome = optionalText(raw.codex_home, 'agent.codex_home');
   const codexCwd = optionalText(raw.codex_cwd, 'agent.codex_cwd');
+  let fetchHosts: string[] | undefined;
+  if (raw.autonomous_web_fetch !== undefined) {
+    if (!Array.isArray(raw.autonomous_web_fetch))
+      throw new ConfigError('agent.autonomous_web_fetch must be a list of hosts');
+    fetchHosts = raw.autonomous_web_fetch.map((host, index) => {
+      const value = typeof host === 'string' ? host.trim().toLowerCase() : '';
+      if (value !== '*' && !/^[a-z0-9-]+(?:\.[a-z0-9-]+)*$/.test(value))
+        throw new ConfigError(
+          `agent.autonomous_web_fetch[${index}] must be a host such as example.com, or *`
+        );
+      return value;
+    });
+  }
   return {
     backend: backend as RuntimeBackend,
     model: text(raw.model, 'agent.model'),
@@ -299,6 +318,7 @@ function parseAgent(value: unknown, home: string, state: ParseState): W1AgentCon
     ...(codexCwd === undefined ? {} : { codex_cwd: configPath(codexCwd, home) }),
     ...(sandbox === undefined ? {} : { codex_sandbox: sandbox as RuntimeSandbox }),
     ...(tools === undefined ? {} : { tools }),
+    ...(fetchHosts === undefined ? {} : { autonomous_web_fetch: fetchHosts }),
   };
 }
 
