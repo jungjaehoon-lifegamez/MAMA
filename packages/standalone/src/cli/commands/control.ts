@@ -13,6 +13,8 @@ interface ControlOptions {
   pollMs?: number;
   /** How long `mama stop` waits for the install to be released. */
   timeoutMs?: number;
+  /** How long a released install must stay free before `mama stop` reports it stopped. */
+  settleMs?: number;
 }
 
 function localTime(ms: unknown): string {
@@ -124,7 +126,12 @@ async function waitForRelease(
   let reported = started;
   for (;;) {
     const holder = lockHolder(paths);
-    if (holder === null) return { kind: 'released' };
+    if (holder === null) {
+      // A supervisor may start a replacement after a pause; the install must stay free a moment.
+      await new Promise((resolve) => setTimeout(resolve, options.settleMs ?? 3_000));
+      const next = lockHolder(paths);
+      return next === null ? { kind: 'released' } : { kind: 'replaced', holder: next };
+    }
     if (holder.nonce !== stopping.nonce) return { kind: 'replaced', holder };
     if (Date.now() - started >= timeoutMs) return { kind: 'timeout', holder };
     if (Date.now() - reported >= 30_000) {
@@ -162,22 +169,19 @@ export async function runStop(
   const write = options.write ?? ((line: string) => console.log(line));
   const holder = lockHolder(installControlPaths(options));
   const service = launchdService();
+  // A loaded LaunchAgent restarts its job (KeepAlive), so it is unloaded first, whichever
+  // process holds the install now.
+  if (service.loaded) bootoutLaunchdService();
+  const unloaded = service.loaded ? ' (launchd service unloaded)' : '';
   if (holder === null) {
-    if (service.loaded) {
-      // Loaded but holding nothing: unload it so it does not start again.
-      bootoutLaunchdService();
-      write('stopped (launchd service unloaded)');
-      return 0;
-    }
-    write('already stopped');
+    write(service.loaded ? `stopped${unloaded}` : 'already stopped');
     return 0;
   }
   if (holder.command !== 'daemon') {
-    write(`not stopped: ${holderLine(holder)} and stops when it finishes`);
+    write(`not stopped${unloaded}: ${holderLine(holder)} and stops when it finishes`);
     return 1;
   }
   if (service.loaded && service.pid === holder.pid) {
-    bootoutLaunchdService();
     return finish(
       await waitForRelease(holder, options, write),
       write,
@@ -186,13 +190,13 @@ export async function runStop(
   }
   const reply = await askDaemon('stop', options);
   if (reply.state === 'stopped') {
-    write(`not stopped: ${holderLine(holder)} does not answer on its control socket`);
+    write(`not stopped${unloaded}: ${holderLine(holder)} does not answer on its control socket`);
     return 1;
   }
   if (reply.reply.ok !== true) {
-    write(`not stopped: ${String(reply.reply.error)}`);
+    write(`not stopped${unloaded}: ${String(reply.reply.error)}`);
     return 1;
   }
   write('stopping');
-  return finish(await waitForRelease(holder, options, write), write, 'stopped');
+  return finish(await waitForRelease(holder, options, write), write, `stopped${unloaded}`);
 }

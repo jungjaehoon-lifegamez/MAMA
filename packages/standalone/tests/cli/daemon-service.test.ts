@@ -149,7 +149,7 @@ describe('mama stop', () => {
     });
     const lines: string[] = [];
     const write = (line: string) => lines.push(line);
-    expect(await runStop([], { configPath, write, pollMs: 10 })).toBe(0);
+    expect(await runStop([], { configPath, write, pollMs: 10, settleMs: 5 })).toBe(0);
     expect(lines).toEqual(['stopping', 'stopped']);
     lines.length = 0;
     expect(await runStop([], { configPath, write })).toBe(0);
@@ -165,9 +165,9 @@ describe('mama stop', () => {
       next = acquireInstallLock(daemonControlPaths(root), 'daemon');
     });
     const lines: string[] = [];
-    expect(await runStop([], { configPath, write: (line) => lines.push(line), pollMs: 10 })).toBe(
-      1
-    );
+    expect(
+      await runStop([], { configPath, write: (line) => lines.push(line), pollMs: 10, settleMs: 5 })
+    ).toBe(1);
     expect(lines[1]).toMatch(/^stopped, but daemon \(pid \d+\) holds the install now/);
     await daemon.server.close();
     next?.release();
@@ -184,6 +184,7 @@ describe('mama stop', () => {
         write: (line) => lines.push(line),
         pollMs: 5,
         timeoutMs: 30,
+        settleMs: 5,
       })
     ).toBe(1);
     expect(lines[1]).toMatch(/^not stopped yet: daemon \(pid \d+\) holds the install/);
@@ -224,13 +225,16 @@ describe('mama stop', () => {
       return { status: 1, stdout: '', stderr: '', signal: null, pid: 1, output: [] };
     }) as never);
     const lines: string[] = [];
-    expect(await runStop([], { configPath, write: (line) => lines.push(line), pollMs: 5 })).toBe(0);
+    expect(
+      await runStop([], { configPath, write: (line) => lines.push(line), pollMs: 5, settleMs: 5 })
+    ).toBe(0);
     expect(lines).toEqual([
       'stopped (launchd service unloaded; launchctl bootstrap starts it again)',
     ]);
     expect(vi.mocked(spawnSync).mock.calls.some(([, args]) => args?.[0] === 'bootout')).toBe(true);
 
-    // A daemon started in a terminal while the LaunchAgent runs another pid: ask it directly.
+    // A daemon started in a terminal while the LaunchAgent runs another pid: the agent is unloaded
+    // so it cannot start a replacement, and the terminal daemon is asked directly.
     vi.mocked(spawnSync).mockReset();
     vi.mocked(spawnSync).mockImplementation(((command: string, args: string[]) =>
       command === 'launchctl' && args[0] === 'print'
@@ -242,7 +246,7 @@ describe('mama stop', () => {
             pid: 1,
             output: [],
           }
-        : { status: 1, stdout: '', stderr: '', signal: null, pid: 1, output: [] }) as never);
+        : { status: 0, stdout: '', stderr: '', signal: null, pid: 1, output: [] }) as never);
     const terminal = acquireInstallLock(paths, 'daemon');
     const server = await startDaemonControl(paths, {
       status: () => ({}),
@@ -251,8 +255,10 @@ describe('mama stop', () => {
       },
     });
     lines.length = 0;
-    expect(await runStop([], { configPath, write: (line) => lines.push(line), pollMs: 5 })).toBe(0);
-    expect(lines).toEqual(['stopping', 'stopped']);
-    expect(vi.mocked(spawnSync).mock.calls.some(([, args]) => args?.[0] === 'bootout')).toBe(false);
+    expect(
+      await runStop([], { configPath, write: (line) => lines.push(line), pollMs: 5, settleMs: 5 })
+    ).toBe(0);
+    expect(lines).toEqual(['stopping', 'stopped (launchd service unloaded)']);
+    expect(vi.mocked(spawnSync).mock.calls.some(([, args]) => args?.[0] === 'bootout')).toBe(true);
   });
 });
