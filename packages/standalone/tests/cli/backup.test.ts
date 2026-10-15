@@ -406,6 +406,13 @@ describe('mama backup', () => {
     symlinkSync(elsewhere, join(installed.root, 'connectors', 'linked'));
     await expect(runBackup([], options)).rejects.toThrow(/linked is a symlink/);
     rmSync(join(installed.root, 'connectors', 'linked'));
+    // A linked logs/ is fine until logs are asked for.
+    rmSync(join(installed.root, 'logs'), { recursive: true });
+    symlinkSync(elsewhere, join(installed.root, 'logs'));
+    await expect(runBackup([], options)).resolves.toMatch(/mama-backup-/);
+    await expect(
+      runBackup(['--logs'], { ...options, now: () => new Date('2026-10-16T06:00:00Z') })
+    ).rejects.toThrow(/logs is a symlink/);
     file(join(installed.root, 'connectors.json'), '{ "chatwork": ');
     await expect(runBackup([], options)).rejects.toThrow(/connectors\.json cannot be parsed/);
   });

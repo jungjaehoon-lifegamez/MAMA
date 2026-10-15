@@ -270,7 +270,10 @@ export function planBackup(
   ]);
   // A kept file or folder that is a link would be archived as the link alone.
   const links = [
-    ...[...rootFiles, 'connectors', 'downloads', 'runtime', 'logs'].map((name) => join(root, name)),
+    // Only what the walk keeps: logs/ without --logs is never read, linked or not.
+    ...[...rootFiles, ...rootDirs]
+      .filter((name) => name !== workspaceTop)
+      .map((name) => join(root, name)),
     ...(existsSync(join(root, 'connectors'))
       ? readdirSync(join(root, 'connectors')).map((name) => join(root, 'connectors', name))
       : []),
