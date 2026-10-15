@@ -143,6 +143,11 @@ reports, notifications and security alerts. See [Sources](docs/guides/connectors
   agent can read but not change.
 - Messages, files and pages from other people reach the agent marked as untrusted evidence, never
   as instructions.
+- Work that runs with no one in the conversation (source changes and reports, and the notices and
+  scheduled jobs of people with the owner role) can search the web but opens pages only from sites
+  you list; other members have no web tools. When you ask, the agent on the Claude
+  backend can open any page, and you are told which sites it opened, grouped per site within a
+  minute. The Codex backend searches the web but does not open pages.
 - The viewer answers only on your machine (`127.0.0.1`) by default and serves read-only pages.
 
 **Reaching the viewer from outside.** If you expose it through a tunnel:
