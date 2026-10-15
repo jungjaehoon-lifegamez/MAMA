@@ -164,8 +164,11 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    owner's DM answered the man-hours and price question from chats, Trello and the Drive sheet (#492), the
    owner accepted the estimates, and C1 was answered from the ledger; `document.render` works under the
    daemon from #494. Members without the owner role are not planned for now (owner, 2026-10-15), so their
-   group check waits. Open owner decision: web tools in owner-role notice turns (Codex security
-   advisory on #483). Owner actions that change common state (management, enrollment, the time zone,
+   group check waits. Later the same day: a DM's PPTX was rendered, checked and sent, a personal job ran, C1
+   was answered from the ledger, and #493–#499 went live (code_act errors, renders, delivery paths, autonomous
+   web fetch limited to configured hosts by owner decision, DM self-facts, numpy/pandas/matplotlib in the
+   toolkit, docs); release PR #500 (mama-os 0.77.0) waits for the owner's go-ahead to publish. Open owner decision: web tools in owner-role notice turns (Codex security
+   advisory on #483), decided 2026-10-15: autonomous turns fetch only configured hosts (#496). Owner actions that change common state (management, enrollment, the time zone,
    common skills) now need the common channel or the person's DM, as owner policy did (#491, live from
    2026-10-15 00:47 KST, [check](checks.md#owner-actions-change-common-state-only-from-the-common-channel-491-2026-10-15)).
    The room enrollment floor in core observation visibility waits with them.
