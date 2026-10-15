@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { backendEnvironment, normalizeReadPaths } from '../runtime/backend-security.js';
 import { runCommand, type CommandRunner } from './command-runner.js';
@@ -37,6 +37,9 @@ export function officeSandboxProfile(
       : []),
     // Every agent denies the host render root. Only this renderer may read its private child.
     `(allow file-read* (subpath ${quoted(temp)}))`,
+    // LibreOffice stats that child's parent, the render root; denied, it waits until the timeout
+    // (measured 2026-10-15). Metadata of the root alone lists no other render.
+    `(allow file-read-metadata (literal ${quoted(dirname(temp))}))`,
   ].join('\n');
 }
 

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `document.render` finishes again under the daemon. Its sandbox denies the host render root, as
+  every agent's does; LibreOffice stats that root and waited until the two-minute timeout, so
+  every office render failed with `sandbox-exec timed out`. The render may now read the root's
+  metadata only.
 - An owner's DM can open a Google Drive file, such as a sheet: `drive.download` saves it in that
   person's own downloads, where the DM reads it. The DM found the file with `drive.read` but could
   not fetch it.

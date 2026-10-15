@@ -19,6 +19,7 @@ import { documentActionRegistrations } from '../../src/api/document-actions.js';
 import { defaultToolsRoot } from '../../src/cli/commands/tools.js';
 import { MEMBER_ACTIONS, OWNER_ACTIONS } from '../../src/runtime/action-surface.js';
 import type { ActionContext } from '@jungjaehoon/mama-core';
+import { HOST_DOCUMENT_RENDER_ROOT } from '../../src/runtime/backend-security.js';
 
 let root: string;
 let workspace: string;
@@ -147,6 +148,8 @@ describe('host document renderer', () => {
       expect(staged).toMatch(new RegExp(`^${parent}/mama-office-render-`));
       expect(statSync(parent).mode & 0o777).toBe(0o700);
       expect(args[1]).toContain(`(allow file-read* (subpath ${JSON.stringify(staged)}))`);
+      // LibreOffice stats the denied render root; only its metadata is readable.
+      expect(args[1]).toContain(`(allow file-read-metadata (literal ${JSON.stringify(parent)}))`);
       expect(readFileSync(join(staged!, 'document.doc'), 'utf8')).toBe('legacy document');
       return host.run(command, args, options);
     };
@@ -501,10 +504,13 @@ it.runIf(Boolean(liveSoffice))(
     const smoke = join(__dirname, '../../toolkit/smoke.py');
     const env = { ...process.env, PATH: `${join(toolkit.versionDir, 'bin')}:${process.env.PATH}` };
     await runCommand('python3', ['-I', smoke, 'create', join(workspace, 'smoke.pptx')], { env });
-    const result = await createDocumentRenderer({ toolsRoot, soffice: liveSoffice }).render(
-      workspace,
-      'smoke.pptx'
-    );
+    // The daemon denies HOME and every render's root to each render, as it does to agents.
+    const deniedReadPaths = [homedir(), HOST_DOCUMENT_RENDER_ROOT];
+    const result = await createDocumentRenderer({
+      toolsRoot,
+      soffice: liveSoffice,
+      deniedReadPaths,
+    }).render(workspace, 'smoke.pptx');
     expect(result.fonts.flat().some((font) => /Noto.*CJK/i.test(font))).toBe(true);
     await runCommand('python3', ['-I', smoke, 'check', join(workspace, result.pdf)], { env });
     // Pages just under the per-page limit still stop at the document's pixel budget.
@@ -519,7 +525,10 @@ it.runIf(Boolean(liveSoffice))(
       { env }
     );
     await expect(
-      createDocumentRenderer({ toolsRoot, soffice: liveSoffice }).render(workspace, 'large.pdf')
+      createDocumentRenderer({ toolsRoot, soffice: liveSoffice, deniedReadPaths }).render(
+        workspace,
+        'large.pdf'
+      )
     ).rejects.toThrow(/200 megapixel/);
   },
   60_000
