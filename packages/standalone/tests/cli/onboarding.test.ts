@@ -241,6 +241,10 @@ describe('owner-only onboarding', () => {
         expect(statSync(join(root, file)).mode & 0o777).toBe(0o600);
       }
       expect(statSync(join(root, 'start.sh')).mode & 0o777).toBe(0o700);
+      // The core logger reads only MAMA_LOG_LEVEL, so config.yaml's level is exported for it.
+      expect(readFileSync(join(root, 'start.sh'), 'utf8')).toContain(
+        "export MAMA_LOG_LEVEL='INFO'"
+      );
       expect(existsSync(join(home, 'Library', 'LaunchAgents', 'com.mama.server.plist'))).toBe(
         false
       );
@@ -355,7 +359,7 @@ describe('owner-only onboarding', () => {
       for (const value of [...Object.values(fixtureSecrets), generatedToken])
         expect(text.includes(value)).toBe(false);
     }
-    expect(p.output.join('\n')).toContain('launchctl bootstrap');
+    expect(p.output.join('\n')).toContain('mama service start');
     expect(p.output.join('\n')).toContain('gws auth login');
     expect(p.answers).toEqual([]);
     expect(p.hidden).toEqual([]);

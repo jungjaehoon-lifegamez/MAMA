@@ -90,18 +90,20 @@ start, see [People and their DMs](../guides/people.md).
 
 ## Start one daemon
 
-On macOS, if you chose to write the launch agent, start it after backend login:
+After backend login, write the service files and start the service:
 
 ```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.mama.server.plist
+mama service install
+mama service start
 mama status
-curl -fsS http://127.0.0.1:3847/health
 ```
 
-Otherwise run `~/.mama/start.sh` in a terminal. It runs the daemon in the foreground
-and appends output to `~/.mama/logs/daemon.log`. Setup writes launch files; it does
-not start or authenticate the service. Avoid starting a second daemon alongside
-launchd. `mama status` reports only `running` or `stopped`.
+On macOS this is a LaunchAgent; on Linux a systemd user unit, and `mama service install
+--enable-linger` keeps it running after you log out. Either restarts the daemon after a failure and
+leaves it stopped after `mama stop`. `mama status` shows the daemon's boot stage, running turns,
+connectors and last error. Without a service manager, run `~/.mama/start.sh` in a terminal; it
+appends output to `~/.mama/logs/daemon.log`. Only one daemon runs per install: a second one is
+refused.
 
 ## Confirm the first useful answer
 

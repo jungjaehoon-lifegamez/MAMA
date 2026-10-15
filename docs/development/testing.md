@@ -75,11 +75,12 @@ changes and the Telegram receipt. Compare the actual answer, report or artifact 
 For correction work, repeat a related request in a fresh session and after restart, and test an
 unrelated request for scope spillover.
 
-launchd uses KeepAlive, so killing the process is not stopping the daemon. Before modifying
-product state under `~/.mama`, stop its service:
+A crashed daemon is restarted by its service, so killing the process is not stopping it. Before
+modifying product state under `~/.mama`, stop it and check that nothing holds the install:
 
 ```bash
-launchctl bootout gui/$(id -u)/com.mama.server
+mama stop
+mama status
 ```
 
 Check the `DAEMON_JS` target in `~/.mama/start.sh` to establish which build will run. MAMA's

@@ -308,9 +308,13 @@ describe('daemon boot holds the install', () => {
     await vi.waitFor(async () =>
       expect((await askDaemon('status', { configPath })).state).toBe('running')
     );
+    const previousExit = process.exitCode;
     process.emit('SIGTERM');
     await running;
     expect(lockHolder(daemonControlPaths(home))).toBeNull();
+    // A daemon stopped by a signal exits as a killed one would, so its service restarts it.
+    expect(process.exitCode).toBe(143);
+    process.exitCode = previousExit;
 
     let release!: () => void;
     const held = new Promise<void>((resolve) => {
@@ -329,6 +333,8 @@ describe('daemon boot holds the install', () => {
     release();
     await expect(during).resolves.toBeUndefined();
     expect(lockHolder(daemonControlPaths(home))).toBeNull();
+    expect(process.exitCode).toBe(130);
+    process.exitCode = previousExit;
   });
 
   it('unwinds a boot stopped before its first stage and releases the install', async () => {

@@ -30,6 +30,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   two minutes until the install is released, and says when something else holds it or started in
   its place.
 - A stop during boot unwinds what has started; signals were handled only after boot.
+- `mama service install|start|stop|restart|status|uninstall` writes and runs the service: a
+  LaunchAgent on macOS, a systemd user unit on Linux (`--enable-linger` keeps it running after
+  logout). Both restart the daemon only after a failure, so a stop or a refused second daemon stays
+  stopped; the LaunchAgent used to restart on every exit. The unit signals the daemon alone
+  (`KillMode=mixed`), so it stops its children in order. `install` regenerates `start.sh`, carries
+  its `export` lines over verbatim, names what else it does not reproduce and every change to what
+  the daemon runs (exec target, PATH, log level), keeps the replaced files under `runtime/`, and
+  refuses to replace a `start.sh` that mama did not write without `--replace`, or to write one when
+  the backend cannot be found. `start` starts a loaded LaunchAgent whose daemon has exited; on
+  Linux `mama stop` and `mama status` go through the unit.
+- A daemon stopped by a signal exits 128 plus the signal's number (143 for SIGTERM), as a killed
+  process would, so its service brings it back; a stop asked for through `mama stop` exits 0.
+- The generated `start.sh` exports `MAMA_LOG_LEVEL` from `config.yaml`'s `logging.level`. The core
+  logger reads only that variable, so a fresh install logged at `ERROR` whatever the config said.
 
 ## [0.77.0] - 2026-10-15
 

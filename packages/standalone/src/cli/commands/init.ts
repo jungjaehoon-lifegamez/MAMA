@@ -389,6 +389,7 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
   const script = startScript({
     home,
     viewer,
+    logLevel: config.logging.level,
     nodePath: options.nodePath ?? process.execPath,
     cliPath: options.cliPath ?? join(__dirname, '..', 'index.js'),
     executablePaths: [backendPath, gwsPath].filter((path): path is string => path !== undefined),
@@ -430,10 +431,7 @@ export async function runInit(options: InitOptions = {}): Promise<void> {
     prompt.write(
       'Configure your tunnel to the local viewer and protect its hostname with the Access application above.'
     );
-  if (installLaunchAgent)
-    prompt.write(
-      `After login, start with: launchctl bootstrap gui/$(id -u) ${shellQuote(plistPath)}`
-    );
+  if (installLaunchAgent) prompt.write('After login, start with: mama service start');
   else prompt.write(`After login, start with: ${shellQuote(join(root, 'start.sh'))}`);
   // Host provisioning is last; a failure leaves setup available for mama tools install.
   if (!config.tools_root) {
