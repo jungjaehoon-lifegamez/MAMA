@@ -152,9 +152,10 @@ export function planConnectors(options: {
   configPath: string;
   configResult?: ConnectorConfigLoadResult;
   wikiRoot?: string;
+  onIgnored?: (names: readonly string[]) => void;
 }): ConnectorPlan {
   const config = configurationOrThrow(
-    options.configResult ?? loadConnectorConfig(options.configPath)
+    options.configResult ?? loadConnectorConfig(options.configPath, options.onIgnored)
   );
   const supported = new Set<string>(LOADABLE_CONNECTORS);
   const enabledConnectorNames = config.enabledNames.filter((name) => supported.has(name));

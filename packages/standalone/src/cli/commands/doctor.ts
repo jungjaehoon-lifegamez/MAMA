@@ -18,8 +18,17 @@ const ERROR_CODES = new Set(Object.keys(constants.errno));
 const CONNECTORS = new Set<string>(LOADABLE_CONNECTORS);
 const STAGES = new Set<string>(BOOT_STAGES);
 
-function logTail(path: string): string[] {
+/** The log's last lines; an unreadable log gives none (the logs check names the fault). */
+function logTail(path: string): string[] | null {
   if (!existsSync(path)) return [];
+  try {
+    return readTail(path);
+  } catch {
+    return null;
+  }
+}
+
+function readTail(path: string): string[] {
   const size = statSync(path).size;
   const length = Math.min(size, LOG_TAIL_BYTES);
   const buffer = Buffer.alloc(length);
@@ -79,9 +88,7 @@ function errorShape(line: string): string {
   const connector = /\bconnector ([a-z][a-z0-9-]*)\b/.exec(line)?.[1];
   const codes = [
     ...new Set(
-      (line.match(/\b[A-Z][A-Z0-9_]{2,}\b/g) ?? []).filter(
-        (word) => ERROR_CODES.has(word) || /^ERR_[A-Z0-9_]+$/.test(word)
-      )
+      (line.match(/\b[A-Z][A-Z0-9_]{2,}\b/g) ?? []).filter((word) => ERROR_CODES.has(word))
     ),
   ];
   const http = /\b(?:HTTP|status) ([1-5]\d\d)\b/.exec(line)?.[1];
@@ -104,7 +111,8 @@ export function doctorReport(checks: readonly Check[], options: DoctorOptions = 
   const home = options.home ?? homedir();
   const configPath = options.configPath ?? join(home, '.mama', 'config.yaml');
   const root = dirname(configPath);
-  const lines = logTail(join(root, 'logs', 'daemon.log'));
+  const tail = logTail(join(root, 'logs', 'daemon.log'));
+  const lines = tail ?? [];
   const lastBoot = lines
     .map((line, index) => (/\bboot stage=config\b/.test(line) ? index : -1))
     .filter((index) => index >= 0)
@@ -133,10 +141,14 @@ export function doctorReport(checks: readonly Check[], options: DoctorOptions = 
     'last boot:',
     ...(bootStages.length > 0 ? bootStages.map((stage) => `  ${stage}`) : ['  (none in the log)']),
     '',
-    `recent errors (last ${LOG_TAIL_BYTES / 1024 / 1024} MB of daemon.log):`,
-    ...(errors.size > 0
-      ? [...errors].map(([shape, count]) => `  ${count}x ${shape}`)
-      : ['  (none)']),
+    tail === null
+      ? 'recent errors: (daemon.log cannot be read)'
+      : `recent errors (last ${LOG_TAIL_BYTES / 1024 / 1024} MB of daemon.log):`,
+    ...(tail === null
+      ? []
+      : errors.size > 0
+        ? [...errors].map(([shape, count]) => `  ${count}x ${shape}`)
+        : ['  (none)']),
     '',
   ].join('\n');
 }

@@ -169,7 +169,13 @@ export async function installService(
     }
     const kept = startPathEntries({ nodePath, executablePaths });
     // $HOME in the old PATH is the same folder the new one names in full.
-    const oldPath = reading.path === null ? [] : startPathValue(reading.path, home);
+    let oldPath: string[] = [];
+    try {
+      oldPath = reading.path === null ? [] : startPathValue(reading.path, home);
+    } catch {
+      // A broken quote is what --replace repairs; say so instead of refusing.
+      write('the old PATH cannot be read (its quoting is broken)');
+    }
     const lost = oldPath.filter((entry) => !kept.includes(entry));
     if (lost.length > 0) write(`PATH no longer includes: ${lost.join(', ')}`);
     if (

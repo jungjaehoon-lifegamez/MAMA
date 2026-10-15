@@ -1,10 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runDoctor } from '../../src/cli/commands/doctor.js';
+import { loadConnector } from '../../src/connectors/index.js';
 import { compareVersions, probeBackend } from '../../src/cli/runtime/backend-probe.js';
 import { runDiagnostics, type Check } from '../../src/cli/runtime/diagnostics.js';
 import { systemdUnitPath } from '../../src/cli/runtime/systemd-service.js';
@@ -314,7 +323,7 @@ describe('mama doctor', () => {
         ical: {
           enabled: true,
           pollIntervalMinutes: 30,
-          channels: { family: { role: 'hub', feedName: 'Family Calendar' } },
+          channels: { family: { role: 'hub', feedName: 'fixture-feed-label' } },
           auth: { type: 'none' },
         },
       },
@@ -381,8 +390,8 @@ describe('mama doctor', () => {
       })
     );
     expect(by.daemon).toMatchObject({
-      status: 'fail',
-      detail: 'stuck at boot stage owner_runtime',
+      status: 'warn',
+      detail: 'at boot stage owner_runtime for 10 min',
     });
     const checks = await runDiagnostics({
       ...base(installed),
@@ -467,7 +476,7 @@ describe('mama doctor', () => {
     expect(by.sandbox).toMatchObject({ status: 'fail', detail: "socat not on the service's PATH" });
   });
 
-  it('starts each source in the service environment, as boot does, unless offline', async () => {
+  it('starts each source in the service environment and asks whether its credentials work', async () => {
     const installed = install({
       auth: { MAMA_CHATWORK_TOKEN: 'from-auth-env' },
       connectors: {
@@ -480,17 +489,52 @@ describe('mama doctor', () => {
         kagemusha: { enabled: true, pollIntervalMinutes: 5, channels: {}, auth: { type: 'none' } },
       },
     });
+    // Chatwork stays off the network: it reports the token it sees at start and is refused.
+    const seen: (string | undefined)[] = [];
+    const loadSource: typeof loadConnector = async (name, config, paths) =>
+      name === 'chatwork'
+        ? ({
+            getAuthRequirements: () => [
+              { type: 'token', tokenName: 'MAMA_CHATWORK_TOKEN', description: '' },
+            ],
+            init: async () => {
+              seen.push(process.env.MAMA_CHATWORK_TOKEN);
+            },
+            authenticate: async () => false,
+            dispose: async () => {},
+          } as never)
+        : loadConnector(name, config, paths);
     expect(process.env.MAMA_CHATWORK_TOKEN).toBeUndefined();
-    let by = byName(await runDiagnostics(base(installed)));
-    // Chatwork reads its token from the daemon's environment, which auth.env provides.
-    expect(by['source chatwork']).toBeUndefined();
+    let by = byName(await runDiagnostics({ ...base(installed), loadSource }));
+    expect(seen).toEqual(['from-auth-env']);
+    expect(process.env.MAMA_CHATWORK_TOKEN).toBeUndefined();
+    expect(by['source chatwork']).toMatchObject({
+      status: 'fail',
+      detail: 'starts, but its credentials or sign-in are refused, so its polls fail',
+      fix: 'mama secret set MAMA_CHATWORK_TOKEN',
+    });
     expect(by['source kagemusha']).toMatchObject({
       status: 'fail',
       detail: 'does not start; boot stops at the connectors stage',
     });
-    expect(process.env.MAMA_CHATWORK_TOKEN).toBeUndefined();
-    by = byName(await runDiagnostics({ ...base(installed), offline: true }));
+    by = byName(await runDiagnostics({ ...base(installed), loadSource, offline: true }));
     expect(by['source kagemusha']).toBeUndefined();
+    expect(by['source chatwork']).toBeUndefined();
+  });
+
+  it('fails a generated start.sh that no longer loads auth.env', async () => {
+    const installed = install();
+    const script = join(installed.root, 'start.sh');
+    writeFileSync(
+      script,
+      readFileSync(script, 'utf8')
+        .split('\n')
+        .filter((line) => !line.endsWith("auth.env'"))
+        .join('\n')
+    );
+    const by = byName(await runDiagnostics(base(installed)));
+    expect(by['start.sh']).toMatchObject({ status: 'fail' });
+    expect(by.telegram.status).toBe('fail');
   });
 
   it('reads auth.env as sh does: comments pass, broken quoting is a failure, not a crash', async () => {
@@ -507,6 +551,15 @@ describe('mama doctor', () => {
       context: 'line 1: unterminated single quote',
     });
     expect(by.telegram.status).toBe('fail');
+    // Sourced under set -e, a line that is not an assignment runs as a command.
+    writeFileSync(
+      join(installed.root, 'auth.env'),
+      `export MAMA_TELEGRAM_TOKEN='${TOKEN}'\nbroken command\n`
+    );
+    expect(byName(await runDiagnostics(base(installed)))['auth.env']).toMatchObject({
+      status: 'fail',
+      context: 'line 2 is not an assignment',
+    });
   });
 
   it('reports a replay or backfill holding the install, not a stuck daemon', async () => {
@@ -540,14 +593,26 @@ describe('mama doctor', () => {
     });
   });
 
+  it('survives a daemon.log it cannot read', async () => {
+    const installed = install();
+    const log = join(installed.root, 'logs', 'daemon.log');
+    writeFileSync(log, 'boot stage=config\n');
+    chmodSync(log, 0o000);
+    const lines: string[] = [];
+    await runDoctor(['--report'], { ...base(installed), write: (line) => lines.push(line) });
+    chmodSync(log, 0o600);
+    expect(lines.join('\n')).toContain('recent errors: (daemon.log cannot be read)');
+    expect(lines.join('\n')).toContain('warn logs: daemon.log cannot be read');
+  });
+
   it('writes a report from names and codes only, whatever the log and the install hold', async () => {
     const installed = install({
-      config: { 'Client Project Alpha': true },
+      config: { fixture_unknown_setting: true },
       connectors: {
         ical: {
           enabled: true,
           pollIntervalMinutes: 30,
-          channels: { family: { role: 'hub', feedName: 'Family Calendar' } },
+          channels: { family: { role: 'hub', feedName: 'fixture-feed-label' } },
           auth: { type: 'none' },
         },
       },
@@ -555,17 +620,18 @@ describe('mama doctor', () => {
     const secrets = [
       TOKEN,
       '9876543210',
-      'Confidential Client Name',
-      'Family Calendar',
+      'fixture-cell-text',
+      'fixture-feed-label',
       'MAMA_ICAL_URL_FAMILY',
-      'F07ABCDEF',
-      'C05XYZ',
-      '/Volumes/ClientDrive',
+      'fixture-file-ref',
+      'fixture-room-ref',
+      '/Volumes/fixture-volume',
       'user:pass',
       'principal_5b55fixture',
-      'Client Project Alpha',
+      'fixture_unknown_setting',
       'Urgent',
       'client_name',
+      'ERR_FIXTURE_NAME',
       'members-outside',
       installed.home,
     ];
@@ -574,15 +640,16 @@ describe('mama doctor', () => {
       [
         'boot stage=config',
         'boot stage=isolation',
-        'boot stage=connectors failed error=Error: iCal feed Family Calendar has no secret',
+        'boot stage=connectors failed error=Error: iCal feed fixture-feed-label has no secret',
         'turn failed error=Error: boot stage=client_name failed earlier',
-        '[PollingScheduler] poll failed for connector sheets Error: duplicate row identity Confidential Client Name',
-        'iCal feed Family Calendar has no MAMA_ICAL_URL_FAMILY secret',
-        'Slack file F07ABCDEF does not belong to observation room C05XYZ',
-        'turn failed reason=Claude CLI exited 1: /Volumes/ClientDrive/plan.pdf ENOENT',
+        '[PollingScheduler] poll failed for connector sheets Error: duplicate row identity fixture-cell-text',
+        'iCal feed fixture-feed-label has no MAMA_ICAL_URL_FAMILY secret',
+        'Slack file fixture-file-ref does not belong to observation room fixture-room-ref',
+        'turn failed reason=Claude CLI exited 1: /Volumes/fixture-volume/plan.pdf ENOENT',
         `[Telegram] send failed to ${CHAT} with token ${TOKEN} via https://user:pass@api.example.test/x status 502`,
         'principal_5b55fixture claimed input failed',
         '[Urgent] continued message line that failed',
+        'reply failed: ERR_FIXTURE_NAME ECONNRESET',
       ].join('\n')
     );
     const lines: string[] = [];
@@ -599,6 +666,7 @@ describe('mama doctor', () => {
     expect(report).toContain('boot stage=connectors failed');
     expect(report).toContain('connector sheets');
     expect(report).toContain('ENOENT');
+    expect(report).toContain('ECONNRESET');
     expect(report).toContain('HTTP 502');
     expect(report).toContain('fail source ical: 1 secret(s) it needs are not set');
     for (const secret of secrets) expect(report).not.toContain(secret);

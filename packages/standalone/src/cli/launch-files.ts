@@ -164,6 +164,8 @@ export interface StartScriptReading {
   readonly exec: string | null;
   /** Other lines with an effect (assignments, commands) that the new script does not have. */
   readonly notReproduced: string[];
+  /** It sources this install's auth.env with the generated line. */
+  readonly loadsAuthEnv: boolean;
 }
 
 /**
@@ -263,8 +265,10 @@ export function readStartScript(script: string, home: string): StartScriptReadin
     if (line.startsWith('#') || generatedLines.has(line)) continue;
     notReproduced.push(line);
   }
+  const authLine = `. ${shellQuote(join(root, 'auth.env'))}`;
   return {
     generated: script.includes(START_SCRIPT_MARKER),
+    loadsAuthEnv: script.split('\n').some((line) => line.trim() === authLine),
     carried,
     path,
     logLevel,

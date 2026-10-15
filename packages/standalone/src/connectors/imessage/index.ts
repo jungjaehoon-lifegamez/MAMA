@@ -53,7 +53,8 @@ export class IMessageConnector implements IConnector {
       throw new Error('iMessage requires explicitly configured chat identifiers');
     }
     try {
-      this.db = new Database(this.dbPath);
+      // Messages owns chat.db; a missing one is an error, never a new empty database.
+      this.db = new Database(this.dbPath, { readonly: true, fileMustExist: true });
     } catch (err) {
       throw new Error(
         `iMessageConnector: failed to open database at ${this.dbPath}: ${err instanceof Error ? err.message : String(err)}`

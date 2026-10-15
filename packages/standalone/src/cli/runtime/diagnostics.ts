@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { connect } from 'node:net';
 import { homedir } from 'node:os';
@@ -60,13 +60,13 @@ export interface DiagnosticsOptions {
   findIn?: (name: string, dirs: string[]) => string | undefined;
   /** Ask the install's daemon for its status; tests replace it. */
   askStatus?: () => Promise<DaemonControlReply>;
+  /** Builds a source as boot does; tests replace it so no source reaches the network. */
+  loadSource?: typeof loadConnector;
   /** Whether something listens on the viewer's address; tests replace it. */
   portInUse?: (port: number, host: string) => Promise<boolean>;
 }
 
 const LOG_WARN_BYTES = 50 * 1024 * 1024;
-/** A daemon still booting after this long is stuck. */
-const BOOT_STUCK_MS = 2 * 60 * 1000;
 /** The PATH a service manager gives a unit that does not set one ($PATH in start.sh). */
 const SERVICE_DEFAULT_PATH: Record<string, string[]> = {
   darwin: ['/usr/bin', '/bin', '/usr/sbin', '/sbin'],
@@ -95,8 +95,10 @@ function readAuthEnv(root: string): Record<string, string> {
   readFileSync(path, 'utf8')
     .split('\n')
     .forEach((line, index) => {
+      if (line.trim() === '' || line.trim().startsWith('#')) return;
       const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
-      if (!match) return;
+      // start.sh sources the file under `set -e`, so any other line runs as a command.
+      if (!match) throw new Error(`line ${index + 1} is not an assignment`);
       try {
         values[match[1]] = shellWords(match[2])[0] ?? '';
       } catch (error) {
@@ -155,11 +157,20 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
   const checks: Check[] = [];
 
   let config: W1Config | null = null;
+  // Setting names can be anything the owner typed, so they stay out of the report.
+  let ignored: readonly string[] = [];
   try {
-    config = loadConfig({ home, path: configPath });
+    config = loadConfig({ home, path: configPath, onIgnored: (names) => (ignored = names) });
     validateDeliveryRoutes(config);
     pathsFor(configPath, config);
-    checks.push({ name: 'config', status: 'ok', detail: 'loads', context: configPath });
+    checks.push({
+      name: 'config',
+      status: 'ok',
+      detail: ignored.length > 0 ? `loads; ${ignored.length} setting(s) it ignores` : 'loads',
+      context: [configPath, ...(ignored.length > 0 ? [`ignored: ${ignored.join(', ')}`] : [])].join(
+        '; '
+      ),
+    });
   } catch (error) {
     checks.push({
       name: 'config',
@@ -187,6 +198,8 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
   const startPath = join(root, 'start.sh');
   let servicePath = SERVICE_DEFAULT_PATH[platform] ?? [];
   let exports: Record<string, string> = {};
+  // A script mama did not write is assumed to load auth.env; a generated one must still.
+  let loadsAuth = true;
   if (!existsSync(startPath)) {
     checks.push({
       name: 'start.sh',
@@ -198,6 +211,15 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
     try {
       const reading = readStartScript(readFileSync(startPath, 'utf8'), home);
       exports = startExports(reading);
+      if (reading.generated && !reading.loadsAuthEnv) {
+        loadsAuth = false;
+        checks.push({
+          name: 'start.sh',
+          status: 'fail',
+          detail: 'no longer loads auth.env, so the daemon gets none of its secrets',
+          fix: 'mama service install --replace rewrites it',
+        });
+      }
       if (reading.path !== null) {
         servicePath = [
           ...startPathValue(reading.path, home),
@@ -235,7 +257,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
   // start.sh loads auth.env with `set -a`, then its own exports override it.
   let auth: Record<string, string> = {};
   try {
-    auth = readAuthEnv(root);
+    if (loadsAuth) auth = readAuthEnv(root);
   } catch (error) {
     checks.push({
       name: 'auth.env',
@@ -323,6 +345,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
       ...(await sourceChecks(config, configPath, servicePath, locate, secret, {
         env: serviceEnv,
         online: !options.offline,
+        load: options.loadSource ?? loadConnector,
       }))
     );
     checks.push(toolkitCheck(config));
@@ -353,6 +376,18 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
   for (const name of ['daemon.log', 'security-events.jsonl']) {
     const path = join(root, 'logs', name);
     if (!existsSync(path)) continue;
+    try {
+      accessSync(path, constants.R_OK);
+    } catch (error) {
+      checks.push({
+        name: 'logs',
+        status: 'warn',
+        detail: `${name} cannot be read`,
+        context: message(error),
+        fix: `give ${name} back to the user that runs MAMA`,
+      });
+      continue;
+    }
     const size = statSync(path).size;
     if (size > LOG_WARN_BYTES) {
       checks.push({
@@ -555,13 +590,15 @@ async function sourceChecks(
   servicePath: string[],
   locate: (name: string, dirs: string[]) => string | undefined,
   secret: (name: string) => boolean,
-  start: { env: NodeJS.ProcessEnv; online: boolean }
+  start: { env: NodeJS.ProcessEnv; online: boolean; load: typeof loadConnector }
 ): Promise<Check[]> {
   const paths = pathsFor(configPath, config);
   let plan: ReturnType<typeof planConnectors>;
   try {
     plan = planConnectors({
       configPath: paths.connectorsConfigPath,
+      // Channel keys can be owner names; they stay out of the terminal and the report.
+      onIgnored: () => {},
       ...(config.wiki?.enabled
         ? { wikiRoot: resolve(config.wiki.vaultPath!, config.wiki.wikiDir!) }
         : {}),
@@ -582,7 +619,7 @@ async function sourceChecks(
   for (const name of plan.enabledConnectorNames) {
     let connector: IConnector;
     try {
-      connector = await loadConnector(
+      connector = await start.load(
         name,
         plan.config.config[name],
         connectorLoadPaths(name, {
@@ -628,18 +665,47 @@ async function sourceChecks(
     }
     if (!start.online) continue;
     // Boot starts each source in the daemon's environment; no source's start writes anything.
+    // Boot only starts a source; a poll then needs its credentials accepted, so ask that too.
+    let failure: Check | null = null;
     try {
-      await withEnvironment(start.env, () => connector.init());
+      await withEnvironment(start.env, async () => {
+        try {
+          await connector.init();
+        } catch (error) {
+          failure = {
+            name: `source ${name}`,
+            status: 'fail',
+            detail: 'does not start; boot stops at the connectors stage',
+            context: message(error),
+          };
+          return;
+        }
+        if (!(await connector.authenticate())) {
+          failure = {
+            name: `source ${name}`,
+            status: 'fail',
+            detail: 'starts, but its credentials or sign-in are refused, so its polls fail',
+            fix:
+              needs
+                .map(
+                  (need) => need.cliAuthCommand ?? (need.tokenName ? secretFix(need.tokenName) : '')
+                )
+                .filter(Boolean)
+                .join('; ') || undefined,
+          };
+        }
+      });
     } catch (error) {
-      checks.push({
+      failure = {
         name: `source ${name}`,
         status: 'fail',
-        detail: 'does not start; boot stops at the connectors stage',
+        detail: 'could not be asked whether its credentials work',
         context: message(error),
-      });
+      };
     } finally {
       await connector.dispose();
     }
+    if (failure) checks.push(failure);
   }
   return checks;
 }
@@ -766,15 +832,16 @@ async function daemonChecks(
   }
   if (stage === 'running') {
     checks.push({ name: 'daemon', status: 'ok', detail: 'running' });
-  } else if (stage !== 'stopping' && Date.now() - startedAt > BOOT_STUCK_MS) {
+  } else {
+    // A first poll of many sources can hold the connectors stage for minutes; time alone
+    // does not make a boot stuck, so this names the stage and how long it has been there.
+    const minutes = Math.floor((Date.now() - startedAt) / 60_000);
     checks.push({
       name: 'daemon',
-      status: 'fail',
-      detail: `stuck at boot stage ${stage}`,
-      fix: 'daemon.log shows what that stage waits for',
+      status: 'warn',
+      detail: `at boot stage ${stage} for ${minutes} min`,
+      fix: 'daemon.log shows what that stage is doing',
     });
-  } else {
-    checks.push({ name: 'daemon', status: 'warn', detail: `at stage ${stage}` });
   }
   // Each source as the running daemon last polled it.
   for (const connector of (Array.isArray(status.connectors) ? status.connectors : []) as {
