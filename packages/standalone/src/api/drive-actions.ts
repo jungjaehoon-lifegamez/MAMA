@@ -23,6 +23,8 @@ export interface DriveActionPorts {
   adapter: DatabaseInstance;
   ownerPrincipalId: string;
   downloadsDir?: string;
+  /** A person's own folders: an owner-role person's Drive file lands in its own downloads. */
+  principalPaths?: (principalId: string) => { downloadsDir: string };
   gws?: GwsCall;
 }
 
@@ -152,6 +154,14 @@ export function driveActionRegistrations(ports: DriveActionPorts): ActionRegistr
     } while (pageToken !== undefined && files.length < max);
     return { files, more: pageToken !== undefined, incomplete };
   };
+  // The common principal and owner-role people read Drive; everyone else has no Drive grant.
+  const readsDrive = (action: string, access: ActionContext['access']) => {
+    if (
+      access.principalId !== ports.ownerPrincipalId &&
+      !holdsOwnerRole((principals ??= createPrincipalRepository(ports.adapter)), access.principalId)
+    )
+      ownerOnly(action, access, ports.ownerPrincipalId);
+  };
   const metadata = async (id: string): Promise<DriveFile> =>
     (await gws([
       'drive',
@@ -216,14 +226,7 @@ export function driveActionRegistrations(ports: DriveActionPorts): ActionRegistr
         ],
       },
       exec: async (input, context) => {
-        if (
-          context.access.principalId !== ports.ownerPrincipalId &&
-          !holdsOwnerRole(
-            (principals ??= createPrincipalRepository(ports.adapter)),
-            context.access.principalId
-          )
-        )
-          ownerOnly('drive.read', context.access, ports.ownerPrincipalId);
+        readsDrive('drive.read', context.access);
         const values = input as Record<string, unknown>;
         switch (values.view) {
           case 'drives': {
@@ -311,7 +314,7 @@ export function driveActionRegistrations(ports: DriveActionPorts): ActionRegistr
         name: 'drive.download',
         readsConnector: { fixed: 'drive' },
         summary:
-          'Fetch one Google Drive file (file: id or Drive/Docs link) into the daemon downloads directory (read-only for you) and return its saved path and size. Google Docs, Sheets and Slides are exported as docx, xlsx and pptx; folders and other Google-native types are refused.',
+          "Fetch one Google Drive file (file: id or Drive/Docs link) into your downloads directory (in a DM, that person's own; read-only for you) and return its saved path and size. Google Docs, Sheets and Slides are exported as docx, xlsx and pptx; folders and other Google-native types are refused.",
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -327,14 +330,19 @@ export function driveActionRegistrations(ports: DriveActionPorts): ActionRegistr
         examples: [{ title: 'Fetch a linked file', input: { file: 'drive-link-or-id' } }],
       },
       exec: async (input, context) => {
-        ownerOnly('drive.download', context.access, ports.ownerPrincipalId);
-        if (!ports.downloadsDir?.trim()) throw new Error('Downloads directory is not configured');
+        readsDrive('drive.download', context.access);
+        // A person's file stays in its own folder, never the common one its session cannot read.
+        const downloadsDir =
+          context.access.principalId === ports.ownerPrincipalId
+            ? ports.downloadsDir
+            : ports.principalPaths?.(context.access.principalId).downloadsDir;
+        if (!downloadsDir?.trim()) throw new Error('Downloads directory is not configured');
         const file = await metadata(driveId((input as Record<string, unknown>).file, 'file'));
         const exported = EXPORTS[file.mimeType];
         if (exported === undefined && file.mimeType.startsWith('application/vnd.google-apps.')) {
           throw invalid(`${file.name} is a ${file.mimeType}, which drive.download cannot fetch`);
         }
-        const targetDir = join(ports.downloadsDir, 'drive');
+        const targetDir = join(downloadsDir, 'drive');
         mkdirSync(targetDir, { recursive: true, mode: 0o700 });
         const name =
           exported === undefined || extname(file.name).toLowerCase() === exported.extension

@@ -573,6 +573,9 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       ...(options.attachmentPorts?.downloadsDir === undefined
         ? {}
         : { downloadsDir: options.attachmentPorts.downloadsDir }),
+      ...(options.attachmentPorts?.principalPaths === undefined
+        ? {}
+        : { principalPaths: options.attachmentPorts.principalPaths }),
     }),
     ...(options.driveDelivery === undefined
       ? []

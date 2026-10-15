@@ -197,7 +197,8 @@ describe('P10.1 owner authority in a personal member DM', () => {
     const help = completed(await call('help', {})) as string;
     expect(help).toContain('drive.read');
     expect(help).toContain('report.read');
-    expect(help).not.toContain('drive.download');
+    // A Drive file lands in the person's own downloads, so fetching it is a read in a DM.
+    expect(help).toContain('drive.download');
     expect(help).toContain('manage.member.list');
   });
 
@@ -234,7 +235,6 @@ describe('P10.1 owner authority in a personal member DM', () => {
       },
     ],
     ['work.no_update', { reason: 'Fixture', observationRefs: ['fixture-observation'] }],
-    ['drive.download', { file: 'fixture-file' }],
     ['owner.timezone.set', { timeZone: 'UTC' }],
     ['report.publish', { slots: { briefing: '<p>Fixture</p>' } }],
     [
