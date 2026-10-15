@@ -111,14 +111,21 @@ function install(options: InstallOptions = {}) {
       viewer: {},
       logLevel: 'info',
       carried: options.carried ?? [],
-    })
+    }),
+    { mode: 0o700 }
   );
   return { home, root, node, configPath: join(root, 'config.yaml') };
 }
 
 /** The commands doctor runs, answering as given; anything else is not found. */
 function host(
-  options: { version?: string; loggedIn?: boolean; sqlite?: boolean; sandbox?: boolean } = {}
+  options: {
+    version?: string;
+    loggedIn?: boolean;
+    sqlite?: boolean;
+    sandbox?: boolean;
+    socat?: boolean;
+  } = {}
 ) {
   return vi.fn((command: string, args: string[], _env?: NodeJS.ProcessEnv) => {
     if (args[0] === '--version')
@@ -127,6 +134,7 @@ function host(
       return result(0, JSON.stringify({ loggedIn: options.loggedIn ?? true, email: 'a@b.test' }));
     }
     if (args[0] === '-e') return options.sqlite === false ? result(1) : result(0, 'v22.13.0');
+    if (command.endsWith('/socat')) return result(options.socat === false ? 1 : 0);
     if (command === '/usr/bin/sandbox-exec' || command.endsWith('/bwrap')) {
       return result(options.sandbox === false ? 1 : 0);
     }
@@ -579,6 +587,66 @@ describe('mama doctor', () => {
     expect(by.daemon).toMatchObject({
       status: 'warn',
       detail: 'stopped; backfill holds the install (stage replay)',
+    });
+  });
+
+  it('fails a start.sh the service cannot run, an address it cannot bind, a socat that does not run', async () => {
+    const installed = install();
+    chmodSync(join(installed.root, 'start.sh'), 0o600);
+    let by = byName(await runDiagnostics(base(installed)));
+    expect(by['start.sh']).toMatchObject({
+      status: 'fail',
+      detail: 'is not executable, so the service cannot run it',
+    });
+    by = byName(
+      await runDiagnostics({
+        ...base(installed),
+        portInUse: async () => {
+          throw Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' });
+        },
+      })
+    );
+    expect(by.port).toMatchObject({
+      status: 'fail',
+      detail: 'MAMA_API_HOST is not an address this machine can bind',
+    });
+    by = byName(
+      await runDiagnostics({
+        ...base(installed),
+        platform: 'linux',
+        run: host({ socat: false }),
+        serviceRun: () => result(0, 'active'),
+      })
+    );
+    expect(by.sandbox).toMatchObject({ status: 'fail', detail: 'socat does not run' });
+  });
+
+  it('gives up on a source that does not answer', async () => {
+    const installed = install({
+      auth: { MAMA_CHATWORK_TOKEN: 'x' },
+      connectors: {
+        chatwork: {
+          enabled: true,
+          pollIntervalMinutes: 5,
+          channels: {},
+          auth: { type: 'token', tokenName: 'MAMA_CHATWORK_TOKEN' },
+        },
+      },
+    });
+    const stalled = (async () =>
+      ({
+        getAuthRequirements: () => [],
+        init: async () => {},
+        authenticate: () => new Promise<boolean>(() => {}),
+        dispose: async () => {},
+      }) as never) as unknown as typeof loadConnector;
+    const by = byName(
+      await runDiagnostics({ ...base(installed), loadSource: stalled, sourceTimeoutMs: 50 })
+    );
+    expect(by['source chatwork']).toMatchObject({
+      status: 'fail',
+      detail: 'could not be asked whether its credentials work',
+      context: 'no answer within 0.05 s',
     });
   });
 

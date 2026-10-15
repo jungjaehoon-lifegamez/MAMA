@@ -61,6 +61,8 @@ async function main(): Promise<void> {
   if (command === 'doctor') {
     const { runDoctor } = await import('./commands/doctor.js');
     process.exitCode = await runDoctor(process.argv.slice(3));
+    // A source probe that timed out may still hold a socket; once the output has drained, leave.
+    setTimeout(() => process.exit(), 1_000).unref();
     return;
   }
   if (command === 'service') {

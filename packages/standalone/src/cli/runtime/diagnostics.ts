@@ -62,6 +62,8 @@ export interface DiagnosticsOptions {
   askStatus?: () => Promise<DaemonControlReply>;
   /** Builds a source as boot does; tests replace it so no source reaches the network. */
   loadSource?: typeof loadConnector;
+  /** How long each source may take to start and answer (default 20 s). */
+  sourceTimeoutMs?: number;
   /** Whether something listens on the viewer's address; tests replace it. */
   portInUse?: (port: number, host: string) => Promise<boolean>;
 }
@@ -121,8 +123,10 @@ async function defaultTelegramCall(
   return (await response.json()) as Record<string, unknown>;
 }
 
+/** True when something listens; a refusal means free; any other error (a host that cannot be
+ * reached or bound) rejects, since the viewer would fail on it too. */
 function portAnswers(port: number, host: string): Promise<boolean> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const socket = connect({ port, host });
     socket.setTimeout(1_000, () => {
       socket.destroy();
@@ -132,7 +136,9 @@ function portAnswers(port: number, host: string): Promise<boolean> {
       socket.destroy();
       resolve(true);
     });
-    socket.once('error', () => resolve(false));
+    socket.once('error', (error: NodeJS.ErrnoException) =>
+      error.code === 'ECONNREFUSED' ? resolve(false) : reject(error)
+    );
   });
 }
 
@@ -208,6 +214,17 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
       fix: 'mama service install writes it',
     });
   } else {
+    // launchd and systemd run the script itself.
+    try {
+      accessSync(startPath, constants.X_OK);
+    } catch {
+      checks.push({
+        name: 'start.sh',
+        status: 'fail',
+        detail: 'is not executable, so the service cannot run it',
+        fix: `chmod 700 ${startPath}`,
+      });
+    }
     try {
       const reading = readStartScript(readFileSync(startPath, 'utf8'), home);
       exports = startExports(reading);
@@ -346,6 +363,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
         env: serviceEnv,
         online: !options.offline,
         load: options.loadSource ?? loadConnector,
+        timeoutMs: options.sourceTimeoutMs ?? SOURCE_PROBE_MS,
       }))
     );
     checks.push(toolkitCheck(config));
@@ -496,6 +514,16 @@ function sandboxCheck(
       fix: 'install bubblewrap and socat',
     };
   }
+  const relay = run(socat, ['-V']);
+  if (relay.error || relay.status !== 0) {
+    return {
+      name: 'sandbox',
+      status: 'fail',
+      detail: 'socat does not run',
+      context: socat,
+      fix: 'reinstall socat',
+    };
+  }
   const result = run(bwrap, ['--ro-bind', '/', '/', '--dev', '/dev', '--unshare-net', '/bin/true']);
   return result.error || result.status !== 0
     ? {
@@ -590,7 +618,12 @@ async function sourceChecks(
   servicePath: string[],
   locate: (name: string, dirs: string[]) => string | undefined,
   secret: (name: string) => boolean,
-  start: { env: NodeJS.ProcessEnv; online: boolean; load: typeof loadConnector }
+  start: {
+    env: NodeJS.ProcessEnv;
+    online: boolean;
+    load: typeof loadConnector;
+    timeoutMs: number;
+  }
 ): Promise<Check[]> {
   const paths = pathsFor(configPath, config);
   let plan: ReturnType<typeof planConnectors>;
@@ -668,33 +701,36 @@ async function sourceChecks(
     // Boot only starts a source; a poll then needs its credentials accepted, so ask that too.
     let failure: Check | null = null;
     try {
-      await withEnvironment(start.env, async () => {
-        try {
-          await connector.init();
-        } catch (error) {
-          failure = {
-            name: `source ${name}`,
-            status: 'fail',
-            detail: 'does not start; boot stops at the connectors stage',
-            context: message(error),
-          };
-          return;
-        }
-        if (!(await connector.authenticate())) {
-          failure = {
-            name: `source ${name}`,
-            status: 'fail',
-            detail: 'starts, but its credentials or sign-in are refused, so its polls fail',
-            fix:
-              needs
-                .map(
-                  (need) => need.cliAuthCommand ?? (need.tokenName ? secretFix(need.tokenName) : '')
-                )
-                .filter(Boolean)
-                .join('; ') || undefined,
-          };
-        }
-      });
+      await withEnvironment(start.env, () =>
+        bounded(start.timeoutMs, async () => {
+          try {
+            await connector.init();
+          } catch (error) {
+            failure = {
+              name: `source ${name}`,
+              status: 'fail',
+              detail: 'does not start; boot stops at the connectors stage',
+              context: message(error),
+            };
+            return;
+          }
+          if (!(await connector.authenticate())) {
+            failure = {
+              name: `source ${name}`,
+              status: 'fail',
+              detail: 'starts, but its credentials or sign-in are refused, so its polls fail',
+              fix:
+                needs
+                  .map(
+                    (need) =>
+                      need.cliAuthCommand ?? (need.tokenName ? secretFix(need.tokenName) : '')
+                  )
+                  .filter(Boolean)
+                  .join('; ') || undefined,
+            };
+          }
+        })
+      );
     } catch (error) {
       failure = {
         name: `source ${name}`,
@@ -708,6 +744,19 @@ async function sourceChecks(
     if (failure) checks.push(failure);
   }
   return checks;
+}
+
+/** Some sources fetch without a deadline; doctor waits this long for each before moving on. */
+const SOURCE_PROBE_MS = 20_000;
+
+function bounded<T>(ms: number, run: () => Promise<T>): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  return Promise.race([
+    run(),
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`no answer within ${ms / 1000} s`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
 }
 
 /** Run with process.env as the daemon's process has it, then put this shell's back. */
@@ -789,7 +838,21 @@ async function daemonChecks(
         fix: 'mama service start',
       },
     ];
-    if (port !== null && (await portInUse(port, host))) {
+    if (port === null) return checks;
+    let used: boolean;
+    try {
+      used = await portInUse(port, host);
+    } catch (error) {
+      checks.push({
+        name: 'port',
+        status: 'fail',
+        detail: 'MAMA_API_HOST is not an address this machine can bind',
+        context: message(error),
+        fix: 'set MAMA_API_HOST in start.sh to a local address, or remove it for 127.0.0.1',
+      });
+      return checks;
+    }
+    if (used) {
       checks.push({
         name: 'port',
         status: 'fail',
