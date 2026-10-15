@@ -160,12 +160,15 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
    ([check](checks.md#live-a-kakao-question-in-the-owners-dm-and-the-estimate-board-2026-10-14)). P10 is
    built. Next: release mama-core 8.7.0 and mama-os 0.76.0 with the user guide for people and DMs; still to
    check live (the DM now reads Kakao chats, owner-confirmed): a personal job, a notice to the co-owner, a PPTX rendered and
-   checked in a DM, an enrollment from an owner's DM, a rule change asked in a DM, and a member without the
-   owner role in the group. Open owner decision: web tools in owner-role notice turns (Codex security
+   checked in a DM, an enrollment from an owner's DM and a rule change asked in a DM. On 2026-10-15 the
+   owner's DM answered the man-hours and price question from chats, Trello and the Drive sheet (#492), the
+   owner accepted the estimates, and C1 was answered from the ledger; `document.render` works under the
+   daemon from #494. Members without the owner role are not planned for now (owner, 2026-10-15), so their
+   group check waits. Open owner decision: web tools in owner-role notice turns (Codex security
    advisory on #483). Owner actions that change common state (management, enrollment, the time zone,
    common skills) now need the common channel or the person's DM, as owner policy did (#491, live from
    2026-10-15 00:47 KST, [check](checks.md#owner-actions-change-common-state-only-from-the-common-channel-491-2026-10-15)).
-   The room enrollment floor in core observation visibility waits for a live room turn that needs graph reads.
+   The room enrollment floor in core observation visibility waits with them.
 6. Paraphrase search: closed on 2026-10-07 without a host change
    ([check](checks.md#fusion-variants-with-both-embeddings-2026-10-07)). Three paraphrases sit
    outside the vector candidates; four fusions on e5 and on EmbeddingGemma 2 either move nothing
