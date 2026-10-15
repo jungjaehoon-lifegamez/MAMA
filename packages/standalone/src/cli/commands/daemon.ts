@@ -270,7 +270,7 @@ function stimulusDelivered(logger: DaemonLogger, row: MailboxRow, modelRunId: st
 }
 
 /** Physical paths: a symlinked workspace must not reach the directories it is kept apart from. */
-function pathsOverlap(left: string, right: string): boolean {
+export function pathsOverlap(left: string, right: string): boolean {
   const inside = (parent: string, child: string): boolean => {
     const local = relative(physicalReadPath(parent), physicalReadPath(child));
     return local === '' || (local !== '..' && !local.startsWith(`..${sep}`) && !isAbsolute(local));

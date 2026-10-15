@@ -53,6 +53,7 @@ describe('owner credential boundary', () => {
           join(home, 'config.yaml'),
           join(home, 'runtime'),
           join(home, '.codex'),
+          join(home, 'backups'),
           join(root, 'custom-auth'),
         ])
       );

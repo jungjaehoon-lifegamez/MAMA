@@ -119,6 +119,8 @@ export function credentialReadPaths(
       resolve(runtimeRoot, 'config.yaml'),
       resolve(runtimeRoot, 'runtime'),
       resolve(runtimeRoot, '.codex'),
+      // Backups can hold every credential above.
+      resolve(runtimeRoot, 'backups'),
       resolve(replayKeyFile ?? resolve(runtimeRoot, 'jev-key')),
       ...(codexHome ? [resolve(codexHome)] : []),
     ]),

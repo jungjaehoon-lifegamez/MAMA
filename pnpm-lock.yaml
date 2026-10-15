@@ -129,6 +129,9 @@ importers:
       js-yaml:
         specifier: ^4.1.1
         version: 4.1.1
+      tar:
+        specifier: 7.5.9
+        version: 7.5.9
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.13
