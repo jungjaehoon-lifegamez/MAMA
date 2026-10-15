@@ -143,7 +143,7 @@ export async function installService(
   const executablePaths = [backend, ...(gws ? [gws] : [])];
   const startPath = join(root, 'start.sh');
   const existing = existsSync(startPath) ? readFileSync(startPath, 'utf8') : null;
-  const reading = existing === null ? null : readStartScript(existing);
+  const reading = existing === null ? null : readStartScript(existing, home);
   const script = startScript({
     home,
     nodePath,

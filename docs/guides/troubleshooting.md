@@ -40,7 +40,7 @@ restart through `start.sh`. The bare `mama daemon` command does not load
 service stays stopped. `mama service start` starts it again and reloads configuration and secrets;
 `mama service restart` does both.
 
-A crashed process comes back while the agent is loaded; a clean exit stays stopped. For a daemon that no
+A crashed or killed process comes back while the agent is loaded; `mama stop` leaves it stopped. For a daemon that no
 service manager runs, `mama stop` asks it to stop through its control socket. `mama status` names
 whatever holds the install; a second daemon is refused while one runs, so a foreground copy beside
 launchd exits at once. If port 3847 is occupied, inspect its owner with

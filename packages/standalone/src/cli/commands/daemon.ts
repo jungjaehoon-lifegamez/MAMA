@@ -1072,17 +1072,32 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
  */
 export async function runDaemon(options: DaemonBootOptions = {}): Promise<void> {
   const controller = new AbortController();
+  // A stop asked for through `mama stop` exits 0; one by a signal exits 128 + its number, as an
+  // unhandled signal would, so a service that restarts only after a failure brings back a daemon
+  // that was killed (a service manager's own stop does not restart it whatever the code).
+  let signalExit: number | undefined;
   const requestStop = (): void => controller.abort();
+  const onSigterm = (): void => {
+    signalExit = 143;
+    controller.abort();
+  };
+  const onSigint = (): void => {
+    signalExit = 130;
+    controller.abort();
+  };
   // Once each: a second signal falls to Node's default and ends the process at once, a force stop;
-  // the next start replaces the lock it leaves.
-  process.once('SIGTERM', requestStop);
-  process.once('SIGINT', requestStop);
+  // the operating system releases the install lock with it.
+  process.once('SIGTERM', onSigterm);
+  process.once('SIGINT', onSigint);
   try {
     let daemon: DaemonHandle;
     try {
       daemon = await bootDaemon({ ...options, signal: controller.signal, requestStop });
     } catch (error) {
-      if (error instanceof StopDuringBootError) return;
+      if (error instanceof StopDuringBootError) {
+        if (signalExit !== undefined) process.exitCode = signalExit;
+        return;
+      }
       throw error;
     }
     if (!controller.signal.aborted) {
@@ -1091,9 +1106,10 @@ export async function runDaemon(options: DaemonBootOptions = {}): Promise<void> 
       );
     }
     await daemon.stop();
+    if (signalExit !== undefined) process.exitCode = signalExit;
   } finally {
-    process.off('SIGTERM', requestStop);
-    process.off('SIGINT', requestStop);
+    process.off('SIGTERM', onSigterm);
+    process.off('SIGINT', onSigint);
   }
 }
 

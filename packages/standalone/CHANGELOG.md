@@ -40,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refuses to replace a `start.sh` that mama did not write without `--replace`, or to write one when
   the backend cannot be found. `start` starts a loaded LaunchAgent whose daemon has exited; on
   Linux `mama stop` and `mama status` go through the unit.
+- A daemon stopped by a signal exits 128 plus the signal's number (143 for SIGTERM), as a killed
+  process would, so its service brings it back; a stop asked for through `mama stop` exits 0.
 - The generated `start.sh` exports `MAMA_LOG_LEVEL` from `config.yaml`'s `logging.level`. The core
   logger reads only that variable, so a fresh install logged at `ERROR` whatever the config said.
 

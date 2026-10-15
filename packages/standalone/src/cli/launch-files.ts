@@ -140,17 +140,20 @@ export interface StartScriptReading {
   readonly notReproduced: string[];
 }
 
-const GENERATED_STRUCTURE = [
-  /^#/,
-  /^set -eu$/,
-  /^set -a$/,
-  /^set \+a$/,
-  /^umask 077$/,
-  /^cd '/,
-  /^\. '/,
-];
-
-export function readStartScript(script: string): StartScriptReading {
+/**
+ * Read a start.sh against what this install's generated one holds. Only exact generated lines
+ * count as reproduced: a changed `cd` or a different sourced file is reported, not dropped.
+ */
+export function readStartScript(script: string, home: string): StartScriptReading {
+  const root = join(home, '.mama');
+  const generatedLines = new Set([
+    'set -eu',
+    'set -a',
+    'set +a',
+    'umask 077',
+    `cd ${shellQuote(root)}`,
+    `. ${shellQuote(join(root, 'auth.env'))}`,
+  ]);
   const carried: string[] = [];
   const notReproduced: string[] = [];
   let path: string | null = null;
@@ -170,7 +173,7 @@ export function readStartScript(script: string): StartScriptReading {
       exec = line;
       continue;
     }
-    if (GENERATED_STRUCTURE.some((pattern) => pattern.test(line))) continue;
+    if (line.startsWith('#') || generatedLines.has(line)) continue;
     notReproduced.push(line);
   }
   return {

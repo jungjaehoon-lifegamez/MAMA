@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import {
   chmodSync,
@@ -29,7 +29,11 @@ vi.mock('node:child_process', async (original) => ({
 
 const platform = process.platform;
 const roots: string[] = [];
+beforeEach(() => {
+  vi.stubEnv('XDG_CONFIG_HOME', '');
+});
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   vi.mocked(spawnSync).mockReset();
   Object.defineProperty(process, 'platform', { value: platform });
@@ -96,7 +100,7 @@ const HAND_WRITTEN = [
 
 describe('start.sh', () => {
   it('carries export lines verbatim, so quoting and expansion keep their meaning', () => {
-    const reading = readStartScript(HAND_WRITTEN);
+    const reading = readStartScript(HAND_WRITTEN, '/fixture/home');
     expect(reading.generated).toBe(false);
     expect(reading.carried).toEqual([
       "export MAMA_VIEWER_HOSTNAMES='viewer.example.test'",
@@ -119,10 +123,19 @@ describe('start.sh', () => {
       logLevel: 'info',
       carried: reading.carried,
     });
-    const again = readStartScript(generated);
+    const again = readStartScript(generated, '/fixture/home');
     expect(again.generated).toBe(true);
     expect(again.carried).toEqual(reading.carried);
     expect(again.notReproduced).toEqual([]);
+
+    // A generated script edited to change directory or source another file is reported.
+    const edited = generated
+      .replace("cd '/fixture/home/.mama'", "cd '/elsewhere'")
+      .replace('set +a', "set +a\n. '/fixture/extra.env'");
+    expect(readStartScript(edited, '/fixture/home').notReproduced).toEqual([
+      "cd '/elsewhere'",
+      ". '/fixture/extra.env'",
+    ]);
   });
 });
 
@@ -290,6 +303,16 @@ describe('mama service on Linux', () => {
     lines.length = 0;
     await runStatus([], { home, configPath, write: (l) => lines.push(l), run });
     expect(lines).toContain('service: systemd (activating)');
+  });
+
+  it('writes the unit where systemd looks when XDG_CONFIG_HOME is set', async () => {
+    const { home } = install();
+    const { run, lingerRoot } = linux(home);
+    const xdg = join(home, 'xdg-config');
+    vi.stubEnv('XDG_CONFIG_HOME', xdg);
+    await installService([], options(home, [], { platform: 'linux', run, lingerRoot }));
+    expect(existsSync(join(xdg, 'systemd', 'user', 'mama.service'))).toBe(true);
+    expect(existsSync(join(home, '.config', 'systemd', 'user', 'mama.service'))).toBe(false);
   });
 
   it('removes the unit on uninstall and keeps start.sh', async () => {

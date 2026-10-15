@@ -5,8 +5,10 @@ import { join } from 'node:path';
 /** The systemd user unit MAMA writes on Linux. */
 export const SYSTEMD_UNIT = 'mama.service';
 
-export function systemdUnitPath(home: string): string {
-  return join(home, '.config', 'systemd', 'user', SYSTEMD_UNIT);
+/** Where systemd's user manager loads units from: XDG_CONFIG_HOME when set, else ~/.config. */
+export function systemdUnitPath(home: string, env: NodeJS.ProcessEnv = process.env): string {
+  const config = env.XDG_CONFIG_HOME ? env.XDG_CONFIG_HOME : join(home, '.config');
+  return join(config, 'systemd', 'user', SYSTEMD_UNIT);
 }
 
 export type ServiceRun = (command: string, args: string[]) => SpawnSyncReturns<string>;
