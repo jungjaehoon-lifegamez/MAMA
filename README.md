@@ -34,8 +34,8 @@ In order of importance.
 1. **Never lose the record.** Original text, time, source and every later change are kept, not
    overwritten.
 2. **Know why it changed.** Each change to a piece of work names the message or file behind it.
-3. **Act only where allowed.** MAMA sends only to the owner destinations you configured, and its
-   agent writes files only inside its own workspace.
+3. **Act only where allowed.** MAMA sends only to the destinations you configured and to the DMs of
+   people you registered, and its agent writes files only inside its own workspace.
 4. **Remember corrections.** Say "reports should be short" or "translate feedback into the usual
    spreadsheet" once. MAMA keeps it as guidance or as a workflow and applies it from then on.
 5. **Stay independent of the model vendor.** Claude or Codex runs the agent; the record's format
@@ -54,6 +54,10 @@ In order of importance.
 >
 > **MAMA:** Saved as a workflow. I will use it for the next feedback PDF.
 
+> **You (in your DM):** Open the progress sheet in Drive and chart this month's prices by title.
+>
+> **MAMA:** Here is the chart and the table behind it. Two titles have no price yet this month.
+
 At 08:00, 13:00 and 18:00 it sends a full report. Urgent changes arrive as soon as they happen;
 the rest are gathered into an hourly reminder between 09:00 and 21:00.
 
@@ -69,6 +73,9 @@ mama init          # asks for settings; tokens are typed at hidden prompts
 mama register-owner YOUR_TELEGRAM_USER_ID # after setting member_root outside HOME
 ~/.mama/start.sh   # or the launchctl command init prints
 ```
+
+On macOS `mama init` also installs the document toolkit the sessions use for office files and
+charts; after an upgrade, run `mama tools install` again.
 
 To run from a checkout instead, run `pnpm install` and `pnpm build`, then use
 `node packages/standalone/dist/cli/index.js` wherever the guides say `mama`.
@@ -89,7 +96,7 @@ See [Claude Code plugin](docs/start/claude-code-plugin.md).
 
 ```
 What you connect   work sources · a messenger · corrections you give
-The agent          one owner agent on Claude or Codex, reading and writing through MAMA's actions
+The agent          a common session, a DM session per person and a group session per member, on Claude or Codex
 The record         SQLite on your machine: originals · work history · guidance · reports · run logs · local search index
 ```
 
@@ -97,16 +104,23 @@ The record         SQLite on your machine: originals · work history · guidance
 observation. Work items keep revisions: each one says what changed, why, the evidence it came from
 and who was involved. Search runs locally over originals, work history and memory.
 
-**The agent.** Your messages, new source changes and scheduled reports all reach one agent
+**The agent.** The common group, new source changes and scheduled reports reach the common
 session. It reads the stored work and sources before answering, updates the work history, writes
 the board and the wiki pages of the work it touched, and can split a large replay window across
 subagents inside the same turn. A source change gets a short turn that decides whether to tell you
 and a second turn that records it; MAMA checks the work ledger and orders the record again if it is
 missing. Every tool call it makes is recorded with the run that made it.
 
+**Each person's DM.** Everyone you register, owners included, gets a session of their own in a DM
+with MAMA, with their own records, scheduled jobs, notices and skills. An owner's DM also reads the
+common records and sources. In a DM, MAMA can run scripts in that person's workspace, make
+PowerPoint, Word, Excel and PDF files and charts, and, for an owner, read Google Drive sheets. A
+member without the owner role works in the group in a session of its own, within the projects it is
+given. See [People and DMs](docs/guides/people.md).
+
 **Guidance and workflows.** Your corrections are kept as lessons, preferences, constraints and
 workflows, each with a line saying when it applies. Rules that always apply go in your owner
-policy file, which the agent holds in every session. With each message from you or source change,
+policy file, which the common session and owners' DMs hold. With each message from you or source change,
 the agent is shown the few saved lessons that match it best, and can add, revise or retire
 workflows as you agree on them. Every change keeps its history.
 
@@ -117,22 +131,24 @@ graph, the wiki and logs.
 
 Each source is optional; enable the ones you use in `~/.mama/connectors.json` or during `mama init`.
 
-| Source                                | What MAMA collects                                                   | How it connects                   |
-| ------------------------------------- | -------------------------------------------------------------------- | --------------------------------- |
-| Chatwork, Slack                       | Messages in the rooms and channels you choose, and their attachments | API token                         |
-| Discord                               | Messages in the channels you choose                                  | Bot token                         |
-| Trello                                | Card and list changes on the boards you choose                       | API key and token                 |
-| Notion                                | Pages shared with the integration                                    | API token                         |
-| Telegram (source)                     | Messages in groups you add a separate source bot to                  | Bot token                         |
-| Google Calendar, Gmail, Drive, Sheets | Changed events, mail, files and rows                                 | The logged-in `gws` command       |
-| Obsidian                              | Notes in the vault folders you choose                                | Local folder                      |
-| iMessage                              | Messages in the chats you choose                                     | Local database (Full Disk Access) |
-| Claude Code                           | Conversations in the projects you choose                             | Local folder                      |
-| Kagemusha bridge                      | A read-only view of a local Kagemusha database                       | Local database                    |
+| Source                                | What MAMA collects                                                   | How it connects                      |
+| ------------------------------------- | -------------------------------------------------------------------- | ------------------------------------ |
+| Chatwork, Slack                       | Messages in the rooms and channels you choose, and their attachments | API token                            |
+| Discord                               | Messages in the channels you choose                                  | Bot token                            |
+| Trello                                | Card and list changes on the boards you choose                       | API key and token                    |
+| Notion                                | Pages shared with the integration                                    | API token                            |
+| Telegram (source)                     | Messages in groups you add a separate source bot to                  | Bot token                            |
+| Google Calendar, Gmail, Drive, Sheets | Changed events, mail, files and rows                                 | The logged-in `gws` command          |
+| iCal feeds                            | Events in the calendar feeds you add                                 | Private URL as a secret, set by hand |
+| Obsidian                              | Notes in the vault folders you choose                                | Local folder                         |
+| iMessage                              | Messages in the chats you choose                                     | Local database (Full Disk Access)    |
+| Claude Code                           | Conversations in the projects you choose                             | Local folder                         |
+| Kagemusha bridge                      | A read-only view of a local Kagemusha database                       | Local database                       |
 
-**Messengers.** You talk to MAMA in Telegram, Discord or Slack. Only your own account in the chats
-you allow is answered; everyone else is ignored and logged. You choose which messenger receives
-reports, notifications and security alerts. See [Sources](docs/guides/connectors.md) and
+**Messengers.** You talk to MAMA in Telegram, Discord or Slack. In Telegram, each person you
+register has a DM with MAMA, and owners and members also use the common group; Discord and Slack
+keep one owner channel. Messages from anyone else are ignored and logged. You choose which messenger
+receives reports, notifications and security alerts. See [Sources](docs/guides/connectors.md) and
 [Messengers](docs/guides/messengers.md).
 
 ## Security
@@ -173,20 +189,21 @@ These are the current package versions.
 
 ## Status
 
-| Stage                  | What                                                                                                | Status                         |
-| ---------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------ |
-| The record             | Originals kept, work history with evidence, local search                                            | done                           |
-| One owner agent        | Answers, reports, board, wiki, guidance and workflows on Claude or Codex                            | done, live checks in progress  |
-| Sources and messengers | The sources above; Telegram, Discord and Slack                                                      | restored in this release       |
-| History import         | Import past messages per source and replay them day by day                                          | `mama backfill`, `mama replay` |
-| Team members           | Each person has its own DM, records, jobs and skills; members work in the group within their grants | built; live checks in progress |
+| Stage                  | What                                                                                                | Status                                                                |
+| ---------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| The record             | Originals kept, work history with evidence, local search                                            | done                                                                  |
+| Common agent           | Answers, reports, board, wiki, guidance and workflows on Claude or Codex                            | live; owner acceptance pending                                        |
+| Sources and messengers | The sources above; Telegram, Discord and Slack                                                      | Telegram live; Discord and Slack not yet run live                     |
+| History import         | Import past messages per source and replay them day by day                                          | `mama backfill` (prepared files), `mama replay`                       |
+| Team members           | Each person has its own DM, records, jobs and skills; members work in the group within their grants | owners' DMs in daily use; members without the owner role not yet used |
 
-What still needs live confirmation is listed in the [changelog](CHANGELOG.md) under known issues.
+Open live checks are tracked in the [work plan](docs/development/plan.md).
 
 ## Documentation
 
 - [Your first day with MAMA](docs/start/tutorial.md) · [Owner setup](docs/start/owner-setup.md)
 - [Sources](docs/guides/connectors.md) · [Messengers](docs/guides/messengers.md) ·
+  [People and DMs](docs/guides/people.md) ·
   [Reports and board](docs/guides/reports-and-board.md) ·
   [Corrections and learning](docs/guides/corrections-and-learning.md)
 - [CLI](docs/reference/cli.md) · [Configuration](docs/reference/configuration.md) ·
