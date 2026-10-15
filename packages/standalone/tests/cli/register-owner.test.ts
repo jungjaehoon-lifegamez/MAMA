@@ -13,6 +13,11 @@ import { RawStore } from '../../src/storage/source-archive.js';
 import { createCoreRawIndexSink, drainRawProjections } from '../../src/replay/import-manifest.js';
 import { memberPaths, memberClaudeTmpDir } from '../../src/runtime/member-paths.js';
 import { OwnerMessageLedger } from '../../src/gateways/telegram-message-ledger.js';
+import {
+  acquireInstallLock,
+  daemonControlPaths,
+  InstallBusyError,
+} from '../../src/cli/runtime/daemon-control.js';
 const firstId = '1001',
   secondId = '1002',
   group = '-1001';
@@ -86,6 +91,16 @@ describe('owner person cutover', () => {
       db.disconnect();
     }
   }
+  it('refuses while another process holds the install, before it opens the database', async () => {
+    const lock = acquireInstallLock(daemonControlPaths(join(home, '.mama')), 'daemon');
+    try {
+      await expect(register()).rejects.toThrow(InstallBusyError);
+      await expect(register()).rejects.toThrow(/daemon, pid \d+.*mama stop/);
+    } finally {
+      lock.release();
+    }
+    expect(await register()).toMatchObject({ membersCreated: 1 });
+  });
   it('initializes a fresh install and reruns without changing registry, files or threads', async () => {
     expect(await register()).toMatchObject({
       principalsCreated: 1,

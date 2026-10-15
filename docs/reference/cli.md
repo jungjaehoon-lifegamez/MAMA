@@ -9,18 +9,18 @@ nav_order: 3
 Use `mama` from `@jungjaehoon/mama-os` to configure and run the owner agent. Start with
 [owner setup](../start/owner-setup.md). Running `mama` without a command prints the supported syntax.
 
-| Command                             | What it does                                                                                                                                                |
-| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mama init`                         | Prompts in a terminal and writes a new installation. No flags are supported.                                                                                |
-| `mama secret set <NAME>`            | Prompts with echo disabled and atomically updates one supported secret in `~/.mama/auth.env`. Restart the daemon afterward.                                 |
-| `mama secret list`                  | Prints configured secret names only. It does not print values.                                                                                              |
-| `mama register-owner <telegram id>` | Registers one active member with the owner role, leaving the common principal without a Telegram identity. Run with the daemon stopped; prints counts only. |
-| `mama tools install`                | Installs or updates the document toolkit under `tools_root` for every session, and adds `tools_root` to `config.yaml` when it is missing.                   |
-| `mama daemon`                       | Runs the daemon in the foreground until stopped. It expects the credentials in its environment.                                                             |
-| `mama replay`                       | Runs the historical replay using the configured database and prepared import manifest, then stops.                                                          |
-| `mama backfill <file>`              | Checks a backfill file and writes the period it describes through the owner's actions, then stops.                                                          |
-| `mama status`                       | Prints `running` or `stopped` from the PID record and process check.                                                                                        |
-| `mama stop`                         | Sends SIGTERM to the recorded daemon PID.                                                                                                                   |
+| Command                             | What it does                                                                                                                                                                                                                      |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mama init`                         | Prompts in a terminal and writes a new installation. No flags are supported.                                                                                                                                                      |
+| `mama secret set <NAME>`            | Prompts with echo disabled and atomically updates one supported secret in `~/.mama/auth.env`. Restart the daemon afterward.                                                                                                       |
+| `mama secret list`                  | Prints configured secret names only. It does not print values.                                                                                                                                                                    |
+| `mama register-owner <telegram id>` | Registers one active member with the owner role, leaving the common principal without a Telegram identity. Refused while the daemon or another command holds the install; prints counts only.                                     |
+| `mama tools install`                | Installs or updates the document toolkit under `tools_root` for every session, and adds `tools_root` to `config.yaml` when it is missing.                                                                                         |
+| `mama daemon`                       | Runs the daemon in the foreground until stopped. It expects the credentials in its environment.                                                                                                                                   |
+| `mama replay`                       | Runs the historical replay using the configured database and prepared import manifest, then stops. Refused while the daemon runs.                                                                                                 |
+| `mama backfill <file>`              | Checks a backfill file and writes the period it describes through the owner's actions, then stops. Refused while the daemon runs.                                                                                                 |
+| `mama status [--json]`              | Asks the running daemon for its version, boot stage, running turns, waiting inputs, connectors and last error. Exits 0 when running and 3 when stopped; names the command that holds the install when it is not the daemon.       |
+| `mama stop`                         | Stops the daemon: unloads the LaunchAgent when one is loaded, otherwise asks the daemon through its control socket, and waits until the install is released. A running turn ends with the stop and is requeued at the next start. |
 
 ## Create an installation
 
@@ -37,8 +37,9 @@ only at the hidden prompts. Both `init` and `secret set` reject non-terminal inp
 connector, startup or selected launchd files. It prints login and start instructions; it does not
 log into a backend, start the daemon or prove that Telegram works.
 
-Allowed secret names are `MAMA_TELEGRAM_TOKEN`, `MAMA_SLACK_TOKEN`, `MAMA_CHATWORK_TOKEN`,
-`MAMA_TRELLO_KEY`, `MAMA_TRELLO_TOKEN`, and `MAMA_AUTH_TOKEN`.
+Allowed secret names are `MAMA_TELEGRAM_TOKEN`, `MAMA_TELEGRAM_SOURCE_TOKEN`, `MAMA_SLACK_TOKEN`,
+`MAMA_SLACK_APP_TOKEN`, `MAMA_CHATWORK_TOKEN`, `MAMA_DISCORD_TOKEN`, `MAMA_NOTION_TOKEN`,
+`MAMA_TRELLO_KEY`, `MAMA_TRELLO_TOKEN`, `MAMA_AUTH_TOKEN`, and `MAMA_ICAL_URL_<NAME>`.
 
 ## Install the document toolkit
 
@@ -72,7 +73,13 @@ launchd uses KeepAlive. To keep its managed daemon stopped, unload the job:
 launchctl bootout gui/$(id -u)/com.mama.server
 ```
 
-`mama status` confirms process existence only. Check an owner Telegram reply and the
+One process holds an install at a time: the daemon, a replay or backfill, or `register-owner`.
+It takes `~/.mama/runtime/daemon.lock` before it opens the database, so a second one is refused
+before it changes anything, and the daemon answers `mama status` and `mama stop` through
+`~/.mama/daemon.sock` with a token it writes there at each start. A crashed holder leaves a
+lock whose process is gone; the next start replaces it.
+
+`mama status` shows what the daemon reports; check an owner Telegram reply and the
 [viewer](../guides/viewer.md) to verify useful operation.
 
 ## Replay prepared history

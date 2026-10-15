@@ -3,17 +3,6 @@
 import { ConfigError } from '../runtime/config.js';
 import { CliInputError } from './prompt.js';
 
-/**
- * replay and backfill open the daemon's database and rewrite its workspace settings, the shell
- * sandbox's proxy ports among them, so they run only while the daemon is stopped.
- */
-async function requireDaemonStopped(command: string): Promise<void> {
-  const { daemonStatus } = await import('./commands/daemon.js');
-  if (daemonStatus() === 'running') {
-    throw new CliInputError(`Stop the daemon before mama ${command}: run mama stop`);
-  }
-}
-
 async function main(): Promise<void> {
   const command = process.argv[2];
   if (command === 'tools') {
@@ -33,40 +22,45 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'register-owner') {
-    await requireDaemonStopped('register-owner');
     const { runRegisterOwner } = await import('./commands/register-owner.js');
     await runRegisterOwner(process.argv.slice(3));
     return;
   }
   if (command === 'daemon') {
     const { runDaemon } = await import('./commands/daemon.js');
-    await runDaemon();
+    const { InstallBusyError } = await import('./runtime/daemon-control.js');
+    try {
+      await runDaemon();
+    } catch (error) {
+      // Another process already serves this install: a clean exit, so a service manager that
+      // restarts only on failure does not keep retrying.
+      if (!(error instanceof InstallBusyError)) throw error;
+      console.error(error.message);
+    }
     return;
   }
   if (command === 'replay') {
-    await requireDaemonStopped('replay');
     const { runReplay } = await import('./commands/replay.js');
     await runReplay();
     return;
   }
   if (command === 'backfill') {
-    await requireDaemonStopped('backfill');
     const { runBackfill } = await import('./commands/backfill.js');
     await runBackfill(process.argv.slice(3));
     return;
   }
   if (command === 'status') {
-    const { daemonStatus } = await import('./commands/daemon.js');
-    console.log(daemonStatus());
+    const { runStatus } = await import('./commands/control.js');
+    process.exitCode = await runStatus(process.argv.slice(3));
     return;
   }
   if (command === 'stop') {
-    const { requestDaemonStop } = await import('./commands/daemon.js');
-    requestDaemonStop();
+    const { runStop } = await import('./commands/control.js');
+    process.exitCode = await runStop(process.argv.slice(3));
     return;
   }
   console.log(
-    'Usage: mama init | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status | stop'
+    'Usage: mama init | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop'
   );
 }
 

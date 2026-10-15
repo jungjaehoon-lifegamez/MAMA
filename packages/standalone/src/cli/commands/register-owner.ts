@@ -11,6 +11,7 @@ import { holdsOwnerRole } from '../../runtime/owner-authority.js';
 import { RawStore } from '../../storage/source-archive.js';
 import { CliInputError } from '../prompt.js';
 import { OWNER_PRINCIPAL_ID } from './daemon.js';
+import { acquireInstallLock, daemonControlPaths } from '../runtime/daemon-control.js';
 
 export interface OwnerCutoverCounts {
   principalsCreated: number;
@@ -51,6 +52,21 @@ export async function runRegisterOwner(
   const memberRoot = config.member_root;
   if (!memberRoot) throw new CliInputError('Set member_root before mama register-owner');
   const root = dirname(configPath);
+  // The cutover writes the daemon's database and raw stores, so no daemon may run beside it.
+  const lock = acquireInstallLock(daemonControlPaths(root), 'register-owner');
+  try {
+    return await registerOwnerHolding(root, config, memberRoot, externalId);
+  } finally {
+    lock.release();
+  }
+}
+
+async function registerOwnerHolding(
+  root: string,
+  config: ReturnType<typeof loadConfig>,
+  memberRoot: string,
+  externalId: string
+): Promise<OwnerCutoverCounts> {
   const ledgerPath = join(root, 'runtime', 'owner-message-ledger.json');
   if (existsSync(ledgerPath)) {
     const entry = new OwnerMessageLedger(ledgerPath)

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const failure = vi.hoisted(() => ({ value: null as unknown }));
-vi.mock('../../src/cli/commands/daemon.js', () => ({
-  daemonStatus: () => {
+vi.mock('../../src/cli/commands/control.js', () => ({
+  runStatus: async () => {
     throw failure.value;
   },
 }));

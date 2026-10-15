@@ -66,6 +66,15 @@ import { findDailyPages } from '../../wiki/wiki-read.js';
 import { createTimeZoneSetting } from '../../runtime/timezone.js';
 import { createOutboundEventRecorder } from '../../api/security-events.js';
 import { startEgressProxy, type EgressProxy } from '../../runtime/egress-proxy.js';
+import {
+  acquireInstallLock,
+  daemonControlPaths,
+  requestDaemonControl,
+  startDaemonControl,
+  type DaemonControlReply,
+  type DaemonControlServer,
+  type InstallLock,
+} from '../runtime/daemon-control.js';
 
 export const OWNER_PRINCIPAL_ID = 'owner';
 const OWNER_AGENT_ID = 'owner-agent';
@@ -141,6 +150,12 @@ export interface DaemonBootOptions {
   mode?: 'live' | 'replay';
   replay?: (context: DaemonReplayContext) => Promise<void>;
   dependencies?: DaemonBootDependencies;
+  /** Named in the install lock and in `mama status`; defaults to the mode. */
+  command?: string;
+  /** Aborted by a signal or `mama stop`; boot unwinds at the next stage when it is. */
+  signal?: AbortSignal;
+  /** Called by the control socket's stop; without it, stop is refused until the command ends. */
+  requestStop?: () => void;
 }
 
 export interface DaemonReplayContext {
@@ -177,7 +192,15 @@ function errorName(error: unknown): string {
   return `${name}: ${error.message}`;
 }
 
-function stage(logger: DaemonLogger, name: string): void {
+export class StopDuringBootError extends Error {
+  constructor() {
+    super('Stopped during boot');
+    this.name = 'StopDuringBootError';
+  }
+}
+
+function stage(logger: DaemonLogger, name: string, signal?: AbortSignal): void {
+  if (signal?.aborted) throw new StopDuringBootError();
   logger.info(`boot stage=${name}`);
 }
 
@@ -356,7 +379,15 @@ async function stopOne(
 
 /** Open the W1 owner subject, then activate producers in their dependency order. */
 export async function bootDaemon(options: DaemonBootOptions = {}): Promise<DaemonHandle> {
-  const logger = options.logger ?? defaultLogger;
+  const baseLogger = options.logger ?? defaultLogger;
+  let lastError: { at: number; line: string } | null = null;
+  const logger: DaemonLogger = {
+    info: (line) => baseLogger.info(line),
+    error: (line) => {
+      lastError = { at: Date.now(), line: line.slice(0, 500) };
+      baseLogger.error(line);
+    },
+  };
   const dependencies = options.dependencies ?? {};
   const configPath = options.configPath ?? defaultConfigPath(options.home ?? homedir());
   let config: W1Config;
@@ -373,10 +404,52 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   let deliveryReady = options.mode === 'replay';
   const startedAt = Date.now();
   let currentStage = 'config';
+  let booted = false;
+  const command = options.command ?? (options.mode === 'replay' ? 'replay' : 'daemon');
+  // The install's one process: taken before anything opens the database or rewrites settings.
+  const control = daemonControlPaths(dirname(configPath));
+  const lock: InstallLock = acquireInstallLock(control, command);
+  let controlServer: DaemonControlServer | null = null;
 
-  const stopResources = async (): Promise<void> => {
-    if (stopped) return;
-    stopped = true;
+  const statusReport = async (): Promise<Record<string, unknown>> => {
+    const report: Record<string, unknown> = {
+      pid: process.pid,
+      command,
+      version: resolvePackageVersion(),
+      startedAt,
+      stage: booted ? 'running' : currentStage,
+      lastError,
+    };
+    if (owner) {
+      const adapter = owner.database.adapter;
+      report.runningTurns = adapter
+        .prepare(
+          `SELECT COALESCE(json_extract(input_refs_json, '$.sessionKey'), 'unknown') AS session,
+                  COUNT(*) AS count
+             FROM model_runs WHERE status = 'running' GROUP BY 1 ORDER BY 1`
+        )
+        .all();
+      report.inputs = adapter
+        .prepare(
+          `SELECT status, COUNT(*) AS count FROM mailbox_inputs
+            WHERE status IN ('pending', 'claimed') GROUP BY status ORDER BY status`
+        )
+        .all();
+    }
+    if (connectors) {
+      const connectorRuntime = connectors;
+      const health = await connectorRuntime.registry.healthCheckAll();
+      report.connectors = connectorRuntime.enabledConnectorNames.map((name) => ({
+        name,
+        healthy: health[name]?.healthy === true,
+        lastPoll: health[name]?.lastPollTime?.toISOString() ?? null,
+        error: health[name]?.error ?? null,
+      }));
+    }
+    return report;
+  };
+
+  const stopOwned = async (): Promise<void> => {
     const errors: unknown[] = [];
     owner?.beginStop?.();
     // Quiesce every producer before awaiting any one of them. Transports and the database
@@ -405,9 +478,34 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
     if (errors.length > 0) throw new AggregateError(errors, 'Daemon shutdown failed');
   };
 
+  const stopResources = async (): Promise<void> => {
+    if (stopped) return;
+    stopped = true;
+    try {
+      await stopOwned();
+    } finally {
+      // Last, so the CLI sees the install busy until every store is closed.
+      if (controlServer) {
+        await controlServer
+          .close()
+          .catch((error: unknown) =>
+            logger.error(`shutdown stage=control failed error=${errorName(error)}`)
+          );
+      }
+      lock.release();
+    }
+  };
+
   try {
     currentStage = 'config';
-    stage(logger, 'config');
+    controlServer = await startDaemonControl(control, {
+      status: statusReport,
+      stop: () => {
+        if (!options.requestStop) throw new Error(`${command} stops when it finishes`);
+        options.requestStop();
+      },
+    });
+    stage(logger, 'config', options.signal);
     config = options.config ?? loadConfig({ path: configPath, home: options.home });
     logger.info(
       `document toolkit: ${readDocumentToolkit(config.tools_root, (error) => logger.error(error.message)) ? 'present' : 'absent (run mama tools install)'}`
@@ -431,7 +529,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       paths,
       ...(options.mcpServerPath ? { mcpServerPath: options.mcpServerPath } : {}),
     });
-    stage(logger, 'isolation');
+    stage(logger, 'isolation', options.signal);
 
     currentStage = 'owner_runtime';
     const ownerPolicyProvider = createOwnerPolicyProvider(paths.mamaRoot);
@@ -686,7 +784,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       onStimulusFailed: (row, reason, modelRunId) =>
         stimulusFailed(logger, row.kind ?? 'unknown', row.stimulusId, reason, modelRunId),
     });
-    stage(logger, 'owner_runtime');
+    stage(logger, 'owner_runtime', options.signal);
 
     currentStage = 'viewer';
     const viewerFactory = dependencies.createViewerServer ?? createDefaultViewerServer;
@@ -738,14 +836,14 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
     });
     await viewer.start();
     logger.info(`viewer server listening on port=${String(viewer.port)}`);
-    stage(logger, 'viewer');
+    stage(logger, 'viewer', options.signal);
 
     if (options.mode === 'replay') {
       logger.info('replay collectors: disabled');
       currentStage = 'replay';
       if (!options.replay) throw new Error('Replay mode requires a replay feeder');
       await options.replay({ config, paths, owner, logger, timeZone });
-      stage(logger, 'replay');
+      stage(logger, 'replay', options.signal);
       return {
         config,
         paths,
@@ -782,7 +880,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       coreAdapter: owner.database?.adapter,
       acceptSourceDelta,
     });
-    stage(logger, 'connectors');
+    stage(logger, 'connectors', options.signal);
 
     currentStage = 'messengers';
     const intake = loggedOwnerIntake(owner.intake, logger);
@@ -828,8 +926,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       });
       gateways.set('telegram', gateway);
       await gateway.start();
-      stage(logger, 'telegram');
-    } else stage(logger, 'telegram:disabled');
+      stage(logger, 'telegram', options.signal);
+    } else stage(logger, 'telegram:disabled', options.signal);
     if (config.discord?.enabled) {
       const token = process.env.MAMA_DISCORD_TOKEN;
       if (!token?.trim()) throw new Error('MAMA_DISCORD_TOKEN is required');
@@ -855,7 +953,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       });
       gateways.set('discord', active);
       await active.start();
-      stage(logger, 'discord');
+      stage(logger, 'discord', options.signal);
     }
     if (config.slack?.enabled) {
       const token = process.env.MAMA_SLACK_TOKEN;
@@ -884,7 +982,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       });
       gateways.set('slack', active);
       await active.start();
-      stage(logger, 'slack');
+      stage(logger, 'slack', options.signal);
     }
     const reportRoute = config.delivery?.reports ?? 'telegram';
     if (gateways.has(reportRoute)) {
@@ -924,8 +1022,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
           logger.error(`report scheduler failed reason=${stimulusFailureReason(error)}`),
       });
       reportScheduler.start();
-      stage(logger, 'report_scheduler');
-    } else stage(logger, 'report_scheduler:route_unavailable');
+      stage(logger, 'report_scheduler', options.signal);
+    } else stage(logger, 'report_scheduler:route_unavailable', options.signal);
     if (gateway?.sendMemberText) {
       owner.personalJobs.start();
       await owner.personalJobs
@@ -933,10 +1031,11 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         .catch((error: unknown) =>
           logger.error(`personal job scheduler failed reason=${stimulusFailureReason(error)}`)
         );
-      stage(logger, 'personal_job_scheduler');
+      stage(logger, 'personal_job_scheduler', options.signal);
     }
     deliveryReady = true;
 
+    booted = true;
     return {
       config,
       paths,
@@ -958,47 +1057,71 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   }
 }
 
-/** Foreground launchd entry: wait until SIGTERM/SIGINT, then close reverse-order stages. */
+/**
+ * Foreground entry for launchd, systemd, Docker or a terminal. Signals are taken before boot, so a
+ * stop during boot unwinds what has started; `mama stop` asks through the control socket.
+ */
 export async function runDaemon(options: DaemonBootOptions = {}): Promise<void> {
-  const daemon = await bootDaemon(options);
-  await new Promise<void>((resolve, reject) => {
-    let finished = false;
-    const finish = async (): Promise<void> => {
-      if (finished) return;
-      finished = true;
-      try {
-        await daemon.stop();
-        resolve();
-      } catch (error) {
-        reject(error);
-      }
-    };
-    process.once('SIGTERM', () => void finish());
-    process.once('SIGINT', () => void finish());
-  });
+  const controller = new AbortController();
+  const requestStop = (): void => controller.abort();
+  process.once('SIGTERM', requestStop);
+  process.once('SIGINT', requestStop);
+  try {
+    let daemon: DaemonHandle;
+    try {
+      daemon = await bootDaemon({ ...options, signal: controller.signal, requestStop });
+    } catch (error) {
+      if (error instanceof StopDuringBootError) return;
+      throw error;
+    }
+    if (!controller.signal.aborted) {
+      await new Promise<void>((resolve) =>
+        controller.signal.addEventListener('abort', () => resolve(), { once: true })
+      );
+    }
+    await daemon.stop();
+  } finally {
+    process.off('SIGTERM', requestStop);
+    process.off('SIGINT', requestStop);
+  }
 }
 
-function launchdService(command: 'print' | 'bootout') {
-  const result = spawnSync('launchctl', [command, `gui/${process.getuid!()}/com.mama.server`], {
+/** The install's control paths from its config path, as boot derives them. */
+export function installControlPaths(options: { home?: string; configPath?: string } = {}) {
+  const configPath = options.configPath ?? defaultConfigPath(options.home ?? homedir());
+  return daemonControlPaths(dirname(configPath));
+}
+
+export async function askDaemon(
+  op: 'status' | 'stop',
+  options: { home?: string; configPath?: string } = {}
+): Promise<DaemonControlReply> {
+  return await requestDaemonControl(installControlPaths(options), op);
+}
+
+/** macOS only: whether this user's LaunchAgent is loaded (`launchctl print` exits 113 if not). */
+export function launchdServiceLoaded(): boolean {
+  if (process.platform !== 'darwin') return false;
+  const result = spawnSync('launchctl', ['print', `gui/${process.getuid!()}/com.mama.server`], {
     encoding: 'utf8',
   });
   if (result.error) throw result.error;
-  // launchctl print exits 113 when this user's service is not registered.
-  if (result.status !== 0 && !(command === 'print' && result.status === 113)) {
-    throw Object.assign(new Error(`launchctl ${command} failed`), {
+  if (result.status === 0) return true;
+  if (result.status === 113) return false;
+  throw Object.assign(new Error('launchctl print failed'), {
+    code: `LAUNCHCTL_${result.status ?? result.signal ?? 'UNKNOWN'}`,
+  });
+}
+
+/** Unload the LaunchAgent so KeepAlive cannot restart it; launchd sends the stop signal. */
+export function bootoutLaunchdService(): void {
+  const result = spawnSync('launchctl', ['bootout', `gui/${process.getuid!()}/com.mama.server`], {
+    encoding: 'utf8',
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw Object.assign(new Error('launchctl bootout failed'), {
       code: `LAUNCHCTL_${result.status ?? result.signal ?? 'UNKNOWN'}`,
     });
   }
-  return result;
-}
-
-export function daemonStatus(): 'running' | 'stopped' {
-  const result = launchdService('print');
-  return result.status === 0 && /^\s*state = running\s*$/m.test(result.stdout)
-    ? 'running'
-    : 'stopped';
-}
-
-export function requestDaemonStop(): void {
-  launchdService('bootout');
 }
