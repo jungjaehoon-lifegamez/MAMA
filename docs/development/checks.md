@@ -2306,3 +2306,14 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Evidence: the same file and toolkit outside the daemon rendered in about 3 s with no denies, with HOME denied and with the Claude temp denied, timed out with the render root denied, and rendered in 3 s with the root's metadata allowed. The real-LibreOffice test now passes the daemon's denies; it timed out before the fix and passes after it. Standalone suite (179 files), CI green, Codex clean (CodeRabbit out of reviews). Merged as 9a6c199a4; deployed from main at 11:59:10 KST (idle checks clean, eight boot stages, toolkit present, no errors).
 - Owner, 2026-10-15: the estimate answers of the morning are accepted; members without the owner role are not planned for now, so the P10.7 group check and the room enrollment floor wait.
 - Still open: the next office render in a live turn (a common-session feedback sheet or a DM PPTX) completing with pages.
+
+### Live: a PPTX made, rendered and sent from the owner's DM (P10.4c, 2026-10-15)
+
+- Evidence: 12:02 KST, "make it a pptx and send it" after the status report. The DM read the ledger, built an eight-slide deck with python-pptx in its workspace, rendered it with `document.render` (5.0 s, the first live render to complete, after #494), fixed the script, rendered again, opened all eight page images, and sent the file through Telegram (46 KB); 143 s. The answer named the slide order, said no text was cut, and that the deck's font may substitute on devices without it.
+- Host gap found: the first `deliver.telegram.file` used the path `files/...` that `document.render` takes and returns, and failed with a missing file under HOME; the retry with the absolute path was sent. The same happened in the common session on 2026-10-14 16:51. Fixed next (relative paths resolve in the caller's workspace).
+
+### Live: a personal job created and run in the owner's DM (P10.4a, 2026-10-15)
+
+- Evidence: 12:05 KST, "every day at 12:10, send only the work linked to me". The DM created a job (`10 12 * * *`, Asia/Seoul) in 10 s. It ran at 12:10:28 as a stateless job turn under the person's access (66 s): the ledger plus sixteen Trello reads, a formatted report of the owner's own items (today and tomorrow's deadlines, internal checks, assignments to decide, a guesthouse calendar block), delivered once to the DM (`telegram outbound delivered`, idempotency key per run).
+- Self-corrected inputs, not product work: eight `trello.read` calls with `text`, then without `view`, before the reads that succeeded.
+- Still open: the next day's run.
