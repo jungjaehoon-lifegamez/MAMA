@@ -355,7 +355,7 @@ describe('owner-only onboarding', () => {
       for (const value of [...Object.values(fixtureSecrets), generatedToken])
         expect(text.includes(value)).toBe(false);
     }
-    expect(p.output.join('\n')).toContain('launchctl bootstrap');
+    expect(p.output.join('\n')).toContain('mama service start');
     expect(p.output.join('\n')).toContain('gws auth login');
     expect(p.answers).toEqual([]);
     expect(p.hidden).toEqual([]);

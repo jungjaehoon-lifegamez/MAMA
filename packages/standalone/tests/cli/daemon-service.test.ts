@@ -229,7 +229,7 @@ describe('mama stop', () => {
       await runStop([], { configPath, write: (line) => lines.push(line), pollMs: 5, settleMs: 5 })
     ).toBe(0);
     expect(lines).toEqual([
-      'stopped (launchd service unloaded; launchctl bootstrap starts it again)',
+      'stopped (launchd service unloaded; mama service start starts it again)',
     ]);
     expect(vi.mocked(spawnSync).mock.calls.some(([, args]) => args?.[0] === 'bootout')).toBe(true);
 

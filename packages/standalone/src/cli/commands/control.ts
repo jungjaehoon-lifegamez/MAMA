@@ -185,7 +185,7 @@ export async function runStop(
     return finish(
       await waitForRelease(holder, options, write),
       write,
-      'stopped (launchd service unloaded; launchctl bootstrap starts it again)'
+      'stopped (launchd service unloaded; mama service start starts it again)'
     );
   }
   const reply = await askDaemon('stop', options);

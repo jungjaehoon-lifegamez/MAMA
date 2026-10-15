@@ -49,6 +49,11 @@ async function main(): Promise<void> {
     await runBackfill(process.argv.slice(3));
     return;
   }
+  if (command === 'service') {
+    const { runService } = await import('./commands/service.js');
+    process.exitCode = await runService(process.argv.slice(3));
+    return;
+  }
   if (command === 'status') {
     const { runStatus } = await import('./commands/control.js');
     process.exitCode = await runStatus(process.argv.slice(3));
@@ -60,7 +65,7 @@ async function main(): Promise<void> {
     return;
   }
   console.log(
-    'Usage: mama init | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop'
+    'Usage: mama init | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop | service install|start|stop|restart|status|uninstall'
   );
 }
 

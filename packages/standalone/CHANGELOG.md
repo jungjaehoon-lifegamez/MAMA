@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   two minutes until the install is released, and says when something else holds it or started in
   its place.
 - A stop during boot unwinds what has started; signals were handled only after boot.
+- `mama service install|start|stop|restart|status|uninstall` writes and runs the service: a
+  LaunchAgent on macOS, a systemd user unit on Linux (`--enable-linger` keeps it running after
+  logout). Both restart the daemon only after a failure, so a stop or a refused second daemon stays
+  stopped; the LaunchAgent used to restart on every exit. `install` regenerates `start.sh`, keeps the
+  replaced one under `runtime/`, carries over the viewer's access settings and names the exports it
+  drops.
 
 ## [0.77.0] - 2026-10-15
 
