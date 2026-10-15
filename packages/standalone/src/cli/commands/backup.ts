@@ -134,6 +134,11 @@ export async function runBackup(
     if (!flags.includeLogs) write('  logs left out (--logs adds them)');
     write('The install is still stopped; mama service start starts it.');
     return final;
+  } catch (error) {
+    // The reason goes to the terminal: a file that changed, a database that failed its check.
+    throw new CliInputError(
+      `Backup failed and nothing was kept: ${error instanceof Error ? error.message : String(error)}`
+    );
   } finally {
     rmSync(staging, { recursive: true, force: true });
     rmSync(partial, { force: true });

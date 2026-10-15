@@ -435,7 +435,10 @@ export async function verifyArchive(file: string, manifest: BackupManifest): Pro
   if (first !== 'manifest.json') problems.push('the manifest is not the first entry');
   for (const path of expected.keys()) if (!seen.has(path)) problems.push(`${path} is missing`);
   if (problems.length > 0) {
-    throw new Error(`the archive does not match its manifest: ${problems.slice(0, 5).join('; ')}`);
+    // A backend process that outlived the daemon can still be writing its history.
+    throw new Error(
+      `the archive does not match its manifest (${problems.length} difference(s): ${problems.slice(0, 5).join('; ')}); if something was still writing the install, run mama backup again once it is quiet`
+    );
   }
 }
 
