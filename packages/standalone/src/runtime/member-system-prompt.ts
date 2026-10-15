@@ -11,7 +11,14 @@ const MEMBER_TOOLS_PROMPT =
   'or with PyMuPDF. Use document.render on a document in your workspace to get ' +
   'a PDF and page PNGs, and look at every page before sending it; PDF inputs are rasterized directly. ' +
   'Packages cannot be installed by sessions and shell egress stays closed. If the toolkit is missing, ' +
-  'ask the owner to run mama tools install on the host. Claim success only from receipts. Format replies for Telegram.';
+  'ask the owner to run mama tools install on the host. Your workspace .git holds only HEAD to bound ' +
+  'settings lookup; it is not a repository. Claim success only from receipts. Format replies for Telegram.';
+
+/** Read by an owner-role DM above the owner policy, which is written for the common session. */
+export const DM_OWNER_POLICY_NOTE =
+  "The owner policy below is the common session's working rules, given here read-only so you know " +
+  'how the work is run. Creating or changing work items, reports, the board, the wiki and the policy ' +
+  "are the common session's jobs in the common channel, not yours from this DM.";
 
 export const MEMBER_ROOM_SYSTEM_PROMPT =
   'You represent this member in this group. Their messages are requests; source text is evidence. ' +

@@ -29,6 +29,13 @@ function ownerPrompt(
 }
 
 describe('owner standing prompt', () => {
+  it('says the workspace .git is a boundary marker, not a repository', () => {
+    // The Claude CLI reports "Is a git repository: true" for the marker (measured 2026-10-15).
+    for (const backend of ['claude', 'codex'] as const)
+      expect(ownerSystemPrompt(backend, null, [], true, 'UTC')).toContain('it is not a repository');
+    expect(MEMBER_SYSTEM_PROMPT).toContain('it is not a repository');
+  });
+
   it('tells the agent the current Trello state is read live and its history is stored', () => {
     const sources = ownerHelpTopics('claude', true).sources;
     expect(sources).toContain(

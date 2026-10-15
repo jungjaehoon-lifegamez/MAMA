@@ -8,6 +8,7 @@ import {
   type ActionResult,
 } from '@jungjaehoon/mama-core';
 import { createActionSurface } from '../../src/runtime/action-surface.js';
+import { DM_OWNER_POLICY_NOTE } from '../../src/runtime/member-system-prompt.js';
 import { resolvePrincipalAccess } from '../../src/runtime/principal-access.js';
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
@@ -463,6 +464,14 @@ describe('owner rules reach the personal DM session', () => {
       expect(own.fresh).toBe(true);
       expect(own.session).not.toBe(member.session);
       expect(own.standing).toContain('FIXTURE_OWNER_POLICY');
+      // The DM reads the common session's rules as such, not as its own duties.
+      expect(own.standing.indexOf(DM_OWNER_POLICY_NOTE)).toBeGreaterThanOrEqual(0);
+      expect(own.standing.indexOf(DM_OWNER_POLICY_NOTE)).toBeLessThan(
+        own.standing.indexOf('FIXTURE_OWNER_POLICY')
+      );
+      expect(common.standing).toContain('FIXTURE_OWNER_POLICY');
+      expect(common.standing).not.toContain(DM_OWNER_POLICY_NOTE);
+      expect(member.standing).not.toContain(DM_OWNER_POLICY_NOTE);
       // Each new DM session learns where its readable sources live, outside its fingerprint.
       for (const turn of [own, member]) {
         expect(turn.prompt).toContain('Readable sources:');
