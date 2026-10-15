@@ -96,7 +96,7 @@ See [Claude Code plugin](docs/start/claude-code-plugin.md).
 
 ```
 What you connect   work sources · a messenger · corrections you give
-The agent          a common session and one session per person, on Claude or Codex, working through MAMA's actions
+The agent          a common session, a DM session per person and a group session per member, on Claude or Codex
 The record         SQLite on your machine: originals · work history · guidance · reports · run logs · local search index
 ```
 
@@ -120,7 +120,7 @@ given. See [People and DMs](docs/guides/people.md).
 
 **Guidance and workflows.** Your corrections are kept as lessons, preferences, constraints and
 workflows, each with a line saying when it applies. Rules that always apply go in your owner
-policy file, which the agent holds in every session. With each message from you or source change,
+policy file, which the common session and owners' DMs hold. With each message from you or source change,
 the agent is shown the few saved lessons that match it best, and can add, revise or retire
 workflows as you agree on them. Every change keeps its history.
 
@@ -131,19 +131,19 @@ graph, the wiki and logs.
 
 Each source is optional; enable the ones you use in `~/.mama/connectors.json` or during `mama init`.
 
-| Source                                | What MAMA collects                                                   | How it connects                   |
-| ------------------------------------- | -------------------------------------------------------------------- | --------------------------------- |
-| Chatwork, Slack                       | Messages in the rooms and channels you choose, and their attachments | API token                         |
-| Discord                               | Messages in the channels you choose                                  | Bot token                         |
-| Trello                                | Card and list changes on the boards you choose                       | API key and token                 |
-| Notion                                | Pages shared with the integration                                    | API token                         |
-| Telegram (source)                     | Messages in groups you add a separate source bot to                  | Bot token                         |
-| Google Calendar, Gmail, Drive, Sheets | Changed events, mail, files and rows                                 | The logged-in `gws` command       |
-| iCal feeds                            | Events in the calendar feeds you add                                 | Private feed URL kept as a secret |
-| Obsidian                              | Notes in the vault folders you choose                                | Local folder                      |
-| iMessage                              | Messages in the chats you choose                                     | Local database (Full Disk Access) |
-| Claude Code                           | Conversations in the projects you choose                             | Local folder                      |
-| Kagemusha bridge                      | A read-only view of a local Kagemusha database                       | Local database                    |
+| Source                                | What MAMA collects                                                   | How it connects                      |
+| ------------------------------------- | -------------------------------------------------------------------- | ------------------------------------ |
+| Chatwork, Slack                       | Messages in the rooms and channels you choose, and their attachments | API token                            |
+| Discord                               | Messages in the channels you choose                                  | Bot token                            |
+| Trello                                | Card and list changes on the boards you choose                       | API key and token                    |
+| Notion                                | Pages shared with the integration                                    | API token                            |
+| Telegram (source)                     | Messages in groups you add a separate source bot to                  | Bot token                            |
+| Google Calendar, Gmail, Drive, Sheets | Changed events, mail, files and rows                                 | The logged-in `gws` command          |
+| iCal feeds                            | Events in the calendar feeds you add                                 | Private URL as a secret, set by hand |
+| Obsidian                              | Notes in the vault folders you choose                                | Local folder                         |
+| iMessage                              | Messages in the chats you choose                                     | Local database (Full Disk Access)    |
+| Claude Code                           | Conversations in the projects you choose                             | Local folder                         |
+| Kagemusha bridge                      | A read-only view of a local Kagemusha database                       | Local database                       |
 
 **Messengers.** You talk to MAMA in Telegram, Discord or Slack. In Telegram, each person you
 register has a DM with MAMA, and owners and members also use the common group; Discord and Slack
@@ -192,9 +192,9 @@ These are the current package versions.
 | Stage                  | What                                                                                                | Status                                                                |
 | ---------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | The record             | Originals kept, work history with evidence, local search                                            | done                                                                  |
-| Common agent           | Answers, reports, board, wiki, guidance and workflows on Claude or Codex                            | done, in daily use                                                    |
-| Sources and messengers | The sources above; Telegram, Discord and Slack                                                      | done                                                                  |
-| History import         | Import past messages per source and replay them day by day                                          | `mama backfill`, `mama replay`                                        |
+| Common agent           | Answers, reports, board, wiki, guidance and workflows on Claude or Codex                            | live; owner acceptance pending                                        |
+| Sources and messengers | The sources above; Telegram, Discord and Slack                                                      | Telegram live; Discord and Slack not yet run live                     |
+| History import         | Import past messages per source and replay them day by day                                          | `mama backfill` (prepared files), `mama replay`                       |
 | Team members           | Each person has its own DM, records, jobs and skills; members work in the group within their grants | owners' DMs in daily use; members without the owner role not yet used |
 
 Open live checks are tracked in the [work plan](docs/development/plan.md).

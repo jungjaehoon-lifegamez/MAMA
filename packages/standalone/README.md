@@ -1,8 +1,8 @@
 # MAMA OS
 
-A common session and one session per registered person, on Claude or Codex, watch connected
-work, keep task revisions and evidence, answer in Telegram (each person's DM and the common group),
-Discord or Slack, publish reports and a board, and recall corrections.
+A common session, a DM session per registered person and a group session per member, on Claude or
+Codex, watch connected work, keep task revisions and evidence, answer in Telegram (each person's DM
+and the common group), Discord or Slack, publish reports and a board, and recall corrections.
 [mama-core](../mama-core/README.md) supplies the shared engine.
 
 Current manifest: **0.77.0**. Install with `npm install -g @jungjaehoon/mama-os` (Node.js 22.13+)
@@ -32,7 +32,7 @@ Before starting the daemon, set `member_root` outside HOME in `config.yaml` and 
 | `mama tools install`                          | Install or update the document toolkit           |
 | `mama secret set <NAME>` / `mama secret list` | Rotate a token / list names only                 |
 | `mama daemon`                                 | Run the configured daemon in the foreground      |
-| `mama backfill <file>`                        | Import past messages for one source              |
+| `mama backfill <file>`                        | Write a prepared past-period backfill file       |
 | `mama replay`                                 | Replay prepared historical inputs in day windows |
 | `mama status` / `mama stop`                   | Report running/stopped / stop the process        |
 
