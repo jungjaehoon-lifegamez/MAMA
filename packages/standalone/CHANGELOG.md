@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- An owner's DM reads the owner policy as the common session's working rules, read-only, with
+  work items, reports, the board, the wiki and the policy left to the common channel. Asked what
+  it could do, a DM had listed the common session's duties as its own. Every session is also told
+  that its workspace `.git` only bounds settings lookup: the Claude CLI reports it as a repository.
 - A turn with no person in it (source changes, record orders, reports, notices, personal jobs)
   fetches web pages only from the hosts in `agent.autonomous_web_fetch` (none by default, `*` for
   all). It keeps web search, and turns where a person speaks keep web fetch. Choosing a page is a

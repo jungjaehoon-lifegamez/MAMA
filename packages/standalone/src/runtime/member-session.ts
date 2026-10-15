@@ -19,7 +19,11 @@ import {
   memberRoomTmpRoot,
   memberRoomClaudeTmpDir,
 } from './member-paths.js';
-import { MEMBER_SYSTEM_PROMPT, MEMBER_ROOM_SYSTEM_PROMPT } from './member-system-prompt.js';
+import {
+  DM_OWNER_POLICY_NOTE,
+  MEMBER_SYSTEM_PROMPT,
+  MEMBER_ROOM_SYSTEM_PROMPT,
+} from './member-system-prompt.js';
 import { MEMBER_VOICE } from './turn-orders.js';
 import {
   resolvePrincipalAccess,
@@ -202,10 +206,16 @@ export function createMemberSession(
       },
       // The host reads the common policy; the person's native tools still cannot read its file.
       // A room reads it only in the common channel, where it may change it.
-      ownerPolicyProvider: () =>
-        (room !== undefined ? room === options.commonChannelId : readsOwnerRules())
-          ? ports.ownerPolicyProvider()
-          : { content: null, fingerprint: '', loaded: false },
+      ownerPolicyProvider: () => {
+        if (room !== undefined ? room !== options.commonChannelId : !readsOwnerRules())
+          return { content: null, fingerprint: '', loaded: false };
+        const policy = ports.ownerPolicyProvider();
+        // The policy is written for the common session. A DM reads it to know how the work is
+        // run; told nothing, it took the common session's duties for its own (2026-10-15).
+        return room !== undefined || policy.content === null
+          ? policy
+          : { ...policy, content: `${DM_OWNER_POLICY_NOTE}\n\n${policy.content}` };
+      },
       // Native session also denies this member's runtime and Codex credentials.
       deniedReadPaths,
       sandboxNetworkProxy: proxy,
