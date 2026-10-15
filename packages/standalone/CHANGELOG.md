@@ -17,6 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   misses on the page only, and the next day repeated one.
 - `work.list` takes `lastEventBefore`: items whose latest source event is before a time, for stale
   work that a backfill or correction rewrote later (`changedBefore` compares write time).
+- One process holds an install at a time. The daemon, a replay or backfill, and `register-owner`
+  take an exclusive lock on `~/.mama/runtime/daemon.lock` before they open the database, so a
+  second one is refused before it changes anything (a second daemon used to migrate the live
+  database, rewrite the workspace settings and reset the web fetch mode before failing). The
+  operating system releases the lock when the process ends; a failed stop keeps it until then. A
+  refused daemon exits cleanly.
+- `mama status` asks the running daemon through `~/.mama/daemon.sock` and shows its version,
+  boot stage, running turns, waiting inputs, connectors and last error (`--json` for scripts); it
+  exits 0 when running and 3 when stopped, and it works on Linux, where it used to fail because it
+  called `launchctl`. `mama stop` unloads the LaunchAgent that runs the daemon or asks the daemon to stop, waits up to
+  two minutes until the install is released, and says when something else holds it or started in
+  its place.
+- A stop during boot unwinds what has started; signals were handled only after boot.
 
 ## [0.77.0] - 2026-10-15
 

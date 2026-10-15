@@ -45,6 +45,7 @@ export async function runBackfill(
   const daemon = await bootDaemon({
     ...(options.daemon ?? {}),
     mode: 'replay',
+    command: 'backfill',
     replay: async (context) => {
       const pagesPath = join(
         context.paths.runtimeRoot,
