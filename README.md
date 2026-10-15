@@ -143,6 +143,9 @@ reports, notifications and security alerts. See [Sources](docs/guides/connectors
   agent can read but not change.
 - Messages, files and pages from other people reach the agent marked as untrusted evidence, never
   as instructions.
+- Work that runs with no one in the conversation (source changes, reports, notices, scheduled jobs)
+  can search the web but opens pages only from sites you list. When you ask, the agent can open any
+  page, and each page it opens is reported to you.
 - The viewer answers only on your machine (`127.0.0.1`) by default and serves read-only pages.
 
 **Reaching the viewer from outside.** If you expose it through a tunnel:

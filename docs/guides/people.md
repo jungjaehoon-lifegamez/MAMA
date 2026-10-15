@@ -33,7 +33,10 @@ Ask "who are the members?" to see each member's status, grants and the latest en
 A DM works with that person's own records. What it saves stays personal unless the person shares
 it. An owner's DM also reads the common records and sources, the owner policy and the owner rules,
 and can search and fetch the web. It can open a Google Drive file, such as a sheet, which is saved
-in that person's own downloads. Changes to common things happen in the common group: shared
+in that person's own downloads. Every DM can write and run scripts in its own workspace, make
+PowerPoint, Word, Excel and PDF files, look at each page before sending them, and work with tables
+and charts (numpy, pandas and matplotlib, with Korean and Japanese labels). It cannot install other
+packages. Changes to common things happen in the common group: shared
 records, the owner policy and rules, reports, the wiki and files sent to the group. A DM that is
 asked for one of these says so.
 
@@ -47,13 +50,16 @@ Ask in your DM for something to happen on a schedule, for example "every weekday
 what changed on the board". MAMA saves a job with a time and a time zone. Each run looks at your
 records and sources at that moment and sends the result to your DM. A run with nothing to say sends
 nothing. Jobs must be at least an hour apart, and a person can have up to ten active jobs. Ask to
-list, change, pause or delete them at any time.
+list, change, pause or delete them at any time. A job runs with no one in the conversation, so it
+searches the web but opens pages only from the sites the owner lists in `agent.autonomous_web_fetch`
+(none by default); ask in your DM when you want a page read.
 
 ## Notices
 
 When a source change concerns a member, the common session can name that member. The member's own
 session then reads the change with the member's access and decides whether to send a short notice
-to the member's DM. Nothing the member cannot read is sent.
+to the member's DM. Nothing the member cannot read is sent. Like a job, a notice opens no web page
+outside the listed sites.
 
 ## Skills
 
