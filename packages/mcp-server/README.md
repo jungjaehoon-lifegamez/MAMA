@@ -42,6 +42,8 @@ above when verifying this branch. Published versions may lag this checkout. See
 | `save`                           | Save a `decision`, `checkpoint` or raw conversation `ingest` |
 | `search`                         | Search or list decisions and checkpoints                     |
 | `update`                         | Record a decision outcome and optional reason                |
+| `link`                           | Link two decisions after saving, with the reason             |
+| `get_decision`                   | Read one decision with every link in and out                 |
 | `search_decisions_and_contracts` | Retrieve context for code/tool use                           |
 | `case_timeline_range`            | Read a bounded timeline of stored case data                  |
 

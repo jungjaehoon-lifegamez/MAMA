@@ -1,7 +1,8 @@
 # MAMA OS
 
-One owner agent on Claude or Codex watches connected work, keeps task revisions and evidence,
-answers on Telegram, publishes reports and a board, and recalls corrections.
+A common session and one session per registered person, on Claude or Codex, watch connected
+work, keep task revisions and evidence, answer in Telegram (each person's DM and the common group),
+Discord or Slack, publish reports and a board, and recall corrections.
 [mama-core](../mama-core/README.md) supplies the shared engine.
 
 Current manifest: **0.77.0**. Install with `npm install -g @jungjaehoon/mama-os` (Node.js 22.13+)
@@ -27,8 +28,11 @@ Before starting the daemon, set `member_root` outside HOME in `config.yaml` and 
 | Command                                       | Purpose                                          |
 | --------------------------------------------- | ------------------------------------------------ |
 | `mama init`                                   | Set up the owner, backend and connectors         |
+| `mama register-owner <telegram id>`           | Register an owner before the daemon starts       |
+| `mama tools install`                          | Install or update the document toolkit           |
 | `mama secret set <NAME>` / `mama secret list` | Rotate a token / list names only                 |
 | `mama daemon`                                 | Run the configured daemon in the foreground      |
+| `mama backfill <file>`                        | Import past messages for one source              |
 | `mama replay`                                 | Replay prepared historical inputs in day windows |
 | `mama status` / `mama stop`                   | Report running/stopped / stop the process        |
 
@@ -37,18 +41,28 @@ See [CLI flags](../../docs/reference/cli.md) and
 
 ## Current surface
 
-- **Owner chat:** Telegram, Discord or Slack, each with an allowed chat and owner sender
-  ([messengers](../../docs/guides/messengers.md)).
-- **Five source connectors:** Chatwork, Slack, Trello, Kagemusha (read-only local bridge),
-  and Google Calendar through `gws`.
+- **Messengers:** in Telegram, a DM per registered person and the common group; Discord and
+  Slack keep one owner channel ([messengers](../../docs/guides/messengers.md)).
+- **People:** each person's DM session has its own records, scheduled jobs, notices and skills;
+  an owner's DM also reads the common records. Members without the owner role work in the group
+  in a session of their own ([people and DMs](../../docs/guides/people.md)).
+- **Sources:** Chatwork, Slack, Discord, Telegram groups, Trello, Notion, Google Calendar, Gmail,
+  Drive and Sheets through `gws`, iCal feeds, Obsidian, iMessage, Claude Code and a read-only
+  Kagemusha bridge ([sources](../../docs/guides/connectors.md)).
 - **Records:** tasks and revision history, a four-slot board, wiki pages, daily journals,
-  lessons, preferences and constraints.
+  lessons, preferences, constraints, workflows and skills.
+- **Documents:** a managed toolkit (`mama tools install`) with python-pptx, python-docx, openpyxl,
+  PyMuPDF, numpy, pandas, matplotlib, LibreOffice and Noto CJK fonts; on macOS `document.render`
+  turns a workspace file into a PDF and page images.
+- **Web:** for owners, turns where a person speaks search the web and, on Claude, open pages;
+  turns with no person in them search the web but open pages only from the hosts in
+  `agent.autonomous_web_fetch`. Members without the owner role have no web tools.
 - **Reports:** live deltas, full reports at 08/13/18 and hourly reminders at 09–21, in the
   configured time zone.
 - **Viewer:** board, work, memory graph, wiki, logs and security events; read-only data routes.
 - **Files:** source attachment lookup/download, native workspace processing,
-  `deliver.<messenger>.file` to the owner's chat and `deliver.drive.file` for files over the
-  messengers' limit.
+  `deliver.<messenger>.file` to the caller's chat and `deliver.drive.file` for files over the
+  messengers' limit; an owner's DM fetches Drive files with `drive.download`.
 
 Assembly lives in `src/runtime/` and `src/cli/commands/daemon.ts`; actions in `src/api/`,
 collectors in `src/connectors/`, Telegram in `src/gateways/`, replay in `src/replay/`,
@@ -70,6 +84,7 @@ The [public MCP server](../mcp-server/README.md) and
 [Replay](../../docs/guides/replay.md) · [Viewer](../../docs/guides/viewer.md).
 
 Completion is measured by [INTENT.md](../../INTENT.md); open live checks are in
+[the work plan](../../docs/development/plan.md) and results in
 [checks.md](../../docs/development/checks.md). Run `pnpm test` inside this package, with isolated
 state as described in [testing](../../docs/development/testing.md).
 

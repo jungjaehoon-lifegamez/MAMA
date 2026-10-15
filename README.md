@@ -139,6 +139,7 @@ Each source is optional; enable the ones you use in `~/.mama/connectors.json` or
 | Notion                                | Pages shared with the integration                                    | API token                         |
 | Telegram (source)                     | Messages in groups you add a separate source bot to                  | Bot token                         |
 | Google Calendar, Gmail, Drive, Sheets | Changed events, mail, files and rows                                 | The logged-in `gws` command       |
+| iCal feeds                            | Events in the calendar feeds you add                                 | Private feed URL kept as a secret |
 | Obsidian                              | Notes in the vault folders you choose                                | Local folder                      |
 | iMessage                              | Messages in the chats you choose                                     | Local database (Full Disk Access) |
 | Claude Code                           | Conversations in the projects you choose                             | Local folder                      |
