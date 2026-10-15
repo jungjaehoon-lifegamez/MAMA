@@ -172,7 +172,11 @@ export class PollingScheduler {
     if (!existsSync(this.stateFile)) return;
     let state: Record<string, unknown>;
     try {
-      state = JSON.parse(readFileSync(this.stateFile, 'utf8')) as Record<string, unknown>;
+      const value: unknown = JSON.parse(readFileSync(this.stateFile, 'utf8'));
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('poll state is not an object');
+      }
+      state = value as Record<string, unknown>;
     } catch (error) {
       // Each source then starts from its first-poll window; the file is kept for a look.
       const quarantine = `${this.stateFile}.corrupt-${this.now()}-${process.pid}`;

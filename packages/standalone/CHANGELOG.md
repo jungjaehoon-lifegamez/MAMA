@@ -9,15 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `mama backup [--include-secrets] [--logs] [--out <folder>]` writes one archive of a stopped
-  install to `~/.mama/backups/` (0600): the database copied with SQLite's backup and checked with
-  `integrity_check`, the MAMA home's state, the workspace, every person's folder under
-  `member_root`, the published common skills, the wiki MAMA writes and Jev's vocabulary. A
-  manifest records each file's mode, symlink target and SHA-256, and the archive is read back
-  against it before it is kept. Credentials (auth.env, Codex logins, the Jev key, and a
-  config.yaml that still holds a token) go in only with `--include-secrets`, logs only with
-  `--logs`; it names everything it left out. It holds the install while it works, so it is
-  refused beside a running daemon, and it refuses a folder the agents read.
+- `mama backup [--include-secrets] [--logs]` writes one archive of a stopped install to
+  `~/.mama/backups/` (0600), the one folder the agents cannot read: the database copied with
+  SQLite's backup and checked with `integrity_check`, the raw stores checked too, the MAMA home's
+  state, the workspace, every person's folder under `member_root`, the published common skills,
+  the wiki MAMA writes, Jev's vocabulary and the MCP configuration, each from where config puts it
+  and through any link. A manifest records each entry's mode, symlink target and SHA-256, and the
+  archive is read back against it before it is kept. Credentials (auth.env, the Codex login, the
+  Jev key, and a config, MCP or start.sh file that holds a token) go in only with
+  `--include-secrets`, logs only with `--logs`; the backends' sessions and logins never (sessions
+  start over after a restore). It names everything it left out, and it is refused beside a
+  running daemon.
 
 - `mama doctor` checks an install as its service would run it, without changing it: config and
   `connectors.json` as boot loads them, `member_root`, the Node in `start.sh` (present, outside one

@@ -53,4 +53,18 @@ describe('poll state restore', () => {
     errors.mockRestore();
     store.close();
   });
+
+  it('quarantines JSON that parses but is not an object', () => {
+    const root = mkdtempSync(join(tmpdir(), 'poll-state-restore-'));
+    roots.push(root);
+    writeFileSync(join(root, 'poll-state.json'), 'null', 'utf8');
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = new RawStore(root);
+    new PollingScheduler(store, root, { now: () => Date.parse('2024-01-02T00:00:00.000Z') });
+    expect(
+      readdirSync(root).filter((name) => name.startsWith('poll-state.json.corrupt-'))
+    ).toHaveLength(1);
+    errors.mockRestore();
+    store.close();
+  });
 });

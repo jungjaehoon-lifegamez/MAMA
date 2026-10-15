@@ -179,8 +179,8 @@ channel) keeps the owner runtime's tools.
   on the machine are not denied; the agent's native reads of them are recorded in tool_traces.
 - Standalone removes secret-shaped environment names before launching either backend; core accepts
   a complete consumer-supplied environment. Native children inherit it; daemon connectors keep theirs.
-- Claude CLI Read denies and Bash sandbox denyRead exclude auth.env, config.yaml, runtime/, backups/
-  and the managed Codex home. Codex uses a named workspace permission profile with those paths denied;
+- Claude CLI Read denies and Bash sandbox denyRead exclude auth.env, config.yaml, runtime/, backups/,
+  the managed Codex home and the replay key file. Codex uses a named workspace permission profile with those paths denied;
   thread start/resume select that profile instead of the legacy sandbox override.
 - Viewer tunnel headers never establish identity. Remote access requires MAMA_AUTH_TOKEN or a verified
   Access JWT configured with MAMA_CF_ACCESS_ISSUER and MAMA_CF_ACCESS_AUD. Unconfigured verification

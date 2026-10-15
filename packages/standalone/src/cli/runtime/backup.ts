@@ -3,12 +3,13 @@ import {
   closeSync,
   createReadStream,
   existsSync,
+  fsyncSync,
   lstatSync,
   openSync,
   readFileSync,
   readdirSync,
   readlinkSync,
-  readSync,
+  realpathSync,
   type Stats,
 } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
@@ -16,6 +17,7 @@ import Database from 'better-sqlite3';
 import * as yaml from 'js-yaml';
 import * as tar from 'tar';
 import type { W1Config } from '../../runtime/config.js';
+import { readStartScript } from '../launch-files.js';
 import { pathsFor } from '../commands/daemon.js';
 
 /** One path in a backup, named by its place in the archive. */
@@ -40,16 +42,19 @@ export interface BackupManifest {
   readonly schemaVersion: number | null;
   readonly includesSecrets: boolean;
   readonly includesLogs: boolean;
-  /** Each archive prefix and the absolute path it came from; restore maps them to its own. */
+  /** Each archive prefix and the physical path it came from. */
   readonly roots: Record<string, string>;
-  /** SQLite files in the archive, each checked with integrity_check before it was written. */
+  /** Every path the install was configured with, whether or not it was archived. */
+  readonly configured: Record<string, string | null>;
+  /** MAMA's own databases in the archive, each checked with integrity_check. */
   readonly databases: string[];
   readonly entries: BackupEntry[];
 }
 
-/** A tree or file to archive under `prefix`, and which of its paths to keep. */
+/** A tree or file archived under `prefix`, and which of its paths to keep. */
 export interface BackupSource {
   readonly prefix: string;
+  /** Physical path. */
   readonly path: string;
   readonly keep: (relativePath: string, stat: Stats) => boolean;
 }
@@ -58,9 +63,10 @@ export interface BackupPlan {
   readonly sources: BackupSource[];
   /** The database file boot opens; the archive holds a copy taken with SQLite's backup. */
   readonly database: string;
-  /** Top-level names in the MAMA root that this version does not read, so they stay out. */
+  readonly configured: Record<string, string | null>;
+  /** Top-level names in the MAMA root that this version does not read. */
   readonly leftOut: string[];
-  /** Credentials left out because the backup was not asked to carry them. */
+  /** Credentials that exist and were left out because they were not asked for. */
   readonly secretsLeftOut: string[];
 }
 
@@ -68,34 +74,48 @@ export interface BackupPlan {
 const RUNTIME_FILES = new Set([
   'owner-message-ledger.json',
   'report-schedule-state.json',
-  'mama-mcp-config.json',
   'client-journal.jsonl',
   'september-import-manifest.json',
   'september-replay-cursor.json',
   'september-replay-ledger.jsonl',
 ]);
-/** Written per boot or per turn, and owner-only: never archived. */
+/** Written per boot or per turn: never archived. */
 const EPHEMERAL_NAMES = new Set(['session-credential', 'web-fetch-turn.json']);
-const SECRET_KEY =
-  /(^|[_-])(token|secret|password|passwd|credential|api[_-]?key|app[_-]?key|private[_-]?key)s?($|[_-])/i;
+/**
+ * Backend homes and their session stores. Sessions are a cache that MAMA starts again (a thread it
+ * cannot resume is a new one), and these folders also hold the backends' logins and the logins an
+ * agent makes in its shell, so they stay out; the owner's Codex login is a credential on its own.
+ */
+const BACKEND_STATE = new Set(['.codex', 'codex-runtime']);
+/** Re-created at boot. */
+const REBUILT_AT_BOOT = new Set(['.empty-plugins']);
+const SECRET_NAME =
+  /(^|[_-])(token|secret|password|passwd|credential|credentials|api[_-]?key|app[_-]?key|private[_-]?key)s?($|[_-])/i;
+/** A name that holds where a secret lives, or what it is called, not the secret. */
+const SECRET_REFERENCE = /(path|file|dir|name)$/i;
+/** Environment names the backend strips (backend-security.ts), less a budget count. */
+const SECRET_EXPORT = /(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL)/i;
+
+function physical(path: string): string {
+  const absolute = resolve(path);
+  return existsSync(absolute) ? realpathSync(absolute) : absolute;
+}
 
 function inside(parent: string, child: string): boolean {
   const path = relative(parent, child);
-  return path !== '..' && !path.startsWith(`..${sep}`) && !path.startsWith(sep);
+  return path === '' || (path !== '..' && !path.startsWith(`..${sep}`) && !path.startsWith(sep));
 }
 
-/**
- * Setting paths in config.yaml that look like they hold a credential: a string value under a
- * token, secret, password, credential or API-key name. Older installs kept tokens there.
- */
-export function secretShapedKeys(configPath: string): string[] {
+/** Setting paths whose string value sits under a credential name. Values are never read out. */
+export function secretShapedKeys(value: unknown): string[] {
   const found: string[] = [];
-  const visit = (value: unknown, path: string[]): void => {
-    if (Array.isArray(value)) {
-      value.forEach((item, index) => visit(item, [...path, String(index)]));
-    } else if (value !== null && typeof value === 'object') {
-      for (const [key, child] of Object.entries(value)) {
-        if (typeof child === 'string' && child.trim() !== '' && SECRET_KEY.test(key)) {
+  const visit = (node: unknown, path: string[]): void => {
+    if (Array.isArray(node)) {
+      node.forEach((item, index) => visit(item, [...path, String(index)]));
+    } else if (node !== null && typeof node === 'object') {
+      for (const [key, child] of Object.entries(node)) {
+        const secret = SECRET_NAME.test(key) && !SECRET_REFERENCE.test(key);
+        if (typeof child === 'string' && child.trim() !== '' && secret) {
           found.push([...path, key].join('.'));
         } else {
           visit(child, [...path, key]);
@@ -103,127 +123,181 @@ export function secretShapedKeys(configPath: string): string[] {
       }
     }
   };
-  visit(yaml.load(readFileSync(configPath, 'utf8')), []);
+  visit(value, []);
   return found;
+}
+
+function readStructured(path: string): unknown {
+  const text = readFileSync(path, 'utf8');
+  return path.endsWith('.json') ? JSON.parse(text) : yaml.load(text);
+}
+
+function relativeName(root: string, path: string): string {
+  return inside(root, path) ? relative(root, path) : path;
 }
 
 /**
  * What a backup holds, from what the current code reads and writes (not from what a root happens
  * to contain): the MAMA root's state, the database, the workspace, every person's tree under
- * member_root, the published common skills, the wiki MAMA writes and Jev's files. Credentials
- * come only with `includeSecrets`; logs only with `includeLogs`.
+ * member_root, the published common skills, the wiki MAMA writes, Jev's vocabulary and the MCP
+ * configuration. Credentials, and any file that holds one, come only with `includeSecrets`;
+ * logs only with `includeLogs`.
  */
 export function planBackup(
   config: W1Config,
   configPath: string,
-  options: { includeSecrets: boolean; includeLogs: boolean }
+  options: { includeSecrets: boolean; includeLogs: boolean; home: string }
 ): BackupPlan {
   const paths = pathsFor(configPath, config);
-  const root = paths.mamaRoot;
-  const workspace = resolve(paths.workspaceDir);
+  const root = physical(paths.mamaRoot);
+  const workspace = physical(paths.workspaceDir);
   const database = resolve(config.database.path);
-  const databaseFiles = new Set(['', '-wal', '-shm', '-journal'].map((end) => database + end));
-  const secretConfig = secretShapedKeys(configPath);
-  const secretsLeftOut: string[] = [];
+  const codexHome = physical(config.agent.codex_home ?? join(paths.mamaRoot, '.codex'));
+  const configured: Record<string, string | null> = {
+    home: physical(options.home),
+    root,
+    workspace,
+    database,
+    member_root: config.member_root ? physical(config.member_root) : null,
+    tools_root: config.tools_root ? physical(config.tools_root) : null,
+    codex_home: codexHome,
+    mcp_config: physical(paths.mcpConfigPath),
+    log_file: physical(config.logging.file),
+    jev_vocab: physical(config.jev.vocabFile),
+    jev_key: physical(config.jev.keyFile),
+    wiki:
+      config.wiki?.enabled && config.wiki.vaultPath && config.wiki.wikiDir
+        ? physical(resolve(config.wiki.vaultPath, config.wiki.wikiDir))
+        : null,
+  };
+
+  // Files that are credentials, wherever they are.
+  const credentials: [string, string][] = [
+    ['credentials/auth.env', join(root, 'auth.env')],
+    ['credentials/jev-key', configured.jev_key!],
+    ['credentials/codex-auth.json', join(codexHome, 'auth.json')],
+  ];
+  const secretsLeftOut = options.includeSecrets
+    ? []
+    : credentials
+        .filter(([, path]) => existsSync(path))
+        .map(([, path]) => relativeName(root, path));
+  // Files MAMA keeps that can carry a credential: archived only when they hold none.
+  const scanned: [string, (path: string) => string[]][] = [
+    [physical(configPath), (path) => secretShapedKeys(readStructured(path))],
+    [join(root, 'connectors.json'), (path) => secretShapedKeys(readStructured(path))],
+    [configured.mcp_config!, (path) => secretShapedKeys(readStructured(path))],
+    [
+      join(root, 'start.sh'),
+      (path) =>
+        readStartScript(readFileSync(path, 'utf8'), options.home)
+          .carried.map((line) => /^export\s+([A-Za-z_][A-Za-z0-9_]*)=/.exec(line)?.[1] ?? '')
+          .filter((name) => name !== 'MAX_THINKING_TOKENS' && SECRET_EXPORT.test(name)),
+    ],
+  ];
+  const withheldFiles = new Set<string>();
   if (!options.includeSecrets) {
-    secretsLeftOut.push('auth.env', 'the Codex logins (.codex/auth.json)', 'the Jev key');
-    if (secretConfig.length > 0) {
-      secretsLeftOut.push(
-        `config.yaml (it holds ${secretConfig.length} credential-shaped value(s))`
-      );
+    for (const [path, holds] of scanned) {
+      if (existsSync(path) && holds(path).length > 0) {
+        withheldFiles.add(path);
+        secretsLeftOut.push(`${relativeName(root, path)} (it holds a credential)`);
+      }
     }
   }
+
+  const databaseFiles = ['', '-wal', '-shm', '-journal'].map((end) => physical(database + end));
+  // Archived on their own, or not at all: every tree leaves them out.
+  const separate = new Set([
+    ...databaseFiles,
+    ...credentials.map(([, path]) => path),
+    configured.mcp_config!,
+    configured.jev_vocab!,
+    configured.log_file!,
+    ...withheldFiles,
+  ]);
+  const common = (absolute: string, stat: Stats): boolean => {
+    if (!stat.isFile() && !stat.isDirectory() && !stat.isSymbolicLink()) return false;
+    if (separate.has(absolute)) return false;
+    const name = absolute.slice(absolute.lastIndexOf(sep) + 1);
+    if (stat.isDirectory() && (name === '.tmp' || BACKEND_STATE.has(name))) return false;
+    // SQLite rebuilds a shared-memory file; a check that opens the database rewrites it.
+    if (EPHEMERAL_NAMES.has(name) || name.endsWith('-shm')) return false;
+    if (name === '.credentials.json' && !options.includeSecrets) return false;
+    return true;
+  };
+
+  const workspaceTop =
+    inside(root, workspace) && relative(root, workspace).split(sep).length === 1
+      ? relative(root, workspace)
+      : null;
   const rootFiles = new Set([
+    'config.yaml',
     'connectors.json',
     'owner-policy.md',
     'report-slots.json',
     'start.sh',
-    ...(secretConfig.length === 0 || options.includeSecrets ? ['config.yaml'] : []),
-    ...(options.includeSecrets ? ['auth.env'] : []),
   ]);
-  const workspaceTop = inside(root, workspace) ? relative(root, workspace).split(sep)[0] : null;
   const rootDirs = new Set([
     'connectors',
     'downloads',
-    'codex-runtime',
-    '.codex',
     'runtime',
     ...(options.includeLogs ? ['logs'] : []),
     ...(workspaceTop ? [workspaceTop] : []),
   ]);
-  // Every tree: no sockets, no scratch, no per-boot credentials, Codex logins only when asked.
-  const common = (relativePath: string, stat: Stats): boolean => {
-    if (!stat.isFile() && !stat.isDirectory() && !stat.isSymbolicLink()) return false;
-    const parts = relativePath.split(sep);
-    const name = parts[parts.length - 1];
-    if (stat.isDirectory() && name === '.tmp') return false;
-    if (EPHEMERAL_NAMES.has(name)) return false;
-    if (!options.includeSecrets && name === 'auth.json' && parts[parts.length - 2] === '.codex') {
-      return false;
+  // A kept folder that is a link would be archived as the link alone.
+  for (const name of ['connectors', 'downloads', 'runtime', 'logs']) {
+    const path = join(root, name);
+    if (rootDirs.has(name) && existsSync(path) && lstatSync(path).isSymbolicLink()) {
+      throw new Error(`${path} is a symlink; a backup would hold the link, not what it names`);
     }
-    return true;
-  };
-  const keepRoot = (relativePath: string, stat: Stats): boolean => {
-    if (relativePath === '') return true;
-    if (databaseFiles.has(join(root, relativePath))) return false;
+  }
+  const keptByRoot = (relativePath: string): boolean => {
     const [top, ...rest] = relativePath.split(sep);
-    if (rest.length === 0 && !rootFiles.has(top) && !rootDirs.has(top)) return false;
-    if (top === 'runtime' && rest.length > 0) {
-      if (rest[0] !== 'backfill' && !(rest.length === 1 && RUNTIME_FILES.has(rest[0]))) {
-        return false;
-      }
-    }
-    return common(relativePath, stat);
+    if (rest.length === 0) return rootFiles.has(top) || rootDirs.has(top);
+    if (!rootDirs.has(top)) return false;
+    if (top !== 'runtime') return true;
+    return rest[0] === 'backfill' || (rest.length === 1 && RUNTIME_FILES.has(rest[0]));
   };
+  const keepRoot = (relativePath: string, stat: Stats): boolean =>
+    relativePath === '' || (keptByRoot(relativePath) && common(join(root, relativePath), stat));
+
   const sources: BackupSource[] = [{ prefix: 'root', path: root, keep: keepRoot }];
-  if (!workspaceTop) sources.push({ prefix: 'workspace', path: workspace, keep: common });
-  if (config.member_root) {
-    sources.push({ prefix: 'members', path: resolve(config.member_root), keep: common });
-  }
-  if (config.tools_root) {
-    // The toolkit is rebuilt by mama tools install; the published skills are not.
+  const add = (prefix: string, path: string | null, keep = common): void => {
+    if (path === null || !existsSync(path)) return;
     sources.push({
-      prefix: 'skills',
-      path: join(resolve(config.tools_root), 'skills'),
-      keep: common,
+      prefix,
+      path,
+      keep: (relativePath, stat) =>
+        keep(relativePath === '' ? path : join(path, relativePath), stat),
     });
+  };
+  // A workspace kept elsewhere is archived where it really is.
+  if (!workspaceTop) add('workspace', workspace);
+  add('members', configured.member_root);
+  // The toolkit is rebuilt by mama tools install; the published skills are not.
+  add('skills', configured.tools_root ? join(configured.tools_root, 'skills') : null);
+  const covered = (path: string): boolean =>
+    (inside(root, path) && keptByRoot(relative(root, path))) || inside(workspace, path);
+  if (configured.wiki && !covered(configured.wiki)) add('wiki', configured.wiki);
+  add('jev-vocab', configured.jev_vocab, () => true);
+  if (!withheldFiles.has(configured.mcp_config!)) {
+    add('mcp-config', configured.mcp_config, () => true);
   }
-  if (config.wiki?.enabled && config.wiki.vaultPath && config.wiki.wikiDir) {
-    const wiki = resolve(config.wiki.vaultPath, config.wiki.wikiDir);
-    if (!inside(root, wiki) && !inside(workspace, wiki)) {
-      sources.push({ prefix: 'wiki', path: wiki, keep: common });
-    }
-  }
-  sources.push({ prefix: 'jev/vocab', path: resolve(config.jev.vocabFile), keep: () => true });
+  if (options.includeLogs) add('log-file', configured.log_file, () => true);
   if (options.includeSecrets) {
-    sources.push({ prefix: 'jev/key', path: resolve(config.jev.keyFile), keep: () => true });
+    for (const [prefix, path] of credentials) add(prefix, path, () => true);
   }
 
-  const covered = new Set([
-    ...[...databaseFiles].filter((path) => inside(root, path)).map((path) => relative(root, path)),
-    ...[config.jev.vocabFile, config.jev.keyFile]
-      .map((path) => resolve(path))
-      .filter((path) => inside(root, path))
-      .map((path) => relative(root, path).split(sep)[0]),
-    'auth.env',
-    'config.yaml',
-    'backups',
-  ]);
-  const leftOut = existsSync(root)
-    ? readdirSync(root)
-        .filter((name) => !rootFiles.has(name) && !rootDirs.has(name) && !covered.has(name))
-        .filter((name) => {
-          const stat = lstatSync(join(root, name));
-          return stat.isFile() || stat.isDirectory() || stat.isSymbolicLink();
-        })
-        .sort()
-    : [];
-  return {
-    sources: sources.filter((source) => existsSync(source.path)),
-    database,
-    leftOut,
-    secretsLeftOut,
-  };
+  const leftOut = readdirSync(root)
+    .filter((name) => !keptByRoot(name) && name !== 'backups' && !REBUILT_AT_BOOT.has(name))
+    .filter((name) => name !== 'logs' && !BACKEND_STATE.has(name))
+    .filter((name) => !separate.has(join(root, name)) && physical(join(root, name)) !== workspace)
+    .filter((name) => {
+      const stat = lstatSync(join(root, name));
+      return stat.isFile() || stat.isDirectory() || stat.isSymbolicLink();
+    })
+    .sort();
+  return { sources, database, configured, leftOut, secretsLeftOut };
 }
 
 function hashFile(path: string): Promise<string> {
@@ -236,16 +310,30 @@ function hashFile(path: string): Promise<string> {
   });
 }
 
-/** The entries each source keeps, in the order tar will write them. */
-export async function collectEntries(sources: readonly BackupSource[]): Promise<BackupEntry[]> {
+export interface CollectedEntries {
+  readonly entries: BackupEntry[];
+  /** Each entry's physical path, in archive order. */
+  readonly absolutes: string[];
+}
+
+/**
+ * The entries each source keeps, in the order tar will write them. A path reached twice (through
+ * overlapping sources) is kept once, under the first source that reached it.
+ */
+export async function collectEntries(sources: readonly BackupSource[]): Promise<CollectedEntries> {
   const entries: BackupEntry[] = [];
+  const absolutes: string[] = [];
+  const seen = new Set<string>();
   const visit = async (source: BackupSource, relativePath: string): Promise<void> => {
     const absolute = relativePath === '' ? source.path : join(source.path, relativePath);
+    if (seen.has(absolute)) return;
     const stat = lstatSync(absolute);
     if (!source.keep(relativePath, stat)) return;
+    seen.add(absolute);
     const path =
       relativePath === '' ? source.prefix : `${source.prefix}/${relativePath.split(sep).join('/')}`;
     const mode = stat.mode & 0o7777;
+    absolutes.push(absolute);
     if (stat.isSymbolicLink()) {
       entries.push({ path, type: 'symlink', mode, target: readlinkSync(absolute) });
     } else if (stat.isDirectory()) {
@@ -254,11 +342,17 @@ export async function collectEntries(sources: readonly BackupSource[]): Promise<
         await visit(source, relativePath === '' ? name : join(relativePath, name));
       }
     } else {
-      entries.push({ path, type: 'file', mode, size: stat.size, sha256: await hashFile(absolute) });
+      entries.push({
+        path,
+        type: 'file',
+        mode,
+        size: stat.size,
+        sha256: await hashFile(absolute),
+      });
     }
   };
   for (const source of sources) await visit(source, '');
-  return entries;
+  return { entries, absolutes };
 }
 
 /** Copy a SQLite database with its backup API and confirm the copy with integrity_check. */
@@ -275,12 +369,27 @@ export async function copyDatabase(
   return checkDatabase(destination);
 }
 
-/** integrity_check must answer ok; also read the highest applied migration when there is one. */
-export function checkDatabase(path: string): { schemaVersion: number | null } {
-  const db = new Database(path, { readonly: true, fileMustExist: true });
+/**
+ * integrity_check must answer ok. For MAMA's main database, also read the highest applied
+ * migration; another database's tables are its own.
+ */
+export function checkDatabase(
+  path: string,
+  options: { schema: boolean } = { schema: true }
+): { schemaVersion: number | null } {
+  let db: Database.Database;
+  try {
+    db = new Database(path, { readonly: true, fileMustExist: true });
+  } catch (error) {
+    // A rollback journal left by a crash needs a writer to roll it back first.
+    throw new Error(
+      `${path} cannot be opened to check it (${error instanceof Error ? error.message : String(error)}); start and stop MAMA once so it recovers, then back up again`
+    );
+  }
   try {
     const result = db.pragma('integrity_check', { simple: true });
     if (result !== 'ok') throw new Error(`${path} failed integrity_check: ${String(result)}`);
+    if (!options.schema) return { schemaVersion: null };
     const table = db
       .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'")
       .get();
@@ -294,89 +403,70 @@ export function checkDatabase(path: string): { schemaVersion: number | null } {
   }
 }
 
-/** SQLite files among the kept entries, by their header. */
-export function sqliteFiles(
-  sources: readonly BackupSource[],
-  entries: readonly BackupEntry[]
-): string[] {
-  const header = Buffer.from('SQLite format 3\0');
-  return entries
-    .filter((entry) => entry.type === 'file' && (entry.size ?? 0) >= header.length)
-    .map((entry) => ({ entry, absolute: absolutePath(sources, entry.path) }))
-    .filter(({ absolute }) => {
-      const buffer = Buffer.alloc(header.length);
-      const fd = openSync(absolute, 'r');
-      try {
-        readSync(fd, buffer, 0, buffer.length, 0);
-      } finally {
-        closeSync(fd);
-      }
-      return buffer.equals(header);
-    })
-    .map(({ entry }) => entry.path);
+/** The raw stores under connectors/: MAMA's own databases besides the main one. */
+export function rawStores(root: string): string[] {
+  const connectors = join(physical(root), 'connectors');
+  if (!existsSync(connectors)) return [];
+  return readdirSync(connectors)
+    .map((name) => join(connectors, name, 'raw.db'))
+    .filter((path) => existsSync(path) && lstatSync(path).isFile());
 }
 
-/** The absolute path an archive entry came from. */
-export function absolutePath(sources: readonly BackupSource[], archivePath: string): string {
-  const source = [...sources]
-    .sort((left, right) => right.prefix.length - left.prefix.length)
-    .find(
-      (candidate) =>
-        archivePath === candidate.prefix || archivePath.startsWith(`${candidate.prefix}/`)
-    );
-  if (!source) throw new Error(`no source for ${archivePath}`);
-  const rest = archivePath.slice(source.prefix.length + 1);
-  return rest === '' ? source.path : join(source.path, ...rest.split('/'));
+/** tar's hard-link cache, told nothing: every name is stored whole, as the manifest lists it. */
+class NoLinks extends Map<string, string> {
+  override get(): string | undefined {
+    return undefined;
+  }
 }
 
 /**
- * Write the archive: the manifest first, then every kept entry under its prefix, with modes and
- * symlinks as they are. The file is created 0600 before tar writes into it.
+ * Write exactly the collected entries, manifest first, each under its archive name, with modes
+ * and symlinks as they are. The file is created 0600 and flushed to disk before it returns.
  */
 export async function writeArchive(
   file: string,
   manifestPath: string,
-  sources: readonly BackupSource[]
+  collected: CollectedEntries
 ): Promise<void> {
+  const names = new Map<string, string>([[manifestPath, 'manifest.json']]);
+  collected.absolutes.forEach((absolute, index) =>
+    names.set(absolute, collected.entries[index].path)
+  );
   closeSync(openSync(file, 'wx', 0o600));
-  const all: BackupSource[] = [
-    { prefix: 'manifest.json', path: manifestPath, keep: () => true },
-    ...sources,
-  ];
-  const owner = (absolute: string): { source: BackupSource; relativePath: string } => {
-    const path = absolute.replace(/\/+$/, '');
-    const source = [...all]
-      .sort((left, right) => right.path.length - left.path.length)
-      .find((candidate) => path === candidate.path || path.startsWith(`${candidate.path}/`));
-    if (!source) throw new Error(`tar reached ${path}, outside every backup source`);
-    return { source, relativePath: path === source.path ? '' : relative(source.path, path) };
-  };
   await tar.c(
     {
       file,
       gzip: true,
       preservePaths: true,
-      filter: (path, stat) => {
-        const { source, relativePath } = owner(path);
-        return source.keep(relativePath, stat as Stats);
-      },
+      noDirRecurse: true,
+      linkCache: new NoLinks() as never,
       onWriteEntry: (entry) => {
         const directory = entry.path.endsWith('/');
-        const { source, relativePath } = owner(entry.path);
-        const path =
-          relativePath === ''
-            ? source.prefix
-            : `${source.prefix}/${relativePath.split(sep).join('/')}`;
-        entry.path = directory ? `${path}/` : path;
+        const name = names.get(directory ? entry.path.slice(0, -1) : entry.path);
+        if (name === undefined) {
+          throw new Error(`tar reached ${entry.path}, which was not collected`);
+        }
+        entry.path = directory ? `${name}/` : name;
       },
     },
-    all.map((source) => source.path)
+    [manifestPath, ...collected.absolutes]
   );
+  syncPath(file);
+}
+
+/** Flush a file or a folder's entries to disk. */
+export function syncPath(path: string): void {
+  const fd = openSync(path, 'r');
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /**
- * Read the archive back: the manifest comes first, every entry it lists is present with its type,
- * and every file's content hashes to what the manifest recorded.
+ * Read the archive back: the manifest comes first, every entry it lists is there once with its
+ * type and link target, nothing else is, and every file hashes to what the manifest recorded.
  */
 export async function verifyArchive(file: string, manifest: BackupManifest): Promise<void> {
   const expected = new Map(manifest.entries.map((entry) => [entry.path, entry]));
@@ -388,30 +478,32 @@ export async function verifyArchive(file: string, manifest: BackupManifest): Pro
     file,
     onReadEntry: (entry) => {
       const path = entry.path.replace(/\/+$/, '');
+      const isFirst = first === null;
       first ??= path;
-      if (path === 'manifest.json') {
+      if (isFirst && path === 'manifest.json') {
         entry.resume();
         return;
       }
       const want = expected.get(path);
+      if (!want || seen.has(path)) {
+        problems.push(want ? `${path} appears twice` : `${path} is not in the manifest`);
+        entry.resume();
+        return;
+      }
       seen.add(path);
-      if (!want) {
-        problems.push(`${path} is not in the manifest`);
-        entry.resume();
-        return;
-      }
-      if (entry.type === 'Link') {
-        // A hard link: tar stored it once; the other name must hash the same.
-        const target = expected.get(String(entry.linkpath).replace(/\/+$/, ''));
-        if (want.type !== 'file' || target?.sha256 !== want.sha256) {
-          problems.push(`${path} is a hard link to different content`);
-        }
-        entry.resume();
-        return;
-      }
       const type =
-        entry.type === 'Directory' ? 'dir' : entry.type === 'SymbolicLink' ? 'symlink' : 'file';
+        entry.type === 'Directory'
+          ? 'dir'
+          : entry.type === 'SymbolicLink'
+            ? 'symlink'
+            : entry.type === 'File' || entry.type === 'OldFile'
+              ? 'file'
+              : String(entry.type);
       if (type !== want.type) problems.push(`${path} is a ${type}, not a ${want.type}`);
+      // tar writes a file's mode as it is and makes a readable folder listable.
+      const mode = (entry.mode ?? 0) & 0o7777;
+      if (type === 'file' && mode !== want.mode) problems.push(`${path} has another mode`);
+      if (type === 'dir' && mode !== listable(want.mode)) problems.push(`${path} has another mode`);
       if (type === 'symlink' && entry.linkpath !== want.target) {
         problems.push(`${path} links elsewhere`);
       }
@@ -435,11 +527,14 @@ export async function verifyArchive(file: string, manifest: BackupManifest): Pro
   if (first !== 'manifest.json') problems.push('the manifest is not the first entry');
   for (const path of expected.keys()) if (!seen.has(path)) problems.push(`${path} is missing`);
   if (problems.length > 0) {
-    // A backend process that outlived the daemon can still be writing its history.
     throw new Error(
-      `the archive does not match its manifest (${problems.length} difference(s): ${problems.slice(0, 5).join('; ')}); if something was still writing the install, run mama backup again once it is quiet`
+      `the archive does not match its manifest (${problems.length} difference(s): ${problems.slice(0, 5).join('; ')})`
     );
   }
+}
+
+function listable(mode: number): number {
+  return mode | (mode & 0o400 ? 0o100 : 0) | (mode & 0o40 ? 0o10 : 0) | (mode & 0o4 ? 0o1 : 0);
 }
 
 export function archiveName(now: Date): string {

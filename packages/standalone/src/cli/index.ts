@@ -86,7 +86,7 @@ async function main(): Promise<void> {
     return;
   }
   console.log(
-    'Usage: mama init | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop | service install|start|stop|restart|status|uninstall | doctor [--json] [--offline] [--report] | backup [--include-secrets] [--logs] [--out <folder>]'
+    'Usage: mama init | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop | service install|start|stop|restart|status|uninstall | doctor [--json] [--offline] [--report] | backup [--include-secrets] [--logs]'
   );
 }
 

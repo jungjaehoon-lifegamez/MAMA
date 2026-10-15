@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -15,7 +17,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import Database from 'better-sqlite3';
 import * as tar from 'tar';
 import { runBackup } from '../../src/cli/commands/backup.js';
@@ -125,7 +127,9 @@ describe('mama backup', () => {
       write: (line) => lines.push(line),
       now: () => new Date('2026-10-16T05:00:00Z'),
     });
-    expect(archive).toBe(join(installed.root, 'backups', 'mama-backup-20261016-050000.tar.gz'));
+    // Archived paths are physical (macOS keeps temp folders behind /private).
+    const root = realpathSync(installed.root);
+    expect(archive).toBe(join(root, 'backups', 'mama-backup-20261016-050000.tar.gz'));
     expect(statSync(archive).mode & 0o777).toBe(0o600);
     expect(statSync(dirname(archive)).mode & 0o777).toBe(0o700);
     expect(readdirSync(dirname(archive))).toEqual(['mama-backup-20261016-050000.tar.gz']);
@@ -142,7 +146,6 @@ describe('mama backup', () => {
       'root/downloads/telegram/1_attachment.txt',
       'root/workspace/files/report.md',
       'root/runtime/owner-message-ledger.json',
-      'root/.codex/sessions/thread.jsonl',
       'members/person-a/workspace/notes.md',
       'skills/demo',
       'skills/.versions/demo-1/SKILL.md',
@@ -161,7 +164,11 @@ describe('mama backup', () => {
       'root/legacy-notes/old.md',
       'members/person-a/.codex/auth.json',
       'members/person-a/runtime/session-credential',
-      'jev/key',
+      // Backend sessions are a cache, and their homes hold logins.
+      'root/.codex/sessions/thread.jsonl',
+      'root/.codex',
+      'credentials/auth.env',
+      'credentials/jev-key',
     ]) {
       expect(names).not.toContain(left);
     }
@@ -174,14 +181,19 @@ describe('mama backup', () => {
       includesSecrets: false,
       includesLogs: false,
       roots: {
-        root: installed.root,
+        root,
         // Config reads member_root and tools_root as physical paths.
         members: realpathSync(installed.members),
         skills: join(realpathSync(installed.tools), 'skills'),
         database: join(installed.root, 'memory.db'),
       },
     });
-    expect(manifest.databases.sort()).toEqual(['database', 'root/connectors/chat/raw.db']);
+    expect(manifest.databases).toEqual(['database', 'root/connectors/chat/raw.db']);
+    expect(manifest.configured).toMatchObject({
+      root,
+      member_root: realpathSync(installed.members),
+      tools_root: realpathSync(installed.tools),
+    });
     expect(lines.join('\n')).toContain('left out, not read by this version: legacy-notes');
     expect(lines.join('\n')).toContain('left out as credentials: auth.env');
 
@@ -210,14 +222,16 @@ describe('mama backup', () => {
     });
     const names = await entries(archive);
     for (const kept of [
-      'root/auth.env',
-      'root/.codex/auth.json',
-      'members/person-a/.codex/auth.json',
-      'jev/key',
-      'root/logs/daemon.log',
+      'credentials/auth.env',
+      'credentials/codex-auth.json',
+      'credentials/jev-key',
+      'log-file',
+      'root/logs',
     ]) {
       expect(names).toContain(kept);
     }
+    // A person's Codex login is a copy of the owner's that MAMA makes again.
+    expect(names).not.toContain('members/person-a/.codex/auth.json');
     expect((await manifestOf(archive)).includesSecrets).toBe(true);
   });
 
@@ -233,7 +247,7 @@ describe('mama backup', () => {
       now: () => new Date('2026-10-16T05:00:00Z'),
     });
     expect(await entries(archive)).not.toContain('root/config.yaml');
-    expect(lines.join('\n')).toContain('config.yaml (it holds 1 credential-shaped value(s))');
+    expect(lines.join('\n')).toContain('config.yaml (it holds a credential)');
     archive = await runBackup(['--include-secrets'], {
       home: installed.home,
       configPath: installed.configPath,
@@ -252,11 +266,13 @@ describe('mama backup', () => {
     } finally {
       lock.release();
     }
-    await expect(
-      runBackup(['--out', join(installed.root, 'workspace', 'files')], options)
-    ).rejects.toThrow(/inside or holds the workspace/);
-    await expect(runBackup(['--out', installed.members], options)).rejects.toThrow(/member_root/);
-    expect(existsSync(join(installed.root, 'backups'))).toBe(false);
+    // Only <root>/backups is denied to the agents: no other destination, not even through a link.
+    await expect(runBackup(['--out', installed.home], options)).rejects.toThrow(/Usage/);
+    const elsewhere = mkdtempSync(join(tmpdir(), 'mama-backup-elsewhere-'));
+    roots.push(elsewhere);
+    symlinkSync(elsewhere, join(installed.root, 'backups'));
+    await expect(runBackup([], options)).rejects.toThrow(/is a symlink/);
+    expect(readdirSync(elsewhere)).toEqual([]);
   });
 
   it('leaves nothing behind and releases the install when it fails', async () => {
@@ -269,6 +285,116 @@ describe('mama backup', () => {
     ).rejects.toThrow();
     expect(readdirSync(join(installed.root, 'backups'))).toEqual([]);
     acquireInstallLock(daemonControlPaths(installed.root), 'daemon').release();
+  });
+
+  it('passes twice over a WAL database a killed writer left, without its shared-memory file', async () => {
+    const installed = install();
+    // A writer killed mid-run leaves the database with its -wal and -shm beside it.
+    const live = join(installed.root, 'workspace', 'agent.sqlite');
+    const writer = new Database(live);
+    writer.pragma('journal_mode = WAL');
+    writer.pragma('wal_autocheckpoint = 0');
+    writer.exec("CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('in-wal');");
+    const left = join(installed.root, 'workspace', 'left.sqlite');
+    for (const end of ['', '-wal', '-shm']) copyFileSync(live + end, left + end);
+    writer.close();
+    const options = { home: installed.home, configPath: installed.configPath, write: () => {} };
+    const first = await runBackup([], { ...options, now: () => new Date('2026-10-16T05:00:00Z') });
+    await runBackup([], { ...options, now: () => new Date('2026-10-16T05:01:00Z') });
+    const names = await entries(first);
+    expect(names).toContain('root/workspace/left.sqlite-wal');
+    expect(names).not.toContain('root/workspace/left.sqlite-shm');
+  });
+
+  it('stores hard links whole, a linked workspace where it is, and config paths where they are', async () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), 'mama-backup-ws-'));
+    roots.push(elsewhere);
+    const installed = install();
+    const root = installed.root;
+    file(
+      join(root, 'mama-mcp-config.json'),
+      JSON.stringify({ mcpServers: { mama: { env: { MAMA_SESSION_CREDENTIAL_PATH: '/x' } } } })
+    );
+    writeFileSync(
+      installed.configPath,
+      JSON.stringify({
+        ...JSON.parse(readFileSync(installed.configPath, 'utf8')),
+        agent: {
+          backend: 'claude',
+          model: 'fixture',
+          max_turns: 10,
+          timeout: 1000,
+          tools: { mcp_config: join(root, 'mama-mcp-config.json') },
+        },
+        jev: {
+          enabled: false,
+          keyFile: join(root, 'connectors', 'jev-key'),
+          vocabFile: join(root, 'vocab.json'),
+        },
+      })
+    );
+    file(join(root, 'connectors', 'jev-key'), 'fixture-key', 0o600);
+    file(join(root, 'vocab.json'), '{}');
+    file(join(elsewhere, 'files', 'moved.md'), 'moved');
+    rmSync(join(root, 'workspace'), { recursive: true });
+    symlinkSync(elsewhere, join(root, 'workspace'));
+    file(join(elsewhere, 'one.txt'), 'same');
+    linkSync(join(elsewhere, 'one.txt'), join(elsewhere, 'two.txt'));
+    const lines: string[] = [];
+    const archive = await runBackup([], {
+      home: installed.home,
+      configPath: installed.configPath,
+      write: (line) => lines.push(line),
+    });
+    const names = await entries(archive);
+    for (const kept of [
+      'workspace/files/moved.md',
+      'workspace/one.txt',
+      'workspace/two.txt',
+      'mcp-config',
+      'jev-vocab',
+    ]) {
+      expect(names).toContain(kept);
+    }
+    expect(names).not.toContain('root/connectors/jev-key');
+    expect(names).not.toContain('root/workspace');
+    expect(lines.join('\n')).not.toMatch(/not read by this version: .*(workspace|mama-mcp-config)/);
+  });
+
+  it('withholds a file that carries a credential: an MCP env token, a start.sh export, a Claude login', async () => {
+    const installed = install();
+    file(
+      join(installed.root, 'runtime', 'mama-mcp-config.json'),
+      JSON.stringify({ mcpServers: { other: { env: { SERVICE_TOKEN: 'fixture-inline' } } } })
+    );
+    file(join(installed.root, 'start.sh'), "#!/bin/sh\nexport MAMA_AUTH_TOKEN='fixture'\n", 0o700);
+    file(join(installed.members, 'person-a', 'claude-config', '.credentials.json'), '{}', 0o600);
+    const lines: string[] = [];
+    const archive = await runBackup([], {
+      home: installed.home,
+      configPath: installed.configPath,
+      write: (line) => lines.push(line),
+    });
+    const names = await entries(archive);
+    expect(names).not.toContain('mcp-config');
+    expect(names).not.toContain('root/start.sh');
+    expect(names).not.toContain('members/person-a/claude-config/.credentials.json');
+    expect(lines.join('\n')).toMatch(/start\.sh \(it holds a credential\)/);
+  });
+
+  it('tightens an existing folder and clears what an interrupted backup left', async () => {
+    const installed = install();
+    const folder = join(installed.root, 'backups');
+    mkdirSync(join(folder, '.staging-1-1'), { recursive: true });
+    writeFileSync(join(folder, 'mama-backup-old.tar.gz.partial'), 'half');
+    chmodSync(folder, 0o755);
+    const archive = await runBackup([], {
+      home: installed.home,
+      configPath: installed.configPath,
+      write: () => {},
+    });
+    expect(statSync(folder).mode & 0o777).toBe(0o700);
+    expect(readdirSync(folder)).toEqual([basename(archive)]);
   });
 
   it('finds an archive whose content does not match its manifest', async () => {
@@ -295,6 +421,20 @@ describe('mama backup', () => {
         entries: [...manifest.entries, { path: 'root/gone.md', type: 'file', mode: 0o644 }],
       })
     ).rejects.toThrow(/root\/gone.md is missing/);
+    await expect(
+      verifyArchive(archive, {
+        ...manifest,
+        entries: manifest.entries.filter((entry) => entry.path !== 'root/owner-policy.md'),
+      })
+    ).rejects.toThrow(/root\/owner-policy.md is not in the manifest/);
+    await expect(
+      verifyArchive(archive, {
+        ...manifest,
+        entries: manifest.entries.map((entry) =>
+          entry.path === 'root/start.sh' ? { ...entry, mode: 0o600 } : entry
+        ),
+      })
+    ).rejects.toThrow(/root\/start.sh has another mode/);
     expect(readFileSync(archive).length).toBeGreaterThan(0);
   });
 });
