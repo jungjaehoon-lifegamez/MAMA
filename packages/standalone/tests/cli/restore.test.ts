@@ -20,6 +20,7 @@ import * as yaml from 'js-yaml';
 import { runBackup } from '../../src/cli/commands/backup.js';
 import { runRestore } from '../../src/cli/commands/restore.js';
 import {
+  hostJobsInFlight,
   journalPath,
   removeTree,
   rewriteDatabase,
@@ -429,6 +430,114 @@ describe('mama restore', () => {
     after.close();
   });
 
+  it('lets a rollback that stopped part way run again', () => {
+    const b = target();
+    mkdirSync(join(b.root, 'backups'), { recursive: true });
+    const policy = join(b.root, 'owner-policy.md');
+    const schedule = join(b.root, 'runtime', 'report-schedule-state.json');
+    file(join(b.root, 'backups', 's1'), 'new policy');
+    file(join(b.root, 'backups', 's2'), 'new schedule');
+    let calls = 0;
+    // The second unit's switch fails, then putting the first back fails once.
+    expect(() =>
+      switchUnits(
+        b.root,
+        [
+          { staged: join(b.root, 'backups', 's1'), destination: policy },
+          { staged: join(b.root, 'backups', 's2'), destination: schedule },
+        ],
+        'r',
+        (from, to) => {
+          calls += 1;
+          if (calls === 4) throw new Error('fixture switch refused');
+          renameSync(from, to);
+        }
+      )
+    ).toThrow();
+    // Simulate the rollback dying after it undid the second step.
+    expect(existsSync(journalPath(b.root))).toBe(false);
+    file(join(b.root, 'backups', 's1'), 'new policy');
+    file(join(b.root, 'backups', 's2'), 'new schedule');
+    switchUnits(
+      b.root,
+      [
+        { staged: join(b.root, 'backups', 's1'), destination: policy },
+        { staged: join(b.root, 'backups', 's2'), destination: schedule },
+      ],
+      'q'
+    );
+    const journal = JSON.parse(readFileSync(journalPath(b.root), 'utf8'));
+    journal.committed = false;
+    writeFileSync(journalPath(b.root), JSON.stringify(journal));
+    let undo = 0;
+    expect(() =>
+      rollBack(b.root, (from, to) => {
+        undo += 1;
+        if (undo === 3) throw new Error('fixture rollback stopped');
+        renameSync(from, to);
+      })
+    ).toThrow(/fixture rollback stopped/);
+    expect(existsSync(journalPath(b.root))).toBe(true);
+    expect(rollBack(b.root)).toBe(1);
+    expect(readFileSync(policy, 'utf8')).toBe('policy from b');
+    expect(readFileSync(schedule, 'utf8')).toBe('{"from":"b"}');
+    expect(leftovers(b.root)).toEqual([]);
+    expect(leftovers(join(b.root, 'runtime'))).toEqual([]);
+  });
+
+  it('refuses two parts going to one place, and backup refuses a half-restored install', async () => {
+    const b = target();
+    mkdirSync(join(b.root, 'backups'), { recursive: true });
+    file(join(b.root, 'backups', 'x'), 'x');
+    file(join(b.root, 'backups', 'y'), 'y');
+    expect(() =>
+      switchUnits(
+        b.root,
+        [
+          { staged: join(b.root, 'backups', 'x'), destination: join(b.root, 'owner-policy.md') },
+          { staged: join(b.root, 'backups', 'y'), destination: join(b.root, 'owner-policy.md') },
+        ],
+        'd'
+      )
+    ).toThrow(/two parts of the archive/);
+    expect(existsSync(journalPath(b.root))).toBe(false);
+    writeFileSync(journalPath(b.root), JSON.stringify({ id: 'x', committed: false, steps: [] }));
+    await expect(backupOf(b)).rejects.toThrow(/restore --rollback/);
+  });
+
+  it('counts only host jobs still open', () => {
+    const dir = temp('jobs');
+    const path = join(dir, 'x.db');
+    const db = new Database(path);
+    db.exec(`
+      CREATE TABLE mailbox_inputs (id INTEGER PRIMARY KEY, status TEXT);
+      CREATE TABLE mailbox_host_checkpoints (input_id INTEGER PRIMARY KEY, state_json TEXT);
+      INSERT INTO mailbox_inputs VALUES (1, 'acked'), (2, 'dead');
+      INSERT INTO mailbox_host_checkpoints VALUES (1, '{}'), (2, '{}');
+    `);
+    db.close();
+    expect(hostJobsInFlight(path)).toBe(0);
+    const open = new Database(path);
+    open.exec(
+      "INSERT INTO mailbox_inputs VALUES (3, 'claimed'); INSERT INTO mailbox_host_checkpoints VALUES (3, '{}');"
+    );
+    open.close();
+    expect(hostJobsInFlight(path)).toBe(1);
+  });
+
+  it('puts a wiki kept in the workspace where this install keeps its wiki', async () => {
+    const a = source();
+    const config = yaml.load(readFileSync(a.configPath, 'utf8')) as Record<string, unknown>;
+    config.wiki = { enabled: true, vaultPath: join(a.root, 'workspace'), wikiDir: 'wiki' };
+    writeFileSync(a.configPath, yaml.dump(config));
+    file(join(a.root, 'workspace', 'wiki', 'daily.md'), 'page in the workspace');
+    const archive = await backupOf(a);
+    const b = target();
+    await runRestore([archive], options(b));
+    expect(readFileSync(join(b.vault, 'wiki', 'daily.md'), 'utf8')).toBe('page in the workspace');
+    expect(existsSync(join(b.root, 'workspace', 'wiki'))).toBe(false);
+  });
+
   it('reads the manifest as untrusted: links with entries beneath, names no backup keeps, credentials it did not take', () => {
     const configured = {
       root: { configured: '/h/.mama', physical: '/h/.mama' },
@@ -447,6 +556,9 @@ describe('mama restore', () => {
     const folder = (path: string) => ({ path, type: 'dir', mode: 0o755 });
     const link = (path: string, target: string) => ({ path, type: 'symlink', mode: 0o777, target });
     const refused = [
+      [folder('root'), folder('root/downloads'), link('root/downloads/telegram', '/etc')],
+      [folder('members'), folder('members/p'), link('members/p/downloads', '/etc')],
+      [folder('root'), folder('root/workspace'), folder('workspace')],
       [folder('root'), link('root/workspace', '.')],
       [folder('workspace'), link('workspace/x', '.'), entry('workspace/x/y')],
       [folder('root'), entry('root/backups')],
@@ -466,6 +578,18 @@ describe('mama restore', () => {
       )
     ).not.toThrow();
     expect(() => validateManifest(manifest([entry('credentials/auth.env')], true))).not.toThrow();
+    expect(() =>
+      validateManifest(
+        manifest([
+          folder('skills'),
+          link('skills/demo', '.versions/demo-1'),
+          folder('members'),
+          folder('members/p'),
+          folder('members/p/workspace'),
+          link('members/p/workspace/l', '/usr/bin'),
+        ])
+      )
+    ).not.toThrow();
   });
 
   it('rewrites stored paths without firing update triggers', () => {

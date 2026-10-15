@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { CodexThreadRegistry } from '@jungjaehoon/mama-core/runtime/drivers/codex-thread-registry';
 import { defaultConfigPath, loadConfig, type W1Config } from '../../runtime/config.js';
 import { CliInputError } from '../prompt.js';
 import { acquireInstallLock, daemonControlPaths } from '../runtime/daemon-control.js';
 import {
   applyModes,
+  clearOwnerThreads,
   destinationOf,
   extractVerified,
   finishSwitch,
@@ -54,13 +54,15 @@ export async function runRestore(
   // Nothing may run while files are switched under it.
   const lock = acquireInstallLock(daemonControlPaths(root), 'restore');
   let staging: string | null = null;
+  let committed = false;
   try {
     // Rollback reads only the journal: mid-switch, config.yaml can be aside or the restored one.
     if (args[0] === '--rollback') {
       const undone = rollBack(root);
+      if (undone === null) clearOwnerThreads(root);
       write(
         undone === null
-          ? 'the interrupted restore had finished; what it set aside is cleared'
+          ? 'the interrupted restore had taken effect; what it set aside is cleared'
           : undone > 0
             ? `put back ${undone} path(s) from the interrupted restore`
             : 'nothing to roll back'
@@ -129,20 +131,9 @@ export async function runRestore(
       unitsFor(prefix, staging!, destinationOf(prefix, target), manifest, target.workspace!)
     );
     switchUnits(root, units, id);
+    committed = true;
+    const threads = clearOwnerThreads(root);
     finishSwitch(root);
-
-    // The owner's Codex threads belong to the state before the restore.
-    let threads = 0;
-    const threadRoot = join(root, 'codex-runtime', 'threads');
-    if (existsSync(threadRoot)) {
-      const registry = new CodexThreadRegistry({ rootDir: threadRoot });
-      for (const key of ['owner:runtime', 'owner:replay']) {
-        if (registry.load(key)) {
-          registry.remove(key);
-          threads += 1;
-        }
-      }
-    }
 
     write(`restored: ${archive}`);
     write(
@@ -168,9 +159,11 @@ export async function runRestore(
     if (error instanceof CliInputError) throw error;
     const reason = error instanceof Error ? error.message : String(error);
     throw new CliInputError(
-      existsSync(journalPath(root))
-        ? `Restore failed and could not be fully put back: ${reason}`
-        : `Restore failed and this install was put back as it was: ${reason}`
+      committed
+        ? `The restore took effect, but finishing it failed: ${reason}; mama restore --rollback finishes it`
+        : existsSync(journalPath(root))
+          ? `Restore failed and could not be fully put back: ${reason}; mama restore --rollback continues putting it back`
+          : `Restore failed and this install was put back as it was: ${reason}`
     );
   } finally {
     if (staging) removeTree(staging);

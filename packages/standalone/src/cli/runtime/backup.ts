@@ -248,6 +248,8 @@ export function planBackup(
       ...credentials.map(([, path]) => path),
       at('jev_vocab'),
       at('log_file'),
+      // The wiki goes on its own, so a restore puts it where that install keeps its wiki.
+      ...(configured.wiki ? [configured.wiki] : []),
     ].flatMap((path) => [path.configured, path.physical])
   );
   for (const path of withheldFiles) separate.add(path);
@@ -305,8 +307,11 @@ export function planBackup(
     sources.push({
       prefix,
       path,
+      // A source's own root is what it archives, even when other trees leave it out.
       keep: (relativePath, stat) =>
-        keep(relativePath === '' ? path : join(path, relativePath), stat),
+        relativePath === ''
+          ? stat.isDirectory() || stat.isFile()
+          : keep(join(path, relativePath), stat),
     });
   };
   // A workspace kept elsewhere is archived where it really is.
@@ -314,19 +319,18 @@ export function planBackup(
   add('members', configured.member_root?.physical ?? null);
   // The toolkit is rebuilt by mama tools install; the published skills are not.
   add('skills', configured.tools_root ? join(configured.tools_root.physical, 'skills') : null);
-  // Covered only when no folder on the way is one the trees leave out.
+  // A tree walks a path only when no folder on the way is one the trees leave out.
   const kept = (parent: string, path: string): boolean =>
     relative(parent, path)
       .split(sep)
       .every((name) => name !== '.tmp' && !BACKEND_STATE.has(name));
-  const covered = (path: string): boolean =>
-    (inside(root, path) && keptByRoot(relative(root, path)) && kept(root, path)) ||
-    (inside(workspace, path) && kept(workspace, path));
-  if (configured.wiki && !covered(configured.wiki.physical)) add('wiki', configured.wiki.physical);
+  if (configured.wiki) add('wiki', configured.wiki.physical);
   // Each tree goes back to its own root, so none may sit inside another one's kept part.
   for (const outer of sources) {
     for (const inner of sources) {
       if (inner === outer || !inside(outer.path, inner.path)) continue;
+      // Left out of the outer walk, and archived on its own.
+      if (separate.has(inner.path)) continue;
       if (!kept(outer.path, inner.path)) continue;
       if (outer.prefix === 'root' && !keptByRoot(relative(root, inner.path))) continue;
       throw new Error(`${inner.path} sits inside ${outer.path}; a backup needs them apart`);

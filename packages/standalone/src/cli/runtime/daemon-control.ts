@@ -46,6 +46,20 @@ export function restoreJournalPath(mamaRoot: string): string {
   return join(mamaRoot, 'backups', '.restore-journal.json');
 }
 
+/** A half-switched install: a refusal, not a failure, so a service does not restart into it. */
+export class RestorePendingError extends CliInputError {
+  readonly code = 'MAMA_RESTORE_PENDING';
+  constructor() {
+    super('An interrupted restore is unfinished; run mama restore --rollback first');
+    this.name = 'RestorePendingError';
+  }
+}
+
+/** Refuse to work on an install while a restore journal is open. */
+export function refuseWhileRestoring(mamaRoot: string): void {
+  if (existsSync(restoreJournalPath(mamaRoot))) throw new RestorePendingError();
+}
+
 export interface LockOwner {
   readonly pid: number;
   readonly command: string;

@@ -1,19 +1,23 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   chmodSync,
+  closeSync,
   cpSync,
   createReadStream,
   existsSync,
   lstatSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
   renameSync,
   rmSync,
   symlinkSync,
-  writeFileSync,
+  writeSync,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { CodexThreadRegistry } from '@jungjaehoon/mama-core/runtime/drivers/codex-thread-registry';
 import Database from 'better-sqlite3';
 import * as yaml from 'js-yaml';
 import * as tar from 'tar';
@@ -176,6 +180,23 @@ export function validateManifest(manifest: BackupManifest): void {
     ...(workspaceTop ? [workspaceTop] : []),
   ]);
   const runtimeNames = new Set<string>([...RUNTIME_FILES, ...RUNTIME_DIRS]);
+  // Agents make links in workspaces, and published skills are links; nothing else a daemon
+  // writes through may be one (a planted downloads/ link would take the next attachment).
+  const linkAllowed = (parts: string[]): boolean => {
+    const inWorkspace = parts.indexOf('workspace');
+    return (
+      (parts[0] === 'workspace' && parts.length >= 2) ||
+      (parts[0] === 'root' &&
+        workspaceTop !== null &&
+        parts[1] === workspaceTop &&
+        parts.length >= 3) ||
+      (parts[0] === 'skills' && parts.length === 2) ||
+      (parts[0] === 'members' && inWorkspace >= 2 && inWorkspace < parts.length - 1)
+    );
+  };
+  if (workspaceTop && manifest.entries.some((entry) => prefixOf(entry.path) === 'workspace')) {
+    throw new Error('the archive manifest holds the workspace both inside the root and on its own');
+  }
   const links: string[] = [];
   const seen = new Set<string>();
   for (const entry of manifest.entries) {
@@ -206,9 +227,7 @@ export function validateManifest(manifest: BackupManifest): void {
     }
     if (entry.type === 'symlink') {
       if (typeof entry.target !== 'string' || entry.target === '') refuse(path, 'links nowhere');
-      if (prefix === 'root' && parts.length === 2) {
-        refuse(path, 'is a link where a backup keeps a file or folder');
-      }
+      if (!linkAllowed(parts)) refuse(path, 'is a link where a backup holds none');
       links.push(path);
     }
     seen.add(path);
@@ -409,8 +428,16 @@ export function hostJobsInFlight(path: string): number {
       )
       .get();
     if (!exists) return 0;
-    return (db.prepare('SELECT COUNT(*) AS n FROM mailbox_host_checkpoints').get() as { n: number })
-      .n;
+    // A finished or abandoned job keeps its row until its input is pruned; only open ones count.
+    return (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM mailbox_host_checkpoints c
+             JOIN mailbox_inputs m ON m.id = c.input_id
+            WHERE m.status IN ('pending', 'claimed')`
+        )
+        .get() as { n: number }
+    ).n;
   } finally {
     db.close();
   }
@@ -437,7 +464,7 @@ export interface SwitchUnit {
   readonly companions?: string[];
 }
 
-type StepState = 'planned' | 'moving-aside' | 'switching' | 'switched';
+type StepState = 'planned' | 'moving-aside' | 'switching' | 'switched' | 'rolled-back';
 
 interface JournalStep {
   destination: string;
@@ -458,11 +485,24 @@ export function journalPath(root: string): string {
   return restoreJournalPath(root);
 }
 
+/** Write the journal so it survives a power cut: whole, flushed, then renamed into place. */
 function writeJournal(root: string, journal: RestoreJournal): void {
   const path = journalPath(root);
   const staged = `${path}.${process.pid}.tmp`;
-  writeFileSync(staged, `${JSON.stringify(journal)}\n`, { mode: 0o600 });
+  const fd = openSync(staged, 'w', 0o600);
+  try {
+    writeSync(fd, `${JSON.stringify(journal)}\n`);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
   renameSync(staged, path);
+  const folder = openSync(dirname(path), 'r');
+  try {
+    fsyncSync(folder);
+  } finally {
+    closeSync(folder);
+  }
 }
 
 /** Move a staged tree beside its destination, so the switch is a rename on one filesystem. */
@@ -500,6 +540,14 @@ export function switchUnits(
   id: string,
   rename: (from: string, to: string) => void = renameSync
 ): void {
+  // Two units with one destination, or one inside another, would set aside each other's copy.
+  const destinations = units.map((unit) => resolve(unit.destination)).sort();
+  destinations.forEach((destination, index) => {
+    const next = destinations[index + 1];
+    if (next !== undefined && (next === destination || next.startsWith(`${destination}/`))) {
+      throw new Error(`two parts of the archive go to ${next}`);
+    }
+  });
   const journal: RestoreJournal = {
     id,
     committed: false,
@@ -551,7 +599,10 @@ export function switchUnits(
  * held: its leftovers are cleared instead. Returns how many destinations were put back, or null
  * when the switch had committed.
  */
-export function rollBack(root: string): number | null {
+export function rollBack(
+  root: string,
+  rename: (from: string, to: string) => void = renameSync
+): number | null {
   const path = journalPath(root);
   if (!existsSync(path)) return 0;
   const journal = JSON.parse(readFileSync(path, 'utf8')) as RestoreJournal;
@@ -561,24 +612,32 @@ export function rollBack(root: string): number | null {
   }
   let undone = 0;
   for (const step of [...journal.steps].reverse()) {
+    // Each step's undoing is recorded as it is done, so a rollback that stops can run again.
+    if (step.state === 'rolled-back') continue;
     const reached = step.state === 'switching' || step.state === 'switched';
     // The copy is in place only if it left its sibling name: move it back out first.
     if (reached && !lexists(step.sibling) && lexists(step.destination)) {
-      renameSync(step.destination, step.sibling);
-      moveWith(step.destination, step.sibling, step.companionEnds);
+      rename(step.destination, step.sibling);
+      for (const end of step.companionEnds) {
+        if (lexists(step.destination + end)) rename(step.destination + end, step.sibling + end);
+      }
     }
     if (lexists(step.aside)) {
       if (lexists(step.destination)) {
         throw new Error(`${step.destination} and its set-aside copy both exist; resolve by hand`);
       }
-      renameSync(step.aside, step.destination);
-      moveWith(step.aside, step.destination, step.companionEnds);
+      rename(step.aside, step.destination);
+      for (const end of step.companionEnds) {
+        if (lexists(step.aside + end)) rename(step.aside + end, step.destination + end);
+      }
       undone += 1;
     } else if (step.existed && !lexists(step.destination)) {
       throw new Error(`${step.destination} is missing and nothing was set aside for it`);
     }
     removeTree(step.sibling);
     for (const end of step.companionEnds) rmSync(step.sibling + end, { force: true });
+    step.state = 'rolled-back';
+    writeJournal(root, journal);
   }
   rmSync(path, { force: true });
   return undone;
@@ -685,6 +744,21 @@ export function unitsFor(
     units.push({ staged: join(staged, name), destination: join(destination, name) });
   }
   return units;
+}
+
+/** The owner's Codex threads belong to the state before the restore; they start over. */
+export function clearOwnerThreads(root: string): number {
+  const threadRoot = join(root, 'codex-runtime', 'threads');
+  if (!existsSync(threadRoot)) return 0;
+  const registry = new CodexThreadRegistry({ rootDir: threadRoot });
+  let cleared = 0;
+  for (const key of ['owner:runtime', 'owner:replay']) {
+    if (registry.load(key)) {
+      registry.remove(key);
+      cleared += 1;
+    }
+  }
+  return cleared;
 }
 
 export function newRestoreId(): string {

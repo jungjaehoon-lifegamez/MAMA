@@ -68,7 +68,7 @@ import { createOutboundEventRecorder } from '../../api/security-events.js';
 import { startEgressProxy, type EgressProxy } from '../../runtime/egress-proxy.js';
 import {
   acquireInstallLock,
-  restoreJournalPath,
+  refuseWhileRestoring,
   daemonControlPaths,
   requestDaemonControl,
   startDaemonControl,
@@ -544,9 +544,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   try {
     currentStage = 'config';
     // A half-switched install is neither the old one nor the restored one.
-    if (existsSync(restoreJournalPath(dirname(configPath)))) {
-      throw new Error('An interrupted restore is unfinished; run mama restore --rollback first');
-    }
+    refuseWhileRestoring(dirname(configPath));
     controlServer = await startDaemonControl(control, {
       status: statusReport,
       stop: () => {

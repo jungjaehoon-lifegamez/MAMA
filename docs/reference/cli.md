@@ -114,7 +114,9 @@ install's stay, and a target with none is told to set them. `start.sh` is never 
 `mama service install` on a new machine. The owner's Codex threads start over. Then `mama doctor`,
 and `mama service start`.
 
-A restore refuses a backup that holds a person's export or erasure in progress, since its paths
+Restore only archives you made: an archive's config and database decide who the owner is and
+what the agents may do, so restoring one from elsewhere hands that over, whatever the path rules
+refuse. A restore refuses a backup that holds a person's export or erasure in progress, since its paths
 and file snapshots cannot move. Restoring an older backup brings back whatever was erased after it
 was taken. If a restore is interrupted, the daemon and `mama doctor` refuse until
 `mama restore --rollback` puts the install back (or finishes clearing a restore that had already

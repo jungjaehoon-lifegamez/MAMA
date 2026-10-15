@@ -20,7 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   destination goes aside while its copy takes its name, under a write-ahead journal: a failure
   puts everything back, and after an interruption the daemon and `mama doctor` refuse until
   `mama restore --rollback` resolves it. The target keeps its credentials when the archive has
-  none, and its `start.sh`; the owner's Codex threads start over.
+  none, and its `start.sh`; the owner's Codex threads start over. While a restore is unfinished
+  the daemon, `register-owner` and `mama backup` refuse with a clean exit, so a service does not
+  restart into it.
+- `mama backup` archives the wiki on its own wherever it is, so a restore puts it where that
+  install keeps its wiki.
 
 - `mama backup [--include-secrets] [--logs]` writes one archive of a stopped install to
   `~/.mama/backups/` (0600), the one folder the agents cannot read: the database copied with
