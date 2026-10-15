@@ -96,15 +96,17 @@ export function ownerDataReadPaths(options: OwnerRuntimeOptions): string[] {
 /** CLI authentication lives in the backend homes. No secret-shaped daemon variable is needed.
  * Non-secret CLAUDE_CODE_* messaging/settings variables remain available to native children.
  */
-export function backendEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  return Object.fromEntries(
-    Object.entries(env).filter(
-      // MAX_THINKING_TOKENS is a budget count the Claude CLI reads, not a credential.
-      ([name]) =>
-        name === 'MAX_THINKING_TOKENS' ||
-        !/(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|^MAMA_ICAL_URL_)/i.test(name)
-    )
+/** A credential-shaped environment name. MAX_THINKING_TOKENS is a budget count the Claude CLI
+ * reads, not a credential. */
+export function isCredentialEnvName(name: string): boolean {
+  return (
+    name !== 'MAX_THINKING_TOKENS' &&
+    /(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|^MAMA_ICAL_URL_)/i.test(name)
   );
+}
+
+export function backendEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([name]) => !isCredentialEnvName(name)));
 }
 
 /** Paths are supplied by the product, never discovered by the shared engine. */
@@ -119,6 +121,8 @@ export function credentialReadPaths(
       resolve(runtimeRoot, 'config.yaml'),
       resolve(runtimeRoot, 'runtime'),
       resolve(runtimeRoot, '.codex'),
+      // Backups can hold every credential above.
+      resolve(runtimeRoot, 'backups'),
       resolve(replayKeyFile ?? resolve(runtimeRoot, 'jev-key')),
       ...(codexHome ? [resolve(codexHome)] : []),
     ]),

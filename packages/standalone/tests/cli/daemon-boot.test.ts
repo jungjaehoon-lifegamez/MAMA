@@ -350,8 +350,9 @@ describe('daemon bootstrap', () => {
     'connectors/workspace',
     'runtime',
     'runtime/workspace',
+    'backups/workspace',
   ])(
-    'refuses a workspace overlapping the daemon downloads, raw store or runtime directory (%s)',
+    'refuses a workspace overlapping the daemon downloads, raw store, runtime or backups directory (%s)',
     async (relativeWorkspace) => {
       const root = mkdtempSync(join(tmpdir(), 'daemon-overlap-'));
       roots.push(root);

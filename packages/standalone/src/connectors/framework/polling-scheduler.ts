@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, readFileSync, renameSync } from 'node:fs';
+import { join } from 'node:path';
+import { writeConnectorState } from './connector-state.js';
 
 import type { ConnectorRegistry } from './connector-registry.js';
 import type { ChannelConfig, IConnector, NormalizedItem } from './types.js';
@@ -169,16 +170,22 @@ export class PollingScheduler {
 
   private restoreState(): void {
     if (!existsSync(this.stateFile)) return;
-    let raw: string;
-    try {
-      raw = readFileSync(this.stateFile, 'utf8');
-    } catch {
-      return;
-    }
     let state: Record<string, unknown>;
     try {
-      state = JSON.parse(raw) as Record<string, unknown>;
-    } catch {
+      const value: unknown = JSON.parse(readFileSync(this.stateFile, 'utf8'));
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('poll state is not an object');
+      }
+      state = value as Record<string, unknown>;
+    } catch (error) {
+      // Each source then starts from its first-poll window; the file is kept for a look.
+      const quarantine = `${this.stateFile}.corrupt-${this.now()}-${process.pid}`;
+      renameSync(this.stateFile, quarantine);
+      console.error(
+        `[PollingScheduler] unreadable poll state quarantined at ${quarantine}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
       return;
     }
     for (const [name, value] of Object.entries(state)) {
@@ -201,8 +208,7 @@ export class PollingScheduler {
   private persistState(): void {
     const state: PollState = {};
     for (const [name, date] of this.lastPollTimes) state[name] = date.toISOString();
-    mkdirSync(dirname(this.stateFile), { recursive: true });
-    writeFileSync(this.stateFile, JSON.stringify(state, null, 2), 'utf8');
+    writeConnectorState(this.stateFile, state);
   }
 
   getLastPollTime(name: string): Date | undefined {

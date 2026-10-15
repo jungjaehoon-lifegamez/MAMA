@@ -270,7 +270,7 @@ function stimulusDelivered(logger: DaemonLogger, row: MailboxRow, modelRunId: st
 }
 
 /** Physical paths: a symlinked workspace must not reach the directories it is kept apart from. */
-function pathsOverlap(left: string, right: string): boolean {
+export function pathsOverlap(left: string, right: string): boolean {
   const inside = (parent: string, child: string): boolean => {
     const local = relative(physicalReadPath(parent), physicalReadPath(child));
     return local === '' || (local !== '..' && !local.startsWith(`..${sep}`) && !isAbsolute(local));
@@ -335,6 +335,11 @@ export function pathsFor(configPath: string, config: W1Config): DaemonPaths {
   // an agent that could write there could open web fetch for a turn with no person in it.
   if (pathsOverlap(workspaceDir, runtimeRoot)) {
     throw new Error(`agent.codex_cwd must not contain or sit inside ${runtimeRoot}`);
+  }
+  // Backups are denied to the agents; a workspace there could not be read by its own agent.
+  const backupsRoot = join(mamaRoot, 'backups');
+  if (pathsOverlap(workspaceDir, backupsRoot)) {
+    throw new Error(`agent.codex_cwd must not contain or sit inside ${backupsRoot}`);
   }
   return {
     mamaRoot,

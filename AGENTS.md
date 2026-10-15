@@ -174,12 +174,13 @@ channel) keeps the owner runtime's tools.
 ## Owner credential boundary — 2026-09-27
 
 - Scope (owner decision 2026-09-27): the boundary covers MAMA's own credentials — auth.env,
-  config.yaml, runtime/, the managed Codex home and the replay key file. Other tools' credential stores
+  config.yaml, runtime/, the managed Codex home and the replay key file, and since W1.3 (plan
+  decision 5) the MAMA home's backups/, whose archives can carry all of them. Other tools' credential stores
   on the machine are not denied; the agent's native reads of them are recorded in tool_traces.
 - Standalone removes secret-shaped environment names before launching either backend; core accepts
   a complete consumer-supplied environment. Native children inherit it; daemon connectors keep theirs.
-- Claude CLI Read denies and Bash sandbox denyRead exclude auth.env, config.yaml, runtime/ and the
-  managed Codex home. Codex uses a named workspace permission profile with those paths denied;
+- Claude CLI Read denies and Bash sandbox denyRead exclude auth.env, config.yaml, runtime/, backups/,
+  the managed Codex home and the replay key file. Codex uses a named workspace permission profile with those paths denied;
   thread start/resume select that profile instead of the legacy sandbox override.
 - Viewer tunnel headers never establish identity. Remote access requires MAMA_AUTH_TOKEN or a verified
   Access JWT configured with MAMA_CF_ACCESS_ISSUER and MAMA_CF_ACCESS_AUD. Unconfigured verification
