@@ -292,9 +292,54 @@ describe('mama doctor', () => {
     }
   });
 
+  it('reports each source as the running daemon last polled it, masked in the report', async () => {
+    const { home, configPath } = install();
+    const lines: string[] = [];
+    const code = await runDoctor(['--report', '--offline'], {
+      home,
+      configPath,
+      platform: 'darwin',
+      run: backend('2.1.299', true),
+      findIn,
+      askStatus: async () => ({
+        state: 'running',
+        reply: {
+          ok: true,
+          status: {
+            connectors: [
+              { name: 'slack', healthy: true, lastPoll: '2026-10-16T01:00:00.000Z', error: null },
+              {
+                name: 'chatwork',
+                healthy: false,
+                lastPoll: null,
+                error: `Room ${CHAT.slice(1)}: "${MESSAGE}"`,
+              },
+            ],
+          },
+        },
+      }),
+      write: (line) => lines.push(line),
+    });
+    const report = lines.join('\n');
+    expect(code).toBe(0);
+    expect(report).toContain('ok source slack: last poll 2026-10-16T01:00:00.000Z');
+    expect(report).toContain('warn source chatwork: last poll never; Room <n>: "<text>"');
+    expect(report).not.toContain(MESSAGE);
+  });
+
   it('masks what a report line may carry', () => {
     expect(
       redact(`at ${'/home/u'}/x "secret words" 1234567 user@x.io principal_abc`, '/home/u')
     ).toBe('at ~/x "<text>" <n> <email> principal_<id>');
+    // Stage names and error codes survive; the apostrophe in a word does not open a quote.
+    expect(redact('boot stage=report_scheduler:route_unavailable', '/h')).toBe(
+      'boot stage=report_scheduler:route_unavailable'
+    );
+    expect(redact("couldn't reach ERR_SOCKET_CONNECTION_TIMEOUT for the owner's room", '/h')).toBe(
+      "couldn't reach ERR_SOCKET_CONNECTION_TIMEOUT for the owner's room"
+    );
+    expect(redact("said 'abc' then a1b2c3d4e5f6a7b8c9d0e1f2a3b4", '/h')).toBe(
+      "said '<text>' then <token>"
+    );
   });
 });

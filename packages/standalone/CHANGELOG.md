@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that `start.sh` runs (the backend's version against the oldest one MAMA was verified on, Claude
   Code 2.1.299 and Codex 0.160.1, and whether it is signed in), the shell sandbox (it starts one),
   the Telegram token and whether the bot reads the common group, the document toolkit, the daemon
-  and port, the service manager and logs over 50 MB. Each problem names what to do, and it exits 1
+  and port, each source as the running daemon last polled it, the service manager and logs over
+  50 MB. Each problem names what to do, and it exits 1
   when a check fails. `--json` for scripts, `--offline` skips Telegram, and `--report` prints a
   summary for a bug report (versions, platform, config key names, enabled sources, the checks, the
   last boot and the last 20 error lines) with home paths, quoted text, emails, URL paths, ids and

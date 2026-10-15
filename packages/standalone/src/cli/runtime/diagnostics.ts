@@ -8,6 +8,7 @@ import { readStartScript, startPathValue, versionedNodePath } from '../launch-fi
 import { askDaemon, launchdService, pathsFor, validateDeliveryRoutes } from '../commands/daemon.js';
 import { probeBackend, type BackendName, type ProbeRun, defaultProbeRun } from './backend-probe.js';
 import { systemdUnitState, type ServiceRun, defaultServiceRun } from './systemd-service.js';
+import type { DaemonControlReply } from './daemon-control.js';
 
 export type CheckStatus = 'ok' | 'warn' | 'fail';
 
@@ -34,6 +35,8 @@ export interface DiagnosticsOptions {
       ) => Promise<Record<string, unknown>>)
     | null;
   findIn?: (name: string, dirs: string[]) => string | undefined;
+  /** Ask the install's daemon for its status; tests replace it. */
+  askStatus?: () => Promise<DaemonControlReply>;
 }
 
 const LOG_WARN_BYTES = 50 * 1024 * 1024;
@@ -329,10 +332,38 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
     }
   }
 
-  const daemon = await askDaemon('status', { home, configPath });
+  const daemon = await (options.askStatus ?? (() => askDaemon('status', { home, configPath })))();
   const port = Number(process.env.MAMA_API_PORT ?? 3847);
-  if (daemon.state === 'running') {
+  if (daemon.state === 'running' && daemon.reply.ok !== true) {
+    checks.push({
+      name: 'daemon',
+      status: 'fail',
+      detail: `running, but it refused status: ${String(daemon.reply.error)}`,
+      fix: 'see daemon.log',
+    });
+  } else if (daemon.state === 'running') {
     checks.push({ name: 'daemon', status: 'ok', detail: 'running' });
+    // Each source as the running daemon last polled it.
+    const status = daemon.reply.status as { connectors?: unknown } | undefined;
+    const connectors = Array.isArray(status?.connectors) ? status.connectors : [];
+    for (const connector of connectors as {
+      name?: unknown;
+      healthy?: unknown;
+      lastPoll?: unknown;
+      error?: unknown;
+    }[]) {
+      const lastPoll = typeof connector.lastPoll === 'string' ? connector.lastPoll : 'never';
+      checks.push(
+        connector.healthy === true
+          ? { name: `source ${connector.name}`, status: 'ok', detail: `last poll ${lastPoll}` }
+          : {
+              name: `source ${connector.name}`,
+              status: 'warn',
+              detail: `last poll ${lastPoll}; ${typeof connector.error === 'string' ? connector.error : 'unhealthy'}`,
+              fix: 'see daemon.log for this source; the daemon keeps polling it',
+            }
+      );
+    }
   } else {
     checks.push({
       name: 'daemon',
@@ -394,15 +425,19 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
  * runs (chat and user ids), emails, URLs beyond their host, principal ids and long tokens.
  */
 export function redact(line: string, home: string = homedir()): string {
-  return line
-    .split(home)
-    .join('~')
-    .replace(/"[^"]*"/g, '"<text>"')
-    .replace(/'[^']*'/g, "'<text>'")
-    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '<email>')
-    .replace(/(https?:\/\/[^/\s]+)[^\s]*/g, '$1/<path>')
-    .replace(/principal_[A-Za-z0-9_]+/g, 'principal_<id>')
-    .replace(/[A-Za-z0-9_\-:]{24,}/g, '<token>')
-    .replace(/-?\d{6,}/g, '<n>')
-    .slice(0, 200);
+  return (
+    line
+      .split(home)
+      .join('~')
+      .replace(/"[^"]*"/g, '"<text>"')
+      // Single quotes around text, not the apostrophe inside a word.
+      .replace(/(?<![A-Za-z])'[^']*'(?![A-Za-z])/g, "'<text>'")
+      .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '<email>')
+      .replace(/(https?:\/\/[^/\s]+)[^\s]*/g, '$1/<path>')
+      .replace(/principal_[A-Za-z0-9_]+/g, 'principal_<id>')
+      // A token mixes letters and digits; a long stage name or error code has no digit.
+      .replace(/(?=[A-Za-z_\-:]*\d)(?=[\d_\-:]*[A-Za-z])[A-Za-z0-9_\-:]{24,}/g, '<token>')
+      .replace(/-?\d{6,}/g, '<n>')
+      .slice(0, 200)
+  );
 }
