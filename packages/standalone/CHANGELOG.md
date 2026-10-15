@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The document toolkit adds numpy, pandas and matplotlib, so sessions can analyse tables and draw
+  charts with Korean and Japanese labels (Agg backend, the toolkit's Noto CJK font). Run
+  `mama tools install` again after upgrading to get them. The lock is generated from
+  `toolkit/requirements.in` with the command in its header and covers every Python the installer
+  accepts (3.10 and newer), with older numpy, pandas and matplotlib pins on 3.10 and 3.11.
+
 ### Changed
 
 - An owner's DM reads the owner policy as the common session's working rules, read-only, with

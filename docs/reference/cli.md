@@ -44,8 +44,9 @@ Allowed secret names are `MAMA_TELEGRAM_TOKEN`, `MAMA_SLACK_TOKEN`, `MAMA_CHATWO
 
 `mama tools install` builds a new toolkit version under `tools_root` and switches to it only after
 its checks pass; the previous version is kept. The toolkit holds a Python environment with
-python-pptx, python-docx, openpyxl, PyMuPDF, pdfplumber, reportlab and Pillow, plus LibreOffice and
-Noto CJK fonts. On macOS `tools_root` defaults to the Shared folder beside the home folders; set it
+python-pptx, python-docx, openpyxl, xlsxwriter, PyMuPDF, pdfplumber, reportlab, Pillow, numpy, pandas and
+matplotlib, plus LibreOffice and Noto CJK fonts. A release that changes the package list takes effect
+only after `mama tools install` runs again; until then sessions keep the previous version. On macOS `tools_root` defaults to the Shared folder beside the home folders; set it
 elsewhere in `config.yaml` if needed, outside HOME. `mama init` runs the install last. The first
 install adds `tools_root` to `config.yaml`; restart the daemon once after it. Later installs need no
 restart. The daemon log says `document toolkit: present` at start. The page renderer

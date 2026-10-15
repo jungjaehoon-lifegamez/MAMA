@@ -1,0 +1,11 @@
+python-pptx
+python-docx
+openpyxl
+xlsxwriter
+pymupdf
+pdfplumber
+reportlab
+pillow
+numpy
+pandas
+matplotlib

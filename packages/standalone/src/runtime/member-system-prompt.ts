@@ -4,7 +4,10 @@ const MEMBER_TOOLS_PROMPT =
   'Read help for the available actions, their arguments and procedures before using them. ' +
   'Use your native tools for requested file work in your workspace. ' +
   'The host document toolkit puts python3 on PATH with python-pptx, python-docx, ' +
-  'openpyxl, xlsxwriter, PyMuPDF, pdfplumber, reportlab and Pillow, including under python3 -I. ' +
+  'openpyxl, xlsxwriter, PyMuPDF, pdfplumber, reportlab, Pillow, numpy, pandas and matplotlib, ' +
+  'including under python3 -I. For charts use the Agg backend, set MPLCONFIGDIR to a directory in ' +
+  'your workspace, and add NotoSansCJK.ttc with matplotlib.font_manager.fontManager.addfont; its ' +
+  "family 'Noto Sans CJK JP' also covers Korean. " +
   'Noto Sans/Serif CJK font files are in tools_root/current/fonts, beside bin/python3 ' +
   '(locate python3 on PATH with shutil.which). Pillow needs the font file path. ' +
   'Reportlab cannot embed the CFF Noto collections; make CJK PDFs by rendering an office file ' +

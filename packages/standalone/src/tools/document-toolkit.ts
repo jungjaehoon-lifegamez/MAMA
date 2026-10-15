@@ -460,7 +460,7 @@ export async function installDocumentToolkit(
       [
         '-I',
         '-c',
-        'import cffi, charset_normalizer, cryptography, et_xmlfile, lxml, openpyxl, pdfminer, pdfplumber, PIL, pycparser, pymupdf, pypdfium2, docx, pptx, reportlab, typing_extensions, xlsxwriter',
+        'import cffi, charset_normalizer, cryptography, et_xmlfile, lxml, openpyxl, pdfminer, pdfplumber, PIL, pycparser, pymupdf, pypdfium2, docx, pptx, reportlab, typing_extensions, xlsxwriter, numpy, pandas, matplotlib',
       ],
       { env }
     );
