@@ -94,6 +94,8 @@ export async function runBackup(
     mkdirSync(staging, { mode: 0o700 });
     const databaseCopy = join(staging, 'database');
     const { schemaVersion } = await copyDatabase(plan.database, databaseCopy);
+    // SQLite creates the copy under this shell's umask; it keeps the database's own mode.
+    chmodSync(databaseCopy, statSync(plan.database).mode & 0o777);
     // Checked before anything is hashed: opening a database can rewrite its side files.
     const stores = rawStores(root);
     for (const store of stores) checkDatabase(store, { schema: false });

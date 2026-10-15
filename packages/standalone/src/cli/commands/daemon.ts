@@ -336,6 +336,11 @@ export function pathsFor(configPath: string, config: W1Config): DaemonPaths {
   if (pathsOverlap(workspaceDir, runtimeRoot)) {
     throw new Error(`agent.codex_cwd must not contain or sit inside ${runtimeRoot}`);
   }
+  // Backups are denied to the agents; a workspace there could not be read by its own agent.
+  const backupsRoot = join(mamaRoot, 'backups');
+  if (pathsOverlap(workspaceDir, backupsRoot)) {
+    throw new Error(`agent.codex_cwd must not contain or sit inside ${backupsRoot}`);
+  }
   return {
     mamaRoot,
     runtimeRoot,

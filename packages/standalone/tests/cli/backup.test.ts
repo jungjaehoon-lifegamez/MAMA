@@ -70,6 +70,7 @@ function install(config: Record<string, unknown> = {}) {
   db.exec('CREATE TABLE schema_version (version INTEGER); INSERT INTO schema_version VALUES (72);');
   db.exec("CREATE TABLE notes (body TEXT); INSERT INTO notes VALUES ('kept');");
   db.close();
+  chmodSync(join(root, 'memory.db'), 0o600);
   mkdirSync(join(root, 'connectors', 'chat'), { recursive: true });
   const raw = new Database(join(root, 'connectors', 'chat', 'raw.db'));
   raw.exec("CREATE TABLE raw_items (id TEXT); INSERT INTO raw_items VALUES ('fixture-item');");
@@ -209,6 +210,8 @@ describe('mama backup', () => {
     expect(readlinkSync(join(out, 'skills', 'demo'))).toBe(join('.versions', 'demo-1'));
     expect(statSync(join(out, 'root', 'start.sh')).mode & 0o777).toBe(0o700);
     chmodSync(join(out, 'skills', '.versions', 'demo-1'), 0o755);
+    // The copy keeps the database's mode, not the umask SQLite created it under.
+    expect(statSync(join(out, 'database')).mode & 0o777).toBe(0o600);
     const copy = new Database(join(out, 'database'), { readonly: true });
     expect(copy.prepare('SELECT body FROM notes').get()).toEqual({ body: 'kept' });
     copy.close();
@@ -405,6 +408,24 @@ describe('mama backup', () => {
     rmSync(join(installed.root, 'connectors', 'linked'));
     file(join(installed.root, 'connectors.json'), '{ "chatwork": ');
     await expect(runBackup([], options)).rejects.toThrow(/connectors\.json cannot be parsed/);
+  });
+
+  it('archives a wiki that sits in a folder the workspace walk leaves out', async () => {
+    const installed = install({
+      wiki: { enabled: true, vaultPath: 'WORKSPACE/.tmp', wikiDir: 'wiki' },
+    });
+    const config = JSON.parse(readFileSync(installed.configPath, 'utf8'));
+    config.wiki.vaultPath = join(installed.root, 'workspace', '.tmp');
+    writeFileSync(installed.configPath, JSON.stringify(config));
+    file(join(installed.root, 'workspace', '.tmp', 'wiki', 'daily.md'), 'page');
+    const archive = await runBackup([], {
+      home: installed.home,
+      configPath: installed.configPath,
+      write: () => {},
+    });
+    const names = await entries(archive);
+    expect(names).toContain('wiki/daily.md');
+    expect(names).not.toContain('root/workspace/.tmp/wiki/daily.md');
   });
 
   it('tightens an existing folder and clears what an interrupted backup left', async () => {
