@@ -62,6 +62,11 @@ interface WorkListFilter {
   readonly changedSince?: number;
   /** Items last written before this epoch-ms instant: work that has not moved since. */
   readonly changedBefore?: number;
+  /**
+   * Items whose latest source event is before this instant, whatever was written later: a
+   * backfill or a correction rewrites old work without making it current.
+   */
+  readonly lastEventBefore?: number;
   /** Open items by their deadline against the owner's today; closed items never match. */
   readonly due?: WorkListDue;
   /**
@@ -285,6 +290,9 @@ function workListFilter(input: Record<string, unknown>): WorkListFilter {
     ...(input.changedBefore === undefined
       ? {}
       : { changedBefore: workListTime(input.changedBefore, 'changedBefore') }),
+    ...(input.lastEventBefore === undefined
+      ? {}
+      : { lastEventBefore: workListTime(input.lastEventBefore, 'lastEventBefore') }),
     ...(input.due === undefined ? {} : { due: workListDueFilter(input.due) }),
     ...(input.eventSince === undefined
       ? {}
@@ -306,6 +314,16 @@ function workListEventPage(item: CommitmentView, filter: WorkListFilter): Record
 
 function workListEventBounded(filter: WorkListFilter): boolean {
   return filter.eventSince !== undefined || filter.eventBefore !== undefined;
+}
+
+/** An item's latest source event: its lastEventTime or a revision's event time, never a write time. */
+function workListLastEvent(item: CommitmentView): number | null {
+  const values = workListValueObject(item.values);
+  const times = [
+    workListEventTime(values.lastEventTime),
+    ...(item.chain ?? []).map((entry) => entry.eventDatetime),
+  ].filter((time): time is number => time !== null);
+  return times.length === 0 ? null : Math.max(...times);
 }
 
 /** The revisions in the event bounds; a revision with no event time counts at its write time. */
@@ -526,6 +544,10 @@ function workListMatches(
   if (filter.project !== undefined && workListText(values.project) !== filter.project) return false;
   if (filter.changedSince !== undefined && item.updatedAt < filter.changedSince) return false;
   if (filter.changedBefore !== undefined && item.updatedAt >= filter.changedBefore) return false;
+  if (filter.lastEventBefore !== undefined) {
+    const last = workListLastEvent(item);
+    if (last === null || last >= filter.lastEventBefore) return false;
+  }
   if (filter.due !== undefined && workListDueGroup(item, now, timeZone) !== filter.due)
     return false;
   if (workListEventBounded(filter) && workListEventRevisions(item, filter).length === 0)
@@ -591,6 +613,7 @@ function workListFingerprint(filter: WorkListFilter, dueDay: string | null): str
         filter.asOf ?? null,
         filter.changedSince ?? null,
         filter.changedBefore ?? null,
+        filter.lastEventBefore ?? null,
         filter.due ?? null,
         filter.eventSince ?? null,
         filter.eventBefore ?? null,
@@ -620,7 +643,8 @@ function workListReadSnapshot(ctx: WorkListViewContext, filter: WorkListFilter):
   for (;;) {
     const query: WorkRead = {
       // The chain carries each revision's event time and summary, read only for an event span.
-      history: workListEventBounded(filter) ? 'chain' : 'current',
+      history:
+        workListEventBounded(filter) || filter.lastEventBefore !== undefined ? 'chain' : 'current',
       limit: 100,
       ...(filter.asOf === undefined ? {} : { asOf: filter.asOf }),
       ...(cursor === undefined ? {} : { cursor }),
@@ -1122,7 +1146,7 @@ export function workListActionRegistrations(ports: WorkListPorts): ActionRegistr
       contract: {
         name: 'work.list',
         summary:
-          'Find owner work by what the turn needs: items filtered by status, stage, project, due, changedSince or changedBefore and ranked by text, in pages of 25 (50 max); overview counts; detail for up to 4 ids with the current record, its 20 newest evidence refs and its 5 newest revisions (history_offset pages older ones). eventSince and eventBefore find what happened in a span by source event time, each item with its revisions there. pipeline returns every open item grouped by stage (rows in the order of its fields: commitmentId, title, status, assignee, deadline as the local due date, latest_change in epoch seconds, latest_event) and ignores limit: read it inside a script that builds the board, not into your context. links for up to 4 ids returns every link from or to the item with its relation, reason, writer, evidence, correction and the other end (item title and status, person, record or observation); follow it to the other item with detail.',
+          'Find owner work by what the turn needs: items filtered by status, stage, project, due, changedSince, changedBefore or lastEventBefore (latest source event, for stale work) and ranked by text, in pages of 25 (50 max); overview counts; detail for up to 4 ids with the current record, its 20 newest evidence refs and its 5 newest revisions (history_offset pages older ones). eventSince and eventBefore find what happened in a span by source event time, each item with its revisions there. pipeline returns every open item grouped by stage (rows in the order of its fields: commitmentId, title, status, assignee, deadline as the local due date, latest_change in epoch seconds, latest_event) and ignores limit: read it inside a script that builds the board, not into your context. links for up to 4 ids returns every link from or to the item with its relation, reason, writer, evidence, correction and the other end (item title and status, person, record or observation); follow it to the other item with detail.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -1171,6 +1195,14 @@ export function workListActionRegistrations(ports: WorkListPorts): ActionRegistr
               ],
               description:
                 'Only items last written before this time (epoch ms or ISO with offset): work that has not moved.',
+            },
+            lastEventBefore: {
+              oneOf: [
+                { type: 'integer', minimum: 0 },
+                { type: 'string', minLength: 1 },
+              ],
+              description:
+                'Only items whose latest source event is before this time (epoch ms or ISO with offset): stale work, even when a backfill or correction rewrote it later.',
             },
             due: {
               type: 'string',

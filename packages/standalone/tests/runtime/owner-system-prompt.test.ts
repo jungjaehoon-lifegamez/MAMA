@@ -37,8 +37,12 @@ describe('owner standing prompt', () => {
     expect(daily).toContain('memory.save (kind lesson, with appliesWhen)');
     expect(daily).toContain("Yesterday's lessons");
     expect(daily).toContain('the previous daily page with manage.wiki.read');
-    expect(daily).toContain('help topic corrections');
-    expect(daily).toContain('no change for 30 days');
+    // A scheduled turn cannot change the owner policy; standing rules go to the owner.
+    expect(daily).toContain('listed for the owner to confirm');
+    expect(daily).not.toContain('help topic corrections');
+    // Only what this turn can read is judged; DM-only or tool-order lessons are said to be unjudged.
+    expect(daily).toContain('cannot be judged here');
+    expect(daily).toContain('lastEventBefore');
     expect(daily).toContain('at most ten a day');
   });
 
