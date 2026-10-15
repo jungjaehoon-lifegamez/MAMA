@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `mama restore <archive>` puts a `mama backup` archive onto a stopped install. The archive's
+  manifest is read as untrusted (safe paths under known prefixes only), every entry is extracted
+  and checked against its hash, type and link, and modes are set as recorded. Each part goes
+  where the target's config puts it; the old install's paths are rewritten in the restored
+  config and in the stored attachment paths MAMA reads back (mailbox payloads, the connector
+  event index, the chat raw store), with the tables' update triggers set aside so no event is
+  renumbered and delivered again. Each destination goes aside while its copy takes its name,
+  under a journal that puts everything back if any step fails (`mama restore --rollback` after an
+  interruption). The target keeps its credentials when the archive has none, and its `start.sh`.
+
 - `mama backup [--include-secrets] [--logs]` writes one archive of a stopped install to
   `~/.mama/backups/` (0600), the one folder the agents cannot read: the database copied with
   SQLite's backup and checked with `integrity_check`, the raw stores checked too, the MAMA home's

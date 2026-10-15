@@ -58,6 +58,11 @@ async function main(): Promise<void> {
     await runBackfill(process.argv.slice(3));
     return;
   }
+  if (command === 'restore') {
+    const { runRestore } = await import('./commands/restore.js');
+    await runRestore(process.argv.slice(3));
+    return;
+  }
   if (command === 'backup') {
     const { runBackup } = await import('./commands/backup.js');
     await runBackup(process.argv.slice(3));
@@ -86,7 +91,7 @@ async function main(): Promise<void> {
     return;
   }
   console.log(
-    'Usage: mama init | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop | service install|start|stop|restart|status|uninstall | doctor [--json] [--offline] [--report] | backup [--include-secrets] [--logs]'
+    'Usage: mama init | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop | service install|start|stop|restart|status|uninstall | doctor [--json] [--offline] [--report] | backup [--include-secrets] [--logs] | restore <archive> | restore --rollback'
   );
 }
 

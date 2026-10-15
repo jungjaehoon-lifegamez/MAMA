@@ -25,6 +25,8 @@ Use `mama` from `@jungjaehoon/mama-os` to configure and run the owner agent. Sta
 | `mama service start\|stop\|restart\|status\|uninstall` | Starts, stops or restarts the service, shows `mama status`, or removes the service file (start.sh and the data stay).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `mama doctor [--json] [--offline] [--report]`          | Checks the install as its service would run it, without changing it: config and `connectors.json`, `member_root`, the Node and backend that `start.sh` runs (version and sign-in with the daemon's environment), the shell sandbox, the secrets each enabled messenger and source needs and each source started as boot starts it, the Telegram bot's place in the common group, the toolkit, the daemon or its port, the service manager and log sizes. Each problem comes with what to do; exits 1 when a check fails. `--offline` makes no network call and starts no source; `--report` prints a summary for a bug report that holds no paths, values, ids or message text.                                                                   |
 | `mama backup [--include-secrets] [--logs]`             | Writes one archive of a stopped install to `~/.mama/backups/` (0600, the one folder the agents cannot read): the database (copied with SQLite's backup and checked), the MAMA home's state, the workspace, every person's folder under `member_root`, the published common skills, the wiki MAMA writes and Jev's vocabulary, with a manifest of every entry's mode, link target and SHA-256 that the archive is read back against. Credentials (auth.env, the Codex login, the Jev key, an MCP configuration with servers besides MAMA's, and any config file that holds a token) only with `--include-secrets`; logs only with `--logs`; Codex sessions never (they start over). Refused while the daemon or another command holds the install. |
+| `mama restore <archive>`                               | Puts a `mama backup` archive onto this stopped install. Each part goes where this install's config puts it, and paths the old install recorded are rewritten in config and in stored attachment paths. Every destination goes aside while its copy takes its place; if any step fails, all of them are put back. This install's credentials and `start.sh` stay when the archive has none.                                                                                                                                                                                                                                                                                                                                                        |
+| `mama restore --rollback`                              | Puts back an install whose restore was interrupted, from the journal under `~/.mama/backups/`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 ## Create an installation
 
@@ -92,15 +94,23 @@ stable `opt` link instead, and doctor checks that Node can load MAMA's SQLite mo
 upgrade), the backend found on that script's `PATH`, and the rest of the install. Attach
 `mama doctor --report` to a bug report rather than the log.
 
-## Back up
+## Back up and restore
 
 `mama backup` reads the install while holding it, so stop the daemon first (`mama stop`) and start
 it again afterwards (`mama service start`). It names what it left out: credentials unless
 `--include-secrets`, logs unless `--logs`, Codex homes and their sessions (sessions start over
 after a restore), and any top-level entry in `~/.mama` that this version does not read. The
 archive stays in `~/.mama/backups/`, which no agent can read; copying it elsewhere is up to you,
-and a copy with credentials is as sensitive as `auth.env`. `mama restore` arrives with the next
-release.
+and a copy with credentials is as sensitive as `auth.env`.
+
+`mama restore <archive>` needs an installed, stopped target: its config decides where the
+database, the workspace, `member_root`, `tools_root` and the wiki go, and the paths the backup
+recorded are rewritten to those in config and in the attachment paths MAMA reads back. Recorded
+evidence and tool history keep the paths they had. If the archive holds credentials they replace
+this install's; otherwise this install's stay, and a target with none is told to set them.
+`start.sh` is never replaced: run `mama service install` on a new machine. Then `mama doctor`, and
+`mama service start`. Restoring an older backup brings back whatever was erased after it was taken;
+a person's erasure that was in progress at backup time stops with an error instead of finishing.
 
 ## Replay prepared history
 
