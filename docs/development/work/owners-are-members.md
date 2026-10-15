@@ -38,7 +38,9 @@ memory scopes (`m/065`), and a member memory grant may not overlap the owner's d
 | Unattended (deltas, record orders, replay, common report jobs) | The common session                               | Common records                                                                                                         | Common scopes        |
 
 In a DM, an owner reads the common records but changes them only in the common channel: common
-work, owner policy and rules, `drive.download`, the time zone, `report.publish` and the wiki. A
+work, owner policy and rules, the time zone, `report.publish` and the wiki. `drive.download` in a
+DM saves into that person's own downloads, so it is a read there (a live DM could not open a Drive
+sheet, 2026-10-15). A
 correction to common work said in a DM stays personal; it reaches deltas and reports when it is
 said in the common channel or shared (P10.3). Notices, alerts, files and the full report keep
 going to `owner_chat_id`, the common channel, until P10.4 (`telegram.ts:293-297`; the config's

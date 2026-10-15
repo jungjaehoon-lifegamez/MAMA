@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An owner's DM can open a Google Drive file, such as a sheet: `drive.download` saves it in that
+  person's own downloads, where the DM reads it. The DM found the file with `drive.read` but could
+  not fetch it.
 - Member management, enrollment, the time zone and common skill publishing change only from the
   common channel (`owner_chat_id`) or a person's own DM, as owner policy already did. An owner's
   message in another allowed group was accepted for them too.

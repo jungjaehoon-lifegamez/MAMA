@@ -32,7 +32,8 @@ Ask "who are the members?" to see each member's status, grants and the latest en
 
 A DM works with that person's own records. What it saves stays personal unless the person shares
 it. An owner's DM also reads the common records and sources, the owner policy and the owner rules,
-and can search and fetch the web. Changes to common things happen in the common group: shared
+and can search and fetch the web. It can open a Google Drive file, such as a sheet, which is saved
+in that person's own downloads. Changes to common things happen in the common group: shared
 records, the owner policy and rules, reports, the wiki and files sent to the group. A DM that is
 asked for one of these says so.
 

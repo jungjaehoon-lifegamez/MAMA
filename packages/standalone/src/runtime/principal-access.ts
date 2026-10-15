@@ -186,6 +186,7 @@ export function resolvePrincipalAccess(
       ? [
           ...MEMBER_ACTIONS,
           'drive.read',
+          'drive.download',
           'report.read',
           ...MEMBER_MANAGEMENT_ACTIONS,
           'manage.member.enroll',

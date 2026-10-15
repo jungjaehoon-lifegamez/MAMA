@@ -68,7 +68,7 @@ source identity and does not download file contents. Use `folderId` for a folder
 
 For a current file, the agent can use `drive.read` to list shared drives, browse a folder, inspect
 a file by ID or link, or search across drives. `drive.download` saves a requested file in the
-downloads directory. Google Docs, Sheets and Slides are exported as docx, xlsx and pptx; folders and
+downloads directory; in an owner's DM, in that person's own downloads. Google Docs, Sheets and Slides are exported as docx, xlsx and pptx; folders and
 other Google-native types are refused. These live reads do not
 keep a copy of Drive state. The separate connector above stores file change observations only when
 it is enabled.

@@ -79,13 +79,14 @@ const owner: ActionContext['access'] = {
   scopes: [],
 };
 
-function dispatcher() {
+function dispatcher(principalPaths?: (principalId: string) => { downloadsDir: string }) {
   return createDispatcher(
     createCatalog(
       driveActionRegistrations({
         adapter: db.adapter,
         ownerPrincipalId: 'owner',
         downloadsDir: home,
+        ...(principalPaths ? { principalPaths } : {}),
         gws: fakeGws,
       })
     )
@@ -107,7 +108,7 @@ describe('drive.read and drive.download', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  it('lets an owner-role member read Drive while refusing the common download directory', async () => {
+  it("downloads into an owner-role person's own folder and never into the common one", async () => {
     const repository = createPrincipalRepository(db.adapter);
     const person = repository.registerMember({
       connector: 'telegram',
@@ -115,16 +116,51 @@ describe('drive.read and drive.download', () => {
       externalId: 'fixture-owner-dm',
       now: 1,
     });
+    const plain = repository.registerMember({
+      connector: 'telegram',
+      namespace: 'private',
+      externalId: 'fixture-member-dm',
+      now: 1,
+    });
     repository.grantRole({ principalId: person, role: 'owner', now: 2 });
     const access = { ...owner, principalId: person };
-    const dispatch = dispatcher();
+    const own = (id: string) => ({ downloadsDir: join(home, 'people', id, 'downloads') });
+    const dispatch = dispatcher(own);
     expect(
       await dispatch({ action: 'drive.read', input: { view: 'file', file: 'bin1' } }, { access })
     ).toMatchObject({ status: 'completed', data: { file: { id: 'bin1' } } });
+    const saved = await dispatch(
+      { action: 'drive.download', input: { file: 'sheet1' } },
+      { access }
+    );
+    expect(saved).toMatchObject({
+      status: 'completed',
+      data: { path: join(own(person).downloadsDir, 'drive', 'sheet1_Tracker.xlsx') },
+    });
+    expect(
+      readFileSync(join(own(person).downloadsDir, 'drive', 'sheet1_Tracker.xlsx'), 'utf8')
+    ).toBe('data');
+    // Without the person's own folders a person never falls back to the common one.
+    expect(
+      await dispatcher()({ action: 'drive.download', input: { file: 'bin1' } }, { access })
+    ).toMatchObject({
+      status: 'failed',
+      error: { message: expect.stringContaining('not configured') },
+    });
+    expect(
+      await dispatch(
+        { action: 'drive.download', input: { file: 'bin1' } },
+        { access: { ...owner, principalId: plain } }
+      )
+    ).toMatchObject({ status: 'failed', error: { code: 'drive_out_of_scope' } });
+    db.adapter
+      .prepare("DELETE FROM principal_roles WHERE principal_id=? AND role='owner'")
+      .run(person);
     expect(
       await dispatch({ action: 'drive.download', input: { file: 'bin1' } }, { access })
     ).toMatchObject({ status: 'failed', error: { code: 'drive_out_of_scope' } });
     expect(existsSync(join(home, 'drive'))).toBe(false);
+    expect(existsSync(join(own(plain).downloadsDir))).toBe(false);
   });
 
   it('reads ids out of the link forms cards and messages carry', () => {
