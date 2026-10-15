@@ -29,6 +29,7 @@ beforeEach(() => {
   vi.mocked(spawnSync).mockReturnValue(result(113));
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   vi.mocked(spawnSync).mockReset();
   for (const path of roots.splice(0)) rmSync(path, { recursive: true, force: true });
@@ -437,9 +438,11 @@ describe('mama doctor', () => {
   });
 
   it('reads systemd on Linux: the sandbox from the service PATH, a missing user manager as a warning', async () => {
+    // The unit lives under the temp home, whatever XDG_CONFIG_HOME this machine sets.
+    vi.stubEnv('XDG_CONFIG_HOME', '');
     const installed = install();
-    mkdirSync(dirname(systemdUnitPath(installed.home, {})), { recursive: true });
-    writeFileSync(systemdUnitPath(installed.home, {}), '');
+    mkdirSync(dirname(systemdUnitPath(installed.home)), { recursive: true });
+    writeFileSync(systemdUnitPath(installed.home), '');
     const service = async (stdout: string) =>
       byName(
         await runDiagnostics({
