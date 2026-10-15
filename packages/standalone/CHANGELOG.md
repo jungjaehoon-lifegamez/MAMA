@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- A turn with no person in it (source changes, record orders, reports, notices, personal jobs)
+  fetches web pages only from the hosts in `agent.autonomous_web_fetch` (none by default, `*` for
+  all). It keeps web search, and turns where a person speaks keep web fetch. Choosing a page is a
+  judgment, and a page address can carry text to any host (owner, 2026-10-15).
+
 ### Fixed
 
 - `deliver.*.file` reads a relative path (`files/...`, as `document.render` returns it) in the

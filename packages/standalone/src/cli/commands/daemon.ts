@@ -556,6 +556,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       connectors: OWNER_CONNECTORS,
       rawPath: paths.connectorsRoot,
       effort: config.agent.effort,
+      autonomousWebFetch: config.agent.autonomous_web_fetch ?? [],
       maxTurns: config.agent.max_turns,
       timeout: config.agent.timeout,
       maxTurnMs: config.agent.max_turn_ms,

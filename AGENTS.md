@@ -144,6 +144,12 @@ Owner decision 2026-10-05: each WebFetch call raises the same kind of security a
 URL and grouped per host within a minute, because text placed in a URL reaches any host. WebFetch
 stays allowed; WebSearch stays recorded in `tool_traces` only. This is observation, not narrowing.
 
+Owner decision 2026-10-15, a narrowing: web fetch needs judgment, so a turn with no person in it
+(source deltas, record orders, reports, notices, personal jobs) fetches only the hosts listed in
+`agent.autonomous_web_fetch` (none by default; `*` is every host). Web search stays in every turn,
+and turns where a person speaks keep web fetch with its alert. The Claude PreToolUse hook refuses
+from the running turn's mode, written outside the workspace; Codex has web search only.
+
 Owner decision 2026-10-08 (4): member agents run in their own workspace under the configured
 member root outside the owner's home, with the same isolation settings as the owner: git boundary,
 empty plugins, project/local settings, persistent sessions, first-turn system prompt, required

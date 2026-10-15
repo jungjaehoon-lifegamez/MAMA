@@ -607,6 +607,60 @@ describe('one owner native session', () => {
     }
   });
 
+  it('lets a person-spoken turn fetch and scopes other turns and the time between turns', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'native-web-fetch-'));
+    try {
+      const model = runner('claude');
+      const modePath = join(workspace, 'runtime', 'runtime', 'web-fetch-turn.json');
+      const seen: unknown[] = [];
+      (model.prompt as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        seen.push(JSON.parse(readFileSync(modePath, 'utf8')));
+        return {
+          response: 'answer',
+          session_id: 'native-session',
+          usage: { input_tokens: 1, output_tokens: 1 },
+        };
+      });
+      const session = createNativeSession({
+        backend: 'claude',
+        model: 'test-model',
+        workspaceDir: workspace,
+        runtimeRoot: join(workspace, 'runtime'),
+        actionSurface: surface(),
+        agent: model,
+        maxTurns: 10,
+        timeout: 1_000,
+        autonomousWebFetch: ['stat.go.jp'],
+      });
+      expect(JSON.parse(readFileSync(modePath, 'utf8'))).toEqual({
+        autonomous: true,
+        hosts: ['stat.go.jp'],
+      });
+      const hooks = JSON.parse(readFileSync(join(workspace, '.claude', 'settings.json'), 'utf8'))
+        .hooks.PreToolUse;
+      expect(hooks[1]).toMatchObject({
+        matcher: 'WebFetch',
+        hooks: [{ type: 'command', command: expect.stringContaining(modePath) }],
+      });
+      await session.runTurn([{ type: 'text', text: 'person' }], {
+        sessionKey: 'owner:runtime',
+        source: 'owner_message',
+      });
+      await session.runTurn([{ type: 'text', text: 'delta' }], {
+        sessionKey: 'owner:runtime',
+        source: 'source_delta',
+      });
+      expect(seen).toEqual([
+        { autonomous: false, hosts: ['stat.go.jp'] },
+        { autonomous: true, hosts: ['stat.go.jp'] },
+      ]);
+      expect(JSON.parse(readFileSync(modePath, 'utf8'))).toMatchObject({ autonomous: true });
+      await session.stop();
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
   it.each(['codex', 'claude'] as const)(
     'exposes the same owner catalog actions for %s',
     async (backend) => {

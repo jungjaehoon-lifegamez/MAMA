@@ -486,3 +486,31 @@ describe('W1 runtime configuration', () => {
     }
   });
 });
+
+describe('agent.autonomous_web_fetch', () => {
+  it('reads listed hosts in lower case, allows *, and refuses URLs and other shapes', () => {
+    const withHosts = (hosts: unknown) =>
+      parseConfig(
+        { ...validConfig(), agent: { ...validConfig().agent, autonomous_web_fetch: hosts } },
+        { home: testHome }
+      ).agent.autonomous_web_fetch;
+    expect(
+      parseConfig(validConfig(), { home: testHome }).agent.autonomous_web_fetch
+    ).toBeUndefined();
+    expect(withHosts(['Stat.go.jp', ' exchange-rates.org '])).toEqual([
+      'stat.go.jp',
+      'exchange-rates.org',
+    ]);
+    expect(withHosts(['*'])).toEqual(['*']);
+    expect(withHosts([])).toEqual([]);
+    for (const invalid of [
+      'stat.go.jp',
+      ['https://stat.go.jp'],
+      ['stat.go.jp/data'],
+      ['*.stat.go.jp'],
+      [''],
+      [3],
+    ])
+      expect(() => withHosts(invalid)).toThrow(/autonomous_web_fetch/);
+  });
+});
