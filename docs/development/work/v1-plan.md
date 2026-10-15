@@ -36,9 +36,10 @@ live check passes.
    `/var/lib/mama/<user>/tools`, created once by the installer with `sudo`. Docker: volumes.
 4. **Minimum backend versions are the versions a release was verified on** (today Claude Code
    2.1.299 and Codex 0.160.1), in one constant, raised only with a verification.
-5. **Backups are taken from a stopped install, and restore makes paths follow the root.** New
-   writes store attachment paths relative to the MAMA root; restore rewrites older absolute paths
-   in config, payloads and ledgers by the old root prefix.
+5. **Backups are taken from a stopped install, and restore makes paths follow their roots.** New
+   writes store attachment paths relative to the root that owns them (the MAMA root, or
+   `member_root` for a person's downloads, `s/gateways/telegram.ts:846-850`); restore rewrites
+   older absolute paths in config, payloads and ledgers by both old prefixes.
 6. **`mama update` serves npm installs.** Docker refuses and prints the pull-and-recreate steps; a
    checkout install (this Mac) updates by git, as the deploy procedure does.
 7. **Services restart on failure only.** launchd `KeepAlive` with `SuccessfulExit=false` and
@@ -102,7 +103,8 @@ live check passes.
 ### W1.3 Backup and restore (R4)
 
 - `mama backup` requires a stopped install (`--restart` drains, stops, backs up and starts): the
-  database and each `raw.db` copied, the state files under the root and `member_root`, a manifest
+  database and each `raw.db` copied, the state files under the root and `member_root`, the common
+  skills under `tools_root/skills` (owner-published, `s/runtime/skills.ts:446-479`), a manifest
   with versions and SHA-256, verified with `integrity_check` and the hashes. Credentials, including
   each member's copied Codex login and session credential, only with `--include-secrets`; left out:
   `tools_root` binaries, Codex thread caches, model caches, logs unless asked.
@@ -110,8 +112,9 @@ live check passes.
   is dropped silently, `:179-182`).
 - Restore writes to a staging folder, swaps, and rewrites the old root prefix (decision 5); new
   attachment writes store root-relative paths (`gateways/telegram-attachments.ts:117`).
-- Proof: back up a copy of this Mac's home, restore it under another HOME, `mama doctor` clean,
-  `work.list` counts equal, and an old attachment opens.
+- Proof: back up a copy of this Mac's home, restore it under another HOME and another
+  `member_root`, `mama doctor` clean, `work.list` counts equal, a common skill listed, and an old
+  owner and member attachment open.
 
 ### W1.4 Upgrade check and downgrade refusal (R5; core change, decision 8)
 
@@ -146,8 +149,9 @@ live check passes.
   daemon, `daemon.ts:822-825`). A state file marks completed steps so a failed init resumes.
 - Pairing: the bot sends the DM's sender a code and init asks for it; then `/bind` from the paired
   person in a group sets the common channel. Strangers stay unanswered.
-- `mama init --section <name>`; `--non-interactive` from flags and environment for everything but
-  pairing. Sources a fresh install cannot use (the Kagemusha bridge, `init.ts:35`) are not offered;
+- `mama init --section <name>`; `--non-interactive` from flags and environment: without a person
+  at a terminal, the owner's Telegram ID and the common group's ID come from flags or environment
+  (as `register-owner <id>` does today), and `mama pair` can replace them interactively later. Sources a fresh install cannot use (the Kagemusha bridge, `init.ts:35`) are not offered;
   the launch-agent question goes to `mama service install`.
 
 ### W2.2 Host chat commands (E1)
@@ -164,10 +168,14 @@ live check passes.
 
 ### W2.3 Update and `/update` (R3, R7)
 
-- `mama update [--dry-run]`: drain, stop through the service manager, back up (W1.3), install,
+- `mama update [--dry-run]`: drain, stop through the service manager, take a private full
+  snapshot for rollback (W1.3 with credentials, kept 0600 and removed after a good boot), install,
   rewrite the launch files, `mama tools install` when the toolkit lock changed, start, wait for the
   boot stages; if the new version does not boot, stop, restore the backup, reinstall the previous
   version and start it.
+- Release discovery: the daemon checks the registry at most once a day and keeps the answer in
+  `runtime/`; `mama status` and `mama doctor` show a newer release from it, say when the last check
+  failed, and make no network call themselves.
 - `/update` from an owner in the common channel or the owner's own DM runs the updater as its own
   job of the service manager (a transient `systemd-run --user` unit on Linux; a one-shot launchd job
   on macOS, verified first), because a child of the daemon dies when the daemon's service stops.
@@ -198,7 +206,8 @@ live check passes.
   `/health`, version tags, published by the release workflow. amd64 is tested on the Steam Deck;
   arm64 is offered only after the same run on arm64, otherwise labelled experimental.
 - Compose volumes: the MAMA home, `member_root`, `tools_root` (common skills live there), the
-  backend credentials. The viewer needs `MAMA_API_HOST`, `MAMA_VIEWER_HOSTNAMES` and its bearer
+  backend credentials and the `gws` credential store (`~/.config/gws`, or
+  `GOOGLE_WORKSPACE_CLI_CONFIG_DIR`). The viewer needs `MAMA_API_HOST`, `MAMA_VIEWER_HOSTNAMES` and its bearer
   token.
 - Sign-in without a desktop: Codex `codex login --device-auth`; the Claude method is verified on the
   image and must be file-based or an owner decision (D3).
