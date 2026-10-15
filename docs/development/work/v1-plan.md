@@ -27,10 +27,11 @@ live check passes.
    the root defaults of decision 3), then polls the new bot itself; later people keep the in-chat
    enrollment (P7). Docker runs `docker compose run mama init` once before `up`; scripts keep
    `register-owner <id>`.
-2. **A lock file and a control socket per install.** An atomic lock file is the single-instance
-   authority, taken first in boot; the control socket under `<root>/runtime/` (already denied to
-   the agents, `s/runtime/backend-security.ts:120`) carries status, stop and drain, and stop and
-   drain need a control token from `auth.env`. It is separate from the sessions' `runtime.sock`.
+2. **A lock file and a control socket per install.** An atomic lock file under `<root>/runtime/`
+   is the single-instance authority, taken first in boot. The control socket sits at the root
+   beside the sessions' `runtime.sock` (the same AF_UNIX path limit, 104 bytes on macOS) and
+   carries status, stop and drain; each request needs the per-boot token the daemon writes under
+   `runtime/`, which the agents' native reads deny (`s/runtime/backend-security.ts:120`).
 3. **Default `member_root` and `tools_root` outside HOME, per platform and per user.** macOS:
    folders in the Shared folder beside the home folders. Linux: `/var/lib/mama/<user>/members` and
    `/var/lib/mama/<user>/tools`, created once by the installer with `sudo`. Docker: volumes.
