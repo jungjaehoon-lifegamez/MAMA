@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `initDB({ refuseNewerSchema: true })` passes the refusal to `openDatabase`, for consumers that
   open the module-level database.
 
+### Fixed
+
+- A backend that goes away while the Codex app-server or Claude CLI driver writes to it fails
+  that request instead of ending the host. The write raised EPIPE on the child's stdin, a stream
+  error with no listener, so the daemon exited; both drivers now take it as the process's failure
+  (Codex also after the exit was reported).
+
 ## [8.7.0] - 2026-10-14
 
 ### Added
