@@ -1146,6 +1146,15 @@ export class CodexAppServerProcess {
     this.stdout.on('line', (line) => this.handleLine(child, line));
     this.stderr.on('line', (line) => this.handleStderr(line));
     child.once('error', (error) => this.failProcess(child, error));
+    // A write to an app-server that stopped reading fails with EPIPE on its stdin; a stream error
+    // with no listener would end the host. Such a child cannot take another request, so it is
+    // stopped as a timed-out request stops it. The listener stays after detach: a write in flight
+    // can fail after the exit was reported, and a child this driver no longer holds is ignored.
+    child.stdin.on('error', (error) => {
+      if (child === this.child) {
+        void this.shutdown(error);
+      }
+    });
     child.once('exit', (code, signal) =>
       this.failProcess(child, new Error(`Codex app-server exited (${code ?? signal ?? 'unknown'})`))
     );
@@ -3052,7 +3061,6 @@ export class CodexAppServerProcess {
     this.stdout?.close();
     this.stderr?.close();
     child.removeAllListeners();
-    child.stdin.removeAllListeners();
     child.stdout.removeAllListeners();
     child.stderr.removeAllListeners();
     this.stdout = undefined;

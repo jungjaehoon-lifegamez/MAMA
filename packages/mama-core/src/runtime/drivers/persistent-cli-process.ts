@@ -499,6 +499,17 @@ export class PersistentClaudeProcess extends EventEmitter {
       this.handleClose(code);
     });
     this.process.on('error', (error) => this.handleError(error));
+    // A write to a CLI that stopped reading fails with EPIPE on its stdin. The stream raises it as
+    // an error event, which with no listener would end the host. Such a CLI cannot take another
+    // request: the one in flight fails with the error and this process ends, as a crash would.
+    const child = this.process;
+    child.stdin?.on('error', (error) => {
+      if (this.process !== child) {
+        return;
+      }
+      this.handleError(error);
+      this.stop();
+    });
 
     // Don't wait for init - CLI only emits it after first user message
     // Just wait a brief moment for the process to stabilize
@@ -687,11 +698,8 @@ export class PersistentClaudeProcess extends EventEmitter {
         this.handleError(error instanceof Error ? error : new Error(String(error)));
         return;
       }
-      this.process.stdin.write(jsonLine, (err) => {
-        if (err) {
-          this.handleError(err);
-        }
-      });
+      // A failed write raises the stdin error event, which handleError takes.
+      this.process.stdin.write(jsonLine);
     });
   }
 
@@ -768,11 +776,8 @@ export class PersistentClaudeProcess extends EventEmitter {
         return;
       }
 
-      this.process.stdin.write(jsonLine, (err) => {
-        if (err) {
-          this.handleError(err);
-        }
-      });
+      // A failed write raises the stdin error event, which handleError takes.
+      this.process.stdin.write(jsonLine);
     });
   }
 
