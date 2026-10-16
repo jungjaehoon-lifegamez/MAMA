@@ -170,6 +170,11 @@ export function createPrincipalSessions(
       if (!session.resetSession) throw new Error(`Principal session ${key} has no reset port`);
       await session.resetSession(key);
     },
+    interrupt: async (key) => {
+      const session = forKey(key).native;
+      if (!session.interrupt) throw new Error(`Principal session ${key} has no interrupt port`);
+      return session.interrupt(key);
+    },
     stop: async () => {
       const results = await Promise.allSettled(
         [...entries.values()].map((entry) => entry.native.stop())

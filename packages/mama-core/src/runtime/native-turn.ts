@@ -433,6 +433,20 @@ export class NativeSessionRunner<TToolContext extends HostExecutionContext = Hos
     }
   }
 
+  /**
+   * Stop the turn running in this session now, keeping the session (unlike `resetSession`). The
+   * turn rejects with `NativeTurnStoppedError`; the host's delivery takes it as any failure after
+   * dispatch. False when no turn runs there.
+   */
+  async interrupt(sessionKey: string): Promise<boolean> {
+    if (this.stopped) throw new Error('Native session is stopped');
+    const entry = this.host.sessionPool.peekSession(sessionKey);
+    if (!entry.busy) return false;
+    if (!this.host.agent.interrupt)
+      throw new Error('Native runner does not support interrupting a turn');
+    return this.host.agent.interrupt(entry.sessionId, sessionKey);
+  }
+
   /** Use the current turn's authority. Steering cannot replace its policy or open a new turn. */
   async steer(
     content: string,

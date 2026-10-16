@@ -67,6 +67,19 @@ export class NativeInputUncertainError extends Error {
   }
 }
 
+/**
+ * The turn was stopped on request (`IModelRunner.interrupt`) before it finished. Like any failure
+ * after dispatch it leaves the input uncertain: it is not run again.
+ */
+export class NativeTurnStoppedError extends Error {
+  readonly retryable = false;
+  readonly code = 'NATIVE_TURN_STOPPED';
+  constructor(message = 'Native turn stopped on request') {
+    super(message);
+    this.name = 'NativeTurnStoppedError';
+  }
+}
+
 /** The exact steering target vanished before anything was written to native transport. */
 export class NativeSteeringTargetUnavailableError extends Error {
   readonly code = 'NATIVE_STEERING_TARGET_UNAVAILABLE';
@@ -424,6 +437,12 @@ export interface IModelRunner {
 
   /** Retire one exact routed backend session before replacing its authority policy. */
   resetSession?(sessionId?: string, sessionKey?: string): void | Promise<void>;
+
+  /**
+   * Stop the turn running in this session now, keeping the session. Its prompt rejects with
+   * `NativeTurnStoppedError`. Resolves false when no turn runs there.
+   */
+  interrupt?(sessionId: string | undefined, sessionKey: string): Promise<boolean>;
 
   /** Set the session/channel ID */
   setSessionId(id: string): void;

@@ -123,6 +123,7 @@ function port(overrides: Partial<TelegramHostCommandPort> = {}): TelegramHostCom
       inputsWaiting: 0,
     })),
     startOver: vi.fn(async () => 'started_over' as const),
+    stopTurn: vi.fn(async () => 'stopped' as const),
     ...overrides,
   };
 }
@@ -156,7 +157,7 @@ describe('Telegram host commands', () => {
     expect(scopes).toEqual(['all_private_chats', 'all_group_chats']);
     expect(
       seams.api.setMyCommands.mock.calls[0][0].map((entry: { command: string }) => entry.command)
-    ).toEqual(['whoami', 'status', 'new', 'help']);
+    ).toEqual(['whoami', 'status', 'stop', 'new', 'help']);
   });
 
   it('starts even when the menu cannot be registered', async () => {
@@ -290,6 +291,43 @@ describe('Telegram host commands', () => {
     const [, common] = await reply();
     expect(common).toContain(`This group (${COMMON}) is MAMA's common channel`);
     expect(common).toContain('the common session');
+  });
+
+  it("stops the common session's turn for an owner in the group, and says when nothing runs", async () => {
+    const commands = port();
+    const { member } = await gateway(commands);
+    await send({
+      ...command('/stop'),
+      chat: { id: Number(COMMON), type: 'supergroup' },
+      from: { id: 7101, is_bot: false },
+    });
+    const [, text] = await reply();
+    expect(commands.stopTurn).toHaveBeenCalledWith({ kind: 'common' });
+    expect(text).toContain("Stopped the common session's running turn");
+    seams.api.sendMessage.mockClear();
+    (commands.stopTurn as ReturnType<typeof vi.fn>).mockResolvedValue('idle');
+    // A member in the group stops only their own conversation there.
+    await send({
+      ...command('/stop'),
+      chat: { id: Number(COMMON), type: 'supergroup' },
+      from: { id: 7102, is_bot: false },
+    });
+    const [, idle] = await reply();
+    expect(commands.stopTurn).toHaveBeenLastCalledWith({
+      kind: 'member',
+      principalId: member,
+      room: COMMON,
+    });
+    expect(idle).toBe('Nothing is running in this conversation.');
+    seams.api.sendMessage.mockClear();
+    (commands.stopTurn as ReturnType<typeof vi.fn>).mockResolvedValue('starting');
+    await send({
+      ...command('/stop'),
+      chat: { id: 7102, type: 'private' },
+      from: { id: 7102, is_bot: false },
+    });
+    const [, starting] = await reply();
+    expect(starting).toContain('starting or finishing');
   });
 
   it('ignores a command addressed to another bot', async () => {

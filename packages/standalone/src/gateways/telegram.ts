@@ -24,6 +24,7 @@ import {
   hostCommand,
   startOverText,
   statusText,
+  stopText,
   whoamiText,
   type TelegramHostCommand,
   type TelegramHostCommandPort,
@@ -843,6 +844,8 @@ export class TelegramGateway extends BaseGateway {
         // Everyone in a group reads the reply, so the owner's view of every conversation stays
         // in the owner's DM.
         text = statusText(await this.hostCommands.status(target, owner && privateChat)).join('\n');
+      else if (command === 'stop')
+        text = stopText(await this.hostCommands.stopTurn(target), target);
       else text = startOverText(await this.hostCommands.startOver(target), target, owner);
     } catch (error) {
       this.log(
@@ -1111,42 +1114,54 @@ export class TelegramGateway extends BaseGateway {
   }
 
   async recoverPendingResponses(): Promise<void> {
-    for (const entry of this.messageLedger.listUndelivered()) {
-      try {
-        if (entry.deliveryUncertain) {
-          this.log(
-            `telegram delivery requires reconciliation key=${entry.key} state=${entry.state} next_chunk_index=${entry.nextChunkIndex ?? 0}`
-          );
-          continue;
-        }
-        if (entry.key.startsWith('outbound:') && entry.state === 'ready') {
-          // Personal turn recovery belongs to mailbox reconciliation, which checks the current person
-          // and input before sending. Gateway startup cannot establish that authority.
-          if (entry.idempotencyKey && isPersonalTurnTextKey(entry.idempotencyKey)) continue;
-          const chatId = entry.deliveryTarget?.slice('telegram:'.length);
-          if (!entry.deliveryTarget?.startsWith('telegram:') || !chatId) {
-            throw new Error('Telegram outbound entry has no valid destination');
-          }
-          if (!this.config.allowedChats?.includes(chatId)) {
-            const recipient = this.registry.resolveByExternal('telegram', 'private', chatId);
-            if (recipient?.kind !== 'member' || recipient.status !== 'active') continue;
-          }
-          await this.runInChatQueue(chatId, () => this.deliverOutboundEntry(entry.key, chatId));
-          continue;
-        }
-        if (!entry.key.startsWith('telegram:')) continue;
-        const intake = await this.responseIntake(entry.key);
-        if (entry.state === 'ready' && entry.response !== undefined) {
-          await this.deliverReadyEntry(entry.key);
-          continue;
-        }
-        if (entry.state === 'processing' && !intake.isPending?.(entry.key)) {
-          await this.interruptResponse(entry.key);
-        }
-      } catch (error) {
-        // Delivery already recorded its progress; one entry must not keep polling from starting.
-        this.log(`telegram recovery failed key=${entry.key} error=${telegramErrorMessage(error)}`);
+    for (const entry of this.messageLedger.listUndelivered()) await this.recoverEntry(entry);
+  }
+
+  /**
+   * Recover one owner message as startup recovery does, for an input parked uncertain while the
+   * daemon runs (a turn stopped with /stop, or timed out): every other message still in flight
+   * keeps its turn and its answer.
+   */
+  async recoverResponse(sourceRef: string): Promise<void> {
+    const entry = this.messageLedger.get(sourceRef);
+    if (entry && entry.state !== 'delivered') await this.recoverEntry(entry);
+  }
+
+  private async recoverEntry(entry: TelegramMessageLedgerEntry): Promise<void> {
+    try {
+      if (entry.deliveryUncertain) {
+        this.log(
+          `telegram delivery requires reconciliation key=${entry.key} state=${entry.state} next_chunk_index=${entry.nextChunkIndex ?? 0}`
+        );
+        return;
       }
+      if (entry.key.startsWith('outbound:') && entry.state === 'ready') {
+        // Personal turn recovery belongs to mailbox reconciliation, which checks the current person
+        // and input before sending. Gateway startup cannot establish that authority.
+        if (entry.idempotencyKey && isPersonalTurnTextKey(entry.idempotencyKey)) return;
+        const chatId = entry.deliveryTarget?.slice('telegram:'.length);
+        if (!entry.deliveryTarget?.startsWith('telegram:') || !chatId) {
+          throw new Error('Telegram outbound entry has no valid destination');
+        }
+        if (!this.config.allowedChats?.includes(chatId)) {
+          const recipient = this.registry.resolveByExternal('telegram', 'private', chatId);
+          if (recipient?.kind !== 'member' || recipient.status !== 'active') return;
+        }
+        await this.runInChatQueue(chatId, () => this.deliverOutboundEntry(entry.key, chatId));
+        return;
+      }
+      if (!entry.key.startsWith('telegram:')) return;
+      const intake = await this.responseIntake(entry.key);
+      if (entry.state === 'ready' && entry.response !== undefined) {
+        await this.deliverReadyEntry(entry.key);
+        return;
+      }
+      if (entry.state === 'processing' && !intake.isPending?.(entry.key)) {
+        await this.interruptResponse(entry.key);
+      }
+    } catch (error) {
+      // Delivery already recorded its progress; one entry must not keep polling from starting.
+      this.log(`telegram recovery failed key=${entry.key} error=${telegramErrorMessage(error)}`);
     }
   }
 

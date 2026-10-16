@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `IModelRunner.interrupt(sessionId, sessionKey)` stops the turn running in a session now and
+  keeps the session; `NativeSessionRunner.interrupt(sessionKey)` and
+  `NativeSessionHandle.interrupt` call it, returning false when no turn runs. The turn's prompt
+  rejects with `NativeTurnStoppedError` (code `NATIVE_TURN_STOPPED`) carrying its usage so far,
+  so a host takes it as any failure after dispatch: the input is left uncertain and not run
+  again. The Claude driver sends the CLI's `interrupt` control request and keeps the process;
+  the Codex driver sends `turn/interrupt` and keeps the thread.
+
 ## [8.8.0] - 2026-10-16
 
 ### Added

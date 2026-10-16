@@ -266,6 +266,16 @@ export function createMemberSession(
         room === undefined && channel !== undefined ? roomSession(channel).native : current
       ).steer(content, target, key);
     },
+    interrupt: (key) => {
+      const channel = memberRoomChannel(principalId, key);
+      if (room === undefined && channel !== undefined) {
+        // A room that has not opened in this process runs no turn.
+        return rooms.has(channel)
+          ? rooms.get(channel)!.native.interrupt(key)
+          : Promise.resolve(false);
+      }
+      return current.interrupt(key);
+    },
     stop: async () => {
       try {
         await Promise.all([...rooms.values()].map((session) => session.native.stop()));

@@ -211,6 +211,10 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
     return this.appServer.reset(sessionKey ?? sessionId ?? this.defaultSessionKey);
   }
 
+  async interrupt(_sessionId: string | undefined, sessionKey: string): Promise<boolean> {
+    return this.appServer.interrupt(sessionKey);
+  }
+
   // ─── AgentRuntimeProcess.sendMessage() ─────────────────────────────────
 
   async sendMessage(
