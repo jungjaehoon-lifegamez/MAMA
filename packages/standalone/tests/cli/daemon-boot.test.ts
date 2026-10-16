@@ -20,6 +20,7 @@ import {
   type DaemonLogger,
 } from '../../src/cli/commands/daemon.js';
 import type { W1Config } from '../../src/runtime/config.js';
+import { DAEMON_LOG_LIMITS, openRotatingLog } from '../../src/runtime/rotating-log.js';
 import type { OutboundAttemptEvent } from '../../src/api/security-events.js';
 import { createOwnerRuntime } from '../../src/runtime/owner-runtime.js';
 import * as egressProxy from '../../src/runtime/egress-proxy.js';
@@ -416,7 +417,7 @@ describe('daemon bootstrap', () => {
   });
 
   it.each([false, true])(
-    'restricts the daemon log before starting runtime %#',
+    'takes its output into the rotated log before starting runtime %#',
     async (existing) => {
       const root = mkdtempSync(join(tmpdir(), 'daemon-log-'));
       roots.push(root);
@@ -426,25 +427,37 @@ describe('daemon bootstrap', () => {
         mkdirSync(join(root, 'logs'));
         writeFileSync(options.logging.file, 'retained\n', { mode: 0o644 });
       }
+      let captured: string | undefined;
+      const order: string[] = [];
       const daemon = await bootDaemon({
         config: options,
         home: root,
         configPath: join(root, 'config.yaml'),
         mode: 'replay',
         replay: async () => {},
-        logger: { info: () => {}, error: () => {} },
+        logger: { info: (line) => order.push(line), error: () => {} },
+        // What `mama daemon` passes, without taking over this test process's own output.
+        captureOutput: (file) => {
+          captured = file;
+          order.push('captured');
+          openRotatingLog(file, DAEMON_LOG_LIMITS).write('taken over\n');
+        },
         dependencies: {
           ensureIsolation: () => {},
           createOwnerRuntime: async () => {
-            expect(existsSync(options.logging.file)).toBe(true);
+            expect(captured).toBe(options.logging.file);
             expect(statSync(options.logging.file).mode & 0o777).toBe(0o600);
-            if (existing) expect(readFileSync(options.logging.file, 'utf8')).toBe('retained\n');
+            expect(readFileSync(options.logging.file, 'utf8')).toBe(
+              `${existing ? 'retained\n' : ''}taken over\n`
+            );
             return ownerDouble([]) as never;
           },
           createViewerServer: () => viewerDouble([]) as never,
         },
       });
       await daemon.stop();
+      // The first boot stage is in the daemon's own log, where doctor's report looks for it.
+      expect(order.indexOf('captured')).toBeLessThan(order.indexOf('boot stage=config'));
     }
   );
 

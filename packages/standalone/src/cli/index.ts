@@ -26,11 +26,22 @@ async function main(): Promise<void> {
     await runRegisterOwner(process.argv.slice(3));
     return;
   }
+  if (command === 'logs') {
+    const { runLogs } = await import('./commands/logs.js');
+    const controller = new AbortController();
+    process.once('SIGINT', () => controller.abort());
+    await runLogs(process.argv.slice(3), { signal: controller.signal });
+    return;
+  }
   if (command === 'daemon') {
     const { runDaemon } = await import('./commands/daemon.js');
     const { InstallBusyError, RestorePendingError } = await import('./runtime/daemon-control.js');
     try {
-      await runDaemon();
+      const { DAEMON_LOG_LIMITS, openRotatingLog, takeOverOutput } =
+        await import('../runtime/rotating-log.js');
+      await runDaemon({
+        captureOutput: (logFile) => takeOverOutput(openRotatingLog(logFile, DAEMON_LOG_LIMITS)),
+      });
     } catch (error) {
       // Another process already holds this install, or a restore is unfinished: a clean exit,
       // which the service files leave stopped (they restart only after a failure).
@@ -96,7 +107,7 @@ async function main(): Promise<void> {
     return;
   }
   console.log(
-    'Usage: mama init | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop | service install|start|stop|restart|status|uninstall | doctor [--json] [--offline] [--report] | backup [--include-secrets] [--logs] | restore <archive> | restore --rollback'
+    'Usage: mama init | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop | service install|start|stop|restart|status|uninstall | doctor [--json] [--offline] [--report] | logs [-n <lines>] [--follow] | backup [--include-secrets] [--logs] | restore <archive> | restore --rollback'
   );
 }
 

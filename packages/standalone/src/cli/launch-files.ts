@@ -71,7 +71,8 @@ export function startScript(options: {
     `export MAMA_LOG_LEVEL=${shellQuote(options.logLevel.toUpperCase())}`,
     ...Object.entries(options.viewer).map(([name, value]) => `export ${name}=${shellQuote(value)}`),
     ...(options.carried ?? []),
-    `exec ${shellQuote(options.nodePath)} ${shellQuote(options.cliPath)} daemon >> ${shellQuote(join(root, 'logs', 'daemon.log'))} 2>&1`,
+    ...crashLogLines(root),
+    `exec ${shellQuote(options.nodePath)} ${shellQuote(options.cliPath)} daemon >> "$crash" 2>&1`,
     '',
   ].join('\n');
 }
@@ -102,6 +103,27 @@ function xml(value: string): string {
     .replace(/'/g, '&apos;');
 }
 
+/**
+ * What the service manager captures before the daemon writes its own rotated log (daemon.log):
+ * start.sh's own messages, a crash while Node loads, a fatal error, a native library's writes.
+ */
+export const CRASH_LOG_NAME = 'crash.log';
+/** start.sh empties the crash log at start once it is past this size. */
+export const CRASH_LOG_CAP_BYTES = 1024 * 1024;
+
+/**
+ * start.sh's crash log: only what comes before the daemon takes over its own output lands there;
+ * it is made owner-only and emptied at start once past the cap.
+ */
+function crashLogLines(root: string): string[] {
+  return [
+    `crash=${shellQuote(join(root, 'logs', CRASH_LOG_NAME))}`,
+    // launchd creates the file it redirects to before this script's umask applies.
+    `if [ -f "$crash" ]; then chmod 600 "$crash"; fi`,
+    `if [ -f "$crash" ] && [ "$(wc -c < "$crash")" -gt ${CRASH_LOG_CAP_BYTES} ]; then : > "$crash"; fi`,
+  ];
+}
+
 /** Seconds a service manager waits for a stopping daemon before it kills it. */
 export const SERVICE_STOP_SECONDS = 60;
 
@@ -121,8 +143,8 @@ export function launchAgent(home: string): string {
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
   <key>ExitTimeOut</key><integer>${SERVICE_STOP_SECONDS}</integer>
-  <key>StandardOutPath</key><string>${xml(join(root, 'logs', 'daemon.log'))}</string>
-  <key>StandardErrorPath</key><string>${xml(join(root, 'logs', 'daemon.log'))}</string>
+  <key>StandardOutPath</key><string>${xml(join(root, 'logs', CRASH_LOG_NAME))}</string>
+  <key>StandardErrorPath</key><string>${xml(join(root, 'logs', CRASH_LOG_NAME))}</string>
 </dict></plist>
 `;
 }
@@ -242,6 +264,7 @@ export function readStartScript(script: string, home: string): StartScriptReadin
     'umask 077',
     `cd ${shellQuote(root)}`,
     `. ${shellQuote(join(root, 'auth.env'))}`,
+    ...crashLogLines(root),
   ]);
   const carried: string[] = [];
   const notReproduced: string[] = [];

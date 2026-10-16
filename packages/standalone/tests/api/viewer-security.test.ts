@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events';
 import { randomBytes, generateKeyPairSync, sign, createHash } from 'node:crypto';
 import * as fs from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { gzipSync } from 'node:zlib';
 import { tmpdir } from 'node:os';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -764,6 +765,16 @@ describe('security events API', () => {
       expect((await request(`/api/security/events?limit=${limit}`)).status).toBe(400);
     expect((await request('/api/security/events', tunnel)).status).toBe(401);
     expect((await request('/api/security/events', {}, '192.0.2.2')).status).toBe(401);
+  });
+  it('reads the newest archive when the events file has just been rotated', async () => {
+    await serve();
+    const path = securityPath();
+    fs.mkdirSync(dirname(path), { recursive: true });
+    fs.writeFileSync(`${path}.1.gz`, gzipSync('{"n":1}\n{"n":2}\n'));
+    fs.writeFileSync(path, '{"n":3}\n');
+    const result = await request('/api/security/events?limit=3');
+    expect(result.status).toBe(200);
+    expect(JSON.parse(result.body).events).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }]);
   });
   it('returns an empty list before the first security event', async () => {
     await serve();

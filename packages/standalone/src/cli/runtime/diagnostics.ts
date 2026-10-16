@@ -17,7 +17,10 @@ import {
   startExports,
   startPathValue,
   versionedNodePath,
+  CRASH_LOG_CAP_BYTES,
+  CRASH_LOG_NAME,
 } from '../launch-files.js';
+import { DAEMON_LOG_LIMITS, SECURITY_LOG_LIMITS } from '../../runtime/rotating-log.js';
 import { isIcalSecret, SECRET_NAMES } from '../secrets.js';
 import {
   askDaemon,
@@ -74,7 +77,6 @@ export interface DiagnosticsOptions {
   portInUse?: (port: number, host: string) => Promise<boolean>;
 }
 
-const LOG_WARN_BYTES = 50 * 1024 * 1024;
 /** The PATH a service manager gives a unit that does not set one ($PATH in start.sh). */
 const SERVICE_DEFAULT_PATH: Record<string, string[]> = {
   darwin: ['/usr/bin', '/bin', '/usr/sbin', '/sbin'],
@@ -408,8 +410,22 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
   );
   checks.push(serviceCheck(platform, home, options.serviceRun ?? defaultServiceRun));
 
-  for (const name of ['daemon.log', 'security-events.jsonl']) {
-    const path = join(root, 'logs', name);
+  // Each log against its own cap: the daemon rotates daemon.log and security-events.jsonl before
+  // they pass theirs, and start.sh empties crash.log at start past its own.
+  for (const [name, path, cap] of [
+    // The daemon's own log is wherever the config puts it.
+    [
+      'daemon.log',
+      config?.logging.file ?? join(root, 'logs', 'daemon.log'),
+      DAEMON_LOG_LIMITS.maxBytes,
+    ],
+    [
+      'security-events.jsonl',
+      join(root, 'logs', 'security-events.jsonl'),
+      SECURITY_LOG_LIMITS.maxBytes,
+    ],
+    [CRASH_LOG_NAME, join(root, 'logs', CRASH_LOG_NAME), CRASH_LOG_CAP_BYTES],
+  ] as const) {
     if (!existsSync(path)) continue;
     try {
       accessSync(path, constants.R_OK);
@@ -424,12 +440,15 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
       continue;
     }
     const size = statSync(path).size;
-    if (size > LOG_WARN_BYTES) {
+    if (size > cap) {
       checks.push({
         name: 'logs',
         status: 'warn',
-        detail: `${name} is ${Math.round(size / 1024 / 1024)} MB`,
-        fix: 'log rotation arrives with W1.5; until then move the file aside while the daemon is stopped',
+        detail: `${name} is ${(size / 1024 / 1024).toFixed(1)} MB, past its ${cap / 1024 / 1024} MB cap`,
+        fix:
+          name === CRASH_LOG_NAME
+            ? 'start.sh empties it at the next start; read it first, it holds what the daemon could not write to its own log'
+            : 'either an older daemon writes it without rotating (restart the daemon on this version) or its rotation fails, and the log says why',
       });
     }
   }

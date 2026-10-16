@@ -1,14 +1,6 @@
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import { readDocumentToolkit } from '../../tools/document-toolkit.js';
-import {
-  closeSync,
-  existsSync,
-  fchmodSync,
-  mkdirSync,
-  openSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -157,6 +149,11 @@ export interface DaemonBootOptions {
   signal?: AbortSignal;
   /** Called by the control socket's stop; without it, stop is refused until the command ends. */
   requestStop?: () => void;
+  /**
+   * Called once the config names the log file: `mama daemon` sends its own output there, rotated.
+   * Tests and the replay commands leave it out, since they share their process's output.
+   */
+  captureOutput?: (logFile: string) => void;
 }
 
 export interface DaemonReplayContext {
@@ -552,21 +549,18 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         options.requestStop();
       },
     });
-    stage(logger, 'config', options.signal);
+    if (options.signal?.aborted) throw new StopDuringBootError();
     config = options.config ?? loadConfig({ path: configPath, home: options.home });
+    mkdirSync(dirname(config.logging.file), { recursive: true });
+    // The service manager redirects only what comes before this point, to the crash log. From here
+    // on the daemon's own log holds everything, from the first boot stage on.
+    options.captureOutput?.(config.logging.file);
+    stage(logger, 'config', options.signal);
     logger.info(
       `document toolkit: ${readDocumentToolkit(config.tools_root, (error) => logger.error(error.message)) ? 'present' : 'absent (run mama tools install)'}`
     );
     const timeZone = createTimeZoneSetting(config.timezone);
     validateDeliveryRoutes(config);
-    // launchd may have created the redirected log already; preserve its contents and tighten it.
-    mkdirSync(dirname(config.logging.file), { recursive: true });
-    const logDescriptor = openSync(config.logging.file, 'a', 0o600);
-    try {
-      fchmodSync(logDescriptor, 0o600);
-    } finally {
-      closeSync(logDescriptor);
-    }
     declareModelCache();
     paths = pathsFor(configPath, config);
     currentStage = 'isolation';
