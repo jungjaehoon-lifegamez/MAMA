@@ -125,6 +125,9 @@ beforeEach(() => {
   mkdirSync(memberRoot, { mode: 0o700 });
   mkdirSync(toolsRoot, { mode: 0o700 });
   vi.stubEnv('HOME', home);
+  // systemd's user units follow XDG_CONFIG_HOME when it is set (CI runners set it); the service
+  // step must write under this test's HOME, never the runner's or a developer's real one.
+  vi.stubEnv('XDG_CONFIG_HOME', join(home, '.config'));
   vi.stubEnv('MAMA_DB_PATH', join(home, 'dev.db'));
 });
 afterEach(() => {
@@ -458,6 +461,7 @@ describe('mama init', () => {
     expect(p.output.join('\n')).toContain('sudo loginctl enable-linger fixture');
     const script = readFileSync(join(root, 'start.sh'), 'utf8');
     expect(script).toContain("export MAMA_API_PORT='3848'");
+    expect(existsSync(join(home, '.config', 'systemd', 'user', 'mama.service'))).toBe(true);
     expect(script).toContain("exec '/srv/fixture/node' '/srv/fixture/cli.js' daemon");
     expect(readInitState(root)?.done).toEqual(['config', 'owner', 'toolkit', 'service']);
   });
