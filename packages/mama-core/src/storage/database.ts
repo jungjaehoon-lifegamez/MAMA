@@ -175,13 +175,11 @@ export async function openDatabase(options: OpenDatabaseOptions = {}): Promise<D
     { name: 'core', dir: options.migrationsDir ?? MIGRATIONS_DIR },
     ...(options.migrations ?? []),
   ];
-  if (options.refuseNewerSchema === true) {
-    const dbPath = resolveAdapterDbPath(adapter);
-    if (!dbPath) throw new Error('refuseNewerSchema needs a database path');
-    if (fs.existsSync(dbPath)) {
-      const newer = readSchemaState(dbPath, sources).find((state) => state.stored > state.highest);
-      if (newer) throw new NewerSchemaError(newer.name, newer.stored, newer.highest);
-    }
+  // Only a file that exists records a schema; a new one is created by the connection.
+  const dbPath = resolveAdapterDbPath(adapter);
+  if (options.refuseNewerSchema === true && dbPath !== undefined && fs.existsSync(dbPath)) {
+    const newer = readSchemaState(dbPath, sources).find((state) => state.stored > state.highest);
+    if (newer) throw new NewerSchemaError(newer.name, newer.stored, newer.highest);
   }
 
   let connection: unknown;
