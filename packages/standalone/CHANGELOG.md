@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `member_root` and `tools_root` are compared by their real letter case, so on a case-insensitive
+  disk a root written as HOME in another case (`/USERS/name`) is refused as overlapping HOME,
+  instead of being accepted and placing member workspaces inside the owner's home.
+
 ### Added
+
+- `mama uninstall [--dry-run] [--data [--toolkit]]` stops whatever holds the install and removes
+  the service. With `--data`, once the MAMA home's path is typed back on a terminal, it also removes
+  the MAMA home, each registered person's folder under `member_root` and the retired ones, and the
+  common skills under `tools_root` (`--toolkit`: the toolkit's versions too); `member_root` and
+  `tools_root` go only once empty, so a misconfigured root loses nothing but MAMA's entries. Paths
+  the config sets outside the MAMA home are listed as staying. `--dry-run` lists it all.
 
 - The daemon writes its own output to `daemon.log` (`logging.file`), rotated at 10 MB with five
   compressed archives; `security-events.jsonl` rotates at 5 MB the same way. The service manager

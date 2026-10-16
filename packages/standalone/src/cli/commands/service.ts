@@ -115,6 +115,11 @@ function unquote(value: string): string {
  * the daemon runs, refuses to replace a start.sh that mama did not write unless asked, and
  * restarts nothing: a running service takes the files at `mama service restart`.
  */
+/** The service file `mama service install` writes on this platform. */
+export function serviceFile(options: ServiceOptions = {}): string {
+  return servicePath(managerFor(options.platform ?? process.platform), options.home ?? homedir());
+}
+
 export async function installService(
   args: readonly string[],
   options: ServiceOptions = {}

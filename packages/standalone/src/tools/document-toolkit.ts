@@ -223,7 +223,8 @@ function permissions(path: string, readOnly: boolean): void {
     for (const name of readdirSync(path)) permissions(join(path, name), readOnly);
 }
 
-function removeVersion(path: string): void {
+/** A toolkit version is read-only once installed: made writable again, then removed. */
+export function removeVersion(path: string): void {
   permissions(path, false);
   rmSync(path, { recursive: true });
 }

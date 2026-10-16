@@ -7,7 +7,9 @@ import type { OwnerRuntimeOptions } from './owner-runtime.js';
 export function physicalReadPath(path: string): string {
   path = resolve(path);
   try {
-    return realpathSync(path);
+    // The native call returns each component's real letter case; on a case-insensitive disk the
+    // JavaScript one keeps the case it was given, so /USERS/name would not compare equal to HOME.
+    return realpathSync.native(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     const parent = dirname(path);

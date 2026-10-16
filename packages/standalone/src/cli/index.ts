@@ -91,6 +91,11 @@ async function main(): Promise<void> {
     setTimeout(() => process.exit(), 1_000).unref();
     return;
   }
+  if (command === 'uninstall') {
+    const { runUninstall } = await import('./commands/uninstall.js');
+    process.exitCode = await runUninstall(process.argv.slice(3));
+    return;
+  }
   if (command === 'service') {
     const { runService } = await import('./commands/service.js');
     process.exitCode = await runService(process.argv.slice(3));
@@ -107,7 +112,7 @@ async function main(): Promise<void> {
     return;
   }
   console.log(
-    'Usage: mama init | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop | service install|start|stop|restart|status|uninstall | doctor [--json] [--offline] [--report] | logs [-n <lines>] [--follow] | backup [--include-secrets] [--logs] | restore <archive> | restore --rollback'
+    'Usage: mama init | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop | service install|start|stop|restart|status|uninstall | uninstall [--dry-run] [--data [--toolkit]] | doctor [--json] [--offline] [--report] | logs [-n <lines>] [--follow] | backup [--include-secrets] [--logs] | restore <archive> | restore --rollback'
   );
 }
 
