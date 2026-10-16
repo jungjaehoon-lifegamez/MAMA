@@ -49,8 +49,13 @@ live check passes.
    systemd `Restart=on-failure`: a clean stop stays stopped, and a refused second boot exits
    cleanly instead of being restarted every ten seconds.
 8. **Core migrations and their consumers move together.** A database newer than the code is
-   refused (R5), so a release that adds a core migration publishes core, the MCP server and the
-   plugin together; they share `~/.claude/mama-memory.db`. Recorded as an API-contract decision.
+   refused (R5). MAMA OS refuses it from W1.4a (#510); core's refusal is opt-in
+   (`openDatabase({ refuseNewerSchema })`), because the plugin hooks and the MCP server share
+   `~/.claude/mama-memory.db` without running one core: on this Mac the hooks run core 5.2.0 from
+   the plugin's data folder (reinstalled only when its manifest text changes) and the plugin starts
+   the server with an unpinned `npx -y @jungjaehoon/mama-server`, which resolves to a global 2.4.0
+   on core 5.5.0. They opt in once W1.4b makes them run one core. Recorded as an API-contract
+   decision.
 9. **Each wave ends with a release** (core first when it changed), so G2 has real earlier versions.
 
 ## Decisions for the owner
@@ -128,9 +133,13 @@ live check passes.
 
 ### W1.4 Upgrade check and downgrade refusal (R5; core change, decision 8)
 
-- Core's migration runner refuses a database whose stored version is above the highest file of a
-  source, including deferred migrations (92, 98, 100, 103).
-- CI installs the previous published packages in a temporary folder, writes synthetic records,
+- W1.4a, done (#510): core's migration runner checks every source before any runs and refuses a
+  database whose stored version is above the highest file of a source, including deferred
+  migrations (92, 98, 100, 103); MAMA OS opts in and stops cleanly; `mama doctor` reports it.
+- W1.4b: the plugin hooks and the MCP server run one core (the plugin pins the server and core it
+  was released with), and release.yml fails when `db/migrations` changed and the server or plugin
+  was left out of the release; then both opt in.
+- W1.4b: CI installs the previous published packages in a temporary folder, writes synthetic records,
   revisions and observations through their public API plus an old `config.yaml`, mailbox payloads
   and JSON ledgers, then boots the current code on them and reads them back.
 
