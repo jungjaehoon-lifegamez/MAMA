@@ -200,6 +200,18 @@ describe('mama service install on macOS', () => {
     expect(statSync(join(root, 'start.sh')).mode & 0o777).toBe(0o700);
   });
 
+  it("writes init's viewer settings once, however often the service step runs", async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    launchd('unloaded');
+    const { home, root } = install();
+    const lines: string[] = [];
+    const viewer = { MAMA_API_PORT: '3848' };
+    await installService([], options(home, lines, { platform: 'darwin', viewer }));
+    await installService([], options(home, lines, { platform: 'darwin', viewer }));
+    const script = readFileSync(join(root, 'start.sh'), 'utf8');
+    expect(script.match(/^export MAMA_API_PORT=/gm)).toHaveLength(1);
+  });
+
   it('refuses before writing anything when the backend cannot be found', async () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     const { home, root } = install();

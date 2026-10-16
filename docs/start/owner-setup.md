@@ -24,31 +24,52 @@ This installs the `mama` command. To work from a checkout instead, run `pnpm ins
 and `pnpm build` at the repository root and use
 `node packages/standalone/dist/cli/index.js` wherever the guides say `mama`.
 
-For Claude, run `claude auth login`. For Codex, authenticate the managed home:
+Sign in to the backend before setup; `mama init` checks it. For Claude, run `claude auth login`.
+For Codex, sign in to the home MAMA gives it, not the usual one:
 
 ```bash
 CODEX_HOME="$HOME/.mama/.codex" codex login
 ```
 
-Use your configured `agent.codex_home` if it differs. The owner runtime reads its
-own Codex home, not the usual one; `mama init` prints this command with the right
-path. See [Backends](../guides/backends.md).
+See [Backends](../guides/backends.md).
 
 ## Run onboarding in your terminal
 
-Create a Telegram bot through BotFather and a group with the bot for common changes,
-even if you are the only owner. Have the group's negative chat ID ready; a supergroup
-also works. Start a private conversation with the bot for your personal session. Then run:
+Create a Telegram bot through BotFather and a group with the bot for common changes, even if you
+are the only owner. Have the group's negative chat ID and your own numeric Telegram user ID ready
+(@userinfobot shows it). Then run:
 
 ```bash
 mama init
 ```
 
-Enter the backend, model, Telegram bot token, negative common group chat ID, and any
-source connectors you want to enable. Tokens are entered with terminal echo off;
-do not send them to the agent. `mama init` requires a terminal and refuses to
-overwrite an existing `config.yaml`, `connectors.json`, `start.sh`, or a selected
-existing launch agent.
+It asks for:
+
+- the backend and model;
+- the Telegram bot token;
+- the common group's chat ID;
+- your Telegram user ID;
+- two folders outside your home, one for member workspaces and one for the document tools;
+- any sources and other messengers you want.
+
+Tokens are entered with terminal echo off; do not send them to the agent.
+
+Before writing anything, `mama init` checks three things:
+
+- the backend is installed, is at least the version MAMA was verified on, and is signed in;
+- Telegram accepts the token;
+- the folders are outside your home and the MAMA home.
+
+If a check fails, setup stops and says what to do, and nothing has been written.
+
+The folders have defaults, so press Enter to keep them:
+
+| Platform | Member workspaces                                                   | Document tools              |
+| -------- | ------------------------------------------------------------------- | --------------------------- |
+| macOS    | `Shared/mama-<you>/members` (the Shared folder beside home folders) | `Shared/mama-<you>/tools`   |
+| Linux    | `/var/lib/mama/<you>/members`                                       | `/var/lib/mama/<you>/tools` |
+
+On Linux they must exist first. The installer creates them once with `sudo`.
 
 Setup then asks whether to use Jev (TypeSafe). With it, the agent can ask Jev typed questions
 inside its scripts (the `judge` action) to narrow many messages or items without reading them all.
@@ -60,50 +81,59 @@ The optional tunnel prompts collect the Cloudflare Access issuer, audience and
 viewer hostname. Configure that Access application and tunnel separately; see
 [Viewer](../guides/viewer.md).
 
+After the questions, `mama init` takes these steps in order:
+
+1. writes the setup;
+2. registers you as the first owner;
+3. installs the document tools;
+4. installs and starts the service (a LaunchAgent on macOS, a systemd user unit kept running
+   after logout on Linux);
+5. waits until MAMA reports it is running.
+
+If a step fails, run `mama init` again: it continues from that step without asking again.
+Once setup is complete it does not run again. It also refuses to start while a MAMA daemon holds
+the install.
+
+To set up without a terminal (a script on the machine that will run MAMA), run
+`mama init --non-interactive` with
+these variables. Secrets come only from variables, never from flags:
+
+| Variable                      | Value                                                      |
+| ----------------------------- | ---------------------------------------------------------- |
+| `MAMA_INIT_BACKEND`           | `claude` or `codex`                                        |
+| `MAMA_INIT_MODEL`             | The model                                                  |
+| `MAMA_TELEGRAM_TOKEN`         | The bot token                                              |
+| `MAMA_INIT_COMMON_CHAT_ID`    | The common group's ID                                      |
+| `MAMA_INIT_OWNER_TELEGRAM_ID` | Your Telegram user ID                                      |
+| `MAMA_INIT_MEMBER_ROOT`       | Member workspaces folder (optional; the default otherwise) |
+| `MAMA_INIT_TOOLS_ROOT`        | Document tools folder (optional; the default otherwise)    |
+| `MAMA_INIT_TIMEZONE`          | Time zone (optional; the machine's otherwise)              |
+
 Setup writes these files under `~/.mama/`:
 
-| File              | Purpose                                                        |
-| ----------------- | -------------------------------------------------------------- |
-| `config.yaml`     | Backend, database, common Telegram channel and wiki settings   |
-| `connectors.json` | Source channels, roles and credential variable names           |
-| `auth.env`        | Tokens, mode 0600; includes a generated viewer bearer token    |
-| `start.sh`        | Loads credentials, sets the executable PATH, starts the daemon |
-| `jev-key`         | Jev API key, mode 0600; only when you chose Jev                |
-| `workspace/`      | Agent files and the default `wiki/` directory                  |
-| `logs/`           | Daemon and security logs                                       |
+| File              | Purpose                                                      |
+| ----------------- | ------------------------------------------------------------ |
+| `config.yaml`     | Backend, database, common Telegram channel, folders and wiki |
+| `connectors.json` | Source channels, roles and credential variable names         |
+| `auth.env`        | Tokens, mode 0600; includes a generated viewer bearer token  |
+| `start.sh`        | Written by the service step: loads credentials, starts MAMA  |
+| `jev-key`         | Jev API key, mode 0600; only when you chose Jev              |
+| `workspace/`      | Agent files and the default `wiki/` directory                |
+| `logs/`           | Daemon and security logs                                     |
 
 The OS database defaults to `~/.mama/memory.db`. Development memory uses
 `~/.claude/mama-memory.db`; keep the two data homes separate.
 
-Before starting the daemon, set `member_root` to an absolute directory outside HOME in
-`config.yaml`, and run `mama register-owner <telegram id>` for each owner, using that person's
-positive Telegram user ID. Each owner gets a personal member session; the common group keeps
-the common session. Private chats cannot serve as the common channel: they always enter that
-person's intake.
+Each owner gets a personal member session; the common group keeps the common session. Private
+chats cannot serve as the common channel: they always enter that person's intake. To add more
+owners or members later, see [People and their DMs](../guides/people.md).
 
-On macOS `mama init` ends by installing the document toolkit under `tools_root`; elsewhere set
-`tools_root` in `config.yaml` and run `mama tools install`. If the install fails, run
-`mama tools install` on the host. If the daemon is already running, follow the command's restart
-guidance; otherwise start it below once the install succeeds
-([CLI reference](../reference/cli.md#install-the-document-toolkit)). To add members after the first
-start, see [People and their DMs](../guides/people.md).
+## The running service
 
-## Start one daemon
-
-After backend login, write the service files and start the service:
-
-```bash
-mama service install
-mama service start
-mama status
-```
-
-On macOS this is a LaunchAgent; on Linux a systemd user unit, and `mama service install
---enable-linger` keeps it running after you log out. Either restarts the daemon after a failure and
-leaves it stopped after `mama stop`. `mama status` shows the daemon's boot stage, running turns,
-connectors and last error. Without a service manager, run `~/.mama/start.sh` in a terminal; it
-appends output to `~/.mama/logs/daemon.log`. Only one daemon runs per install: a second one is
-refused.
+`mama status` shows the daemon's boot stage, running turns, connectors and last error.
+`mama stop` stops it and it stays stopped; after a failure the service manager restarts it.
+`mama service restart` restarts it after a change. Only one daemon runs per install: a second
+one is refused.
 
 ## Confirm the first useful answer
 

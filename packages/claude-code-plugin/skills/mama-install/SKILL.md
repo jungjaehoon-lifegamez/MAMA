@@ -27,8 +27,9 @@ You install; the owner decides every choice and types every secret.
    If they choose it, they get a key from TypeSafe (https://docs.typesafe.ai) and type it at the
    hidden prompt; it is stored in `~/.mama/jev-key` (0600).
 
-4. Have the owner sign in the backend as `mama init` prints, then start MAMA with the command it
-   prints. `mama status` shows whether it is running.
+4. Have the owner sign in the backend before `mama init` (`claude auth login`, or for Codex
+   `CODEX_HOME="$HOME/.mama/.codex" codex login`); init checks it, then starts MAMA itself and
+   says when it is running. `mama status` shows it afterwards.
 
 Installation is complete only when the owner sends a message to their bot and MAMA answers. Files
 on disk or a running daemon are not the end.

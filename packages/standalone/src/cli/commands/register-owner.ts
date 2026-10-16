@@ -66,7 +66,8 @@ export async function runRegisterOwner(
   }
 }
 
-async function registerOwnerHolding(
+/** The cutover itself, for a caller that already holds the install lock (`mama init`). */
+export async function registerOwnerHolding(
   root: string,
   config: ReturnType<typeof loadConfig>,
   memberRoot: string,

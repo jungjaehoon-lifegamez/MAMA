@@ -17,9 +17,14 @@ export function assertOwnedDirectory(path: string): void {
 }
 
 /** Sticky shared parents prevent another uid from renaming this uid's toolkit tree. */
-function assertToolsAncestors(root: string): void {
+/**
+ * Every existing folder above a root must be this account's or root's, and writable by others
+ * only when sticky: otherwise another account could rename the root away from the path the
+ * session denies and allows were written for.
+ */
+export function assertRootAncestors(root: string, label = 'tools_root'): void {
   const uid = process.getuid?.();
-  if (uid === undefined) throw new Error('tools_root ownership requires a POSIX uid');
+  if (uid === undefined) throw new Error(`${label} ownership requires a POSIX uid`);
   for (let path = dirname(root); ; path = dirname(path)) {
     if (existsSync(path)) {
       const meta = statSync(path);
@@ -29,7 +34,7 @@ function assertToolsAncestors(root: string): void {
         ((meta.mode & 0o022) !== 0 && (meta.mode & 0o1000) === 0)
       )
         throw new Error(
-          `Unsafe tools_root ancestor ${path}: require uid ${uid} or root and no group/other write unless sticky`
+          `Unsafe ${label} ancestor ${path}: require uid ${uid} or root and no group/other write unless sticky`
         );
     }
     if (dirname(path) === path) break;
@@ -37,7 +42,7 @@ function assertToolsAncestors(root: string): void {
 }
 
 export function assertToolsOwnership(root: string): void {
-  assertToolsAncestors(physicalReadPath(root));
+  assertRootAncestors(physicalReadPath(root));
   if (!existsSync(root)) return;
   const uid = process.getuid?.();
   if (uid === undefined) throw new Error('tools_root ownership requires a POSIX uid');
@@ -88,7 +93,7 @@ function contains(parent: string, child: string): boolean {
 export function validateToolsRoot(root: string, forbiddenPaths: readonly string[]): string {
   if (!isAbsolute(root)) throw new Error('tools_root must be absolute');
   const physical = physicalReadPath(resolve(root));
-  assertToolsAncestors(physical);
+  assertRootAncestors(physical);
   for (const forbidden of forbiddenPaths.map(physicalReadPath)) {
     if (contains(forbidden, physical) || contains(physical, forbidden))
       throw new Error('tools_root must not overlap HOME, the MAMA home or member_root');

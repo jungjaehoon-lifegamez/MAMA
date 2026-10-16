@@ -43,14 +43,14 @@ mama init
 ```
 
 At the prompts, enter `claude` or `codex`, the model name, your timezone (press Enter to keep this
-machine's timezone), the Telegram bot token, and negative common group chat ID. Positive private
+machine's timezone), the Telegram bot token, the negative common group chat ID, your numeric
+Telegram user ID, and the two folders (press Enter to keep the defaults). Positive private
 chat IDs are refused because private chats enter personal sessions. Tokens are typed into hidden prompts. Do not paste them into chat or a configuration
 file. When asked which connectors to enable, type `slack` (or `chatwork`) and enter its token
-and channel ids. To skip a source for now, leave the connector list blank. Enable the launch agent
-if you want macOS to manage the daemon.
+and channel ids. To skip a source for now, leave the connector list blank.
 
-**You should see:** `Setup written. Credentials are stored only in auth.env (0600).` The final
-lines tell you how to log into the selected model CLI and how to start MAMA.
+**You should see:** `Setup written. Credentials are stored only in auth.env (0600).`, then the
+owner registration, the document toolkit, the service start, and finally `MAMA is running`.
 
 **Check:** `~/.mama/config.yaml` contains no tokens; `~/.mama/auth.env` holds credentials and
 has mode 0600. `mama init` writes source selections into `connectors.json`.
@@ -60,19 +60,9 @@ For an existing `~/.mama/config.yaml`, stop and review the [setup guide](owner-s
 changing files. For missing or invalid prompts, correct the value and run `init` again only after
 reviewing its no-overwrite message.
 
-## 3. Start MAMA
+## 3. Check that MAMA runs
 
-Before starting, set `member_root` to an absolute directory outside HOME in `config.yaml`, then
-run `mama register-owner <telegram id>` for each owner using their positive Telegram user ID.
-Authenticate the model CLI if needed. Then use the start command printed by `init`. If you
-chose a launch agent, type the printed `launchctl bootstrap` command. Otherwise start the generated
-script:
-
-```bash
-~/.mama/start.sh
-```
-
-In another terminal, check the process:
+`mama init` already started MAMA as a service. Check it:
 
 ```bash
 mama status
@@ -84,7 +74,8 @@ mama status
 your Telegram chat. A running process by itself does not prove the owner flow works.
 
 **If not:** use `mama status`, then read the daemon log for
-the failed startup stage. Check the backend login and the environment path in `~/.mama/start.sh`.
+the failed startup stage. If `init` stopped before `MAMA is running`, fix what it named and run
+`mama init` again; it continues from where it stopped.
 
 ## 4. Ask your first question in Telegram
 

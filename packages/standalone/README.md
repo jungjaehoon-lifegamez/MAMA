@@ -16,19 +16,20 @@ mama init
 ```
 
 From a checkout, run `pnpm install` and `pnpm build`, then use
-`node packages/standalone/dist/cli/index.js` in place of `mama`. Onboarding is terminal-only: the owner types tokens
-with echo off. It writes configuration and optional launchd files; backend login and service
-startup are separate steps.
+`node packages/standalone/dist/cli/index.js` in place of `mama`. Onboarding runs in a terminal, where the owner types tokens
+with echo off, or from `MAMA_INIT_*` variables with `--non-interactive`. Sign in to the backend
+first; `mama init` checks it, writes the setup, registers the first owner, installs the document
+toolkit and starts the service.
 
 For Telegram's common session, create a group with the bot, even for a solo owner, and enter
 its negative group or supergroup ID in `mama init`. Private chats always enter personal sessions.
-Before starting the daemon, set `member_root` outside HOME in `config.yaml` and run
-`mama register-owner <telegram id>` for each owner's positive user ID.
+`mama init` registers you as the first owner; `mama register-owner <telegram id>` registers
+another owner while the daemon is stopped.
 
 | Command                                       | Purpose                                          |
 | --------------------------------------------- | ------------------------------------------------ |
-| `mama init`                                   | Set up the owner, backend and connectors         |
-| `mama register-owner <telegram id>`           | Register an owner before the daemon starts       |
+| `mama init`                                   | Set up and start MAMA, with the first owner      |
+| `mama register-owner <telegram id>`           | Register another owner while MAMA is stopped     |
 | `mama tools install`                          | Install or update the document toolkit           |
 | `mama secret set <NAME>` / `mama secret list` | Rotate a token / list names only                 |
 | `mama daemon`                                 | Run the configured daemon in the foreground      |

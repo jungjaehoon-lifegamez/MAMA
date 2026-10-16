@@ -118,7 +118,7 @@ function readAuthEnv(root: string): Record<string, string> {
   return values;
 }
 
-async function defaultTelegramCall(
+export async function defaultTelegramCall(
   token: string,
   method: string,
   params: Record<string, string> = {}
@@ -133,7 +133,7 @@ async function defaultTelegramCall(
 
 /** True when something listens; a refusal means free; any other error (a host that cannot be
  * reached or bound) rejects, since the viewer would fail on it too. */
-function portAnswers(port: number, host: string): Promise<boolean> {
+export function portAnswers(port: number, host: string): Promise<boolean> {
   return new Promise((resolve, reject) => {
     const socket = connect({ port, host });
     socket.setTimeout(1_000, () => {
@@ -629,7 +629,7 @@ function sandboxCheck(
     : { name: 'sandbox', status: 'ok', detail: 'starts' };
 }
 
-async function telegramCheck(
+export async function telegramCheck(
   token: string | undefined,
   commonChat: string | number | undefined,
   call: NonNullable<DiagnosticsOptions['telegramCall']>

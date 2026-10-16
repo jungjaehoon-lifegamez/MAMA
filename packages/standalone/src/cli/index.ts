@@ -11,9 +11,8 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'init') {
-    if (process.argv.length !== 3) throw new CliInputError('Usage: mama init');
     const { runInit } = await import('./commands/init.js');
-    await runInit();
+    await runInit(process.argv.slice(3));
     return;
   }
   if (command === 'secret') {
@@ -112,7 +111,7 @@ async function main(): Promise<void> {
     return;
   }
   console.log(
-    'Usage: mama init | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop | service install|start|stop|restart|status|uninstall | uninstall [--dry-run] [--data [--toolkit]] | doctor [--json] [--offline] [--report] | logs [-n <lines>] [--follow] | backup [--include-secrets] [--logs] | restore <archive> | restore --rollback'
+    'Usage: mama init [--non-interactive] | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop | service install|start|stop|restart|status|uninstall | uninstall [--dry-run] [--data [--toolkit]] | doctor [--json] [--offline] [--report] | logs [-n <lines>] [--follow] | backup [--include-secrets] [--logs] | restore <archive> | restore --rollback'
   );
 }
 

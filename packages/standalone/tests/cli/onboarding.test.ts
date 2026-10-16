@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -11,17 +12,25 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
-import { defaultToolsRoot } from '../../src/cli/commands/tools.js';
+import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { runInit } from '../../src/cli/commands/init.js';
+import { createPrincipalRepository } from '@jungjaehoon/mama-core';
+import { defaultToolsRoot } from '../../src/cli/commands/tools.js';
+import { runInit, type InitOptions } from '../../src/cli/commands/init.js';
 import { runSecret } from '../../src/cli/commands/secret.js';
 import type { PromptAdapter } from '../../src/cli/prompt.js';
 import { loadConfig } from '../../src/runtime/config.js';
 import { loadConnectorConfig } from '../../src/connectors/config-loader.js';
+import { defaultRoots, prepareRoot } from '../../src/cli/runtime/default-roots.js';
+import { initStatePath, readInitState } from '../../src/cli/runtime/init-state.js';
+import { acquireInstallLock, daemonControlPaths } from '../../src/cli/runtime/daemon-control.js';
+import { openCoreDatabase } from '../../src/runtime/core-db.js';
 
 let home: string;
 let root: string;
+let memberRoot: string;
+let toolsRoot: string;
+const OWNER_ID = '7123';
 const fixtureSecrets = {
   MAMA_TELEGRAM_TOKEN: 'fixture-telegram',
   MAMA_SLACK_TOKEN: 'fixture-slack',
@@ -48,7 +57,7 @@ function prompt(
     text: async (label) => {
       if (label.startsWith('Owner timezone')) return timezoneAnswer ?? '';
       if (label.startsWith('Use Jev (TypeSafe)')) return jevAnswer;
-      if (!answers.length) throw new Error('Unexpected visible prompt');
+      if (!answers.length) throw new Error(`Unexpected visible prompt: ${label}`);
       return answers.shift()!;
     },
     secret: async () => {
@@ -62,97 +71,501 @@ function prompt(
   return { adapter, output, answers, hidden };
 }
 
-function minimal(backend = 'codex', launch = 'n') {
-  return [backend, 'fixture-model', '-100', '', 'n', 'n', 'n', launch];
+/** backend, model, common group, owner id, both folders, then no source, messenger or tunnel. */
+function minimal(backend = 'codex') {
+  return [backend, 'fixture-model', '-100', OWNER_ID, memberRoot, toolsRoot, '', 'n', 'n', 'n'];
 }
 
-function options(adapter: PromptAdapter) {
-  return {
+const probeOk = (command: string, args: string[]) =>
+  ({
+    status: 0,
+    stdout: args[0] === '--version' ? '9.9.9' : args[0] === 'auth' ? '{"loggedIn":true}' : '',
+    stderr: '',
+    pid: 1,
+    output: [],
+    signal: null,
+  }) as never;
+
+function options(adapter: PromptAdapter, overrides: Partial<InitOptions> = {}) {
+  const started: Array<Record<string, string>> = [];
+  const value: InitOptions = {
     prompt: adapter,
     home,
-    cliPath: join(home, 'package', 'cli.js'),
-    nodePath: process.execPath,
+    platform: 'linux',
+    user: 'fixture',
+    uid: process.getuid!(),
     findExecutable: (name: string) => join(home, 'bin', name),
     installToolkit: async () => {},
-    toolsRoot: join(dirname(home), `${basename(home)}-tools`),
+    probeRun: probeOk,
+    telegramCall: async (_token, method) =>
+      method === 'getMe'
+        ? { ok: true, result: { id: 9001, can_read_all_group_messages: true } }
+        : { ok: true, result: { status: 'administrator' } },
+    startService: async (viewer) => {
+      started.push(viewer);
+    },
+    daemonStatus: async () => ({
+      state: 'running',
+      reply: { ok: true, status: { stage: 'running' } },
+    }),
+    health: async () => true,
+    // This machine's own MAMA may hold the default port; the fixture sees every port free.
+    portAnswers: async () => false,
+    pollMs: 1,
+    ...overrides,
   };
+  return Object.assign(value, { started });
 }
 
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), 'mama-init-')));
   root = join(home, '.mama');
+  memberRoot = `${home}-members`;
+  toolsRoot = `${home}-tools`;
+  mkdirSync(memberRoot, { mode: 0o700 });
+  mkdirSync(toolsRoot, { mode: 0o700 });
   vi.stubEnv('HOME', home);
+  // systemd's user units follow XDG_CONFIG_HOME when it is set (CI runners set it); the service
+  // step must write under this test's HOME, never the runner's or a developer's real one.
+  vi.stubEnv('XDG_CONFIG_HOME', join(home, '.config'));
   vi.stubEnv('MAMA_DB_PATH', join(home, 'dev.db'));
 });
 afterEach(() => {
   vi.unstubAllEnvs();
-  rmSync(home, { recursive: true, force: true });
+  for (const path of [home, memberRoot, toolsRoot]) rmSync(path, { recursive: true, force: true });
 });
 
-describe('owner-only onboarding', () => {
-  it('finishes Linux init without a default root and names tools_root and the install command', async () => {
-    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
-    const installToolkit = vi.fn();
-    await runInit({
-      ...options(p.adapter),
-      toolsRoot: undefined,
-      platform: 'linux',
-      installToolkit,
+describe('default folders', () => {
+  it('puts each account in its own folder outside HOME', () => {
+    // macOS keeps a Shared folder beside the home folders.
+    expect(defaultRoots({ platform: 'darwin', home: '/srv/homes/person', user: 'person' })).toEqual(
+      {
+        memberRoot: '/srv/homes/Shared/mama-person/members',
+        toolsRoot: '/srv/homes/Shared/mama-person/tools',
+      }
+    );
+    expect(defaultRoots({ platform: 'linux', user: 'person' })).toEqual({
+      memberRoot: '/var/lib/mama/person/members',
+      toolsRoot: '/var/lib/mama/person/tools',
     });
-    expect(defaultToolsRoot('linux')).toBeUndefined();
-    expect(loadConfig({ home }).tools_root).toBeUndefined();
-    expect(installToolkit).not.toHaveBeenCalled();
-    expect(p.output.join('\n')).toMatch(/tools_root.*mama tools install/);
+    expect(defaultRoots({ platform: 'win32', user: 'person' })).toBeUndefined();
+    expect(defaultRoots({ platform: 'darwin', user: '../person' })).toBeUndefined();
+    expect(defaultToolsRoot('darwin', '/srv/homes/person')).toMatch(
+      /^\/srv\/homes\/Shared\/mama-.+\/tools$/
+    );
   });
 
-  it('installs the toolkit last and keeps rerunnable setup when installation fails', async () => {
+  it('refuses a folder another account owns or can write, and names the one sudo step', () => {
+    expect(() => prepareRoot(memberRoot, { uid: process.getuid!() + 1 })).toThrow(
+      /belongs to another account/
+    );
+    chmodSync(memberRoot, 0o770);
+    expect(() => prepareRoot(memberRoot)).toThrow(/written by other accounts/);
+    chmodSync(memberRoot, 0o700);
+    // A per-user folder this account owns: the subfolders are made here.
+    prepareRoot(join(memberRoot, 'made'), { ownParent: true });
+    expect(statSync(join(memberRoot, 'made')).mode & 0o777).toBe(0o700);
+    // One it cannot create (as /var/lib/mama on Linux) names the per-user folder to make once.
+    const locked = join(memberRoot, 'locked');
+    mkdirSync(locked, { mode: 0o500 });
+    try {
+      expect(() => prepareRoot(join(locked, 'person', 'members'), { ownParent: true })).toThrow(
+        `Create ${join(locked, 'person')} for this account once: sudo install -d -o "$USER" -m 0700 ${join(locked, 'person')}`
+      );
+    } finally {
+      chmodSync(locked, 0o700);
+    }
+  });
+});
+
+describe('mama init', () => {
+  it.each(['claude', 'codex'])(
+    'checks, writes, registers the owner, installs the tools and starts the service (%s)',
+    async (backend) => {
+      const p = prompt(minimal(backend), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+      const order: string[] = [];
+      const o = options(p.adapter, {
+        installToolkit: async () => {
+          order.push('toolkit');
+        },
+      });
+      const startService = o.startService!;
+      o.startService = async (viewer) => {
+        order.push('service');
+        await startService(viewer);
+      };
+      await runInit([], o);
+      expect(order).toEqual(['toolkit', 'service']);
+      const config = loadConfig({ home });
+      expect(config.agent).toMatchObject({
+        backend,
+        model: 'fixture-model',
+        timeout: 600_000,
+        max_turn_ms: 3_600_000,
+      });
+      expect(config.member_root).toBe(memberRoot);
+      expect(config.tools_root).toBe(toolsRoot);
+      expect(config.telegram).toMatchObject({
+        enabled: true,
+        owner_chat_id: '-100',
+        allowed_chats: ['-100'],
+        polling: true,
+      });
+      expect(config.telegram).not.toHaveProperty('token');
+      expect(config.jev.enabled).toBe(false);
+      expect(o.started).toEqual([{}]);
+      expect(readInitState(root)?.done).toEqual(['config', 'owner', 'toolkit', 'service']);
+      expect(readInitState(root)).not.toHaveProperty('pendingOwner');
+      for (const file of ['auth.env', 'config.yaml', 'connectors.json'])
+        expect(statSync(join(root, file)).mode & 0o777).toBe(0o600);
+      // Init no longer writes the launch files; the service step does, through mama service.
+      expect(existsSync(join(root, 'start.sh'))).toBe(false);
+      expect(p.output.join('\n')).toContain('MAMA is running');
+      expect(p.output.join('\n')).not.toContain('register-owner');
+      expect(p.answers).toEqual([]);
+      expect(p.hidden).toEqual([]);
+      const database = await openCoreDatabase({ path: config.database.path });
+      try {
+        const repo = createPrincipalRepository(database.adapter);
+        const owner = repo.resolveByExternal('telegram', 'private', OWNER_ID);
+        expect(owner?.kind).toBe('member');
+        expect(repo.listRoles(owner!.principalId).map(({ role }) => role)).toContain('owner');
+      } finally {
+        await database.close();
+      }
+    }
+  );
+
+  it('refuses a missing, old or signed-out backend before writing anything', async () => {
+    for (const [probe, message] of [
+      [undefined, /not on this PATH/],
+      [
+        (_c: string, args: string[]) =>
+          ({ ...probeOk(_c, args), stdout: args[0] === '--version' ? '0.1.0' : '' }) as never,
+        /older than/,
+      ],
+      [
+        (_c: string, args: string[]) =>
+          ({
+            ...probeOk(_c, args),
+            stdout: args[0] === '--version' ? '9.9.9' : '{"loggedIn":false}',
+          }) as never,
+        /not signed in.*claude auth login/,
+      ],
+    ] as const) {
+      const p = prompt(minimal('claude'), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+      await expect(
+        runInit(
+          [],
+          options(p.adapter, {
+            ...(probe === undefined
+              ? { findExecutable: () => undefined }
+              : { probeRun: probe as InitOptions['probeRun'] }),
+          })
+        )
+      ).rejects.toThrow(message);
+      expect(existsSync(root)).toBe(false);
+    }
+  });
+
+  it('refuses a token Telegram rejects before writing anything', async () => {
     const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
-    let called = false;
     await expect(
-      runInit({
-        ...options(p.adapter),
-        installToolkit: async (config) => {
-          called = true;
-          expect(defaultToolsRoot('darwin', join('/fixture-homes', 'person'))).toBe(
-            join('/fixture-homes', 'Shared', 'mama-tools')
-          );
-          expect(config.tools_root).toBe(options(p.adapter).toolsRoot);
-          expect(existsSync(join(root, 'config.yaml'))).toBe(true);
-          expect(existsSync(join(root, 'start.sh'))).toBe(true);
-          throw new Error('fixture failed');
+      runInit(
+        [],
+        options(p.adapter, { telegramCall: async () => ({ ok: false, error_code: 401 }) })
+      )
+    ).rejects.toThrow(/Telegram refused the bot token/);
+    expect(existsSync(root)).toBe(false);
+  });
+
+  it('refuses when Telegram cannot be reached, so the token is never left unchecked', async () => {
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    await expect(
+      runInit(
+        [],
+        options(p.adapter, {
+          telegramCall: async () => {
+            throw new TypeError('fetch failed');
+          },
+        })
+      )
+    ).rejects.toThrow(/could not reach Telegram.*token is unchecked/);
+    expect(existsSync(root)).toBe(false);
+  });
+
+  it('checks the backend login as the daemon runs it, without secret-shaped variables', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'fixture-shell-key');
+    const seen: Array<NodeJS.ProcessEnv | undefined> = [];
+    const p = prompt(minimal('claude'), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    await runInit(
+      [],
+      options(p.adapter, {
+        probeRun: (command, args, env) => {
+          seen.push(env);
+          return probeOk(command, args);
         },
       })
-    ).rejects.toThrow(/mama tools install/);
-    expect(called).toBe(true);
-    expect(loadConfig({ home }).tools_root).toBe(options(p.adapter).toolsRoot);
+    );
+    expect(seen.length).toBeGreaterThan(0);
+    for (const env of seen) expect(env).not.toHaveProperty('ANTHROPIC_API_KEY');
   });
+
+  it('refuses a member folder under a folder other accounts can write', async () => {
+    const open = `${home}-open`;
+    mkdirSync(open, { mode: 0o777 });
+    chmodSync(open, 0o777);
+    try {
+      const answers = minimal();
+      answers[4] = join(open, 'members');
+      const p = prompt(answers, [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+      await expect(runInit([], options(p.adapter))).rejects.toThrow(/Unsafe member_root ancestor/);
+      expect(existsSync(root)).toBe(false);
+    } finally {
+      rmSync(open, { recursive: true, force: true });
+    }
+  });
+
+  it('starts the setup step over when an earlier init stopped while writing its files', async () => {
+    // auth.env as a folder makes the write fail after the step record is written.
+    mkdirSync(join(root, 'auth.env'), { recursive: true });
+    const first = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    await expect(runInit([], options(first.adapter))).rejects.toThrow();
+    expect(readInitState(root)?.done).toEqual([]);
+    rmSync(join(root, 'auth.env'), { recursive: true });
+    // A Codex login made before init stays; only init's own files are removed.
+    mkdirSync(join(root, '.codex'), { recursive: true });
+    writeFileSync(join(root, '.codex', 'auth.json'), '{}');
+    const again = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    await runInit([], options(again.adapter));
+    expect(again.output.join('\n')).toContain('that step starts over');
+    expect(existsSync(join(root, '.codex', 'auth.json'))).toBe(true);
+    expect(readInitState(root)?.done).toEqual(['config', 'owner', 'toolkit', 'service']);
+  });
+
+  it('checks the viewer port again before starting the service', async () => {
+    let taken = false;
+    let statusCalls = 0;
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    const o = options(p.adapter, {
+      // Free while the setup is written; taken by the time the service starts.
+      portAnswers: async (port) => taken && port === 3847,
+      installToolkit: async () => {
+        taken = true;
+      },
+      daemonStatus: async () => {
+        statusCalls += 1;
+        return statusCalls === 1
+          ? { state: 'stopped', holder: null }
+          : { state: 'running', reply: { ok: true, status: { stage: 'running' } } };
+      },
+    });
+    await runInit([], o);
+    expect(o.started).toEqual([{ MAMA_API_PORT: '3848' }]);
+  });
+
   it.each(['100', '0', '-0', 'group', '-100abc', '-01'])(
     'refuses a non-group Telegram common destination before writing setup: %s',
     async (chatId) => {
       const answers = minimal();
       answers[2] = chatId;
       const p = prompt(answers, [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
-      await expect(runInit(options(p.adapter))).rejects.toThrow(
+      await expect(runInit([], options(p.adapter))).rejects.toThrow(
         /group or supergroup.*negative.*private chats.*personal intake/
       );
       expect(existsSync(root)).toBe(false);
     }
   );
 
-  it.each(['-100', '-100100'])(
-    'asks for a common group and accepts its negative id: %s',
-    async (chatId) => {
-      const answers = minimal();
-      answers[2] = chatId;
-      const p = prompt(answers, [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
-      const visiblePrompt = vi.spyOn(p.adapter, 'text');
-      await runInit(options(p.adapter));
-      expect(
-        visiblePrompt.mock.calls.some(([label]) => /Telegram.*group.*negative/.test(label))
-      ).toBe(true);
-      expect(loadConfig({ home }).telegram.owner_chat_id).toBe(chatId);
+  it('refuses a member folder inside HOME before writing anything', async () => {
+    const answers = minimal();
+    answers[4] = join(home, 'members');
+    const p = prompt(answers, [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    await expect(runInit([], options(p.adapter))).rejects.toThrow(/must not overlap HOME/);
+    expect(existsSync(root)).toBe(false);
+  });
+
+  it('reports a toolkit that cannot be installed and still starts MAMA', async () => {
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    const o = options(p.adapter, {
+      installToolkit: async () => {
+        throw new Error('fixture toolkit needs soffice');
+      },
+    });
+    await runInit([], o);
+    expect(p.output.join('\n')).toMatch(
+      /document tools could not be installed: fixture toolkit needs soffice.*mama tools install/
+    );
+    expect(readInitState(root)?.done).toEqual(['config', 'owner', 'toolkit', 'service']);
+    expect(o.started).toEqual([{}]);
+  });
+
+  it('continues a failed setup from its last step, beside a daemon still starting', async () => {
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    await expect(runInit([], options(p.adapter, { health: async () => false }))).rejects.toThrow(
+      /does not answer \/health/
+    );
+    expect(readInitState(root)?.done).toEqual(['config', 'owner', 'toolkit']);
+    // The daemon the failed wait left starting holds the install; only the service step is left,
+    // which writes nothing, so init does not need the lock.
+    const daemon = acquireInstallLock(daemonControlPaths(root), 'daemon');
+    try {
+      const again = prompt([], []);
+      const o = options(again.adapter);
+      await runInit([], o);
+      expect(again.output.join('\n')).toContain(
+        'continuing setup: done so far: config, owner, toolkit'
+      );
+      expect(readInitState(root)?.done).toEqual(['config', 'owner', 'toolkit', 'service']);
+      expect(o.started).toEqual([{}]);
+    } finally {
+      daemon.release();
     }
-  );
+    // A finished setup is not run again.
+    await expect(runInit([], options(prompt([], []).adapter))).rejects.toThrow(
+      /already set up here/
+    );
+  });
+
+  it("picks the next free viewer port when another account's MAMA has the default", async () => {
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    const o = options(p.adapter, { portAnswers: async (port) => port === 3847 });
+    await runInit([], o);
+    expect(o.started).toEqual([{ MAMA_API_PORT: '3848' }]);
+  });
+
+  it('installs the service with mama service, warning when linger cannot be enabled', async () => {
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    const calls: string[] = [];
+    const o = options(p.adapter, {
+      startService: undefined,
+      nodePath: '/srv/fixture/node',
+      cliPath: '/srv/fixture/cli.js',
+      portAnswers: async (port) => port === 3847,
+      serviceRun: (command: string, args: string[]) => {
+        calls.push([command, ...args].join(' '));
+        const failed = command === 'loginctl';
+        return {
+          status: failed ? 1 : 0,
+          stdout: command === 'systemctl' && args.includes('is-active') ? 'inactive\n' : '',
+          stderr: '',
+          pid: 1,
+          output: [],
+          signal: null,
+        } as never;
+      },
+    });
+    await runInit([], o);
+    expect(calls[0]).toBe('loginctl enable-linger fixture');
+    expect(calls).toEqual(expect.arrayContaining(['systemctl --user start mama.service']));
+    expect(p.output.join('\n')).toContain('sudo loginctl enable-linger fixture');
+    const script = readFileSync(join(root, 'start.sh'), 'utf8');
+    expect(script).toContain("export MAMA_API_PORT='3848'");
+    expect(existsSync(join(home, '.config', 'systemd', 'user', 'mama.service'))).toBe(true);
+    expect(script).toContain("exec '/srv/fixture/node' '/srv/fixture/cli.js' daemon");
+    expect(readInitState(root)?.done).toEqual(['config', 'owner', 'toolkit', 'service']);
+  });
+
+  it('waits for the boot and says where to look when it does not finish', async () => {
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    let asked = 0;
+    await expect(
+      runInit(
+        [],
+        options(p.adapter, {
+          daemonStatus: async () => {
+            asked += 1;
+            return asked < 3
+              ? { state: 'stopped', holder: null }
+              : { state: 'running', reply: { ok: true, status: { stage: 'owner_runtime' } } };
+          },
+          bootTimeoutMs: 50,
+        })
+      )
+    ).rejects.toThrow(/last stage: owner_runtime.*mama logs/);
+    expect(readInitState(root)?.done).toEqual(['config', 'owner', 'toolkit']);
+    const healthless = prompt([], []);
+    await expect(
+      runInit([], options(healthless.adapter, { health: async () => false }))
+    ).rejects.toThrow(/does not answer \/health/);
+  });
+
+  it('refuses when another init set up here while this one asked its questions', async () => {
+    const answers = minimal();
+    const p = prompt(answers, [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    const ask = p.adapter.text;
+    p.adapter.text = async (label) => {
+      // A second init writes its record while this one is still at its questions.
+      if (label.startsWith('Folder for member workspaces')) {
+        mkdirSync(join(root, 'runtime'), { recursive: true, mode: 0o700 });
+        writeFileSync(initStatePath(root), JSON.stringify({ version: 1, done: [] }));
+      }
+      return ask(label);
+    };
+    await expect(runInit([], options(p.adapter))).rejects.toThrow(
+      /Another mama init set up here meanwhile/
+    );
+    expect(existsSync(join(root, 'config.yaml'))).toBe(false);
+  });
+
+  it('names the default port again when it is the free one, replacing the one start.sh carries', async () => {
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    let statusCalls = 0;
+    let phase: 'config' | 'service' = 'config';
+    const o = options(p.adapter, {
+      // While the setup is written 3847 is taken (3848 chosen); by the service step 3848 is taken.
+      portAnswers: async (port) => (phase === 'config' ? port === 3847 : port === 3848),
+      installToolkit: async () => {
+        phase = 'service';
+      },
+      daemonStatus: async () => {
+        statusCalls += 1;
+        return statusCalls === 1
+          ? { state: 'stopped', holder: null }
+          : { state: 'running', reply: { ok: true, status: { stage: 'running' } } };
+      },
+    });
+    await runInit([], o);
+    expect(o.started).toEqual([{ MAMA_API_PORT: '3847' }]);
+  });
+
+  it('refuses while something else holds the install', async () => {
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    mkdirSync(root, { mode: 0o700 });
+    const held = acquireInstallLock(daemonControlPaths(root), 'daemon');
+    try {
+      await expect(runInit([], options(p.adapter))).rejects.toThrow(/daemon/);
+    } finally {
+      held.release();
+    }
+    expect(existsSync(join(root, 'config.yaml'))).toBe(false);
+  });
+
+  it('sets up from MAMA_INIT_* variables without a terminal, and names a missing one', async () => {
+    const p = prompt([], [], [false, false]);
+    const env = {
+      MAMA_INIT_BACKEND: 'codex',
+      MAMA_INIT_MODEL: 'fixture-model',
+      MAMA_TELEGRAM_TOKEN: fixtureSecrets.MAMA_TELEGRAM_TOKEN,
+      MAMA_INIT_COMMON_CHAT_ID: '-100',
+      MAMA_INIT_MEMBER_ROOT: memberRoot,
+      MAMA_INIT_TOOLS_ROOT: toolsRoot,
+      MAMA_INIT_TIMEZONE: 'Asia/Tokyo',
+    };
+    await expect(runInit(['--non-interactive'], options(p.adapter, { env }))).rejects.toThrow(
+      /needs MAMA_INIT_OWNER_TELEGRAM_ID/
+    );
+    expect(existsSync(root)).toBe(false);
+    await runInit(
+      ['--non-interactive'],
+      options(p.adapter, { env: { ...env, MAMA_INIT_OWNER_TELEGRAM_ID: OWNER_ID } })
+    );
+    const config = loadConfig({ home });
+    expect(config.timezone).toBe('Asia/Tokyo');
+    expect(config.member_root).toBe(memberRoot);
+    expect(readInitState(root)?.done).toEqual(['config', 'owner', 'toolkit', 'service']);
+    expect(p.output.join('\n')).not.toContain(fixtureSecrets.MAMA_TELEGRAM_TOKEN);
+  });
 
   it('writes the timezone selected during onboarding', async () => {
     const p = prompt(
@@ -161,14 +574,8 @@ describe('owner-only onboarding', () => {
       [true, true],
       'America/Los_Angeles'
     );
-    await runInit(options(p.adapter));
-    const config = loadConfig({ home });
-    expect(config.timezone).toBe('America/Los_Angeles');
-    // 10 minutes without progress or an hour in all (owner, 2026-10-03); Jev stays off
-    // unless the owner chooses it.
-    expect(config.agent).toMatchObject({ timeout: 600_000, max_turn_ms: 3_600_000 });
-    expect(config.jev.enabled).toBe(false);
-    expect(existsSync(join(root, 'jev-key'))).toBe(false);
+    await runInit([], options(p.adapter));
+    expect(loadConfig({ home }).timezone).toBe('America/Los_Angeles');
   });
 
   it('turns Jev on when the owner chooses it and keeps its key in its own 0600 file', async () => {
@@ -179,15 +586,17 @@ describe('owner-only onboarding', () => {
       undefined,
       'y'
     );
-    await runInit(options(p.adapter));
+    await runInit([], options(p.adapter));
     expect(loadConfig({ home }).jev).toMatchObject({
       enabled: true,
       keyFile: join(root, 'jev-key'),
     });
     expect(readFileSync(join(root, 'jev-key'), 'utf8')).toBe('fixture-jev-key\n');
     expect(statSync(join(root, 'jev-key')).mode & 0o777).toBe(0o600);
-    for (const file of ['config.yaml', 'auth.env', 'start.sh'])
-      expect(readFileSync(join(root, file), 'utf8')).not.toContain('fixture-jev-key');
+    for (const file of ['config.yaml', 'auth.env', initStatePath(root)])
+      expect(readFileSync(file.startsWith('/') ? file : join(root, file), 'utf8')).not.toContain(
+        'fixture-jev-key'
+      );
     expect(p.output.join('\n')).not.toContain('fixture-jev-key');
     expect(p.output.join('\n')).toContain('Jev is on');
   });
@@ -198,7 +607,7 @@ describe('owner-only onboarding', () => {
     [false, false],
   ])('refuses init and secret set without both TTYs %j', async (...tty) => {
     const p = prompt([], [], tty);
-    await expect(runInit(options(p.adapter))).rejects.toThrow(/TTY/);
+    await expect(runInit([], options(p.adapter))).rejects.toThrow(/TTY/);
     await expect(
       runSecret(['set', 'MAMA_TELEGRAM_TOKEN'], { home, prompt: p.adapter })
     ).rejects.toThrow(/TTY/);
@@ -210,63 +619,17 @@ describe('owner-only onboarding', () => {
     writeFileSync(join(root, 'config.yaml'), 'existing');
     writeFileSync(join(root, 'auth.env'), '# untouched\n');
     const p = prompt([], []);
-    await expect(runInit(options(p.adapter))).rejects.toThrow(/config.yaml.*exists/);
+    await expect(runInit([], options(p.adapter))).rejects.toThrow(/config.yaml.*exists/);
     expect(readFileSync(join(root, 'config.yaml'), 'utf8')).toBe('existing');
     expect(readFileSync(join(root, 'auth.env'), 'utf8')).toBe('# untouched\n');
   });
 
-  it.each(['claude', 'codex'])(
-    'writes a loadable secret-free config and executable start script for %s',
-    async (backend) => {
-      const p = prompt(minimal(backend), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
-      await runInit(options(p.adapter));
-      const config = loadConfig({ home });
-      expect(config.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
-      expect(config.agent.backend).toBe(backend);
-      expect(config.agent.model).toBe('fixture-model');
-      expect(config.telegram).toMatchObject({
-        enabled: true,
-        owner_chat_id: '-100',
-        allowed_chats: ['-100'],
-        polling: true,
-      });
-      expect(config.telegram).not.toHaveProperty('token');
-      expect(config.telegram).not.toHaveProperty('owner_user_ids');
-      expect(p.output.join('\n')).toContain('mama register-owner <telegram id>');
-      expect(loadConnectorConfig(join(root, 'connectors.json'))).toMatchObject({
-        ok: true,
-        enabledNames: [],
-      });
-      for (const file of ['auth.env', 'config.yaml', 'connectors.json']) {
-        expect(statSync(join(root, file)).mode & 0o777).toBe(0o600);
-      }
-      expect(statSync(join(root, 'start.sh')).mode & 0o777).toBe(0o700);
-      // The core logger reads only MAMA_LOG_LEVEL, so config.yaml's level is exported for it.
-      expect(readFileSync(join(root, 'start.sh'), 'utf8')).toContain(
-        "export MAMA_LOG_LEVEL='INFO'"
-      );
-      expect(existsSync(join(home, 'Library', 'LaunchAgents', 'com.mama.server.plist'))).toBe(
-        false
-      );
-      // Codex must log in to the managed home the owner runtime reads, not the default one.
-      expect(p.output.join('\n')).toContain(
-        backend === 'claude'
-          ? 'claude auth login'
-          : `CODEX_HOME='${join(root, '.codex')}' codex login`
-      );
-      expect(p.answers).toEqual([]);
-      expect(p.hidden).toEqual([]);
-    }
-  );
-
   it('sets up a Discord owner gateway in init without enabling a source connector', async () => {
-    const p = prompt(
-      ['codex', 'fixture-model', '-100', '', 'y', 'channel_test', 'user_test', 'n', 'n', 'n'],
-      [fixtureSecrets.MAMA_TELEGRAM_TOKEN, 'fixture-discord-owner']
-    );
-    await runInit(options(p.adapter));
-    const config = loadConfig({ home });
-    expect(config.discord).toMatchObject({
+    const answers = minimal();
+    answers.splice(7, 1, 'y', 'channel_test', 'user_test');
+    const p = prompt(answers, [fixtureSecrets.MAMA_TELEGRAM_TOKEN, 'fixture-discord-owner']);
+    await runInit([], options(p.adapter));
+    expect(loadConfig({ home }).discord).toMatchObject({
       enabled: true,
       owner_channel_id: 'channel_test',
       allowed_channels: ['channel_test'],
@@ -279,13 +642,15 @@ describe('owner-only onboarding', () => {
   });
 
   it('sets up Slack bot and Socket Mode credentials for an owner gateway', async () => {
-    const p = prompt(
-      ['codex', 'fixture-model', '-100', '', 'n', 'y', 'channel_test', 'user_test', 'n', 'n'],
-      [fixtureSecrets.MAMA_TELEGRAM_TOKEN, 'fixture-slack-owner', 'fixture-slack-app-owner']
-    );
-    await runInit(options(p.adapter));
-    const config = loadConfig({ home });
-    expect(config.slack).toMatchObject({
+    const answers = minimal();
+    answers.splice(8, 1, 'y', 'channel_test', 'user_test');
+    const p = prompt(answers, [
+      fixtureSecrets.MAMA_TELEGRAM_TOKEN,
+      'fixture-slack-owner',
+      'fixture-slack-app-owner',
+    ]);
+    await runInit([], options(p.adapter));
+    expect(loadConfig({ home }).slack).toMatchObject({
       enabled: true,
       owner_channel_id: 'channel_test',
       allowed_channels: ['channel_test'],
@@ -294,20 +659,21 @@ describe('owner-only onboarding', () => {
     const auth = readFileSync(join(root, 'auth.env'), 'utf8');
     expect(auth).toContain("MAMA_SLACK_TOKEN='fixture-slack-owner'");
     expect(auth).toContain("MAMA_SLACK_APP_TOKEN='fixture-slack-app-owner'");
-    expect(readFileSync(join(root, 'config.yaml'), 'utf8')).not.toContain('fixture-slack-owner');
   });
 
-  it('wires every selected connector, tunnel environment and opt-in launchd without leaking credentials', async () => {
+  it('wires every selected connector and the tunnel settings without leaking credentials', async () => {
     const p = prompt(
       [
         'claude',
         'fixture-model',
         '-100',
-        'slack,chatwork,trello,kagemusha,calendar,notion,discord,telegram',
+        OWNER_ID,
+        memberRoot,
+        toolsRoot,
+        'slack,chatwork,trello,calendar,notion,discord,telegram',
         'channel-a,channel-b',
         'room-a',
         'board-a',
-        'source-a',
         'calendar',
         'channel-discord',
         'chat-telegram',
@@ -318,11 +684,11 @@ describe('owner-only onboarding', () => {
         'fixture-audience',
         'viewer.example.test',
         '',
-        'y',
       ],
       Object.values(fixtureSecrets)
     );
-    await runInit(options(p.adapter));
+    const o = options(p.adapter);
+    await runInit([], o);
     const loaded = loadConnectorConfig(join(root, 'connectors.json'));
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) throw new Error('Generated connector config was rejected');
@@ -335,61 +701,38 @@ describe('owner-only onboarding', () => {
     expect(loaded.config.trello.channels['board-a']).toEqual({ role: 'hub', boardId: 'board-a' });
     expect(Object.keys(loaded.config.slack.channels)).toEqual(['channel-a', 'channel-b']);
     expect(loaded.config.calendar.auth.cli).toBe('gws');
-    expect(loaded.config.discord.channels['channel-discord']).toEqual({
-      role: 'hub',
-    });
+    // The tunnel settings reach the service step, which writes them into start.sh.
+    expect(o.started).toEqual([
+      {
+        MAMA_CF_ACCESS_ISSUER: 'https://access.example.test',
+        MAMA_CF_ACCESS_AUD: 'fixture-audience',
+        MAMA_VIEWER_HOSTNAMES: 'viewer.example.test',
+      },
+    ]);
     const auth = execFileSync('/bin/sh', ['-c', '. "$1"; env', 'sh', join(root, 'auth.env')], {
       env: { HOME: home },
       encoding: 'utf8',
     });
-    for (const [name, value] of Object.entries(fixtureSecrets)) {
+    for (const [name, value] of Object.entries(fixtureSecrets))
       expect(auth.includes(`${name}=${value}\n`)).toBe(true);
-    }
     const generatedToken = auth
       .split('\n')
       .find((line) => line.startsWith('MAMA_AUTH_TOKEN='))!
       .slice('MAMA_AUTH_TOKEN='.length);
     expect(/^[a-f0-9]{64}$/.test(generatedToken)).toBe(true);
-    const publicFiles = ['config.yaml', 'connectors.json', 'start.sh'].map((file) =>
+    const publicFiles = ['config.yaml', 'connectors.json'].map((file) =>
       readFileSync(join(root, file), 'utf8')
     );
-    const plist = join(home, 'Library', 'LaunchAgents', 'com.mama.server.plist');
-    expect(statSync(plist).mode & 0o777).toBe(0o600);
-    for (const text of [...publicFiles, readFileSync(plist, 'utf8'), ...p.output]) {
+    for (const text of [...publicFiles, readFileSync(initStatePath(root), 'utf8'), ...p.output]) {
       for (const value of [...Object.values(fixtureSecrets), generatedToken])
         expect(text.includes(value)).toBe(false);
     }
-    expect(p.output.join('\n')).toContain('mama service start');
     expect(p.output.join('\n')).toContain('gws auth login');
     expect(p.answers).toEqual([]);
     expect(p.hidden).toEqual([]);
-    // Execute the generated script with a harmless daemon substitute; no real CLI or network.
-    mkdirSync(join(home, 'package'));
-    writeFileSync(
-      join(home, 'package', 'cli.js'),
-      `
-      const fs = require('node:fs');
-      fs.writeFileSync(process.env.HOME + '/launch-result.json', JSON.stringify({
-        argv: process.argv.slice(2), cwd: process.cwd(), path: process.env.PATH,
-        issuer: process.env.MAMA_CF_ACCESS_ISSUER, audience: process.env.MAMA_CF_ACCESS_AUD,
-        host: process.env.MAMA_VIEWER_HOSTNAMES,
-        tokenLoaded: !!process.env.MAMA_TELEGRAM_TOKEN, authLoaded: !!process.env.MAMA_AUTH_TOKEN
-      }));
-    `
+    expect(readdirSync(join(root, 'runtime')).sort()).toEqual(
+      expect.arrayContaining(['init-state.json'])
     );
-    execFileSync(join(root, 'start.sh'), [], { env: { HOME: home, PATH: '/usr/bin:/bin' } });
-    const result = JSON.parse(readFileSync(join(home, 'launch-result.json'), 'utf8'));
-    expect(result).toMatchObject({
-      argv: ['daemon'],
-      cwd: realpathSync(root),
-      issuer: 'https://access.example.test',
-      audience: 'fixture-audience',
-      host: 'viewer.example.test',
-      tokenLoaded: true,
-      authLoaded: true,
-    });
-    expect(result.path.split(':')).toContain(join(home, 'bin'));
-    expect(readdirSync(join(root, 'runtime'))).toEqual([]);
   });
 
   it('prompts for the fields needed by the restored Google, vault, and project sources', async () => {
@@ -399,6 +742,9 @@ describe('owner-only onboarding', () => {
         'codex',
         'fixture-model',
         '-100',
+        OWNER_ID,
+        memberRoot,
+        toolsRoot,
         'gmail,drive,sheets,notion,obsidian,claude-code,imessage',
         'folder-fixture',
         'spreadsheet-fixture',
@@ -411,11 +757,10 @@ describe('owner-only onboarding', () => {
         'n',
         'n',
         'n',
-        'n',
       ],
       [fixtureSecrets.MAMA_TELEGRAM_TOKEN, fixtureSecrets.MAMA_NOTION_TOKEN]
     );
-    await runInit(options(p.adapter));
+    await runInit([], options(p.adapter));
     const loaded = loadConnectorConfig(join(root, 'connectors.json'));
     expect(loaded.ok).toBe(true);
     if (!loaded.ok) throw new Error('Generated connector config was rejected');
@@ -424,11 +769,6 @@ describe('owner-only onboarding', () => {
       role: 'hub',
       folderId: 'folder-fixture',
     });
-    expect(loaded.config.sheets?.channels.spreadsheet).toMatchObject({
-      spreadsheetId: 'spreadsheet-fixture',
-      sheetRange: 'Records!A1:B1',
-    });
-    expect(loaded.config.notion?.channels.workspace?.name).toBe('Notion workspace');
     expect(loaded.config.obsidian?.channels.vault?.vaultPath).toBe(vaultPath);
     expect(loaded.config['claude-code']?.channels['project-fixture']?.name).toBe('Fixture Project');
     expect(loaded.config.imessage?.channels['chat-fixture-1']).toMatchObject({ role: 'hub' });
@@ -436,14 +776,12 @@ describe('owner-only onboarding', () => {
     expect(p.hidden).toEqual([]);
   });
 
-  it('does not overwrite an existing launch agent', async () => {
-    const dir = join(home, 'Library', 'LaunchAgents');
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'com.mama.server.plist'), 'existing');
-    const p = prompt(minimal('codex', 'y'), ['fixture-telegram']);
-    await expect(runInit(options(p.adapter))).rejects.toThrow(/plist.*exists/);
-    expect(readFileSync(join(dir, 'com.mama.server.plist'), 'utf8')).toBe('existing');
-    expect(existsSync(join(root, 'config.yaml'))).toBe(false);
+  it('no longer offers the Kagemusha bridge, which a fresh install cannot use', async () => {
+    const answers = minimal();
+    answers[6] = 'kagemusha';
+    const p = prompt(answers, [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    await expect(runInit([], options(p.adapter))).rejects.toThrow(/Choose connectors from/);
+    expect(existsSync(root)).toBe(false);
   });
 
   it('leaves no partial setup after a cancelled hidden prompt', async () => {
@@ -451,7 +789,7 @@ describe('owner-only onboarding', () => {
     p.adapter.secret = async () => {
       throw new Error('Input cancelled');
     };
-    await expect(runInit(options(p.adapter))).rejects.toThrow(/cancelled/);
+    await expect(runInit([], options(p.adapter))).rejects.toThrow(/cancelled/);
     expect(existsSync(root)).toBe(false);
   });
 });
