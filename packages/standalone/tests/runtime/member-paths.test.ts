@@ -2,10 +2,12 @@ import * as fs from 'node:fs';
 import { MEMBER_ROOM_TMP_PARENT } from '../../src/runtime/backend-security.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, realpathSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
+import { tmpdir, userInfo } from 'node:os';
 import {
   ensureMemberPaths,
+  removeRetiredMemberTemp,
+  memberClaudeTmpDir,
   memberRoomTmpRoot,
   memberRoomClaudeTmpDir,
   ensureMemberClaudeTmpDir,
@@ -42,15 +44,69 @@ it('separates backend state and host runtime paths, creates private roots and a 
   expect(() => ensureMemberPaths(root, 'fixture-symlink')).toThrow(/symlink/);
 });
 
+const account = (uid: number) => uid.toString(36);
+
 it('fits the room sandbox suffix for a ten-digit uid and separates people in the same room', () => {
-  const path = memberRoomClaudeTmpDir('fixture-member', '-100', {
-    parent: '/tmp/m',
-    uid: 9999999999,
-  });
+  const parent = `/tmp/m${account(9999999999)}`;
+  const path = memberRoomClaudeTmpDir('fixture-member', '-100', { parent, uid: 9999999999 });
   expect(Buffer.byteLength(join(path, 'claude-9999999999'))).toBeLessThanOrEqual(44);
   expect(path).not.toBe(
-    memberRoomClaudeTmpDir('fixture-other', '-100', { parent: '/tmp/m', uid: 9999999999 })
+    memberRoomClaudeTmpDir('fixture-other', '-100', { parent, uid: 9999999999 })
   );
+});
+
+it("keeps each OS account's member temp parents apart, with full hashes for ordinary uids", async () => {
+  // The test setup points these at per-file folders; the module's own values are the daemon's.
+  const actual = await vi.importActual<typeof import('../../src/runtime/backend-security.js')>(
+    '../../src/runtime/backend-security.js'
+  );
+  expect(actual.MEMBER_CLAUDE_TMP_PARENT).toBe(`/tmp/mm${account(userInfo().uid)}`);
+  expect(actual.MEMBER_ROOM_TMP_PARENT).toBe(`/tmp/m${account(userInfo().uid)}`);
+  expect(actual.RETIRED_MEMBER_TMP_PARENTS).toEqual(['/tmp/mama-m', '/tmp/m']);
+  // An ordinary uid keeps the full hashes: 12 hex for a member, 8 and 10 for a room.
+  const ordinary = { uid: 501 };
+  expect(
+    basename(memberClaudeTmpDir('fixture-member', { parent: '/tmp/mmdx', ...ordinary }))
+  ).toHaveLength(12);
+  const room = memberRoomClaudeTmpDir('fixture-member', '-100', {
+    parent: '/tmp/mdx',
+    ...ordinary,
+  });
+  expect(
+    room
+      .split('/')
+      .slice(-2)
+      .map((part) => part.length)
+  ).toEqual([8, 10]);
+  // A ten-digit uid still fits, with shorter hashes.
+  const dm = memberClaudeTmpDir('fixture-member', {
+    parent: `/tmp/mm${account(9999999999)}`,
+    uid: 9999999999,
+  });
+  expect(Buffer.byteLength(join(dm, 'claude-9999999999'))).toBeLessThanOrEqual(44);
+});
+
+it('removes only the member temp folders MAMA named, and the old parent once it is empty', () => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'retired-temp-')));
+  roots.push(base);
+  // A generic /tmp name another program also uses: only MAMA's hashed folders go.
+  const shared = join(base, 'shared');
+  fs.mkdirSync(join(shared, 'abcdef012345', 'claude-1'), { recursive: true });
+  // The copy a suspension set aside goes too.
+  fs.mkdirSync(join(shared, '.retired-abcdef012345-0f8e2a7c-1b2c-4d3e-8f90-123456789abc'));
+  fs.mkdirSync(join(shared, 'another-app'));
+  // An old parent holding nothing but MAMA's folders goes with them.
+  const mama = join(base, 'mama');
+  fs.mkdirSync(join(mama, '0123abcd', 'deadbeef00'), { recursive: true });
+  const target = join(base, 'target');
+  fs.mkdirSync(target);
+  const link = join(base, 'link');
+  symlinkSync(target, link);
+  removeRetiredMemberTemp([shared, mama, link, join(base, 'missing')]);
+  expect(fs.readdirSync(shared)).toEqual(['another-app']);
+  expect(fs.existsSync(mama)).toBe(false);
+  expect(fs.existsSync(link)).toBe(true);
+  expect(fs.existsSync(target)).toBe(true);
 });
 
 it('creates and repairs managed room temp directories as 0700', () => {

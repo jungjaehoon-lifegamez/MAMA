@@ -24,6 +24,8 @@ vi.mock('../../src/runtime/backend-security.js', async (importOriginal) => {
     ...actual,
     MEMBER_CLAUDE_TMP_PARENT: dm,
     MEMBER_ROOM_TMP_PARENT: rooms,
+    // A daemon boot in a test must never remove this machine's real member temp folders.
+    RETIRED_MEMBER_TMP_PARENTS: [],
     ownerNativeDataReadPaths: (...args: Parameters<typeof actual.ownerNativeDataReadPaths>) =>
       replaceRoots(actual.ownerNativeDataReadPaths(...args)),
   };

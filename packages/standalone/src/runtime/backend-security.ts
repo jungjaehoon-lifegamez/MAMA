@@ -21,10 +21,29 @@ export function normalizeReadPaths(paths: readonly string[]): string[] {
   return [...new Set(paths.map(physicalReadPath))];
 }
 
-/** Parent of each member's short Claude temp root (member-paths.ts). */
-export const MEMBER_CLAUDE_TMP_PARENT = join('/tmp', 'mama-m');
-/** Short enough for a principal and room component plus Claude's sandbox suffix. */
-export const MEMBER_ROOM_TMP_PARENT = join('/tmp', 'm');
+/**
+ * The OS account in temp names: its uid in base 36, distinct for every account and seven
+ * characters at most (ten-digit directory uids). The hashes under these parents take whatever
+ * Claude's 44-byte sandbox socket limit leaves (member-paths.ts).
+ */
+const ACCOUNT = userInfo().uid.toString(36);
+/**
+ * Parent of each member's short Claude temp root (member-paths.ts). One per OS account: a parent
+ * another account created first is refused, so a shared one kept a second account's MAMA on the
+ * same machine from serving any member.
+ */
+export const MEMBER_CLAUDE_TMP_PARENT = join('/tmp', `mm${ACCOUNT}`);
+/** Short enough for a principal and room component plus Claude's sandbox suffix; per account. */
+export const MEMBER_ROOM_TMP_PARENT = join('/tmp', `m${ACCOUNT}`);
+/**
+ * The machine-wide parents every account's MAMA used before they were per account. Member temp
+ * data left there is no longer under any session deny, so the daemon removes this account's at
+ * boot (removeRetiredMemberTemp).
+ */
+export const RETIRED_MEMBER_TMP_PARENTS: readonly string[] = [
+  join('/tmp', 'mama-m'),
+  join('/tmp', 'm'),
+];
 
 /** Host renders contain every principal's staged input and trusted LibreOffice profile. */
 export const HOST_DOCUMENT_RENDER_ROOT = join('/tmp', `mama-office-host-${userInfo().uid}`);
