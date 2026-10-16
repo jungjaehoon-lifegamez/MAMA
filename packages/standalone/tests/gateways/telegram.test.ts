@@ -404,6 +404,34 @@ describe('TelegramGateway', () => {
     await restarted.stop();
   });
 
+  it('recovers only the message parked uncertain; others in flight keep their answers', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'telegram-recover-one-'));
+    temporaryRoots.push(root);
+    const ledgerPath = join(root, 'ledger.json');
+    const received: OwnerMessageInput[] = [];
+    const gateway = await gatewayFor(intakeFor(received), ledgerPath);
+    const handler = seams.handlers.get('message')!;
+    await handler({ message: message({ message_id: 11, text: 'stopped request' }) });
+    await handler({ message: message({ message_id: 12, text: 'running request' }) });
+    expect(received).toHaveLength(2);
+    const [stopped, running] = received.map((input) => input.id);
+    // Neither input is pending (both are claimed); only the parked one is recovered.
+    seams.api.sendMessage.mockClear();
+    seams.api.editMessageText.mockClear();
+    await gateway.recoverResponse(stopped);
+    // The notice replaces the stopped message's progress line; nothing else is sent.
+    const notices = [
+      ...seams.api.sendMessage.mock.calls,
+      ...seams.api.editMessageText.mock.calls,
+    ].filter((call) => call.some((arg: unknown) => String(arg).includes('interrupted')));
+    expect(notices).toHaveLength(1);
+    expect(new TelegramMessageLedger(ledgerPath).get(stopped)?.state).toBe('delivered');
+    expect(new TelegramMessageLedger(ledgerPath).get(running)?.state).toBe('processing');
+    await gateway.deliverResponse(running, 'the real answer');
+    expect(new TelegramMessageLedger(ledgerPath).get(running)?.state).toBe('delivered');
+    await gateway.stop();
+  });
+
   it('does not resend an outbound entry when concurrent recovery scans see it ready', async () => {
     const gateway = await gatewayFor(intakeFor([]));
     seams.api.sendMessage.mockRejectedValueOnce(

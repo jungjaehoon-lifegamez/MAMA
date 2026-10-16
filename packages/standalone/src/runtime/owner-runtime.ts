@@ -216,7 +216,7 @@ export interface OwnerRuntime {
    * uncertain, as any turn that fails after dispatch, so it is not run again and its message is
    * told it was interrupted. Inputs waiting behind it still run.
    */
-  stopTurn(target: ConversationTarget): Promise<'stopped' | 'idle'>;
+  stopTurn(target: ConversationTarget): Promise<'stopped' | 'starting' | 'idle'>;
   beginStop(): void;
   drain(): Promise<void>;
   stop(): Promise<void>;
@@ -1409,7 +1409,11 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         if (target.kind === 'member' && !intakeRuntime.servesPrincipal(target.principalId))
           return 'idle';
         // The principal sessions always route an interrupt to the session that owns the key.
-        return (await sessions.native.interrupt!(conversationKey(target))) ? 'stopped' : 'idle';
+        const key = conversationKey(target);
+        if (await sessions.native.interrupt!(key)) return 'stopped';
+        // The session is taken while its backend has no request open: the turn is starting or
+        // finishing, so stopping it now would stop nothing.
+        return sessionPool.peekSession(key).busy ? 'starting' : 'idle';
       },
       stop: () => {
         if (stopPromise) return stopPromise;

@@ -109,38 +109,51 @@ export class DiscordGateway extends BaseGateway {
     return this.ledger.get(sourceRef)?.state === 'delivered';
   }
   async recoverPendingResponses(): Promise<void> {
-    for (const entry of this.ledger.listUndelivered()) {
-      try {
-        const channel = entry.deliveryTarget?.startsWith('discord:')
-          ? entry.deliveryTarget.slice('discord:'.length)
-          : '';
-        const source = entry.key.startsWith('discord:');
-        const outbound = entry.key.startsWith('outbound:') || entry.key.startsWith('file:');
-        if (
-          (!source && !outbound) ||
-          !channel ||
-          !this.options.config.allowedChannels.includes(channel)
-        )
-          continue;
-        if (entry.deliveryUncertain) {
-          this.log(`discord delivery requires reconciliation key=${entry.key}`);
-          continue;
-        }
-        if (source && entry.state === 'processing' && !this.intake.isPending?.(entry.key)) {
-          this.ledger.markInterrupted(entry.key, this.interruptedNotice);
-          await this.deliverResponse(entry.key, this.interruptedNotice);
-        } else if (entry.state === 'ready' && entry.response !== undefined) {
-          if (source) await this.deliverResponse(entry.key, entry.response);
-          else
-            await this.runInDestination(channel, () =>
-              this.sendChunks(channel, entry.key, entry.response!)
-            );
-        }
-      } catch (error) {
-        this.log(
-          `discord recovery failed key=${entry.key} error=${error instanceof Error ? error.message : String(error)}`
-        );
+    for (const entry of this.ledger.listUndelivered()) await this.recoverEntry(entry);
+  }
+
+  /**
+   * Recover one owner message as startup recovery does, for an input parked uncertain while the
+   * daemon runs: every other message still in flight keeps its turn and its answer.
+   */
+  async recoverResponse(sourceRef: string): Promise<void> {
+    const entry = this.ledger.get(sourceRef);
+    if (entry && entry.state !== 'delivered') await this.recoverEntry(entry);
+  }
+
+  private async recoverEntry(
+    entry: ReturnType<OwnerMessageLedger['listUndelivered']>[number]
+  ): Promise<void> {
+    try {
+      const channel = entry.deliveryTarget?.startsWith('discord:')
+        ? entry.deliveryTarget.slice('discord:'.length)
+        : '';
+      const source = entry.key.startsWith('discord:');
+      const outbound = entry.key.startsWith('outbound:') || entry.key.startsWith('file:');
+      if (
+        (!source && !outbound) ||
+        !channel ||
+        !this.options.config.allowedChannels.includes(channel)
+      )
+        return;
+      if (entry.deliveryUncertain) {
+        this.log(`discord delivery requires reconciliation key=${entry.key}`);
+        return;
       }
+      if (source && entry.state === 'processing' && !this.intake.isPending?.(entry.key)) {
+        this.ledger.markInterrupted(entry.key, this.interruptedNotice);
+        await this.deliverResponse(entry.key, this.interruptedNotice);
+      } else if (entry.state === 'ready' && entry.response !== undefined) {
+        if (source) await this.deliverResponse(entry.key, entry.response);
+        else
+          await this.runInDestination(channel, () =>
+            this.sendChunks(channel, entry.key, entry.response!)
+          );
+      }
+    } catch (error) {
+      this.log(
+        `discord recovery failed key=${entry.key} error=${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 

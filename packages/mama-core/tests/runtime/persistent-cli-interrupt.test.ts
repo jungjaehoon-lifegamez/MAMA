@@ -69,6 +69,18 @@ describe('persistent CLI interrupt', () => {
     expect(proc.interrupt()).toBe(false);
   });
 
+  it('lets a turn that finished before the interrupt land answer normally', async () => {
+    const { proc, emit } = readyProcess();
+    const pending = proc.sendMessage('fixture');
+    expect(proc.interrupt()).toBe(true);
+    emit({ type: 'result', subtype: 'success', result: 'done anyway', usage: {} });
+    await expect(pending).resolves.toMatchObject({ response: 'done anyway' });
+    // The mark ends with that request: the next request's failure is an ordinary one.
+    const next = proc.sendMessage('fixture again');
+    emit({ type: 'result', subtype: 'error_during_execution', is_error: true });
+    await expect(next).rejects.not.toBeInstanceOf(NativeTurnStoppedError);
+  });
+
   it('keeps an unrequested failed turn an ordinary error', async () => {
     const { proc, emit } = readyProcess();
     const pending = proc.sendMessage('fixture');

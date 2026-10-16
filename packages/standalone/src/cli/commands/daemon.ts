@@ -92,6 +92,8 @@ export interface DaemonGateway {
   cancelMemberEnrollment?(principalId: string): void;
   interruptResponse?(sourceRef: string): Promise<void>;
   recoverPendingResponses(): Promise<void>;
+  /** Recover one owner message as startup recovery does, leaving every other one alone. */
+  recoverResponse(sourceRef: string): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
   deliverResponse(sourceRef: string, response: string): Promise<void>;
@@ -778,7 +780,9 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
               const selected = gateways.get(sourceForRef(row.stimulusId));
               if (!selected)
                 throw new Error('Owner messenger is not available for an interrupted response');
-              await selected.recoverPendingResponses();
+              // Only this message: a sweep would tell messages still in flight that they were
+              // interrupted, and their answers would then be dropped as already delivered.
+              await selected.recoverResponse(row.stimulusId);
             },
             closeUncertain: {
               ownerAnswered: (row) =>

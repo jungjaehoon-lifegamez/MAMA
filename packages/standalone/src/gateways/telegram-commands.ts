@@ -23,8 +23,8 @@ export interface TelegramHostCommandPort {
   status(target: ConversationTarget, ownerView: boolean): Promise<ChatStatus>;
   /** Start the conversation over, or say it is busy: a running turn keeps its session. */
   startOver(target: ConversationTarget): Promise<'started_over' | 'busy'>;
-  /** Stop the turn running in this conversation, or say none runs. */
-  stopTurn(target: ConversationTarget): Promise<'stopped' | 'idle'>;
+  /** Stop the turn running in this conversation, or say none runs or one is only starting. */
+  stopTurn(target: ConversationTarget): Promise<'stopped' | 'starting' | 'idle'>;
 }
 
 /**
@@ -95,8 +95,13 @@ export function startOverText(
   return 'Started over: the next message here begins a new conversation. What MAMA has saved stays.';
 }
 
-export function stopText(result: 'stopped' | 'idle', target: ConversationTarget): string {
+export function stopText(
+  result: 'stopped' | 'starting' | 'idle',
+  target: ConversationTarget
+): string {
   if (result === 'idle') return 'Nothing is running in this conversation.';
+  if (result === 'starting')
+    return 'A turn here is starting or finishing. Send /stop again in a moment.';
   return target.kind === 'common'
     ? "Stopped the common session's running turn. A message it was answering is told it was interrupted; anything waiting still runs."
     : 'Stopped the turn running in this conversation. Its message is told it was interrupted; messages sent after it still run.';

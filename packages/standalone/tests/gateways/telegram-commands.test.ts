@@ -319,6 +319,15 @@ describe('Telegram host commands', () => {
       room: COMMON,
     });
     expect(idle).toBe('Nothing is running in this conversation.');
+    seams.api.sendMessage.mockClear();
+    (commands.stopTurn as ReturnType<typeof vi.fn>).mockResolvedValue('starting');
+    await send({
+      ...command('/stop'),
+      chat: { id: 7102, type: 'private' },
+      from: { id: 7102, is_bot: false },
+    });
+    const [, starting] = await reply();
+    expect(starting).toContain('starting or finishing');
   });
 
   it('ignores a command addressed to another bot', async () => {

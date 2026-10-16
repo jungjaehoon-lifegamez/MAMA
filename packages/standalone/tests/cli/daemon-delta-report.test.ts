@@ -196,6 +196,7 @@ async function boot(
               sendFile: async () => ({ sentAs: 'file', size: 0 }),
               deliverResponse: async () => {},
               recoverPendingResponses: async () => {},
+              recoverResponse: async () => {},
               answered: () => false,
               start: async () => {},
               stop: async () => {},
