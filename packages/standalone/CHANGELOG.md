@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `mama doctor` checks the database's schema read-only against what this version knows, per
+  migration source: a newer one fails (boot refuses it; install the version that wrote it, or
+  restore a backup taken with this one), an older one reports that the next start migrates it.
+
 - `mama restore <archive>` puts a `mama backup` archive onto a stopped install. The manifest is
   read as untrusted: only the names a backup keeps, nothing beneath a link, credentials only in a
   backup that says it holds them. Files are extracted and checked against their hashes, links

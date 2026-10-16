@@ -12,6 +12,8 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import Database from 'better-sqlite3';
+import { highestMigrationVersion, MIGRATIONS_DIR } from '@jungjaehoon/mama-core/db-manager';
 import { runDoctor } from '../../src/cli/commands/doctor.js';
 import { loadConnector } from '../../src/connectors/index.js';
 import { compareVersions, probeBackend } from '../../src/cli/runtime/backend-probe.js';
@@ -648,6 +650,30 @@ describe('mama doctor', () => {
       detail: 'could not be asked whether its credentials work',
       context: 'no answer within 0.05 s',
     });
+  });
+
+  it("holds the database's schema to what this version knows", async () => {
+    const installed = install();
+    let by = byName(await runDiagnostics(base(installed)));
+    expect(by.schema).toMatchObject({
+      status: 'ok',
+      detail: 'no database yet; the first start creates it',
+    });
+    const highest = highestMigrationVersion(MIGRATIONS_DIR);
+    const db = new Database(join(installed.root, 'memory.db'));
+    db.exec('CREATE TABLE schema_version (source TEXT, version INTEGER)');
+    db.prepare("INSERT INTO schema_version VALUES ('core', ?)").run(highest - 1);
+    db.close();
+    by = byName(await runDiagnostics(base(installed)));
+    expect(by.schema.status).toBe('ok');
+    expect(by.schema.detail).toContain(`core ${highest - 1} of ${highest}`);
+    expect(by.schema.detail).toContain('the next start migrates it');
+    const newer = new Database(join(installed.root, 'memory.db'));
+    newer.prepare("INSERT INTO schema_version VALUES ('core', ?)").run(highest + 1);
+    newer.close();
+    by = byName(await runDiagnostics(base(installed)));
+    expect(by.schema).toMatchObject({ status: 'fail' });
+    expect(by.schema.detail).toContain(`core ${highest + 1} of ${highest}`);
   });
 
   it('warns about a log past 50 MB', async () => {

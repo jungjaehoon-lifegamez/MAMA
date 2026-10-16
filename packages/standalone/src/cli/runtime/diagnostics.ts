@@ -28,6 +28,13 @@ import {
 } from '../commands/daemon.js';
 import { probeBackend, type BackendName, type ProbeRun, defaultProbeRun } from './backend-probe.js';
 import { restoreJournalPath, type DaemonControlReply } from './daemon-control.js';
+import Database from 'better-sqlite3';
+import {
+  CORE_MIGRATION_SOURCE,
+  highestMigrationVersion,
+  MIGRATIONS_DIR,
+} from '@jungjaehoon/mama-core/db-manager';
+import { STANDALONE_MIGRATION_SOURCE } from '../../storage/migrations-source.js';
 import { systemdUnitState, type ServiceRun, defaultServiceRun } from './systemd-service.js';
 
 export type CheckStatus = 'ok' | 'warn' | 'fail';
@@ -194,6 +201,8 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
       fix: `correct ${configPath}; the daemon refuses to boot until this passes`,
     });
   }
+
+  if (config) checks.push(schemaCheck(config.database.path));
 
   if (config) {
     checks.push(
@@ -425,6 +434,77 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
     }
   }
   return checks;
+}
+
+/**
+ * The database's schema against what this version knows, per migration source, read-only. A
+ * newer one is what an older install refuses at boot; an older one migrates at the next start.
+ */
+function schemaCheck(databasePath: string): Check {
+  if (!existsSync(databasePath)) {
+    return { name: 'schema', status: 'ok', detail: 'no database yet; the first start creates it' };
+  }
+  const sources = [
+    { name: CORE_MIGRATION_SOURCE, dir: MIGRATIONS_DIR },
+    STANDALONE_MIGRATION_SOURCE,
+  ];
+  let db: Database.Database;
+  try {
+    db = new Database(databasePath, { readonly: true, fileMustExist: true });
+  } catch (error) {
+    return {
+      name: 'schema',
+      status: 'fail',
+      detail: 'the database cannot be opened',
+      context: message(error),
+    };
+  }
+  try {
+    const table = db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'")
+      .get();
+    const bySource =
+      table !== undefined &&
+      (db.prepare('PRAGMA table_info(schema_version)').all() as { name: string }[]).some(
+        (column) => column.name === 'source'
+      );
+    const states = sources.map((source) => {
+      const row = !table
+        ? undefined
+        : ((bySource
+            ? db
+                .prepare('SELECT MAX(version) AS version FROM schema_version WHERE source = ?')
+                .get(source.name)
+            : source.name === CORE_MIGRATION_SOURCE
+              ? db.prepare('SELECT MAX(version) AS version FROM schema_version').get()
+              : undefined) as { version: number | null } | undefined);
+      return {
+        name: source.name,
+        current: row?.version ?? 0,
+        highest: highestMigrationVersion(source.dir),
+      };
+    });
+    const newer = states.filter((state) => state.current > state.highest);
+    const summary = states
+      .map((state) => `${state.name} ${state.current} of ${state.highest}`)
+      .join(', ');
+    if (newer.length > 0) {
+      return {
+        name: 'schema',
+        status: 'fail',
+        detail: `the database is newer than this MAMA (${summary}); boot refuses it`,
+        fix: 'install the version that wrote it, or mama restore a backup taken with this one',
+      };
+    }
+    const pending = states.reduce((sum, state) => sum + (state.highest - state.current), 0);
+    return {
+      name: 'schema',
+      status: 'ok',
+      detail: pending > 0 ? `${summary}; the next start migrates it` : summary,
+    };
+  } finally {
+    db.close();
+  }
 }
 
 /** start.sh's Node: still there, outside one version's folder, and able to load MAMA's SQLite. */

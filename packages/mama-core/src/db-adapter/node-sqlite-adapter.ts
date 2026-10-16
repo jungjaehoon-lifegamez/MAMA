@@ -298,6 +298,15 @@ export interface MigrationSource {
 /** The core is one source among others; it is only first because others build on it. */
 export const CORE_MIGRATION_SOURCE = 'core';
 
+/** The highest migration number among a source's files. */
+export function highestMigrationVersion(migrationsDir: string): number {
+  return fs
+    .readdirSync(migrationsDir)
+    .map((file) => /^(\d+)-.*\.sql$/.exec(file)?.[1])
+    .filter((version): version is string => version !== undefined)
+    .reduce((highest, version) => Math.max(highest, Number.parseInt(version, 10)), 0);
+}
+
 /** The columns migration 101 adds to model_runs. */
 const MODEL_RUN_USAGE_COLUMNS = [
   'input_tokens',
@@ -804,6 +813,14 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
       .readdirSync(migrationsDir)
       .filter((file) => file.endsWith('.sql'))
       .sort();
+    // A database a newer version migrated cannot be read by older code: refuse it before any
+    // repair or migration writes to it. Deferred migrations are files too, so they count.
+    const highest = highestMigrationVersion(migrationsDir);
+    if (currentVersion > highest) {
+      throw new Error(
+        `This database's ${sourceName} schema is at ${currentVersion}, newer than this version knows (${highest}); install the version that wrote it, or restore a backup taken with this one`
+      );
+    }
 
     if (
       isCore &&

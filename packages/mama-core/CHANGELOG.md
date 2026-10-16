@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `openDatabase` refuses a database whose schema, for any migration source, is newer than the
+  highest migration file this version ships (deferred migrations count, since they are files),
+  before any repair or migration writes to it. The error names both numbers and says to install
+  the version that wrote it or restore a backup taken with this one.
+
+### Added
+
+- `@jungjaehoon/mama-core/db-manager` exports `MIGRATIONS_DIR`, `CORE_MIGRATION_SOURCE` and
+  `highestMigrationVersion(dir)`, so a consumer can compare a database's schema with the code
+  without opening it for writing.
+
 ## [8.7.0] - 2026-10-14
 
 ### Added
