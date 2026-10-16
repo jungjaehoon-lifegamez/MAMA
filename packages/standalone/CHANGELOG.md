@@ -25,7 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     write.
   - **Then in order:** writes the setup, registers the person running it as the first owner,
     installs the document tools, installs and starts the service through `mama service`, and
-    waits until the daemon reports it is running and the viewer answers `/health`.
+    waits until the daemon reports it is running and the viewer answers `/health`. Last, the
+    daemon runs one real backend turn in a session of its own, so the login is proven as the
+    service runs it; a failure names `mama logs` and `mama doctor`.
   - **Repeat-safe:** a failed run continues from its last finished step without asking again,
     and a finished setup is refused.
   - **No typed Telegram IDs:** as the last question, the bot sends a six-digit code to whoever

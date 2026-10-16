@@ -171,6 +171,13 @@ function options(adapter: PromptAdapter, overrides: Partial<InitOptions> = {}) {
       reply: { ok: true, status: { stage: 'running' } },
     }),
     health: async () => true,
+    daemonProbe: async () => ({
+      state: 'running',
+      reply: {
+        ok: true,
+        probe: { backend: 'codex', model: 'fixture-model', ms: 5, modelRunId: 'fixture-run' },
+      },
+    }),
     // This machine's own MAMA may hold the default port; the fixture sees every port free.
     portAnswers: async () => false,
     pollMs: 1,
@@ -479,6 +486,27 @@ describe('mama init', () => {
     await expect(runInit([], options(p.adapter))).rejects.toThrow(/written by other accounts/);
     expect(existsSync(root)).toBe(false);
     expect(telegram.sent).toEqual([]);
+  });
+
+  it('proves the backend with one real turn through the started daemon', async () => {
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    await runInit([], options(p.adapter));
+    expect(p.output.join('\n')).toContain('codex (fixture-model) answered a real turn in 5 ms.');
+  });
+
+  it('says where to look when the backend does not answer, with the setup kept', async () => {
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    const o = options(p.adapter, {
+      daemonProbe: async () => ({
+        state: 'running',
+        reply: { ok: false, error: 'Not logged in · fixture backend' },
+      }),
+    });
+    await expect(runInit([], o)).rejects.toThrow(
+      /did not answer a real turn \(Not logged in · fixture backend\)\. mama logs shows why/
+    );
+    // Everything before it is done; a rerun is not asked to set up again.
+    expect(readInitState(root)?.done).toEqual(['config', 'owner', 'toolkit', 'service']);
   });
 
   it('reports a toolkit that cannot be installed and still starts MAMA', async () => {

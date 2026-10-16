@@ -66,6 +66,7 @@ import {
   daemonControlPaths,
   requestDaemonControl,
   startDaemonControl,
+  type DaemonControlOp,
   type DaemonControlReply,
   type DaemonControlServer,
   type InstallLock,
@@ -553,6 +554,21 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       stop: () => {
         if (!options.requestStop) throw new Error(`${command} stops when it finishes`);
         options.requestStop();
+      },
+      probe: async () => {
+        if (!booted || stopped || !owner) throw new Error('MAMA has not finished starting');
+        try {
+          const probed = await owner.probeBackend();
+          logger.info(
+            `backend probe: ${config.agent.backend} answered in ${probed.ms} ms (model run ${probed.modelRunId ?? 'none'})`
+          );
+          return { backend: config.agent.backend, model: config.agent.model, ...probed };
+        } catch (error) {
+          logger.error(
+            `backend probe: ${config.agent.backend} failed (${error instanceof Error ? error.name : 'error'})`
+          );
+          throw error;
+        }
       },
     });
     if (options.signal?.aborted) throw new StopDuringBootError();
@@ -1199,10 +1215,10 @@ export function installControlPaths(options: { home?: string; configPath?: strin
 }
 
 export async function askDaemon(
-  op: 'status' | 'stop',
-  options: { home?: string; configPath?: string } = {}
+  op: DaemonControlOp,
+  options: { home?: string; configPath?: string; timeoutMs?: number } = {}
 ): Promise<DaemonControlReply> {
-  return await requestDaemonControl(installControlPaths(options), op);
+  return await requestDaemonControl(installControlPaths(options), op, options.timeoutMs);
 }
 
 export interface LaunchdService {

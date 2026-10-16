@@ -94,9 +94,14 @@ describe('control socket', () => {
     const paths = daemonControlPaths(root());
     const lock = acquireInstallLock(paths, 'daemon');
     const stop = vi.fn();
+    let probeFails = false;
     const server = await startDaemonControl(paths, {
       status: () => ({ stage: 'running' }),
       stop,
+      probe: async () => {
+        if (probeFails) throw new Error('Not logged in · fixture backend');
+        return { ms: 3 };
+      },
     });
     expect(statSync(paths.socketPath).mode & 0o777).toBe(0o600);
     expect(statSync(paths.tokenPath).mode & 0o777).toBe(0o600);
@@ -108,6 +113,15 @@ describe('control socket', () => {
       reply: { ok: true },
     });
     expect(stop).toHaveBeenCalledTimes(1);
+    expect(await requestDaemonControl(paths, 'probe')).toEqual({
+      state: 'running',
+      reply: { ok: true, probe: { ms: 3 } },
+    });
+    probeFails = true;
+    expect(await requestDaemonControl(paths, 'probe')).toEqual({
+      state: 'running',
+      reply: { ok: false, error: 'Not logged in · fixture backend' },
+    });
 
     writeFileSync(paths.tokenPath, 'wrong-token\n');
     expect(await requestDaemonControl(paths, 'status')).toEqual({
@@ -169,6 +183,7 @@ function boot(home: string, logs: string[], extra: Partial<Parameters<typeof boo
     intake: { recordOwnerReply: () => {}, acceptOwnerMessage: vi.fn() },
     surface: { dispatch: vi.fn(), ownerAccess: { scopes: [{ kind: 'user', id: 'owner' }] } },
     acceptSourceDelta: vi.fn(),
+    probeBackend: vi.fn(async () => ({ modelRunId: 'fixture-run', ms: 7 })),
     stop: vi.fn(async () => {}),
   }));
   const run = bootDaemon({
@@ -244,6 +259,13 @@ describe('daemon boot holds the install', () => {
         ],
       })
     );
+    // A running daemon answers a probe with one turn of its own backend, and logs it.
+    const probe = await askDaemon('probe', { configPath: join(home, 'config.yaml') });
+    expect(probe.state === 'running' && probe.reply).toEqual({
+      ok: true,
+      probe: expect.objectContaining({ modelRunId: 'fixture-run', ms: 7 }),
+    });
+    expect(firstLogs).toContainEqual(expect.stringMatching(/^backend probe: .* answered in 7 ms/));
     await askDaemon('stop', { configPath: join(home, 'config.yaml') });
     expect(requestStop).toHaveBeenCalledTimes(1);
 

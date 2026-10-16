@@ -85,6 +85,8 @@ export interface InitOptions {
   startService?: (viewer: Record<string, string>) => Promise<void>;
   /** Asks the install's daemon for its status while init waits for its boot; tests replace it. */
   daemonStatus?: () => Promise<DaemonControlReply>;
+  /** Asks the started daemon for one real backend turn; tests replace it. */
+  daemonProbe?: () => Promise<DaemonControlReply>;
   /** Whether the viewer answers /health; tests replace it. */
   health?: () => Promise<boolean>;
   /** Whether something listens on a port; tests replace it. */
@@ -343,6 +345,9 @@ async function viewerHealth(port: number): Promise<boolean> {
     return false;
   }
 }
+
+/** A probe is one model turn; the daemon's own turn deadline is ten minutes without progress. */
+const PROBE_WAIT_MS = 600_000;
 
 const initUsage = `Usage: mama init [--non-interactive] | mama init --section <${initSections.join('|')}>`;
 
@@ -656,6 +661,22 @@ export async function runInit(
     });
     delete progress.viewer;
     mark('service');
+    // The backend's version and login were read from this terminal. One real turn through the
+    // daemon proves it answers as the service runs it: its PATH, environment, sandbox and model.
+    const probe = await (
+      options.daemonProbe ?? (() => askDaemon('probe', { home, timeoutMs: PROBE_WAIT_MS }))
+    )();
+    const probed =
+      probe.state === 'running' && probe.reply.ok === true
+        ? (probe.reply.probe as { backend?: unknown; model?: unknown; ms?: unknown })
+        : undefined;
+    if (!probed)
+      throw new CliInputError(
+        `MAMA is running, but its backend did not answer a real turn (${probe.state === 'running' ? String(probe.reply.error) : 'MAMA stopped'}). mama logs shows why, and mama doctor checks the backend's login; then send your bot a message.`
+      );
+    write(
+      `${String(probed.backend)} (${String(probed.model)}) answered a real turn in ${String(probed.ms)} ms.`
+    );
   }
   write('MAMA is running. Send your bot a message in Telegram.');
 }
