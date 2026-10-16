@@ -1435,8 +1435,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           throw new Error('The owner session has no turn port');
         const native = nativeSession;
         // Turns of one workspace run one at a time (the web-fetch mode file relies on it), and a
-        // drain waits for this chain.
-        return sessions.turnChain(options.ownerPrincipalId)(async () => {
+        // drain waits for this chain. The check goes next, as /new does, not behind queued work.
+        return sessions.turnChain(options.ownerPrincipalId).afterCurrent(async () => {
           const started = Date.now();
           let modelRunId: string | null = null;
           let turnError: unknown;

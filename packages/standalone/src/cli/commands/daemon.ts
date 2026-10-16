@@ -564,10 +564,10 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
           );
           return { backend: config.agent.backend, model: config.agent.model, ...probed };
         } catch (error) {
-          logger.error(
-            `backend probe: ${config.agent.backend} failed (${error instanceof Error ? error.name : 'error'})`
-          );
-          throw error;
+          // The turn's own failure is wrapped by the dispatch layer; its causes name what failed.
+          const reason = stimulusFailureReason(error);
+          logger.error(`backend probe: ${config.agent.backend} failed: ${reason}`);
+          throw new Error(reason);
         }
       },
     });

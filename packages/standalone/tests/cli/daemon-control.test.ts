@@ -264,7 +264,8 @@ describe('daemon boot holds the install', () => {
     const home = root('mama-boot-lock-');
     const firstLogs: string[] = [];
     const requestStop = vi.fn();
-    const first = await boot(home, firstLogs, { requestStop }).run;
+    const booted = boot(home, firstLogs, { requestStop });
+    const first = await booted.run;
 
     const secondLogs: string[] = [];
     const second = boot(home, secondLogs);
@@ -292,6 +293,23 @@ describe('daemon boot holds the install', () => {
       probe: expect.objectContaining({ modelRunId: 'fixture-run', ms: 7 }),
     });
     expect(firstLogs).toContainEqual(expect.stringMatching(/^backend probe: .* answered in 7 ms/));
+    // A failed probe names what failed beneath the dispatch layer's wrapper.
+    const owner = (await booted.createOwnerRuntime.mock.results[0].value) as {
+      probeBackend: ReturnType<typeof vi.fn>;
+    };
+    owner.probeBackend.mockRejectedValueOnce(
+      new Error('Native input dispatch began', {
+        cause: new Error('Not logged in · fixture backend'),
+      })
+    );
+    const failed = await askDaemon('probe', { configPath: join(home, 'config.yaml') });
+    expect(failed.state === 'running' && failed.reply).toEqual({
+      ok: false,
+      error: expect.stringContaining('Not logged in · fixture backend'),
+    });
+    expect(firstLogs).toContainEqual(
+      expect.stringMatching(/^backend probe: .* failed: .*Not logged in · fixture backend/)
+    );
     await askDaemon('stop', { configPath: join(home, 'config.yaml') });
     expect(requestStop).toHaveBeenCalledTimes(1);
 

@@ -976,7 +976,7 @@ export class PersistentClaudeProcess extends EventEmitter {
             agentPath: 'cli-turn',
             itemId: 'untracked',
             text,
-            isError: event.subtype !== 'success',
+            isError: event.is_error === true || event.subtype !== 'success',
           });
           break;
         }
