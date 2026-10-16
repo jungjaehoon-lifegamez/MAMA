@@ -2510,3 +2510,21 @@ The implementation writes raw/index data during import only. Replay is the owner
   - Not yet covered: runtime JSON ledgers (`owner-message-ledger.json`), connector raw stores and deltas. They need a live-mode boot with a gateway.
   - No migration between 0.77.0 and `main` yet (both at core 106); the next core migration is the first one exercised.
   - The downgrade half ("old code refuses a newer database") becomes testable once a release with the refusal is the previous one.
+
+### W1.5a: the daemon writes its own rotated log; mama logs (#514, 2026-10-16)
+
+- Result: closes v1.md R9.
+  - `mama daemon` takes over its own output right after loading its config, before the first boot stage, into `logging.file`. The file is rotated in place at 10 MB with five gzip archives; `security-events.jsonl` rotates at 5 MB.
+  - The generated launch files send what comes earlier to `logs/crash.log`, which `start.sh` makes owner-only and empties past 1 MB.
+  - `mama logs [-n] [--follow]` reads across the archives. The viewer's tails fill from the newest archive, and doctor checks each log against its own cap.
+- Evidence:
+  - Opus three rounds. The first round reproduced a closed descriptor being reused by another file after a failed rotation; that led to rotation in place with one descriptor kept for good. It also found the first boot stage landing in the crash log.
+  - Codex two rounds and CodeRabbit; two P2s declined and listed as known limits (two rotations within one follow poll; bytes another descriptor appends during compression).
+  - Deployed 14:35:54 KST: eight boot stages, no errors, doctor 15 ok and 1 warn.
+    - The live daemon holds `daemon.log` three times: fds 1 and 2 from the hand-written plist, and fd 17 for its own log. All three are the same inode, which rotation keeps.
+    - `mama logs -n 3` printed the live tail.
+  - The deployed module, with a second descriptor appending to the same file, rotated twice at a 2 KB limit and kept all 150 lines contiguous, in files and archives that are 0600.
+- Still open:
+  - The live `daemon.log` (9.3 MB) rotates for the first time at 10 MB.
+  - This Mac's crash log arrives with W1.6.
+  - `mama uninstall` (R6) is W1.5b.
