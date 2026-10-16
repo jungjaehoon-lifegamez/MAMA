@@ -20,6 +20,7 @@ import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -102,7 +103,15 @@ try {
   const os = join(install, 'node_modules', '@jungjaehoon', 'mama-os', 'package.json');
   for (const [name, path, version] of [
     ['mama-os', os, previous],
-    ['mama-core', createRequire(os).resolve('@jungjaehoon/mama-core/package.json'), core],
+    [
+      'mama-core',
+      // Node's own search order from mama-os; core does not export its package.json.
+      createRequire(os)
+        .resolve.paths('@jungjaehoon/mama-core')
+        .map((dir) => join(dir, '@jungjaehoon', 'mama-core', 'package.json'))
+        .find((path) => existsSync(path)),
+      core,
+    ],
   ]) {
     const installed = JSON.parse(readFileSync(path, 'utf8')).version;
     if (installed !== version) {
