@@ -81,23 +81,30 @@ describe('persistent CLI interrupt', () => {
     await expect(next).rejects.not.toBeInstanceOf(NativeTurnStoppedError);
   });
 
-  it('waits for the input acknowledgement, which a stopped result before it would kill', async () => {
+  it('stops a turn before its input is acknowledged, as the CLI answers it', async () => {
     const { proc, child, emit } = readyProcess();
     const pending = proc.sendMessage('fixture', { onAccepted: () => {} } as never);
-    void pending.catch(() => {});
-    expect(proc.interrupt()).toBe(false);
-    expect(child.lines.some((line) => line.includes('control_request'))).toBe(false);
     const input = JSON.parse(child.lines.at(-1)!) as { uuid?: string };
+    // The CLI acknowledges an input only with the model's first output; a stop comes before it.
+    expect(proc.interrupt()).toBe(true);
+    // Measured on CLI 2.1.299: the control response, the input replayed, an interruption
+    // marker, then the stopped result.
+    emit({ type: 'control_response', response: { subtype: 'success' } });
     emit({
       type: 'user',
       uuid: input.uuid,
       session_id: 'fixture-session',
       message: { role: 'user', content: 'fixture' },
     });
-    expect(proc.interrupt()).toBe(true);
+    emit({
+      type: 'user',
+      session_id: 'fixture-session',
+      message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] },
+    });
     emit({ type: 'result', subtype: 'error_during_execution', is_error: true });
     await expect(pending).rejects.toBeInstanceOf(NativeTurnStoppedError);
     expect(child.signals).toEqual([]);
+    expect(proc.isAlive()).toBe(true);
   });
 
   it('keeps an unrequested failed turn an ordinary error', async () => {
