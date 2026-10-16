@@ -2,6 +2,49 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.78.0] / mama-core [8.8.0] / mama-server [2.6.0] / plugin [2.3.0] - 2026-10-16
+
+MAMA can now be run and looked after like a service: it checks itself, backs up and restores,
+refuses a database written by a newer version, keeps its logs to a fixed size and uninstalls
+cleanly. The Claude Code plugin and its MCP server now run the same core. Each package changelog
+lists every change.
+
+### Upgrading
+
+- Run `mama service install` to see what it would change in your `start.sh` and service file, then
+  `mama service install --replace` and `mama service restart`. The new files use a Node path that
+  survives upgrades, restart the daemon only after a failure, and keep early output in
+  `~/.mama/logs/crash.log`.
+- An older MAMA now refuses a database a newer one migrated. To go back, restore a backup taken
+  with that version (`mama backup` before you upgrade).
+- Update the Claude Code plugin to 2.3.0. Its first session moves the development-memory database
+  to the new schema; copy `~/.claude/mama-memory.db` first if you want a way back.
+
+### Added
+
+- `mama status` and `mama stop`, with one process holding an install at a time (#505).
+- `mama service install|start|stop|restart|status|uninstall` (#506).
+- `mama doctor`, with `--report` for a bug report that holds no paths, values or message text (#507).
+- `mama backup` and `mama restore` (#508, #509).
+- `mama logs [-n] [--follow]`; the daemon rotates its own log (#514).
+- `mama uninstall [--dry-run] [--data [--toolkit]]` (#515).
+- An upgrade check in CI: the previous release writes an install, this one reads it back (#512).
+
+### Changed
+
+- MAMA OS refuses a database whose schema is newer than it knows, before it touches it (#510).
+- The plugin runs the MCP server it was released with, on the core its hooks use, and both refuse
+  a newer database (#511).
+
+### Fixed
+
+- A backend that stops while MAMA writes to it fails that request instead of stopping the daemon
+  (#513).
+- A `member_root` or `tools_root` written as your home folder in another letter case is refused
+  (#515).
+- The generated `start.sh` keeps Homebrew's folder on PATH, where the agent's shell finds the tools
+  you installed (#516).
+
 ## mama-os [0.77.0] - 2026-10-15
 
 An owner's DM opens Google Drive sheets and checks rendered documents before sending them, work
