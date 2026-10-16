@@ -68,7 +68,8 @@ record, or a daemon holding the install is refused.
 (a bot token; the bot must already be in the common group), `model` (backend and model, checked in
 the Codex home the daemon uses), `timezone`, `connectors` (the sources named are set up again, the
 others kept), `discord` or `slack` (the block's other settings, such as `file_delivery`, stay) or
-`jev`. It takes the install lock, so MAMA must be stopped (`mama stop`). The answers get init's
+`jev`. It takes the install lock, so MAMA must be stopped (`mama stop`); run `mama doctor` before
+starting it again. The answers get init's
 checks, and the new `config.yaml` (with its delivery routes) and `connectors.json` must pass the
 checks MAMA runs at boot; nothing is written until they do. Tokens go to `auth.env` only. A
 `config.yaml` written by hand is written again in plain YAML and loses its comments.

@@ -917,7 +917,9 @@ describe('mama init --section', () => {
     expect(secret('MAMA_DISCORD_TOKEN')).toBe('fixture-discord-token');
     expect(readFileSync(join(root, 'config.yaml'), 'utf8')).not.toContain('fixture-discord-token');
     expect(statSync(join(root, 'config.yaml')).mode & 0o777).toBe(0o600);
-    expect(p.output.join('\n')).toContain('Saved discord. MAMA uses it from its next start');
+    expect(p.output.join('\n')).toContain(
+      'Saved discord. Check the install with mama doctor, then start MAMA'
+    );
   });
 
   it('sets up the sources named and keeps the others', async () => {

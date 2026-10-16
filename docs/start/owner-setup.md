@@ -149,7 +149,9 @@ owners or members later, see [People and their DMs](../guides/people.md).
 | `discord`, `slack` | Owner messages on Discord or Slack, on or off; other settings stay        |
 | `jev`              | Jev on or off; its key file stays when you turn it off                    |
 
-Stop MAMA first with `mama stop`, and start it again with `mama service start`. Answers are
+Stop MAMA first with `mama stop`. Afterwards, `mama doctor` checks the install as MAMA will start
+it (for example, that the service finds a backend you switched to), then `mama service start`
+starts it. Answers are
 checked before anything is saved, as MAMA checks its settings when it starts, so a change that
 leaves a delivery route on a messenger you turned off is refused. Tokens go only to `auth.env`.
 The folders cannot be changed this way, since member data lives in them. A `config.yaml` written

@@ -197,5 +197,9 @@ export async function runInitSection(section: string, options: InitOptions = {})
   } finally {
     lock.release();
   }
-  write(`Saved ${section}. MAMA uses it from its next start: mama service start`);
+  // doctor checks what this command cannot see: the service's PATH for a new backend or a
+  // source's tool, and the rest of the install as boot will read it.
+  write(
+    `Saved ${section}. Check the install with mama doctor, then start MAMA: mama service start`
+  );
 }
