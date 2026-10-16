@@ -440,7 +440,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
         fix:
           name === CRASH_LOG_NAME
             ? 'start.sh empties it at the next start; read it first, it holds what the daemon could not write to its own log'
-            : 'an older daemon is writing it without rotating; restart the daemon on this version',
+            : 'either an older daemon writes it without rotating (restart the daemon on this version) or its rotation fails, and the log says why',
       });
     }
   }
