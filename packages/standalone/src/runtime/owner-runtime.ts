@@ -12,7 +12,7 @@ import {
   retirePersonalTurnReceipt,
   type OwnerMessageLedger,
 } from '../gateways/telegram-message-ledger.js';
-import { createMemberSession } from './member-session.js';
+import { createMemberSession, memberRoomsRoot, roomDirectory } from './member-session.js';
 import { ownerDataReadPaths, ownerNativeDataReadPaths } from './backend-security.js';
 import { memberPaths, validateMemberRoot, setAsideMemberPaths } from './member-paths.js';
 import {
@@ -38,7 +38,7 @@ import {
 } from '@jungjaehoon/mama-core';
 import { randomUUID } from 'node:crypto';
 import { basename, join, isAbsolute } from 'node:path';
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import type { OwnerAttachment } from '../gateways/telegram-attachments.js';
 import type { JsonValue } from '@jungjaehoon/mama-core/knowledge';
 import type { ServerResponse } from 'node:http';
@@ -1361,6 +1361,14 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           if (inputsWaiting()) return 'busy';
           // The principal sessions always route a reset to the session that owns the key.
           await sessions.native.resetSession!(conversationKey(target));
+          // A member's DM reset reaches the rooms open in this process. A room kept on disk from
+          // before a restart (a Codex thread) would resume its old context, so it starts over too.
+          if (target.kind === 'member' && target.room === undefined && memberRoot !== undefined) {
+            const rooms = memberRoomsRoot(memberPaths(memberRoot, principalId).runtimeRoot);
+            for (const channel of options.roomChannels ?? [])
+              if (existsSync(join(rooms, roomDirectory(channel))))
+                await sessions.native.resetSession!(memberRoomSessionKey(principalId, channel));
+          }
           return 'started_over';
         });
       },
