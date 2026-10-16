@@ -17,6 +17,7 @@ import {
   startExports,
   startPathValue,
   versionedNodePath,
+  CRASH_LOG_NAME,
 } from '../launch-files.js';
 import { isIcalSecret, SECRET_NAMES } from '../secrets.js';
 import {
@@ -408,7 +409,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
   );
   checks.push(serviceCheck(platform, home, options.serviceRun ?? defaultServiceRun));
 
-  for (const name of ['daemon.log', 'security-events.jsonl']) {
+  for (const name of ['daemon.log', 'security-events.jsonl', CRASH_LOG_NAME]) {
     const path = join(root, 'logs', name);
     if (!existsSync(path)) continue;
     try {
@@ -429,7 +430,8 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
         name: 'logs',
         status: 'warn',
         detail: `${name} is ${Math.round(size / 1024 / 1024)} MB`,
-        fix: 'log rotation arrives with W1.5; until then move the file aside while the daemon is stopped',
+        // The daemon rotates daemon.log and security-events.jsonl, and start.sh caps crash.log.
+        fix: 'an older daemon or a hand-written launch file is still appending to it; mama service install shows the change',
       });
     }
   }

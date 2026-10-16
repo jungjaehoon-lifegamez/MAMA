@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The daemon writes its own output to `daemon.log` (`logging.file`), rotated at 10 MB with five
+  compressed archives; `security-events.jsonl` rotates at 5 MB the same way. The service manager
+  keeps only what comes before the daemon reads its config, in `logs/crash.log`, which `start.sh`
+  empties at start past 1 MB (`mama service install` rewrites the launch files). Writes stay
+  synchronous, so no line is lost or reordered across a rotation.
+- `mama logs [-n <lines>] [--follow]` prints the daemon log's last lines and follows it across a
+  rotation.
+
 - MAMA OS refuses to open a database a newer version migrated, before anything writes to it, and
   the daemon stops with a clean exit so its service does not restart into the refusal; other
   commands print the refusal's own text. `mama doctor` checks the schema read-only against what this version knows, per migration source:

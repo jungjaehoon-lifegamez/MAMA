@@ -20,6 +20,7 @@ import {
   type DaemonLogger,
 } from '../../src/cli/commands/daemon.js';
 import type { W1Config } from '../../src/runtime/config.js';
+import { DAEMON_LOG_LIMITS, openRotatingLog } from '../../src/runtime/rotating-log.js';
 import type { OutboundAttemptEvent } from '../../src/api/security-events.js';
 import { createOwnerRuntime } from '../../src/runtime/owner-runtime.js';
 import * as egressProxy from '../../src/runtime/egress-proxy.js';
@@ -416,16 +417,20 @@ describe('daemon bootstrap', () => {
   });
 
   it.each([false, true])(
-    'restricts the daemon log before starting runtime %#',
+    'takes its output into the rotated log and tightens the crash log before starting runtime %#',
     async (existing) => {
       const root = mkdtempSync(join(tmpdir(), 'daemon-log-'));
       roots.push(root);
       const options = config(root);
       options.logging.file = join(root, 'logs', 'daemon.log');
+      const crashLog = join(root, 'logs', 'crash.log');
       if (existing) {
         mkdirSync(join(root, 'logs'));
         writeFileSync(options.logging.file, 'retained\n', { mode: 0o644 });
+        // launchd creates the file it redirects to with the user's umask.
+        writeFileSync(crashLog, 'before boot\n', { mode: 0o644 });
       }
+      let captured: string | undefined;
       const daemon = await bootDaemon({
         config: options,
         home: root,
@@ -433,12 +438,20 @@ describe('daemon bootstrap', () => {
         mode: 'replay',
         replay: async () => {},
         logger: { info: () => {}, error: () => {} },
+        // What `mama daemon` passes, without taking over this test process's own output.
+        captureOutput: (file) => {
+          captured = file;
+          openRotatingLog(file, DAEMON_LOG_LIMITS).write('taken over\n');
+        },
         dependencies: {
           ensureIsolation: () => {},
           createOwnerRuntime: async () => {
-            expect(existsSync(options.logging.file)).toBe(true);
+            expect(captured).toBe(options.logging.file);
             expect(statSync(options.logging.file).mode & 0o777).toBe(0o600);
-            if (existing) expect(readFileSync(options.logging.file, 'utf8')).toBe('retained\n');
+            expect(readFileSync(options.logging.file, 'utf8')).toBe(
+              `${existing ? 'retained\n' : ''}taken over\n`
+            );
+            if (existing) expect(statSync(crashLog).mode & 0o777).toBe(0o600);
             return ownerDouble([]) as never;
           },
           createViewerServer: () => viewerDouble([]) as never,

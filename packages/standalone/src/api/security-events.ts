@@ -1,3 +1,4 @@
+import { rotateBeforeWrite, SECURITY_LOG_LIMITS } from '../runtime/rotating-log.js';
 import { randomUUID } from 'node:crypto';
 import { closeSync, fchmodSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -58,10 +59,12 @@ function createAlertGate<Class extends string>(windowMs: number) {
 function appendSecurityEvent(path: string, event: object): boolean {
   try {
     mkdirSync(dirname(path), { recursive: true });
+    const line = JSON.stringify(event) + '\n';
+    rotateBeforeWrite(path, Buffer.byteLength(line), SECURITY_LOG_LIMITS);
     const fd = openSync(path, 'a', 0o600);
     try {
       fchmodSync(fd, 0o600);
-      writeFileSync(fd, JSON.stringify(event) + '\n');
+      writeFileSync(fd, line);
     } finally {
       closeSync(fd);
     }

@@ -1,15 +1,8 @@
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import { readDocumentToolkit } from '../../tools/document-toolkit.js';
-import {
-  closeSync,
-  existsSync,
-  fchmodSync,
-  mkdirSync,
-  openSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { CRASH_LOG_NAME } from '../launch-files.js';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import type { MailboxRow } from '@jungjaehoon/mama-core/runtime/mailbox';
@@ -157,6 +150,11 @@ export interface DaemonBootOptions {
   signal?: AbortSignal;
   /** Called by the control socket's stop; without it, stop is refused until the command ends. */
   requestStop?: () => void;
+  /**
+   * Called once the config names the log file: `mama daemon` sends its own output there, rotated.
+   * Tests and the replay commands leave it out, since they share their process's output.
+   */
+  captureOutput?: (logFile: string) => void;
 }
 
 export interface DaemonReplayContext {
@@ -559,14 +557,12 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
     );
     const timeZone = createTimeZoneSetting(config.timezone);
     validateDeliveryRoutes(config);
-    // launchd may have created the redirected log already; preserve its contents and tighten it.
     mkdirSync(dirname(config.logging.file), { recursive: true });
-    const logDescriptor = openSync(config.logging.file, 'a', 0o600);
-    try {
-      fchmodSync(logDescriptor, 0o600);
-    } finally {
-      closeSync(logDescriptor);
-    }
+    // The service manager redirects only what comes before this point, to the crash log; launchd
+    // creates that file before start.sh's umask applies, so it is tightened here.
+    const crashLog = join(dirname(configPath), 'logs', CRASH_LOG_NAME);
+    if (existsSync(crashLog)) chmodSync(crashLog, 0o600);
+    options.captureOutput?.(config.logging.file);
     declareModelCache();
     paths = pathsFor(configPath, config);
     currentStage = 'isolation';
