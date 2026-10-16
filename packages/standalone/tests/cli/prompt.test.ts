@@ -69,3 +69,19 @@ describe('terminal secret entry', () => {
     }
   });
 });
+
+describe('terminal text entry', () => {
+  it('ends the question as cancelled when its signal aborts, and gives the terminal back', async () => {
+    const t = terminal();
+    try {
+      const stop = new AbortController();
+      const answer = t.prompt.text('Code', stop.signal);
+      stop.abort();
+      await expect(answer).rejects.toThrow(/cancelled/);
+      expect(t.input.isRaw).toBe(false);
+    } finally {
+      t.input.destroy();
+      t.output.destroy();
+    }
+  });
+});

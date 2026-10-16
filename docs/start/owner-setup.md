@@ -36,8 +36,8 @@ See [Backends](../guides/backends.md).
 ## Run onboarding in your terminal
 
 Create a Telegram bot through BotFather and a group with the bot for common changes, even if you
-are the only owner. Have the group's negative chat ID and your own numeric Telegram user ID ready
-(@userinfobot shows it). Then run:
+are the only owner. Use a bot only this install uses: Telegram hands a bot's messages to one
+program at a time, so a bot another MAMA already reads cannot be paired. Then run:
 
 ```bash
 mama init
@@ -47,12 +47,16 @@ It asks for:
 
 - the backend and model;
 - the Telegram bot token;
-- the common group's chat ID;
-- your Telegram user ID;
+- the pairing code the bot sends when you message it privately, which makes you the first owner;
+- `/bind`, sent by you in the common group after you add the bot there as an administrator;
 - two folders outside your home, one for member workspaces and one for the document tools;
 - any sources and other messengers you want.
 
 Tokens are entered with terminal echo off; do not send them to the agent.
+
+Everyone who messages the bot privately while setup waits gets a code, but only the code typed at
+your terminal counts, and only that person's `/bind` names the group. If no `/bind` arrives within
+15 minutes, setup stops without writing anything; run `mama init` again.
 
 Before writing anything, `mama init` checks three things:
 

@@ -34,19 +34,25 @@ build` again. For package-specific setup, see [Owner setup](owner-setup.md).
 
 ## 2. Create the local installation
 
-Create a Telegram bot and a group with it for common changes, even if you are the only owner.
-Have the group's negative chat ID ready (a supergroup also works). Open a private chat with the
-bot for your personal session and have your positive Telegram user ID ready. In your terminal, type:
+Create a Telegram bot and a group with it for common changes, even if you are the only owner (a
+supergroup also works). Use a bot only this install uses: Telegram hands a bot's messages to one
+program at a time. In your terminal, type:
 
 ```bash
 mama init
 ```
 
 At the prompts, enter `claude` or `codex`, the model name, your timezone (press Enter to keep this
-machine's timezone), the Telegram bot token, the negative common group chat ID, your numeric
-Telegram user ID, and the two folders (press Enter to keep the defaults). Positive private
-chat IDs are refused because private chats enter personal sessions. Tokens are typed into hidden prompts. Do not paste them into chat or a configuration
-file. When asked which connectors to enable, type `slack` (or `chatwork`) and enter its token
+machine's timezone) and the Telegram bot token. Setup then pairs you through the bot, so no chat or
+user ID is typed:
+
+1. Send the bot any private message. It answers with a six-digit pairing code; type that code at
+   the prompt. This makes you the first owner, and that private chat your personal session.
+2. Add the bot to the group as an administrator, so it reads the group, and send `/bind` there.
+   The bot answers that the group is now MAMA's common channel. Only your `/bind` counts.
+
+Then enter the two folders (press Enter to keep the defaults). Tokens are typed into hidden
+prompts. Do not paste them into chat or a configuration file. When asked which connectors to enable, type `slack` (or `chatwork`) and enter its token
 and channel ids. To skip a source for now, leave the connector list blank.
 
 **You should see:** `Setup written. Credentials are stored only in auth.env (0600).`, then the
@@ -87,7 +93,7 @@ Send a simple message to confirm the bot can reply, for example:
 
 **Check:** confirm the reply reaches the same Telegram chat and answers your message.
 
-**If not:** verify that the chat id and sender user id match the values entered during `init`, the
+**If not:** check that you wrote from the Telegram account you paired during `init`, the
 bot token is present, and the daemon log shows Telegram polling. See [Telegram troubleshooting](../guides/telegram.md).
 
 ## 5. Connect one source and ask about a work item

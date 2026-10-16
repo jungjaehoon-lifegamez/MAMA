@@ -22,6 +22,7 @@ import { shellQuote, updateSecrets, type SecretName } from '../secrets.js';
 import { probeBackend, type ProbeRun } from '../runtime/backend-probe.js';
 import { defaultTelegramCall, portAnswers, telegramCheck } from '../runtime/diagnostics.js';
 import { defaultRoots, prepareRoot, type DefaultRoots } from '../runtime/default-roots.js';
+import { bindCommonGroup, confirmUpdates, pairOwner } from '../runtime/telegram-pairing.js';
 import {
   initComplete,
   readInitState,
@@ -364,7 +365,7 @@ function checkBackend(
 /** Telegram must accept the token; anything about the group is reported and doctor checks again. */
 async function checkTelegram(
   token: string,
-  chatId: string,
+  chatId: string | undefined,
   call: TelegramCall,
   write: (line: string) => void
 ): Promise<void> {
@@ -387,7 +388,8 @@ async function askAnswers(
   defaults: DefaultRoots | undefined,
   checks: {
     backend(name: 'claude' | 'codex'): void;
-    telegram(token: string, chat: string): Promise<void>;
+    telegram(token: string, chat?: string): Promise<void>;
+    pair(token: string): Promise<{ ownerId: string; chatId: string }>;
   }
 ): Promise<InitAnswers> {
   const backend = await text(prompt, 'Backend (claude|codex)');
@@ -401,13 +403,13 @@ async function askAnswers(
   const secrets: Partial<Record<SecretName, string>> = {
     MAMA_TELEGRAM_TOKEN: nonblankLine(await prompt.secret('Telegram bot token')),
   };
-  const chatId = validChatId(
-    await text(prompt, 'Telegram common group/supergroup chat id (negative)')
-  );
+  await checks.telegram(secrets.MAMA_TELEGRAM_TOKEN!);
+  // No numeric ID is typed: the bot's code names the owner and /bind names the common group.
+  const paired = await checks.pair(secrets.MAMA_TELEGRAM_TOKEN!);
+  const chatId = validChatId(paired.chatId);
+  const ownerTelegramId = validTelegramId(paired.ownerId);
+  // The group's privacy and membership are reported; doctor checks them again later.
   await checks.telegram(secrets.MAMA_TELEGRAM_TOKEN!, chatId);
-  const ownerTelegramId = validTelegramId(
-    await text(prompt, 'Your Telegram user ID (numeric; @userinfobot shows it)')
-  );
   const memberAnswer = (
     await prompt.text(
       `Folder for member workspaces, outside your home${defaults ? ` [${defaults.memberRoot}]` : ''}`
@@ -530,7 +532,7 @@ async function environmentAnswers(
   defaults: DefaultRoots | undefined,
   checks: {
     backend(name: 'claude' | 'codex'): void;
-    telegram(token: string, chat: string): Promise<void>;
+    telegram(token: string, chat?: string): Promise<void>;
   }
 ): Promise<InitAnswers> {
   const backend = requiredVariable(env, 'MAMA_INIT_BACKEND');
@@ -647,6 +649,12 @@ export async function runInit(
   // first is still writing. A setup with only the service step left takes no lock: that step
   // writes no install files, and the daemon a failed wait left starting holds the lock.
   const peek = readInitState(root);
+  // An install set up before init kept its steps, or by hand: init will not take it over. Said
+  // before the lock, since that install's running daemon holds it.
+  if (peek === null && existsSync(configPath))
+    throw new CliInputError(
+      'config.yaml already exists; init will not overwrite it. mama doctor checks this install.'
+    );
   const serviceOnly =
     peek !== null &&
     (['config', 'owner', 'toolkit'] as const).every((step) => peek.done.includes(step));
@@ -695,10 +703,32 @@ export async function runInit(
         home,
         ...(options.user === undefined ? {} : { user: options.user }),
       });
+      const call = options.telegramCall ?? defaultTelegramCall;
       const checks = {
         backend: (name: 'claude' | 'codex') => checkBackend(name, root, locate, options.probeRun),
-        telegram: (token: string, chat: string) =>
-          checkTelegram(token, chat, options.telegramCall ?? defaultTelegramCall, write),
+        telegram: (token: string, chat?: string) => checkTelegram(token, chat, call, write),
+        pair: async (token: string) => {
+          const me = await call(token, 'getMe');
+          const botUsername = String((me.result as { username?: unknown } | undefined)?.username);
+          const owner = await pairOwner({
+            token,
+            call,
+            write,
+            botUsername,
+            ask: (label, signal) => prompt.text(label, signal),
+          });
+          const group = await bindCommonGroup({
+            token,
+            call,
+            write,
+            botUsername,
+            ownerId: owner.ownerId,
+            offset: owner.offset,
+            earlier: owner.groupMessages,
+          });
+          await confirmUpdates({ token, call, write, offset: group.offset });
+          return { ownerId: owner.ownerId, chatId: group.chatId };
+        },
       };
       answers = nonInteractive
         ? await environmentAnswers(options.env ?? process.env, defaults, checks)

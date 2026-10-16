@@ -36,8 +36,9 @@ Run `mama init` yourself in a terminal. It asks for:
 
 - the backend (`claude` or `codex`) and model;
 - the Telegram bot token;
-- the negative chat ID of the Telegram common group or supergroup;
-- your numeric Telegram user ID;
+- the pairing code the bot sends when you message it privately (this names you as the owner);
+- `/bind`, sent by you in the Telegram common group or supergroup after the bot is added as an
+  administrator (this names the common channel);
 - the member workspace and document tool folders (defaults outside HOME);
 - optional connectors, messengers and viewer access settings.
 
