@@ -24,6 +24,7 @@ import {
   hostCommand,
   startOverText,
   statusText,
+  stopText,
   whoamiText,
   type TelegramHostCommand,
   type TelegramHostCommandPort,
@@ -843,6 +844,8 @@ export class TelegramGateway extends BaseGateway {
         // Everyone in a group reads the reply, so the owner's view of every conversation stays
         // in the owner's DM.
         text = statusText(await this.hostCommands.status(target, owner && privateChat)).join('\n');
+      else if (command === 'stop')
+        text = stopText(await this.hostCommands.stopTurn(target), target);
       else text = startOverText(await this.hostCommands.startOver(target), target, owner);
     } catch (error) {
       this.log(

@@ -18,6 +18,7 @@ import { createInterface, type Interface as ReadlineInterface } from 'node:readl
 import {
   HostToolTerminalError,
   NativeInputUncertainError,
+  NativeTurnStoppedError,
   NativeSteeringTargetUnavailableError,
   isHostToolTerminalCode,
   type HostToolBridge,
@@ -840,6 +841,20 @@ export class CodexAppServerProcess {
       throw new NativeInputUncertainError('Native steer acknowledgement is uncertain', target);
     }
     return { ...target };
+  }
+
+  /**
+   * Stop the turn running in this session and keep its thread: `turn/interrupt`, as a timed-out
+   * turn gets, and the prompt rejects with `NativeTurnStoppedError` and the turn's usage so far.
+   * False when no turn runs there.
+   */
+  interrupt(sessionKey: string): boolean {
+    const threadId = this.sessions.get(sessionKey)?.threadId;
+    const turn = threadId === undefined ? undefined : this.turns.get(threadId);
+    if (threadId === undefined || turn === undefined) return false;
+    const error = Object.assign(new NativeTurnStoppedError(), { usage: { ...turn.usage } });
+    this.timeoutTurn(threadId, error, DEFAULT_TIMEOUT);
+    return true;
   }
 
   async reset(sessionKey = this.options.sessionKey): Promise<void> {
@@ -2787,6 +2802,9 @@ export class CodexAppServerProcess {
     }
     if (error instanceof CodexTurnRejectedError) {
       return new CodexTurnRejectedError(this.redact(error.message));
+    }
+    if (error instanceof NativeTurnStoppedError) {
+      return new NativeTurnStoppedError(this.redact(error.message));
     }
     return error instanceof Error
       ? new Error(this.redact(error.message))

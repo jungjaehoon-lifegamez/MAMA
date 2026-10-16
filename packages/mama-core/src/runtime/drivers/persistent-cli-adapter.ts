@@ -328,6 +328,11 @@ export class PersistentCLIAdapter extends EventEmitter implements IModelRunner {
     return this.options.sessionId || this.channelKey;
   }
 
+  /** Stop the request running in this session's process, keyed as `prompt` keys it. */
+  async interrupt(sessionId: string | undefined, sessionKey: string): Promise<boolean> {
+    return this.processPool.interruptProcess(sessionId ?? sessionKey);
+  }
+
   /**
    * Create a new session (creates new process)
    */

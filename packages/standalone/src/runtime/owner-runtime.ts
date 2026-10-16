@@ -211,6 +211,12 @@ export interface OwnerRuntime {
    * member reset is.
    */
   startOver(target: ConversationTarget): Promise<'started_over' | 'busy'>;
+  /**
+   * Stop the turn running in this conversation, keeping the session. The stopped input is left
+   * uncertain, as any turn that fails after dispatch, so it is not run again and its message is
+   * told it was interrupted. Inputs waiting behind it still run.
+   */
+  stopTurn(target: ConversationTarget): Promise<'stopped' | 'idle'>;
   beginStop(): void;
   drain(): Promise<void>;
   stop(): Promise<void>;
@@ -1396,6 +1402,14 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           }
           return 'started_over';
         });
+      },
+      stopTurn: async (target) => {
+        if (stopping) throw new Error('Cannot stop a turn after runtime stop');
+        // A member not served in this process runs no turn.
+        if (target.kind === 'member' && !intakeRuntime.servesPrincipal(target.principalId))
+          return 'idle';
+        // The principal sessions always route an interrupt to the session that owns the key.
+        return (await sessions.native.interrupt!(conversationKey(target))) ? 'stopped' : 'idle';
       },
       stop: () => {
         if (stopPromise) return stopPromise;

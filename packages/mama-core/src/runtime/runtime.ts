@@ -118,6 +118,8 @@ export interface NativeSessionHandle {
   runTurn?(content: ContentBlock[], request?: NativeInvocationOptions): Promise<NativeTurnResult>;
   /** Retire the native context and its pool route, preserving durable product records. */
   resetSession?(sessionKey: string): Promise<void>;
+  /** Stop the turn running in this session, keeping the session; false when none runs. */
+  interrupt?(sessionKey: string): Promise<boolean>;
   /** Add input to the exact active turn; the runtime journals this input separately. */
   steer?(
     content: string,

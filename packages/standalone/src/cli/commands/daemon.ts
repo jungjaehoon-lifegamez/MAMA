@@ -980,6 +980,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
             };
           },
           startOver: (target) => owner!.startOver(target),
+          stopTurn: (target) => owner!.stopTurn(target),
         },
         config: {
           enabled: true,

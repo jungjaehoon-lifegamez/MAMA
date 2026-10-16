@@ -157,6 +157,8 @@ export interface NativeSession {
   hostToolDefinitions(): HostToolDefinition[];
   callAction(call: ActionCall, caller: NativeToolCaller): Promise<ActionResult>;
   resetSession(sessionKey: string): Promise<void>;
+  /** Stop the turn running in this session, keeping the session; false when none runs. */
+  interrupt(sessionKey: string): Promise<boolean>;
   runTurn(content: ContentBlock[], request?: NativeSessionRequest): Promise<NativeTurnResult>;
   steer(
     content: string,
@@ -633,6 +635,7 @@ export function createNativeSession(options: NativeSessionOptions): NativeSessio
         });
       }),
     resetSession: (sessionKey) => runnerRef.current!.resetSession(sessionKey),
+    interrupt: (sessionKey) => runnerRef.current!.interrupt(sessionKey),
     runTurn: async (content, request) => {
       const access = request?.prepareAccess ?? prepareAccess;
       const nativeRequest = {

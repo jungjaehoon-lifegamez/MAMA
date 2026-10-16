@@ -10,6 +10,7 @@ type TelegramMessage = NonNullable<Context['message']>;
 export const TELEGRAM_HOST_COMMANDS = [
   { command: 'whoami', description: 'Your Telegram ID and how MAMA knows you' },
   { command: 'status', description: 'Whether MAMA is working, and on what' },
+  { command: 'stop', description: 'Stop the turn running in this conversation' },
   { command: 'new', description: 'Start this conversation over' },
   { command: 'help', description: 'The commands MAMA answers itself' },
 ] as const;
@@ -22,6 +23,8 @@ export interface TelegramHostCommandPort {
   status(target: ConversationTarget, ownerView: boolean): Promise<ChatStatus>;
   /** Start the conversation over, or say it is busy: a running turn keeps its session. */
   startOver(target: ConversationTarget): Promise<'started_over' | 'busy'>;
+  /** Stop the turn running in this conversation, or say none runs. */
+  stopTurn(target: ConversationTarget): Promise<'stopped' | 'idle'>;
 }
 
 /**
@@ -90,6 +93,13 @@ export function startOverText(
   if (memberDm)
     return 'Started over: your next message here begins a new conversation; the common group goes on until /new there. What MAMA has saved stays.';
   return 'Started over: the next message here begins a new conversation. What MAMA has saved stays.';
+}
+
+export function stopText(result: 'stopped' | 'idle', target: ConversationTarget): string {
+  if (result === 'idle') return 'Nothing is running in this conversation.';
+  return target.kind === 'common'
+    ? "Stopped the common session's running turn. A message it was answering is told it was interrupted; anything waiting still runs."
+    : 'Stopped the turn running in this conversation. Its message is told it was interrupted; messages sent after it still run.';
 }
 
 /** What /status reports; counts beyond the asker's own appear only for owners. */

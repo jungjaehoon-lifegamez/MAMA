@@ -22,6 +22,7 @@ import { CodexAppServerProcess } from '@jungjaehoon/mama-core/runtime/drivers/co
 import {
   HostToolTerminalError,
   NativeSteeringTargetUnavailableError,
+  NativeTurnStoppedError,
 } from '@jungjaehoon/mama-core/runtime/drivers/types';
 import type {
   HostToolBridge,
@@ -2341,6 +2342,35 @@ describe('Story: Codex app-server process', () => {
       await runner.stop();
     }
   );
+
+  it('stops a running turn on request and keeps its thread for the next one', async () => {
+    const item = fixture('delayed');
+    const runner = new CodexAppServerProcess({
+      hostRootDir: '/tmp/mama-test-host',
+      ...item.options,
+      requestTimeout: 5_000,
+    });
+    try {
+      expect(runner.interrupt('session-a')).toBe(false);
+      const running = runner.prompt('long');
+      const stopped = expect(running).rejects.toBeInstanceOf(NativeTurnStoppedError);
+      await vi.waitFor(() =>
+        expect(messages(item.capture).some((m) => m.method === 'turn/start')).toBe(true)
+      );
+      await vi.waitFor(() => expect(runner.interrupt('session-a')).toBe(true));
+      await stopped;
+      await vi.waitFor(() =>
+        expect(messages(item.capture).some((m) => m.method === 'turn/interrupt')).toBe(true)
+      );
+      expect(runner.interrupt('session-a')).toBe(false);
+      writeFileSync(join(item.root, 'release'), '1');
+      await expect(runner.prompt('next')).resolves.toMatchObject({ response: 'hello' });
+      // The session keeps its thread: no second thread/start.
+      expect(messages(item.capture).filter((m) => m.method === 'thread/start')).toHaveLength(1);
+    } finally {
+      await runner.stop();
+    }
+  });
 
   it('ONE-MAMA-P3 Task 4 AC #4: interrupts a codex turn whose counted usage crosses the run budget', async () => {
     const item = fixture('tool-success');
