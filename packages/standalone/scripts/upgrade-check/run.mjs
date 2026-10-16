@@ -179,6 +179,9 @@ try {
     [join(standalone, 'dist', 'cli', 'index.js'), 'doctor', '--json', '--offline'],
     { encoding: 'utf8', env, timeout: 120_000 }
   );
+  if (doctor.error) {
+    throw doctor.error;
+  }
   let checks;
   try {
     checks = JSON.parse(doctor.stdout).checks;

@@ -78,10 +78,25 @@ const daemon = await bootDaemon({
       { query: 'lesson the previous release saved', limit: 5 },
       'upgrade-check:read:lesson'
     );
+    const lesson = found.results.find((result) => result.id === written.lessonId);
+    expect(lesson, `lesson ${written.lessonId} is not found`);
     expect(
-      found.results.some((result) => result.id === written.lessonId),
-      `lesson ${written.lessonId} is not found`
+      lesson?.topic === written.lesson.topic &&
+        lesson?.decision === written.lesson.summary &&
+        lesson?.reasoning === written.lesson.details,
+      `lesson ${written.lessonId} reads ${JSON.stringify(lesson)}`
     );
+
+    // The owner the previous release registered, still the owner.
+    const owner = context.owner.database.adapter
+      .prepare(
+        `SELECT p.status, r.role FROM external_identities e
+           JOIN principals p ON p.principal_id = e.principal_id
+           JOIN principal_roles r ON r.principal_id = p.principal_id
+          WHERE e.external_id = ? AND r.role = 'owner'`
+      )
+      .get(written.ownerTelegramId);
+    expect(owner, `no owner registered for ${written.ownerTelegramId}`);
 
     // The owner message as the previous release stored it in the chat source.
     const chat = await call(

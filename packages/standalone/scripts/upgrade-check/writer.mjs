@@ -162,6 +162,12 @@ const daemon = await bootDaemon({
         },
       ],
       lessonId: lesson.id,
+      lesson: {
+        topic: 'upgrade_check_lesson',
+        summary: 'A lesson the previous release saved',
+        details: 'Kept across an upgrade.',
+      },
+      ownerTelegramId,
       messageRef,
       messageText,
     };
