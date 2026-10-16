@@ -346,8 +346,8 @@ async function viewerHealth(port: number): Promise<boolean> {
   }
 }
 
-/** A probe is one model turn; the daemon's own turn deadline is ten minutes without progress. */
-const PROBE_WAIT_MS = 600_000;
+/** How much longer than the daemon's own turn deadline init waits for the backend check. */
+const PROBE_MARGIN_MS = 60_000;
 
 const initUsage = `Usage: mama init [--non-interactive] | mama init --section <${initSections.join('|')}>`;
 
@@ -659,24 +659,33 @@ export async function runInit(
       pollMs: options.pollMs ?? 1_000,
       write,
     });
-    delete progress.viewer;
-    mark('service');
     // The backend's version and login were read from this terminal. One real turn through the
     // daemon proves it answers as the service runs it: its PATH, environment, sandbox and model.
+    // The step is done only then, so mama init again checks once more after a fix.
+    write('Checking the backend with one real turn through MAMA…');
+    // The daemon gives up on a turn after agent.timeout without progress; wait a little longer.
+    const timeoutMs = loadConfig({ home, path: configPath }).agent.timeout + PROBE_MARGIN_MS;
     const probe = await (
-      options.daemonProbe ?? (() => askDaemon('probe', { home, timeoutMs: PROBE_WAIT_MS }))
-    )();
-    const probed =
-      probe.state === 'running' && probe.reply.ok === true
-        ? (probe.reply.probe as { backend?: unknown; model?: unknown; ms?: unknown })
-        : undefined;
-    if (!probed)
+      options.daemonProbe ?? (() => askDaemon('probe', { home, timeoutMs }))
+    )().catch((error: unknown) => {
       throw new CliInputError(
-        `MAMA is running, but its backend did not answer a real turn (${probe.state === 'running' ? String(probe.reply.error) : 'MAMA stopped'}). mama logs shows why, and mama doctor checks the backend's login; then send your bot a message.`
+        `MAMA did not answer the backend check (${error instanceof Error ? error.message : 'no answer'}). mama logs shows why; then run mama init again.`
       );
+    });
+    if (probe.state !== 'running')
+      throw new CliInputError(
+        'MAMA stopped before its backend could be checked. mama logs shows why; then run mama init again.'
+      );
+    if (probe.reply.ok !== true)
+      throw new CliInputError(
+        `The backend did not answer a real turn: ${String(probe.reply.error)}. mama logs shows more, and mama doctor checks the backend's login; fix it, then run mama init again.`
+      );
+    const probed = probe.reply.probe as { backend?: unknown; model?: unknown; ms?: unknown };
     write(
       `${String(probed.backend)} (${String(probed.model)}) answered a real turn in ${String(probed.ms)} ms.`
     );
+    delete progress.viewer;
+    mark('service');
   }
   write('MAMA is running. Send your bot a message in Telegram.');
 }

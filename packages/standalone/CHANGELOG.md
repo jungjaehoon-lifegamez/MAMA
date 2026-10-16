@@ -27,7 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     installs the document tools, installs and starts the service through `mama service`, and
     waits until the daemon reports it is running and the viewer answers `/health`. Last, the
     daemon runs one real backend turn in a session of its own, so the login is proven as the
-    service runs it; a failure names `mama logs` and `mama doctor`.
+    service runs it; a failure names `mama logs` and `mama doctor`, and `mama init` checks again
+    after a fix.
   - **Repeat-safe:** a failed run continues from its last finished step without asking again,
     and a finished setup is refused.
   - **No typed Telegram IDs:** as the last question, the bot sends a six-digit code to whoever
@@ -48,6 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message it was answering is told it was interrupted and is not run again, and messages sent
   after it still run. In the common group an owner stops the common session's turn and a member
   their own.
+
+### Fixed
+
+- A backend failure such as a signed-out Claude CLI or an API error no longer arrives as MAMA's
+  answer. The turn fails, its message is told it was interrupted, and `daemon.log` names the
+  error. Before, the CLI's error text was sent as the reply and the run was recorded as committed
+  (mama-core).
 
 ## [0.78.0] - 2026-10-16
 

@@ -1433,19 +1433,32 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         if (stopping) throw new Error('Cannot probe the backend after runtime stop');
         if (!nativeSession?.runTurn || !nativeSession.resetSession)
           throw new Error('The owner session has no turn port');
-        const started = Date.now();
-        let modelRunId: string | null = null;
-        try {
-          await nativeSession.runTurn([{ type: 'text', text: BACKEND_PROBE_PROMPT }], {
-            sessionKey: OWNER_PROBE_SESSION_KEY,
-            onModelRunStarted: (id: string) => {
-              modelRunId = id;
-            },
-          } as NativeInvocationOptions);
-        } finally {
-          await nativeSession.resetSession(OWNER_PROBE_SESSION_KEY);
-        }
-        return { modelRunId, ms: Date.now() - started };
+        const native = nativeSession;
+        // Turns of one workspace run one at a time (the web-fetch mode file relies on it), and a
+        // drain waits for this chain.
+        return sessions.turnChain(options.ownerPrincipalId)(async () => {
+          const started = Date.now();
+          let modelRunId: string | null = null;
+          let turnError: unknown;
+          try {
+            await native.runTurn!([{ type: 'text', text: BACKEND_PROBE_PROMPT }], {
+              sessionKey: OWNER_PROBE_SESSION_KEY,
+              onModelRunStarted: (id: string) => {
+                modelRunId = id;
+              },
+            } as NativeInvocationOptions);
+          } catch (error) {
+            turnError = error;
+          }
+          try {
+            await native.resetSession!(OWNER_PROBE_SESSION_KEY);
+          } catch (error) {
+            // The turn's own failure says more than the reset that followed it.
+            throw turnError ?? error;
+          }
+          if (turnError !== undefined) throw turnError;
+          return { modelRunId, ms: Date.now() - started };
+        });
       },
       stop: () => {
         if (stopPromise) return stopPromise;

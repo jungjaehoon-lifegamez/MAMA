@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   again. The Claude driver sends the CLI's `interrupt` control request and keeps the process;
   the Codex driver sends `turn/interrupt` and keeps the thread.
 
+### Fixed
+
+- A Claude CLI result flagged `is_error` fails the request with its text, in the persistent
+  driver and the one-shot wrapper. The CLI reports a failure meeting the model, such as a
+  signed-out CLI ("Not logged in · Please run /login") or an API error, as a `success` result with
+  `is_error: true`. That text was returned as the model's answer, and the model run was committed.
+
 ## [8.8.0] - 2026-10-16
 
 ### Added

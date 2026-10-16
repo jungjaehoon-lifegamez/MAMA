@@ -141,6 +141,32 @@ describe('control socket', () => {
     expect(await requestDaemonControl(paths, 'status')).toEqual({ state: 'stopped', holder: null });
   });
 
+  it('waits for a probe longer than a request may take to arrive', async () => {
+    const paths = daemonControlPaths(root());
+    const lock = acquireInstallLock(paths, 'daemon');
+    const server = await startDaemonControl(
+      paths,
+      {
+        status: () => ({}),
+        stop: () => {},
+        probe: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          return { ms: 150 };
+        },
+      },
+      50
+    );
+    try {
+      expect(await requestDaemonControl(paths, 'probe', 1_000)).toEqual({
+        state: 'running',
+        reply: { ok: true, probe: { ms: 150 } },
+      });
+    } finally {
+      await server.close();
+      lock.release();
+    }
+  });
+
   it('reports stopped when a dead holder left its token behind', async () => {
     const paths = daemonControlPaths(root());
     mkdirSync(join(paths.tokenPath, '..'), { recursive: true });

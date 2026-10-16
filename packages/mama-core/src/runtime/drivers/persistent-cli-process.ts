@@ -994,7 +994,9 @@ export class PersistentClaudeProcess extends EventEmitter {
         // Request complete
         this.clearRequestTimeout();
 
-        if (event.subtype === 'success') {
+        // A failure meeting the model (signed out, an API error) comes as a success result
+        // flagged is_error; its text is the error, not an answer.
+        if (event.subtype === 'success' && event.is_error !== true) {
           const unresolvedToolUses = [...this.toolUseBlocks];
           const completedToolExchanges = [...this.completedToolExchanges];
           const hasToolUse = unresolvedToolUses.length > 0;
@@ -1053,7 +1055,9 @@ export class PersistentClaudeProcess extends EventEmitter {
           const error = this.withPromptUsage(
             this.stopRequested
               ? new NativeTurnStoppedError()
-              : new Error(event.error || `Claude CLI ended the turn: ${event.subtype}`),
+              : new Error(
+                  event.error || event.result || `Claude CLI ended the turn: ${event.subtype}`
+                ),
             event.usage
           );
           this.currentCallbacks?.onError?.(error);

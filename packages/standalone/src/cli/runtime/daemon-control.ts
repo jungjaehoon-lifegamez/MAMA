@@ -192,7 +192,9 @@ const MAX_REQUEST_BYTES = 4096;
  */
 export async function startDaemonControl(
   paths: DaemonControlPaths,
-  handlers: DaemonControlHandlers
+  handlers: DaemonControlHandlers,
+  /** How long a client may take to send its request; tests shorten it. */
+  requestTimeoutMs = 5_000
 ): Promise<DaemonControlServer> {
   const token = randomBytes(32).toString('hex');
   rmSync(paths.tokenPath, { force: true });
@@ -202,7 +204,7 @@ export async function startDaemonControl(
   const server: Server = createServer((socket) => {
     let buffer = '';
     socket.setEncoding('utf8');
-    socket.setTimeout(5_000, () => socket.destroy());
+    socket.setTimeout(requestTimeoutMs, () => socket.destroy());
     socket.on('error', () => socket.destroy());
     socket.on('data', (chunk: string) => {
       buffer += chunk;

@@ -323,7 +323,11 @@ export class ClaudeCLIWrapper {
           // Parse final JSON output
           const result = JSON.parse(stdout.trim());
 
-          if (result.type === 'result' && result.subtype === 'success') {
+          if (
+            result.type === 'result' &&
+            result.subtype === 'success' &&
+            result.is_error !== true
+          ) {
             const promptResult: PromptResult = {
               response: result.result || '',
               session_id: result.session_id || this.sessionId,
@@ -345,7 +349,15 @@ export class ClaudeCLIWrapper {
             callbacks?.onFinal?.({ content: promptResult.response, toolUseBlocks });
             resolve(promptResult);
           } else {
-            throw new Error(`Unexpected result type: ${result.type}`);
+            // A failure meeting the model (signed out, an API error) comes as a result flagged
+            // is_error, its text the error rather than an answer.
+            const error = new Error(
+              result.type === 'result' && result.is_error === true
+                ? result.result || `Claude CLI ended the turn: ${result.subtype}`
+                : `Unexpected result type: ${result.type}`
+            );
+            callbacks?.onError?.(error);
+            reject(error);
           }
         } catch (parseError) {
           const error = new Error(`Failed to parse Claude CLI output: ${parseError}`);

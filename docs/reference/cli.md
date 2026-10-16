@@ -59,9 +59,10 @@ workspace beneath `~/.mama/`, and continues in this order:
 2. installs the document toolkit;
 3. installs and starts the service through `mama service`;
 4. waits until the daemon reports it is running and the viewer answers `/health`;
-5. asks the daemon for one real backend turn (`probe` on the control socket), run in a session of
-   its own that is reset afterwards, so the backend is proven with the service's PATH,
-   environment, sandbox and model.
+5. asks the daemon for one real backend turn (`probe` on the control socket), run on the common
+   session's turn chain in a session of its own that is reset afterwards, so the backend is proven
+   with the service's PATH, environment, sandbox and model. The service step is done only when it
+   answers, so `mama init` checks again after a fix.
 
 Each finished step is recorded in `~/.mama/runtime/init-state.json`. A failed run continues from
 its last step when `mama init` runs again. A finished setup, an existing `config.yaml` without that
