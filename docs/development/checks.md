@@ -2449,3 +2449,23 @@ The implementation writes raw/index data during import only. Replay is the owner
   - Moving the path rewrite into core is a W1.4 candidate.
   - A published skill is proven by test only (no `tools_root/skills` on this Mac).
   - Restoring an older backup brings back data erased after it (P9, owner decision).
+
+### W1.4a: core refuses a newer database; doctor checks the schema (#510, 2026-10-16)
+
+- Result: closes v1.md R2 and R5's first half.
+  - `openDatabase({ refuseNewerSchema: true })` reads the file on its own read-only connection before connecting. It refuses (`NewerSchemaError`, `MAMA_SCHEMA_NEWER`) when a migration source is recorded above what this version ships, or when the database records a source this version does not know.
+  - A version table from before 085 counts as the core's alone.
+  - MAMA OS alone opts in. Its daemon exits cleanly on the refusal; other commands print the refusal text.
+  - `mama doctor` reports the same read per source; only a confirmed `ENOENT` counts as "no database yet".
+- Evidence:
+  - Reviews: Opus three rounds, Codex three, CodeRabbit.
+    - Opus found the check ran per source (core could migrate first) and that pre-085 installs and their restores were refused as "newer".
+    - Codex and CodeRabbit found the check ran after `connect()` (WAL switch, vector cache).
+    - Each has a test: rollback-journal mode unchanged after a refusal, a real pre-085 database built from core's files below 85, an unknown recorded source.
+  - Deployed 10:10:51 KST: eight boot stages, no errors, boot read core 106 and standalone 1. Doctor: 15 ok, 1 warn (the hand-written `start.sh`, W1.6), `schema: core 106 of 106, standalone 1 of 1`.
+  - The deployed `openCoreDatabase` refused a scratch database with standalone at 2 (`MAMA_SCHEMA_NEWER`) and left it in `delete` journal mode. The scratch copy was deleted.
+- Still open:
+  - The plugin hooks (core 5.2.0) and the MCP server (unpinned npx, global 2.4.0 on core 5.5.0) do not run one core, so they do not opt in. W1.4b pins them and adds a release check (plan decision 8, d51fe0126).
+  - W1.4b: CI boots this release on a database the previous published release wrote (R5).
+  - This Mac's plist still has `KeepAlive true`, so a clean exit restarts until W1.6.
+  - Moving restore's path rewrite into core was not taken up here.
