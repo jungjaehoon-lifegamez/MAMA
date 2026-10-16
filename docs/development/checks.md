@@ -2598,3 +2598,16 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Still open:
   - A `/stop` in the common group after #522.
   - Core 8.9.0 carries `interrupt` and goes out with the W2 release.
+
+### W2.1a–b: `mama init` sets up and pairs, member temp per account, deployed (#524, #525, #526, 2026-10-17)
+
+- Result: `mama init` checks, writes, registers the first owner, installs the tools and starts the service (#524), and names the owner and the common group through the bot instead of typed IDs (#526). Member temp parents are per OS account (#525). All three are deployed; none has had its full live run yet, so B1–B6 and I2 stay open.
+- Evidence:
+  - Deploys at 00:00:44 (#524), 01:01:12 (#525) and 01:55:17 KST (#526): eight boot stages each, no errors, doctor 16 ok after #526.
+  - On this Mac's install, which has `config.yaml` and no init step record, `mama init` run through a terminal refused before taking the lock with "config.yaml already exists; init will not overwrite it." `config.yaml` kept its modification time and no `runtime/init-state.json` appeared.
+  - #525 at boot: the old shared member temp parent was removed, and the per-account parent was made 0700 with the two member folders.
+  - Reviews: #524 Opus ×2 and Codex ×4; #525 Codex ×4 and CodeRabbit; #526 Opus ×2 (one P1 and six P2 fixed: held Telegram messages dropped, refusing chats skipped, pairing last, folders made when named) and Codex ×2 with no findings.
+- Still open:
+  - Pairing with a new test bot and group (B2); the live bot cannot be used, since the daemon polls it.
+  - A full `mama init` on a clean macOS account (B1, B3, B4, B6), and I2's real backend call through the isolated launcher.
+  - A member DM turn on the per-account temp parent: no member turn has run since #525.
