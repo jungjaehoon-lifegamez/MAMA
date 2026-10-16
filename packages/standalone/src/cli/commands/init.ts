@@ -7,7 +7,7 @@ import type { ConnectorsConfig } from '../../connectors/framework/types.js';
 import { loadConfig, parseConfig, type W1Config } from '../../runtime/config.js';
 import { validateMemberRoot } from '../../runtime/member-paths.js';
 import { assertRootAncestors, validateToolsRoot } from '../../runtime/tools-paths.js';
-import { backendEnvironment, physicalReadPath } from '../../runtime/backend-security.js';
+import { physicalReadPath } from '../../runtime/backend-security.js';
 import { resolveApiPort } from '../../api/viewer-server.js';
 import { installDocumentToolkit } from '../../tools/document-toolkit.js';
 import { findExecutable } from '../launch-files.js';
@@ -19,7 +19,7 @@ import {
   type PromptAdapter,
 } from '../prompt.js';
 import { shellQuote, updateSecrets, type SecretName } from '../secrets.js';
-import { probeBackend, type ProbeRun } from '../runtime/backend-probe.js';
+import type { ProbeRun } from '../runtime/backend-probe.js';
 import { defaultTelegramCall, portAnswers, telegramCheck } from '../runtime/diagnostics.js';
 import { defaultRoots, prepareRoot, type DefaultRoots } from '../runtime/default-roots.js';
 import {
@@ -43,6 +43,22 @@ import {
 } from '../runtime/daemon-control.js';
 import { defaultServiceRun, type ServiceRun } from '../runtime/systemd-service.js';
 import { askDaemon } from './daemon.js';
+import {
+  askBackend,
+  askDiscord,
+  askJev,
+  askSlack,
+  askTimezone,
+  checkBackend,
+  checkTelegram,
+  collectConnectors,
+  gwsConnectorNames,
+  report,
+  text,
+  validTimezone,
+  yes,
+} from './init-questions.js';
+import { initSections, runInitSection } from './init-section.js';
 import { registerOwnerHolding } from './register-owner.js';
 import { installService, startService } from './service.js';
 
@@ -77,202 +93,6 @@ export interface InitOptions {
   pollMs?: number;
 }
 
-const connectorNames = [
-  'slack',
-  'chatwork',
-  'trello',
-  'calendar',
-  'gmail',
-  'drive',
-  'sheets',
-  'notion',
-  'obsidian',
-  'discord',
-  'telegram',
-  'imessage',
-  'claude-code',
-] as const;
-const connectorSecrets: Record<string, SecretName[]> = {
-  slack: ['MAMA_SLACK_TOKEN'],
-  chatwork: ['MAMA_CHATWORK_TOKEN'],
-  trello: ['MAMA_TRELLO_KEY', 'MAMA_TRELLO_TOKEN'],
-  calendar: [],
-  gmail: [],
-  drive: [],
-  sheets: [],
-  notion: ['MAMA_NOTION_TOKEN'],
-  obsidian: [],
-  discord: ['MAMA_DISCORD_TOKEN'],
-  telegram: ['MAMA_TELEGRAM_SOURCE_TOKEN'],
-  imessage: [],
-  'claude-code': [],
-};
-
-const gwsConnectorNames = new Set(['calendar', 'gmail', 'drive', 'sheets']);
-const noSecretConnectorNames = new Set(['obsidian', 'imessage', 'claude-code']);
-
-async function yes(prompt: PromptAdapter, label: string): Promise<boolean> {
-  const value = (await prompt.text(`${label} [y/N]`)).trim().toLowerCase();
-  if (['', 'n', 'no'].includes(value)) return false;
-  if (['y', 'yes'].includes(value)) return true;
-  throw new CliInputError('Answer yes or no.');
-}
-
-async function text(prompt: PromptAdapter, label: string): Promise<string> {
-  return nonblankLine(await prompt.text(label)).trim();
-}
-
-async function optionalText(prompt: PromptAdapter, label: string): Promise<string | undefined> {
-  const value = (await prompt.text(label)).trim();
-  return value === '' ? undefined : nonblankLine(value).trim();
-}
-
-async function collectConnectors(
-  prompt: PromptAdapter,
-  secrets: Partial<Record<SecretName, string>>
-): Promise<ConnectorsConfig> {
-  const selected = (
-    await prompt.text(
-      `Connectors to enable (${connectorNames.join(', ')}; comma-separated, blank for none)`
-    )
-  ).trim();
-  const names = selected === '' ? [] : [...new Set(selected.split(',').map((name) => name.trim()))];
-  if (names.some((name) => !(connectorNames as readonly string[]).includes(name))) {
-    throw new CliInputError(`Choose connectors from: ${connectorNames.join(', ')}`);
-  }
-  const config: ConnectorsConfig = {};
-  for (const name of names) {
-    for (const tokenName of connectorSecrets[name])
-      secrets[tokenName] = nonblankLine(await prompt.secret(tokenName));
-    if (name === 'slack')
-      secrets.MAMA_SLACK_APP_TOKEN = nonblankLine(await prompt.secret('MAMA_SLACK_APP_TOKEN'));
-    if (name === 'calendar')
-      prompt.write(
-        'Calendar currently reads the primary calendar only; its source channel id is calendar.'
-      );
-
-    if (name === 'gmail') {
-      config.gmail = {
-        enabled: true,
-        pollIntervalMinutes: 5,
-        channels: { inbox: { role: 'hub' } },
-        auth: { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' },
-      };
-      continue;
-    }
-    if (name === 'notion') {
-      config.notion = {
-        enabled: true,
-        pollIntervalMinutes: 5,
-        channels: { workspace: { role: 'hub', name: 'Notion workspace' } },
-        auth: { type: 'token', tokenName: 'MAMA_NOTION_TOKEN' },
-      };
-      continue;
-    }
-    if (name === 'obsidian') {
-      const vaultPath = await text(prompt, 'Obsidian vault path');
-      config.obsidian = {
-        enabled: true,
-        pollIntervalMinutes: 5,
-        channels: { vault: { role: 'hub', name: 'Vault', vaultPath } },
-        auth: { type: 'none' },
-      };
-      continue;
-    }
-    if (name === 'claude-code') {
-      const selectedProjects = (
-        await text(prompt, 'Claude Code project directory names (comma-separated)')
-      )
-        .split(',')
-        .map((project) => project.trim());
-      if (selectedProjects.some((project) => !project || /[/\\\s]/.test(project))) {
-        throw new CliInputError(
-          'Enter Claude Code project directory names without paths or spaces.'
-        );
-      }
-      const channels: ConnectorsConfig[string]['channels'] = {};
-      for (const project of selectedProjects) {
-        const alias = await text(prompt, `Display alias for ${project}`);
-        channels[project] = { role: 'hub', name: alias };
-      }
-      config['claude-code'] = {
-        enabled: true,
-        pollIntervalMinutes: 5,
-        channels,
-        auth: { type: 'none' },
-      };
-      continue;
-    }
-    if (name === 'drive') {
-      const folderIds = (await text(prompt, 'Drive folder ids (comma-separated)'))
-        .split(',')
-        .map((id) => id.trim());
-      if (folderIds.some((id) => !id || /\s/.test(id)))
-        throw new CliInputError('Enter Drive folder ids separated by commas without spaces.');
-      config.drive = {
-        enabled: true,
-        pollIntervalMinutes: 5,
-        channels: Object.fromEntries(
-          folderIds.map((folderId) => [folderId, { role: 'hub', folderId }])
-        ),
-        auth: { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' },
-      };
-      continue;
-    }
-    if (name === 'sheets') {
-      const spreadsheetId = await text(prompt, 'Google Sheets spreadsheet id');
-      const sheetRange = await text(prompt, 'Google Sheets header-and-data range');
-      const dataRange = await optionalText(
-        prompt,
-        'Separate data range (blank to use the full range)'
-      );
-      config.sheets = {
-        enabled: true,
-        pollIntervalMinutes: 5,
-        channels: {
-          spreadsheet: {
-            role: 'hub',
-            spreadsheetId,
-            sheetRange,
-            ...(dataRange ? { dataRange } : {}),
-          },
-        },
-        auth: { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' },
-      };
-      continue;
-    }
-
-    const ids = (
-      await text(
-        prompt,
-        `${name} ${name === 'trello' ? 'board' : 'channel'} ids (comma-separated ids only)`
-      )
-    )
-      .split(',')
-      .map((id) => id.trim());
-    if (ids.some((id) => !id || /\s/.test(id)))
-      throw new CliInputError('Enter channel ids separated by commas, without display names.');
-    if (name === 'calendar' && (ids.length !== 1 || ids[0] !== 'calendar')) {
-      throw new CliInputError(
-        'Calendar supports only the source channel id calendar (primary calendar).'
-      );
-    }
-    config[name] = {
-      enabled: true,
-      pollIntervalMinutes: 5,
-      channels: Object.fromEntries(
-        ids.map((id) => [id, { role: 'hub', ...(name === 'trello' ? { boardId: id } : {}) }])
-      ),
-      auth: gwsConnectorNames.has(name)
-        ? { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' }
-        : noSecretConnectorNames.has(name)
-          ? { type: 'none' }
-          : { type: 'token', tokenName: connectorSecrets[name].at(-1)! },
-    };
-  }
-  return config;
-}
-
 /** The answers `mama init` asks for, from a person at a terminal or from MAMA_INIT_* variables. */
 interface InitAnswers {
   backend: 'claude' | 'codex';
@@ -283,7 +103,6 @@ interface InitAnswers {
   ownerTelegramId: string;
   memberRoot: string;
   toolsRoot: string;
-  /** Which roots are the per-user defaults, whose parent folder is this user's too. */
   connectors: ConnectorsConfig;
   discordConfig: Record<string, unknown>;
   slackConfig: Record<string, unknown>;
@@ -292,21 +111,10 @@ interface InitAnswers {
   jevKey: string | undefined;
 }
 
-type TelegramCall = Parameters<typeof telegramCheck>[2];
-
 function requiredVariable(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name]?.trim();
   if (!value) throw new CliInputError(`mama init --non-interactive needs ${name}`);
   return nonblankLine(value).trim();
-}
-
-function validTimezone(timezone: string): string {
-  try {
-    new Intl.DateTimeFormat('en', { timeZone: timezone });
-  } catch {
-    throw new CliInputError(`Timezone "${timezone}" is not a valid IANA time zone.`);
-  }
-  return timezone;
 }
 
 function validChatId(chatId: string): string {
@@ -324,71 +132,6 @@ function validTelegramId(id: string): string {
   return id;
 }
 
-/**
- * The backend this install will run must be installed, at least the version a release was
- * verified on, and signed in, before anything is written: the daemon would otherwise fail its
- * first turn. Codex is asked about the managed home MAMA gives it.
- */
-function checkBackend(
-  backend: 'claude' | 'codex',
-  root: string,
-  locate: (name: string) => string | undefined,
-  run: ProbeRun | undefined
-): void {
-  const executable = locate(backend);
-  const login =
-    backend === 'claude'
-      ? 'claude auth login'
-      : `CODEX_HOME=${shellQuote(join(root, '.codex'))} codex login`;
-  if (!executable) {
-    throw new CliInputError(
-      `${backend} is not on this PATH. Install it, sign in with: ${login}, then run mama init again.`
-    );
-  }
-  // The daemon starts the backend without secret-shaped variables; a login that only this
-  // shell's API key gives would pass here and fail every turn.
-  const probe = probeBackend(backend, executable, {
-    env: backendEnvironment(),
-    ...(backend === 'codex' ? { codexHome: join(root, '.codex') } : {}),
-    ...(run ? { run } : {}),
-  });
-  if (probe.version === null) throw new CliInputError(`${probe.problem}; check ${executable}`);
-  // An old CLI is the more useful answer even when its login could not be read.
-  if (!probe.versionOk) {
-    throw new CliInputError(
-      `${backend} ${probe.version} is older than ${probe.minimum}, the oldest MAMA was verified on; update it, then run mama init again.`
-    );
-  }
-  if (probe.problem) throw new CliInputError(`${probe.problem}; check ${executable}`);
-  if (!probe.loggedIn) {
-    throw new CliInputError(`${backend} is not signed in. Run: ${login}, then mama init again.`);
-  }
-}
-
-/** Telegram must accept the token; anything about the group is reported and doctor checks again. */
-async function checkTelegram(
-  token: string,
-  chatId: string | undefined,
-  call: TelegramCall,
-  write: (line: string) => void
-): Promise<void> {
-  const check = await telegramCheck(token, chatId, call);
-  if (check.detail === 'Telegram refused the bot token') {
-    throw new CliInputError(`Telegram refused the bot token; copy it again from BotFather.`);
-  }
-  if (check.detail.startsWith('could not reach Telegram')) {
-    throw new CliInputError(
-      `${check.detail}, so the token is unchecked; check the network, then run mama init again.`
-    );
-  }
-  report(check, write);
-}
-
-function report(check: Awaited<ReturnType<typeof telegramCheck>>, write: (line: string) => void) {
-  if (check.status !== 'ok')
-    write(`telegram: ${check.detail}${check.fix ? ` (${check.fix})` : ''}`);
-}
-
 async function askAnswers(
   prompt: PromptAdapter,
   root: string,
@@ -404,14 +147,8 @@ async function askAnswers(
     pair(token: string): Promise<{ ownerId: string; chatId: string }>;
   }
 ): Promise<InitAnswers> {
-  const backend = await text(prompt, 'Backend (claude|codex)');
-  if (backend !== 'claude' && backend !== 'codex')
-    throw new CliInputError('Backend must be claude or codex.');
-  checks.backend(backend);
-  const model = await text(prompt, 'Model');
-  const machineTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const timezoneAnswer = (await prompt.text(`Owner timezone [${machineTimeZone}]`)).trim();
-  const timezone = validTimezone(timezoneAnswer || machineTimeZone);
+  const { backend, model } = await askBackend(prompt, checks.backend);
+  const timezone = await askTimezone(prompt);
   const secrets: Partial<Record<SecretName, string>> = {
     MAMA_TELEGRAM_TOKEN: nonblankLine(await prompt.secret('Telegram bot token')),
   };
@@ -435,54 +172,10 @@ async function askAnswers(
     tools: !toolsAnswer,
   });
   const connectors = await collectConnectors(prompt, secrets);
-  const discordEnabled = await yes(prompt, 'Enable Discord owner messages');
-  let discordConfig: Record<string, unknown> = {
-    enabled: false,
-    allowed_channels: [],
-    owner_user_ids: [],
-  };
-  if (discordEnabled) {
-    secrets.MAMA_DISCORD_TOKEN ??= nonblankLine(await prompt.secret('Discord bot token'));
-    const channel = await text(prompt, 'Discord owner channel id');
-    const user = await text(prompt, 'Discord owner user id');
-    discordConfig = {
-      enabled: true,
-      owner_channel_id: channel,
-      allowed_channels: [channel],
-      owner_user_ids: [user],
-    };
-  }
-  const slackEnabled = await yes(prompt, 'Enable Slack owner messages');
-  let slackConfig: Record<string, unknown> = {
-    enabled: false,
-    allowed_channels: [],
-    owner_user_ids: [],
-  };
-  if (slackEnabled) {
-    secrets.MAMA_SLACK_TOKEN ??= nonblankLine(await prompt.secret('Slack bot token'));
-    secrets.MAMA_SLACK_APP_TOKEN ??= nonblankLine(
-      await prompt.secret('Slack Socket Mode app token')
-    );
-    const channel = await text(prompt, 'Slack owner channel id');
-    const user = await text(prompt, 'Slack owner user id');
-    slackConfig = {
-      enabled: true,
-      owner_channel_id: channel,
-      allowed_channels: [channel],
-      owner_user_ids: [user],
-    };
-  }
+  const discordConfig = await askDiscord(prompt, secrets);
+  const slackConfig = await askSlack(prompt, secrets);
   const viewer: Record<string, string> = {};
-  // Jev (TypeSafe) is the owner's choice: the agent's judge tool, off unless chosen here.
-  const jevEnabled = await yes(
-    prompt,
-    'Use Jev (TypeSafe) so the agent can judge many messages or items without reading them all? Owner text in those calls goes to the Jev service'
-  );
-  let jevKey: string | undefined;
-  if (jevEnabled && !existsSync(join(root, 'jev-key'))) {
-    prompt.write('Get a Jev API key from TypeSafe: https://docs.typesafe.ai');
-    jevKey = nonblankLine(await prompt.secret('Jev API key'));
-  }
+  const { enabled: jevEnabled, key: jevKey } = await askJev(prompt, join(root, 'jev-key'));
   if (await yes(prompt, 'Expose the viewer through a tunnel')) {
     const issuer = await text(prompt, 'Access issuer (HTTPS URL)');
     let url: URL;
@@ -539,7 +232,8 @@ async function askAnswers(
 /**
  * `--non-interactive`: the answers come from the environment (the Docker image and scripts use
  * this). Secrets come only from variables, never from flags, which `ps` shows. No source,
- * messenger besides Telegram, Jev or tunnel is set up this way; `mama init --section` adds them.
+ * messenger besides Telegram, Jev or tunnel is set up this way; `mama init --section` adds the
+ * first three from a terminal.
  */
 async function environmentAnswers(
   env: NodeJS.ProcessEnv,
@@ -650,12 +344,18 @@ async function viewerHealth(port: number): Promise<boolean> {
   }
 }
 
+const initUsage = `Usage: mama init [--non-interactive] | mama init --section <${initSections.join('|')}>`;
+
 export async function runInit(
   args: readonly string[] = [],
   options: InitOptions = {}
 ): Promise<void> {
+  if (args[0] === '--section') {
+    if (args.length !== 2) throw new CliInputError(initUsage);
+    return runInitSection(args[1], options);
+  }
   if (args.length > 1 || (args.length === 1 && args[0] !== '--non-interactive'))
-    throw new CliInputError('Usage: mama init [--non-interactive]');
+    throw new CliInputError(initUsage);
   const nonInteractive = args[0] === '--non-interactive';
   const prompt = options.prompt ?? createTerminalPrompt();
   if (!nonInteractive) requireTTY(prompt);
@@ -728,7 +428,8 @@ export async function runInit(
       });
       const call = options.telegramCall ?? defaultTelegramCall;
       const checks = {
-        backend: (name: 'claude' | 'codex') => checkBackend(name, root, locate, options.probeRun),
+        backend: (name: 'claude' | 'codex') =>
+          checkBackend(name, join(root, '.codex'), locate, options.probeRun),
         telegram: (token: string, chat?: string) => checkTelegram(token, chat, call, write),
         roots: (
           memberAnswer: string,

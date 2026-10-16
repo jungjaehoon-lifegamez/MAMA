@@ -197,7 +197,7 @@ on the developer's own Mac. 1.0 is the stage where anyone can install it.
 | 2. Your own work           | It finds the work in your sources, adds news to it, answers who is doing what and how things went, keeps reports and the board in line with the work, and follows your corrections, on Claude or Codex | Live on one install; 2 of 5 owner checks accepted                                                                       |
 | 3. A shared engine         | Another project builds its own records, history and search on mama-core                                                                                                                                | Done                                                                                                                    |
 | 4. People                  | Each person has a DM with its own records, jobs and skills; members work in the group within what they are granted                                                                                     | In progress: owners' DMs built and in use (one daily, one a few times); members without the owner role not yet verified |
-| 5. 1.0: anyone can install | A fresh install on macOS, Linux or Docker, set up from the docs alone and kept across upgrades                                                                                                         | In progress: 10 of 52                                                                                                   |
+| 5. 1.0: anyone can install | A fresh install on macOS, Linux or Docker, set up from the docs alone and kept across upgrades                                                                                                         | In progress: 11 of 52                                                                                                   |
 
 Messengers: Telegram is live; Discord and Slack have not run live yet. Windows is not planned for
 1.0.
@@ -207,7 +207,7 @@ Messengers: Telegram is live; Discord and Slack have not run live yet. Windows i
 | Area             | What it covers                                                                                                              | Done        |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------- |
 | Install          | One command per platform, a check of the AI CLI you sign in to, a Node path that survives upgrades, document tools on Linux | 1 / 6       |
-| Setup            | Pairing in Telegram instead of typed IDs, defaults instead of edited files, the service started for you                     | 0 / 7       |
+| Setup            | Pairing in Telegram instead of typed IDs, defaults instead of edited files, the service started for you                     | 1 / 7       |
 | Operations       | Status, `mama doctor`, update (also from chat), backup and restore, upgrade checks, logs, log rotation, uninstall           | 7 / 9       |
 | Linux            | Document rendering, sandbox checks, a full run                                                                              | 0 / 5       |
 | Docker           | An official image, signing in inside the container, the same isolation inside it                                            | 0 / 5       |
@@ -215,7 +215,7 @@ Messengers: Telegram is live; Discord and Slack have not run live yet. Windows i
 | People           | The remaining live checks, and use by more than one person                                                                  | 0 / 5       |
 | Your own work    | The owner checks of stage 2 accepted                                                                                        | 0 / 4       |
 | Fixes and guides | Chatwork polling, shutdown order, prompt size, test stability, CI coverage, a guide per platform, what 1.x promises         | 1 / 7       |
-| **Total**        |                                                                                                                             | **10 / 52** |
+| **Total**        |                                                                                                                             | **11 / 52** |
 
 Each item, with what is true today and how it is checked, is in the
 [1.0 work list](docs/development/work/v1.md). Ongoing live checks are in the

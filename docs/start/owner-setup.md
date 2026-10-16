@@ -83,7 +83,7 @@ Setup then asks whether to use Jev (TypeSafe). With it, the agent can ask Jev ty
 inside its scripts (the `judge` action) to narrow many messages or items without reading them all.
 Owner text in those calls goes to the Jev service, so it is off unless you choose it. Choosing it
 asks for a Jev API key, stored in `~/.mama/jev-key` (0600), and sets `jev.enabled: true` in
-`config.yaml`; remove that line to turn it off. MAMA works the same without it.
+`config.yaml`; `mama init --section jev` turns it off. MAMA works the same without it.
 
 The optional tunnel prompts collect the Cloudflare Access issuer, audience and
 viewer hostname. Configure that Access application and tunnel separately; see
@@ -135,6 +135,27 @@ The OS database defaults to `~/.mama/memory.db`. Development memory uses
 Each owner gets a personal member session; the common group keeps the common session. Private
 chats cannot serve as the common channel: they always enter that person's intake. To add more
 owners or members later, see [People and their DMs](../guides/people.md).
+
+## Change one part later
+
+`mama init --section <part>` asks one part of the setup again and saves it:
+
+| Part               | What it asks                                                              |
+| ------------------ | ------------------------------------------------------------------------- |
+| `telegram`         | A new bot token; the bot must already be in the common group              |
+| `model`            | The backend and model, checked as setup checks them                       |
+| `timezone`         | Your time zone                                                            |
+| `connectors`       | Sources to set up; those you name are set up again, the others stay as is |
+| `discord`, `slack` | Owner messages on Discord or Slack, on or off; other settings stay        |
+| `jev`              | Jev on or off; its key file stays when you turn it off                    |
+
+Stop MAMA first with `mama stop`. Afterwards, `mama doctor` checks the install as MAMA will start
+it (for example, that the service finds a backend you switched to), then `mama service start`
+starts it. Answers are
+checked before anything is saved, as MAMA checks its settings when it starts, so a change that
+leaves a delivery route on a messenger you turned off is refused. Tokens go only to `auth.env`.
+The folders cannot be changed this way, since member data lives in them. A `config.yaml` written
+by hand is written again in plain YAML without its comments, and the command says so.
 
 ## The running service
 

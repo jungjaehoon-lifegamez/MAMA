@@ -13,6 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import * as yaml from 'js-yaml';
 import { tmpdir } from 'node:os';
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import { defaultToolsRoot } from '../../src/cli/commands/tools.js';
@@ -882,6 +883,250 @@ describe('mama init', () => {
     };
     await expect(runInit([], options(p.adapter))).rejects.toThrow(/cancelled/);
     expect(existsSync(root)).toBe(false);
+  });
+});
+
+describe('mama init --section', () => {
+  const readDoc = () =>
+    yaml.load(readFileSync(join(root, 'config.yaml'), 'utf8')) as Record<string, unknown>;
+  /** A value auth.env holds, read as start.sh reads it. */
+  const secret = (name: string) =>
+    new RegExp(`^export ${name}='([^']*)'$`, 'm').exec(
+      readFileSync(join(root, 'auth.env'), 'utf8')
+    )?.[1];
+
+  /** A finished setup, as the sections find it. */
+  async function setUp(): Promise<void> {
+    await runInit([], options(prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]).adapter));
+  }
+
+  it('changes only the part asked for, with its token in auth.env', async () => {
+    await setUp();
+    const before = readDoc();
+    const p = prompt(['y', 'fixture-channel', 'fixture-user'], ['fixture-discord-token']);
+    await runInit(['--section', 'discord'], options(p.adapter));
+    const after = readDoc();
+    expect(after.discord).toEqual({
+      ...(before.discord as object),
+      enabled: true,
+      owner_channel_id: 'fixture-channel',
+      allowed_channels: ['fixture-channel'],
+      owner_user_ids: ['fixture-user'],
+    });
+    expect({ ...after, discord: before.discord }).toEqual(before);
+    expect(secret('MAMA_DISCORD_TOKEN')).toBe('fixture-discord-token');
+    expect(readFileSync(join(root, 'config.yaml'), 'utf8')).not.toContain('fixture-discord-token');
+    expect(statSync(join(root, 'config.yaml')).mode & 0o777).toBe(0o600);
+    expect(p.output.join('\n')).toContain(
+      'Saved discord. Check the install with mama doctor, then start MAMA'
+    );
+  });
+
+  it('sets up the sources named and keeps the others', async () => {
+    await setUp();
+    await runInit(
+      ['--section', 'connectors'],
+      options(prompt(['trello', 'board-1'], ['fixture-trello-key', 'fixture-trello']).adapter)
+    );
+    await runInit(
+      ['--section', 'connectors'],
+      options(prompt(['chatwork', 'room-1'], ['fixture-chatwork']).adapter)
+    );
+    const loaded = loadConnectorConfig(join(root, 'connectors.json'));
+    expect(loaded.ok && Object.keys(loaded.config).sort()).toEqual(['chatwork', 'trello']);
+    expect(secret('MAMA_TRELLO_TOKEN')).toBe('fixture-trello');
+    expect(secret('MAMA_CHATWORK_TOKEN')).toBe('fixture-chatwork');
+    expect(secret('MAMA_TELEGRAM_TOKEN')).toBe('fixture-telegram');
+  });
+
+  it('checks a new backend and model as init does, keeping the other agent settings', async () => {
+    await setUp();
+    const before = readDoc().agent as Record<string, unknown>;
+    await runInit(
+      ['--section', 'model'],
+      options(prompt(['claude', 'fixture-model-2'], []).adapter)
+    );
+    expect(readDoc().agent).toEqual({ ...before, backend: 'claude', model: 'fixture-model-2' });
+    const missing = prompt(['claude'], []);
+    await expect(
+      runInit(['--section', 'model'], options(missing.adapter, { findExecutable: () => undefined }))
+    ).rejects.toThrow(/claude is not on this PATH/);
+  });
+
+  it('refuses an answer the setup would refuse, writing nothing', async () => {
+    await setUp();
+    const before = readFileSync(join(root, 'config.yaml'), 'utf8');
+    await expect(
+      runInit(['--section', 'timezone'], options(prompt([], [], [true, true], 'Mars/Base').adapter))
+    ).rejects.toThrow(/not a valid IANA time zone/);
+    expect(readFileSync(join(root, 'config.yaml'), 'utf8')).toBe(before);
+    await runInit(
+      ['--section', 'timezone'],
+      options(prompt([], [], [true, true], 'Asia/Tokyo').adapter)
+    );
+    expect(readDoc().timezone).toBe('Asia/Tokyo');
+  });
+
+  it('turns Jev on with its key file and off again, keeping the key', async () => {
+    await setUp();
+    await runInit(
+      ['--section', 'jev'],
+      options(prompt([], ['fixture-jev-key'], [true, true], undefined, 'y').adapter)
+    );
+    expect(loadConfig({ home }).jev).toMatchObject({ enabled: true });
+    expect(statSync(join(root, 'jev-key')).mode & 0o777).toBe(0o600);
+    await runInit(
+      ['--section', 'jev'],
+      options(prompt([], [], [true, true], undefined, 'n').adapter)
+    );
+    expect(readDoc().jev).toMatchObject({ enabled: false });
+    expect(readFileSync(join(root, 'jev-key'), 'utf8')).toBe('fixture-jev-key\n');
+  });
+
+  it('checks a new bot token against the common group before saving it', async () => {
+    await setUp();
+    const refused = options(prompt([], ['fixture-telegram-2']).adapter, {
+      telegramCall: async () => ({ ok: false, error_code: 401 }),
+    });
+    await expect(runInit(['--section', 'telegram'], refused)).rejects.toThrow(
+      /refused the bot token/
+    );
+    expect(secret('MAMA_TELEGRAM_TOKEN')).toBe('fixture-telegram');
+    await runInit(['--section', 'telegram'], options(prompt([], ['fixture-telegram-2']).adapter));
+    expect(secret('MAMA_TELEGRAM_TOKEN')).toBe('fixture-telegram-2');
+    expect(readDoc().telegram).toMatchObject({ owner_chat_id: '-100' });
+  });
+
+  it('keeps a hand-written config readable and refuses a change its delivery routes forbid', async () => {
+    await setUp();
+    const path = join(root, 'config.yaml');
+    const doc = readDoc();
+    doc.discord = {
+      enabled: true,
+      owner_channel_id: 'fixture-channel',
+      allowed_channels: ['fixture-channel'],
+      owner_user_ids: ['fixture-user'],
+      file_delivery: false,
+    };
+    doc.delivery = { ...(doc.delivery as object), reports: 'discord' };
+    // Written by hand: a comment at the end of a line, and a block MAMA does not read.
+    writeFileSync(
+      path,
+      `${yaml.dump(doc)}legacy_block:\n  since: 2026-07-01 # kept from an older setup\n`
+    );
+    const handWritten = readFileSync(path, 'utf8');
+    await expect(
+      runInit(['--section', 'discord'], options(prompt(['n'], []).adapter))
+    ).rejects.toThrow(/delivery\.reports targets discord.*set that route in config\.yaml/);
+    expect(readFileSync(path, 'utf8')).toBe(handWritten);
+    const p = prompt(['y', 'fixture-channel-2', 'fixture-user'], ['fixture-discord-token']);
+    await runInit(['--section', 'discord'], options(p.adapter));
+    expect(readDoc().discord).toEqual({
+      enabled: true,
+      owner_channel_id: 'fixture-channel-2',
+      allowed_channels: ['fixture-channel-2'],
+      owner_user_ids: ['fixture-user'],
+      file_delivery: false,
+    });
+    expect(readDoc()).toHaveProperty('legacy_block');
+    expect(p.output.join('\n')).toContain('its comments and layout were not kept');
+    for (const folder of [root, join(root, 'runtime')])
+      expect(readdirSync(folder).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('refuses a new bot that is not in the common group, saving nothing', async () => {
+    await setUp();
+    const outside = options(prompt([], ['fixture-telegram-2']).adapter, {
+      telegramCall: async (_token, method) =>
+        method === 'getMe'
+          ? { ok: true, result: { id: 9002, username: 'fixture_bot_2' } }
+          : { ok: true, result: { status: 'left' } },
+    });
+    await expect(runInit(['--section', 'telegram'], outside)).rejects.toThrow(
+      /the bot is not in the common group: add the bot to the group.*token was not saved/
+    );
+    // Membership Telegram would not confirm is no better than none.
+    const unknown = options(prompt([], ['fixture-telegram-2']).adapter, {
+      telegramCall: async (_token, method) =>
+        method === 'getMe'
+          ? { ok: true, result: { id: 9002, username: 'fixture_bot_2' } }
+          : { ok: false, error_code: 500 },
+    });
+    await expect(runInit(['--section', 'telegram'], unknown)).rejects.toThrow(
+      /did not answer about the common group/
+    );
+    expect(secret('MAMA_TELEGRAM_TOKEN')).toBe('fixture-telegram');
+  });
+
+  it('refuses sources boot would refuse, and replaces an entry whatever its case', async () => {
+    await setUp();
+    // A vault holding the wiki would read MAMA's own wiki writes back as source changes.
+    const before = readFileSync(join(root, 'connectors.json'), 'utf8');
+    const vault = options(prompt(['obsidian', root], []).adapter);
+    await expect(runInit(['--section', 'connectors'], vault)).rejects.toThrow(
+      /connectors.json would be refused at boot: .*contains the configured wiki root/
+    );
+    expect(readFileSync(join(root, 'connectors.json'), 'utf8')).toBe(before);
+    expect(readdirSync(join(root, 'runtime')).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    writeFileSync(
+      join(root, 'connectors.json'),
+      JSON.stringify({
+        Trello: {
+          enabled: true,
+          pollIntervalMinutes: 5,
+          channels: { 'board-0': { role: 'hub', boardId: 'board-0' } },
+          auth: { type: 'token', tokenName: 'MAMA_TRELLO_TOKEN' },
+        },
+      })
+    );
+    await runInit(
+      ['--section', 'connectors'],
+      options(prompt(['trello', 'board-1'], ['fixture-trello-key', 'fixture-trello']).adapter)
+    );
+    const saved = JSON.parse(readFileSync(join(root, 'connectors.json'), 'utf8')) as Record<
+      string,
+      { channels: object }
+    >;
+    expect(Object.keys(saved)).toEqual(['trello']);
+    expect(Object.keys(saved.trello.channels)).toEqual(['board-1']);
+  });
+
+  it('checks a Codex login in the Codex home the daemon uses', async () => {
+    await setUp();
+    const doc = readDoc();
+    doc.agent = { ...(doc.agent as object), codex_home: join(home, 'codex-elsewhere') };
+    writeFileSync(join(root, 'config.yaml'), yaml.dump(doc));
+    const homes: Array<string | undefined> = [];
+    const probe = options(prompt(['codex', 'fixture-model'], []).adapter, {
+      probeRun: (command, args, env) => {
+        if (args[0] === 'login') homes.push(env?.CODEX_HOME);
+        return probeOk(command, args);
+      },
+    });
+    await runInit(['--section', 'model'], probe);
+    expect(homes).toEqual([join(home, 'codex-elsewhere')]);
+  });
+
+  it('refuses without a setup, beside a running MAMA, and for an unknown part', async () => {
+    const p = prompt([], []);
+    await expect(runInit(['--section', 'timezone'], options(p.adapter))).rejects.toThrow(
+      /not set up here; run mama init first/
+    );
+    await setUp();
+    const held = acquireInstallLock(daemonControlPaths(root), 'daemon');
+    try {
+      await expect(runInit(['--section', 'timezone'], options(p.adapter))).rejects.toThrow(
+        /already running here.*stop it first/
+      );
+    } finally {
+      held.release();
+    }
+    await expect(runInit(['--section', 'folders'], options(p.adapter))).rejects.toThrow(
+      /Choose a section: telegram, model/
+    );
+    await expect(runInit(['--section'], options(p.adapter))).rejects.toThrow(
+      /mama init --section <telegram\|model/
+    );
   });
 });
 

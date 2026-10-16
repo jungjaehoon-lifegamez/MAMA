@@ -111,7 +111,7 @@ async function main(): Promise<void> {
     return;
   }
   console.log(
-    'Usage: mama init [--non-interactive] | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop | service install|start|stop|restart|status|uninstall | uninstall [--dry-run] [--data [--toolkit]] | doctor [--json] [--offline] [--report] | logs [-n <lines>] [--follow] | backup [--include-secrets] [--logs] | restore <archive> | restore --rollback'
+    'Usage: mama init [--non-interactive] | init --section <part> | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop | service install|start|stop|restart|status|uninstall | uninstall [--dry-run] [--data [--toolkit]] | doctor [--json] [--offline] [--report] | logs [-n <lines>] [--follow] | backup [--include-secrets] [--logs] | restore <archive> | restore --rollback'
   );
 }
 
