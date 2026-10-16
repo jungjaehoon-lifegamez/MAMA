@@ -5,6 +5,7 @@
  */
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -29,6 +30,10 @@ vi.mock('node:child_process', async (original) => ({
 
 const roots: string[] = [];
 const platform = process.platform;
+// A person's temporary files live under the machine's shared /tmp parents, named by a hash of the
+// id. Ids no real install uses keep the tests away from a running install's people.
+const PERSON = `fixture-person-${process.pid}-${Date.now()}`;
+const OTHER = `fixture-other-${process.pid}-${Date.now()}`;
 afterEach(() => {
   vi.mocked(spawnSync).mockReset();
   Object.defineProperty(process, 'platform', { value: platform });
@@ -64,13 +69,13 @@ function install(options: { loaded?: boolean } = {}) {
   const members = join(outside, 'members');
   const tools = join(outside, 'tools');
   mkdirSync(join(root, 'logs'), { recursive: true });
-  mkdirSync(join(members, 'person'), { recursive: true });
+  mkdirSync(join(members, PERSON), { recursive: true });
   mkdirSync(join(members, '.retired-gone-1'), { recursive: true });
   mkdirSync(join(members, 'not-mama'), { recursive: true });
   mkdirSync(join(tools, 'skills', 'common'), { recursive: true });
   mkdirSync(join(tools, 'apps'), { recursive: true });
   writeFileSync(join(root, 'logs', 'daemon.log'), 'x'.repeat(1024));
-  writeFileSync(join(members, 'person', 'state.json'), '{}');
+  writeFileSync(join(members, PERSON, 'state.json'), '{}');
   writeFileSync(join(tools, 'skills', 'common', 'SKILL.md'), '# skill');
   writeFileSync(join(tools, 'apps', 'toolkit'), 'binary');
   writeFileSync(
@@ -86,7 +91,7 @@ function install(options: { loaded?: boolean } = {}) {
   );
   const db = new Database(join(root, 'memory.db'));
   db.exec('CREATE TABLE principals (principal_id TEXT PRIMARY KEY)');
-  db.prepare("INSERT INTO principals VALUES ('person'), ('owner')").run();
+  db.prepare('INSERT INTO principals VALUES (?), (?)').run(PERSON, OTHER);
   db.close();
   const plist = join(home, 'Library', 'LaunchAgents', 'com.mama.server.plist');
   mkdirSync(join(plist, '..'), { recursive: true });
@@ -126,7 +131,7 @@ describe('mama uninstall', () => {
     });
     expect(code).toBe(0);
     expect(out[0]).toBe(`would stop MAMA and remove its service: ${plist}`);
-    expect(out.join('\n')).toContain(`would remove ${join(members, 'person')} (`);
+    expect(out.join('\n')).toContain(`would remove ${join(members, PERSON)} (`);
     expect(out.join('\n')).toContain(`would remove ${join(members, '.retired-gone-1')} (`);
     expect(out.join('\n')).not.toContain(join(members, 'not-mama'));
     expect(out.join('\n')).toContain(`would remove ${members} too, if nothing else is left in it`);
@@ -157,11 +162,11 @@ describe('mama uninstall', () => {
     const { home, root, members, tools, plist } = install();
     const asked = prompt(root);
     expect(await runUninstall(['--data'], { ...base(home), prompt: asked })).toBe(0);
-    expect(asked.lines.join('\n')).toContain(`removes ${join(members, 'person')}`);
+    expect(asked.lines.join('\n')).toContain(`removes ${join(members, PERSON)}`);
     for (const path of [
       plist,
       root,
-      join(members, 'person'),
+      join(members, PERSON),
       join(members, '.retired-gone-1'),
       join(tools, 'skills'),
     ]) {
@@ -172,15 +177,57 @@ describe('mama uninstall', () => {
     expect(existsSync(join(tools, 'apps', 'toolkit'))).toBe(true);
   });
 
-  it("also removes the toolkit's versions with --toolkit, and tools_root once empty", async () => {
+  it("also removes the toolkit's read-only versions with --toolkit, and tools_root once empty", async () => {
     const { home, root, tools } = install();
     rmSync(join(tools, 'apps'), { recursive: true });
-    mkdirSync(join(tools, 'v-1', 'apps'), { recursive: true });
+    // As the installer leaves a version: folders 0555, files 0444.
+    mkdirSync(join(tools, 'v-1', 'program'), { recursive: true });
+    writeFileSync(join(tools, 'v-1', 'program', 'soffice'), 'binary');
+    chmodSync(join(tools, 'v-1', 'program', 'soffice'), 0o444);
+    chmodSync(join(tools, 'v-1', 'program'), 0o555);
+    chmodSync(join(tools, 'v-1'), 0o555);
     symlinkSync(join(tools, 'v-1'), join(tools, 'current'));
+    mkdirSync(join(tools, '.leases'));
+    writeFileSync(join(tools, '.mama-document-toolkit'), '');
     expect(
       await runUninstall(['--data', '--toolkit'], { ...base(home), prompt: prompt(root) })
     ).toBe(0);
     expect(existsSync(tools)).toBe(false);
+  });
+
+  it("leaves Homebrew's apps and fonts, says how to remove them, and keeps tools_root", async () => {
+    const { home, root, tools } = install();
+    mkdirSync(join(tools, 'fonts'));
+    const out: string[] = [];
+    expect(
+      await runUninstall(['--data', '--toolkit'], {
+        ...base(home),
+        write: (line) => out.push(line),
+        prompt: prompt(root),
+      })
+    ).toBe(0);
+    expect(existsSync(join(tools, 'apps'))).toBe(true);
+    expect(out.join('\n')).toContain(`kept ${tools}`);
+  });
+
+  it('removes what it can when one entry cannot be removed, and reports it', async () => {
+    const { home, root, members, plist } = install();
+    // The person's folder sits in a folder that does not allow removing it.
+    chmodSync(members, 0o555);
+    const out: string[] = [];
+    try {
+      expect(
+        await runUninstall(['--data'], {
+          ...base(home),
+          write: (line) => out.push(line),
+          prompt: prompt(root),
+        })
+      ).toBe(1);
+    } finally {
+      chmodSync(members, 0o755);
+    }
+    expect(out.join('\n')).toContain(`could not remove ${join(members, PERSON)}`);
+    for (const path of [plist, root]) expect(existsSync(path)).toBe(false);
   });
 
   it('refuses the home folder written in another letter case', async () => {

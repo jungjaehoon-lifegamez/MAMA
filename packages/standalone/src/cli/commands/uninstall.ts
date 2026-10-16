@@ -14,6 +14,8 @@ import { dirname, join, relative, sep } from 'node:path';
 import Database from 'better-sqlite3';
 import { defaultConfigPath, loadConfig, type W1Config } from '../../runtime/config.js';
 import { physicalReadPath } from '../../runtime/backend-security.js';
+import { memberClaudeTmpDir, memberRoomTmpRoot } from '../../runtime/member-paths.js';
+import { removeVersion } from '../../tools/document-toolkit.js';
 import { CliInputError, createTerminalPrompt, requireTTY, type PromptAdapter } from '../prompt.js';
 import { acquireInstallLock, daemonControlPaths, lockHolder } from '../runtime/daemon-control.js';
 import { runStop } from './control.js';
@@ -29,6 +31,8 @@ export interface UninstallOptions extends ServiceOptions {
 interface Entry {
   path: string;
   what: string;
+  /** How it is removed when a plain recursive removal cannot be (a read-only toolkit version). */
+  remove?: (path: string) => void;
 }
 
 interface DataPlan {
@@ -122,6 +126,9 @@ function dataPlan(home: string, configPath: string, toolkit: boolean): DataPlan 
         const folder = join(config.member_root, id);
         if (existsSync(folder))
           plan.remove.push({ path: folder, what: `${id}'s workspace and state` });
+        for (const temp of [memberClaudeTmpDir(id), memberRoomTmpRoot(id)]) {
+          if (existsSync(temp)) plan.remove.push({ path: temp, what: `${id}'s temporary files` });
+        }
       }
       for (const entry of readdirSync(config.member_root)) {
         if (entry.startsWith('.retired-')) {
@@ -132,10 +139,24 @@ function dataPlan(home: string, configPath: string, toolkit: boolean): DataPlan 
     }
     if (config.tools_root !== undefined && existsSync(config.tools_root)) {
       for (const entry of readdirSync(config.tools_root)) {
+        const path = join(config.tools_root, entry);
         if (entry === 'skills') {
-          plan.remove.push({ path: join(config.tools_root, entry), what: 'the common skills' });
-        } else if (toolkit && (entry === 'current' || entry.startsWith('v-'))) {
-          plan.remove.push({ path: join(config.tools_root, entry), what: 'the document toolkit' });
+          plan.remove.push({ path, what: 'the common skills' });
+        } else if (!toolkit) {
+          continue;
+        } else if (entry.startsWith('v-')) {
+          plan.remove.push({ path, what: 'a document toolkit version', remove: removeVersion });
+        } else if (
+          entry === 'current' ||
+          entry.startsWith('.current-') ||
+          entry === '.leases' ||
+          entry === '.mama-document-toolkit'
+        ) {
+          plan.remove.push({ path, what: 'the document toolkit' });
+        } else if (entry === 'apps' || entry === 'fonts') {
+          // Homebrew installed these casks into tools_root and keeps their records.
+          const casks = entry === 'apps' ? 'libreoffice' : 'font-noto-sans-cjk font-noto-serif-cjk';
+          plan.stays.push({ path, what: `installed by Homebrew: brew uninstall --cask ${casks}` });
         }
       }
       if (toolkit) plan.emptied.push(config.tools_root);
@@ -147,9 +168,20 @@ function dataPlan(home: string, configPath: string, toolkit: boolean): DataPlan 
       { path: config.agent.codex_home ?? join(root, '.codex'), what: 'the Codex home' },
       { path: config.jev.keyFile, what: 'the Jev key' },
       { path: config.jev.vocabFile, what: "Jev's vocabulary" },
+      ...(config.agent.codex_cwd
+        ? [{ path: config.agent.codex_cwd, what: 'the Codex workspace' }]
+        : []),
+      ...(config.agent.tools?.mcp_config
+        ? [{ path: config.agent.tools.mcp_config, what: 'the MCP configuration' }]
+        : []),
     ];
     for (const entry of elsewhere) {
-      if (existsSync(entry.path) && !within(root, entry.path)) plan.stays.push(entry);
+      if (existsSync(entry.path) && !within(root, entry.path)) {
+        plan.stays.push({
+          path: entry.path,
+          what: `${entry.what}, set outside the MAMA home; remove it yourself if it is MAMA's alone`,
+        });
+      }
     }
   }
   plan.remove.push({
@@ -175,9 +207,7 @@ export async function runUninstall(
     for (const folder of plan.emptied)
       say(`${prefix} ${folder} too, if nothing else is left in it`);
     for (const entry of plan.stays) {
-      say(
-        `stays: ${entry.path} (${entry.what}, set outside the MAMA home; remove it yourself if it is MAMA's alone)`
-      );
+      say(`stays: ${entry.path} (${entry.what})`);
     }
   };
 
@@ -211,24 +241,32 @@ export async function runUninstall(
     return removed;
   }
 
+  // One entry that cannot be removed does not stop the rest half-way; each failure is reported.
+  const failed: string[] = [];
   const lock = acquireInstallLock(control, 'uninstall');
   try {
     for (const entry of plan.remove) {
-      rmSync(entry.path, { recursive: true, force: true });
-      write(`removed ${entry.path}`);
+      try {
+        if (entry.remove) entry.remove(entry.path);
+        else rmSync(entry.path, { recursive: true, force: true });
+        write(`removed ${entry.path}`);
+      } catch (error) {
+        failed.push(`${entry.path}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
     for (const folder of plan.emptied) {
       if (existsSync(folder) && readdirSync(folder).length === 0) {
         rmdirSync(folder);
         write(`removed ${folder}`);
       } else if (existsSync(folder)) {
-        write(`kept ${folder}: it holds entries MAMA did not create`);
+        write(`kept ${folder}: it still holds what stays, or entries MAMA did not create`);
       }
     }
   } finally {
     // The lock's file went with the MAMA home; closing it is all that is left.
     lock.release();
   }
+  for (const failure of failed) write(`could not remove ${failure}`);
   write('npm uninstall -g @jungjaehoon/mama-os removes the program itself');
-  return 0;
+  return failed.length > 0 ? 1 : 0;
 }
