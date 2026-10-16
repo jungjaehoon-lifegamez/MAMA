@@ -7,6 +7,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  rmdirSync,
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -34,17 +35,44 @@ const physical = physicalReadPath;
  * (AF_UNIX socket paths); a longer one falls back to the /tmp/claude-<uid> every Claude session of
  * this OS user shares. A member workspace path is far longer, so each member gets a short one.
  */
-export function memberClaudeTmpDir(principalId: string): string {
-  const id = createHash('sha256').update(principalId).digest('hex').slice(0, 12);
-  return join(MEMBER_CLAUDE_TMP_PARENT, id);
+const SANDBOX_PATH_LIMIT = 44;
+
+/** Bytes left under a parent for the hashed components once `/claude-<uid>` is counted. */
+function hashBudget(parent: string, uid: number, separators: number): number {
+  return SANDBOX_PATH_LIMIT - Buffer.byteLength(`${parent}/claude-${uid}`) - separators;
+}
+
+function hashed(value: string, length: number): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, length);
+}
+
+/**
+ * The hash lengths a room path gets: the full 8 and 10 hex where the budget allows, which is every
+ * account up to seven-digit uids; a ten-digit directory uid leaves 5 and 6.
+ */
+function roomHashLengths(parent: string, uid: number): { principal: number; room: number } {
+  const budget = hashBudget(parent, uid, 2);
+  const principal = Math.min(8, Math.floor(budget / 2));
+  return { principal, room: Math.min(10, budget - principal) };
+}
+
+export function memberClaudeTmpDir(
+  principalId: string,
+  options: { parent?: string; uid?: number } = {}
+): string {
+  const parent = options.parent ?? MEMBER_CLAUDE_TMP_PARENT;
+  const length = Math.min(12, hashBudget(parent, options.uid ?? userInfo().uid, 1));
+  return join(parent, hashed(principalId, length));
 }
 
 /** Known before any room starts, so other principals deny this whole subtree. */
-export function memberRoomTmpRoot(principalId: string): string {
-  return join(
-    MEMBER_ROOM_TMP_PARENT,
-    createHash('sha256').update(principalId).digest('hex').slice(0, 7)
-  );
+export function memberRoomTmpRoot(
+  principalId: string,
+  options: { parent?: string; uid?: number } = {}
+): string {
+  const parent = options.parent ?? MEMBER_ROOM_TMP_PARENT;
+  const lengths = roomHashLengths(parent, options.uid ?? userInfo().uid);
+  return join(parent, hashed(principalId, lengths.principal));
 }
 
 export function memberRoomClaudeTmpDir(
@@ -52,37 +80,45 @@ export function memberRoomClaudeTmpDir(
   channel: string,
   options: { parent?: string; uid?: number } = {}
 ): string {
+  const parent = options.parent ?? MEMBER_ROOM_TMP_PARENT;
+  const uid = options.uid ?? userInfo().uid;
+  const lengths = roomHashLengths(parent, uid);
   const path = join(
-    options.parent === undefined
-      ? memberRoomTmpRoot(principalId)
-      : join(options.parent, createHash('sha256').update(principalId).digest('hex').slice(0, 7)),
-    createHash('sha256')
-      .update(JSON.stringify([principalId, channel]))
-      .digest('hex')
-      .slice(0, 8)
+    memberRoomTmpRoot(principalId, { parent, uid }),
+    hashed(JSON.stringify([principalId, channel]), lengths.room)
   );
-  if (Buffer.byteLength(join(path, `claude-${options.uid ?? userInfo().uid}`)) > 44)
+  if (Buffer.byteLength(join(path, `claude-${uid}`)) > SANDBOX_PATH_LIMIT)
     throw new Error('Room Claude temp path exceeds the 44-byte sandbox limit');
   return path;
 }
 
 /**
- * Remove this account's member temp parents from before they were per account; another
- * account's, a link or a file stay. Called at daemon boot, before any member session runs.
+ * Remove the member temp folders this account's MAMA made under the parents it used before they
+ * were per account: entries named as MAMA named them (8 hex for a room root, 12 for a member) and
+ * owned by this uid. Anything else in those generic /tmp names belongs to someone else and stays;
+ * the parent goes only once empty. Called at daemon boot, before any member session runs.
  */
 export function removeRetiredMemberTemp(
   parents: readonly string[] = RETIRED_MEMBER_TMP_PARENTS
 ): void {
+  const uid = userInfo().uid;
+  const own = (path: string) => {
+    const entry = lstatSync(path);
+    return !entry.isSymbolicLink() && entry.isDirectory() && entry.uid === uid;
+  };
   for (const parent of parents) {
-    let entry: ReturnType<typeof lstatSync>;
     try {
-      entry = lstatSync(parent);
+      if (!own(parent)) continue;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
       throw error;
     }
-    if (entry.isSymbolicLink() || !entry.isDirectory() || entry.uid !== userInfo().uid) continue;
-    rmSync(parent, { recursive: true, force: true });
+    for (const name of readdirSync(parent)) {
+      const path = join(parent, name);
+      if (/^(?:[0-9a-f]{8}|[0-9a-f]{12})$/.test(name) && own(path))
+        rmSync(path, { recursive: true, force: true });
+    }
+    if (readdirSync(parent).length === 0) rmdirSync(parent);
   }
 }
 

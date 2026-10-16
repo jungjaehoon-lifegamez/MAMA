@@ -1,5 +1,4 @@
 import { realpathSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { homedir, userInfo } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { OwnerRuntimeOptions } from './owner-runtime.js';
@@ -23,11 +22,11 @@ export function normalizeReadPaths(paths: readonly string[]): string[] {
 }
 
 /**
- * The OS account in temp names: three hex of its uid's hash, short enough that a ten-digit uid
- * (directory-bound accounts) still fits Claude's 44-byte sandbox socket limit below. Two accounts
- * that share it are not mixed: the second finds a parent another uid owns and refuses.
+ * The OS account in temp names: its uid in base 36, distinct for every account and seven
+ * characters at most (ten-digit directory uids). The hashes under these parents take whatever
+ * Claude's 44-byte sandbox socket limit leaves (member-paths.ts).
  */
-const ACCOUNT = createHash('sha256').update(String(userInfo().uid)).digest('hex').slice(0, 3);
+const ACCOUNT = userInfo().uid.toString(36);
 /**
  * Parent of each member's short Claude temp root (member-paths.ts). One per OS account: a parent
  * another account created first is refused, so a shared one kept a second account's MAMA on the

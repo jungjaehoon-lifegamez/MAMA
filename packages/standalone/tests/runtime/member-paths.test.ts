@@ -1,5 +1,4 @@
 import * as fs from 'node:fs';
-import { createHash } from 'node:crypto';
 import { MEMBER_ROOM_TMP_PARENT } from '../../src/runtime/backend-security.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, realpathSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
@@ -45,7 +44,7 @@ it('separates backend state and host runtime paths, creates private roots and a 
   expect(() => ensureMemberPaths(root, 'fixture-symlink')).toThrow(/symlink/);
 });
 
-const account = (uid: number) => createHash('sha256').update(String(uid)).digest('hex').slice(0, 3);
+const account = (uid: number) => uid.toString(36);
 
 it('fits the room sandbox suffix for a ten-digit uid and separates people in the same room', () => {
   const parent = `/tmp/m${account(9999999999)}`;
@@ -56,7 +55,7 @@ it('fits the room sandbox suffix for a ten-digit uid and separates people in the
   );
 });
 
-it("keeps each OS account's member temp parents apart, and a member's fits a ten-digit uid", async () => {
+it("keeps each OS account's member temp parents apart, with full hashes for ordinary uids", async () => {
   // The test setup points these at per-file folders; the module's own values are the daemon's.
   const actual = await vi.importActual<typeof import('../../src/runtime/backend-security.js')>(
     '../../src/runtime/backend-security.js'
@@ -64,21 +63,46 @@ it("keeps each OS account's member temp parents apart, and a member's fits a ten
   expect(actual.MEMBER_CLAUDE_TMP_PARENT).toBe(`/tmp/mm${account(userInfo().uid)}`);
   expect(actual.MEMBER_ROOM_TMP_PARENT).toBe(`/tmp/m${account(userInfo().uid)}`);
   expect(actual.RETIRED_MEMBER_TMP_PARENTS).toEqual(['/tmp/mama-m', '/tmp/m']);
-  const dm = join(`/tmp/mm${account(9999999999)}`, basename(memberClaudeTmpDir('fixture-member')));
+  // An ordinary uid keeps the full hashes: 12 hex for a member, 8 and 10 for a room.
+  const ordinary = { uid: 501 };
+  expect(
+    basename(memberClaudeTmpDir('fixture-member', { parent: '/tmp/mmdx', ...ordinary }))
+  ).toHaveLength(12);
+  const room = memberRoomClaudeTmpDir('fixture-member', '-100', {
+    parent: '/tmp/mdx',
+    ...ordinary,
+  });
+  expect(
+    room
+      .split('/')
+      .slice(-2)
+      .map((part) => part.length)
+  ).toEqual([8, 10]);
+  // A ten-digit uid still fits, with shorter hashes.
+  const dm = memberClaudeTmpDir('fixture-member', {
+    parent: `/tmp/mm${account(9999999999)}`,
+    uid: 9999999999,
+  });
   expect(Buffer.byteLength(join(dm, 'claude-9999999999'))).toBeLessThanOrEqual(44);
 });
 
-it("removes this account's retired member temp parents, never a link or a missing one", () => {
+it('removes only the member temp folders MAMA named, and the old parent once it is empty', () => {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'retired-temp-')));
   roots.push(base);
-  const own = join(base, 'own');
-  fs.mkdirSync(join(own, 'member', 'claude-1'), { recursive: true });
+  // A generic /tmp name another program also uses: only MAMA's hashed folders go.
+  const shared = join(base, 'shared');
+  fs.mkdirSync(join(shared, 'abcdef012345', 'claude-1'), { recursive: true });
+  fs.mkdirSync(join(shared, 'another-app'));
+  // An old parent holding nothing but MAMA's folders goes with them.
+  const mama = join(base, 'mama');
+  fs.mkdirSync(join(mama, '0123abcd', 'deadbeef00'), { recursive: true });
   const target = join(base, 'target');
   fs.mkdirSync(target);
   const link = join(base, 'link');
   symlinkSync(target, link);
-  removeRetiredMemberTemp([own, link, join(base, 'missing')]);
-  expect(fs.existsSync(own)).toBe(false);
+  removeRetiredMemberTemp([shared, mama, link, join(base, 'missing')]);
+  expect(fs.readdirSync(shared)).toEqual(['another-app']);
+  expect(fs.existsSync(mama)).toBe(false);
   expect(fs.existsSync(link)).toBe(true);
   expect(fs.existsSync(target)).toBe(true);
 });
