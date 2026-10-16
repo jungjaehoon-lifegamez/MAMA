@@ -92,6 +92,8 @@ it('removes only the member temp folders MAMA named, and the old parent once it 
   // A generic /tmp name another program also uses: only MAMA's hashed folders go.
   const shared = join(base, 'shared');
   fs.mkdirSync(join(shared, 'abcdef012345', 'claude-1'), { recursive: true });
+  // The copy a suspension set aside goes too.
+  fs.mkdirSync(join(shared, '.retired-abcdef012345-0f8e2a7c-1b2c-4d3e-8f90-123456789abc'));
   fs.mkdirSync(join(shared, 'another-app'));
   // An old parent holding nothing but MAMA's folders goes with them.
   const mama = join(base, 'mama');

@@ -92,10 +92,14 @@ export function memberRoomClaudeTmpDir(
   return path;
 }
 
+/** A member temp folder as MAMA named it: 8 hex (room root) or 12 (member), or its set-aside copy. */
+const RETIRED_MEMBER_TEMP_NAME =
+  /^(?:\.retired-)?(?:[0-9a-f]{8}|[0-9a-f]{12})(?:-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})?$/;
+
 /**
  * Remove the member temp folders this account's MAMA made under the parents it used before they
- * were per account: entries named as MAMA named them (8 hex for a room root, 12 for a member) and
- * owned by this uid. Anything else in those generic /tmp names belongs to someone else and stays;
+ * were per account: entries named as MAMA named them (8 hex for a room root, 12 for a member, and
+ * the `.retired-` copies a suspension or offboarding set aside) and owned by this uid. Anything else in those generic /tmp names belongs to someone else and stays;
  * the parent goes only once empty. Called at daemon boot, before any member session runs.
  */
 export function removeRetiredMemberTemp(
@@ -115,7 +119,7 @@ export function removeRetiredMemberTemp(
     }
     for (const name of readdirSync(parent)) {
       const path = join(parent, name);
-      if (/^(?:[0-9a-f]{8}|[0-9a-f]{12})$/.test(name) && own(path))
+      if (RETIRED_MEMBER_TEMP_NAME.test(name) && own(path))
         rmSync(path, { recursive: true, force: true });
     }
     if (readdirSync(parent).length === 0) rmdirSync(parent);
