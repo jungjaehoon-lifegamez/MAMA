@@ -2528,3 +2528,18 @@ The implementation writes raw/index data during import only. Replay is the owner
   - The live `daemon.log` (9.3 MB) rotates for the first time at 10 MB.
   - This Mac's crash log arrives with W1.6.
   - `mama uninstall` (R6) is W1.5b.
+
+### W1.5b: mama uninstall (#515, 2026-10-16)
+
+- Result: closes v1.md R6, with `mama logs` from #514.
+  - `mama uninstall` stops whatever holds the install, then removes the service.
+  - `--data`, after the MAMA home is typed back on a terminal, also removes only what MAMA created, under the install lock: the MAMA home, each registered person's folder and temporary folders, the retired folders, `skills`, and with `--toolkit` the toolkit's versions (through the installer's `removeVersion`). `member_root` and `tools_root` go only once empty.
+  - Configured paths outside the MAMA home, and Homebrew's apps and fonts, are listed as staying. `--dry-run` changes nothing.
+  - Also fixed: physical paths now use `realpathSync.native`. On a case-insensitive disk, `member_root: /USERS/<name>` had passed the HOME-overlap check.
+- Evidence:
+  - Opus four rounds. The first found the case bypass and a removal wide enough to erase a volume, which led to the redesign. A later round found that read-only toolkit versions stopped the removal half-way.
+  - Codex rounds on the first commit, all answered.
+  - The tests never reach launchctl or the live install. The live database has a person named `owner`, so the fixtures use ids no install has, and the shared /tmp parents are unchanged after the run.
+  - Deployed 15:19:45 KST: eight boot stages, no errors, doctor 15 ok and 1 warn.
+  - A dry run on the live install listed two people's folders and temporary folders, the MAMA home (3.7 GB), and `member_root` only if empty. Nothing changed.
+- Still open: retired temporary folders under `/tmp/mama-m` and `/tmp/m` stay (the system clears /tmp). This Mac moves to the generated launch files at W1.6.
