@@ -10,6 +10,8 @@ import {
   readSync,
   statSync,
 } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
+import { archivePath } from '../runtime/rotating-log.js';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join, relative, resolve } from 'node:path';
 import {
@@ -577,6 +579,22 @@ function readLogTail(
         source = newline === -1 ? '' : source.slice(newline + 1);
       }
       allLines = source.split(/\r?\n/).filter((line) => line.length > 0);
+    }
+    // Just after a rotation the file holds only a few lines; the rest of the tail is in the newest
+    // archive.
+    const archive = archivePath(logPath, 1);
+    if (position === 0 && allLines.length < tail && existsSync(archive)) {
+      const older = gunzipSync(readFileSync(archive))
+        .toString('utf8')
+        .split(/\r?\n/)
+        .filter((line) => line.length > 0);
+      const taken = older.slice(-(tail - allLines.length));
+      return {
+        ...base,
+        lines: [...taken, ...allLines],
+        total: null,
+        truncated: older.length > taken.length,
+      };
     }
     const lines = allLines.slice(-tail);
     return {

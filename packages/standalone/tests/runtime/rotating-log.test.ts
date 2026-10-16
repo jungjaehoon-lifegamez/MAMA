@@ -2,7 +2,19 @@
  * Logs rotate by size: no line is lost or repeated across a rotation, archives are compressed and
  * capped in number, and every file stays owner-only.
  */
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
@@ -10,6 +22,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   archivePath,
   openRotatingLog,
+  readLastLines,
+  rotateLogFile,
   rotateBeforeWrite,
   takeOverOutput,
 } from '../../src/runtime/rotating-log.js';
@@ -90,7 +104,7 @@ describe('a rotating log', () => {
     rotateBeforeWrite(path, 50, { maxBytes: 1000, keep: 3 });
     expect(existsSync(archivePath(path, 1))).toBe(false);
     rotateBeforeWrite(path, 200, { maxBytes: 1000, keep: 3 });
-    expect(existsSync(path)).toBe(false);
+    expect(readFileSync(path, 'utf8')).toBe('');
     expect(gunzipSync(readFileSync(archivePath(path, 1))).toString('utf8')).toBe('z'.repeat(900));
   });
 
@@ -113,5 +127,78 @@ describe('a rotating log', () => {
     log.close();
     expect(readFileSync(path, 'utf8')).toBe('first\nsecond\nthird\n');
     expect(called).toBe(2);
+  });
+
+  it('keeps writing through another descriptor open on the same file across a rotation', () => {
+    // A hand-written launch file that still redirects the daemon's output into daemon.log.
+    const path = logPath();
+    const log = openRotatingLog(path, { maxBytes: 1000, keep: 5 });
+    const serviceManager = openSync(path, 'a');
+    for (let n = 0; n < 30; n += 1) {
+      if (n % 10 === 9) writeSync(serviceManager, `native ${n}\n`);
+      else log.write(line(n));
+    }
+    closeSync(serviceManager);
+    log.close();
+    const kept = allLines(path, 5);
+    expect(kept.filter((entry) => entry.startsWith('native'))).toEqual([
+      'native 9',
+      'native 19',
+      'native 29',
+    ]);
+    expect(kept).toHaveLength(30);
+  });
+
+  it('goes on writing when a rotation fails, says so, and leaves other descriptors alone', () => {
+    const path = logPath();
+    const log = openRotatingLog(path, { maxBytes: 300, keep: 3 });
+    log.write(line(0));
+    // A folder it cannot write archives into stands in for a full disk.
+    chmodSync(join(path, '..'), 0o500);
+    const other = openSync(join(tmpdir(), `mama-rotating-other-${process.pid}`), 'w');
+    try {
+      for (let n = 1; n < 12; n += 1) log.write(line(n));
+      // The other file's descriptor is still its own.
+      writeSync(other, 'mine\n');
+      expect(fstatSync(other).size).toBe(5);
+    } finally {
+      closeSync(other);
+      rmSync(join(tmpdir(), `mama-rotating-other-${process.pid}`), { force: true });
+      chmodSync(join(path, '..'), 0o700);
+    }
+    log.close();
+    const text = readFileSync(path, 'utf8');
+    expect(text.match(/rotating .* failed/g)?.length).toBeGreaterThanOrEqual(1);
+    for (let n = 0; n < 12; n += 1) expect(text).toContain(line(n));
+  });
+
+  it('reads the last lines across the file and its archives', () => {
+    const path = logPath();
+    writeFileSync(path, 'a\nb\n');
+    rotateLogFile(path, 3);
+    writeFileSync(path, 'c\nd\n');
+    rotateLogFile(path, 3);
+    writeFileSync(path, 'e\n');
+    expect(readLastLines(path, 3, 4)).toEqual(['b\n', 'c\n', 'd\n', 'e\n']);
+    expect(readLastLines(path, 3, 10)).toEqual(['a\n', 'b\n', 'c\n', 'd\n', 'e\n']);
+    expect(readLastLines(path, 3, 0)).toEqual([]);
+  });
+
+  it('keeps the archives it has when a rotation cannot write its new one', () => {
+    const path = logPath();
+    writeFileSync(path, 'first\n');
+    rotateLogFile(path, 2);
+    writeFileSync(path, 'second\n');
+    rotateLogFile(path, 2);
+    writeFileSync(path, 'third\n');
+    chmodSync(join(path, '..'), 0o500);
+    try {
+      expect(() => rotateLogFile(path, 2)).toThrow();
+    } finally {
+      chmodSync(join(path, '..'), 0o700);
+    }
+    expect(gunzipSync(readFileSync(archivePath(path, 1))).toString('utf8')).toBe('second\n');
+    expect(gunzipSync(readFileSync(archivePath(path, 2))).toString('utf8')).toBe('first\n');
+    expect(readFileSync(path, 'utf8')).toBe('third\n');
   });
 });

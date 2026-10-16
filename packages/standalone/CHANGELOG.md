@@ -13,7 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compressed archives; `security-events.jsonl` rotates at 5 MB the same way. The service manager
   keeps only what comes before the daemon reads its config, in `logs/crash.log`, which `start.sh`
   empties at start past 1 MB (`mama service install` rewrites the launch files). Writes stay
-  synchronous, so no line is lost or reordered across a rotation.
+  synchronous, so no line is lost or reordered across a rotation, and the file is emptied in place,
+  never replaced, so a launch file that still redirects into it keeps working. A rotation that
+  fails is written to the log and tried again after another limit's worth.
 - `mama logs [-n <lines>] [--follow]` prints the daemon log's last lines and follows it across a
   rotation.
 

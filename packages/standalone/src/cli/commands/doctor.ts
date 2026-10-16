@@ -6,6 +6,7 @@ import { LOADABLE_CONNECTORS } from '../../connectors/index.js';
 import { resolvePackageVersion } from '../../package-version.js';
 import { CONFIG_KEYS } from '../../runtime/config.js';
 import { CliInputError } from '../prompt.js';
+import { CRASH_LOG_NAME } from '../launch-files.js';
 import { BOOT_STAGES } from './daemon.js';
 import { runDiagnostics, type Check, type DiagnosticsOptions } from '../runtime/diagnostics.js';
 
@@ -125,8 +126,12 @@ export function doctorReport(checks: readonly Check[], options: DoctorOptions = 
           const stage = bootStage(line);
           return stage ? [`boot stage=${stage.name}${stage.failed ? ' failed' : ''}`] : [];
         });
+  // A config that does not load, or a crash before the daemon writes its own log, is in the crash log.
+  const crash = logTail(join(root, 'logs', CRASH_LOG_NAME)) ?? [];
   const errors = new Map<string, number>();
-  for (const line of lines.filter((line) => /error|failed|fatal|uncaught/i.test(line))) {
+  for (const line of [...lines, ...crash].filter((line) =>
+    /error|failed|fatal|uncaught/i.test(line)
+  )) {
     const shape = errorShape(line) || '(no tag or code)';
     errors.set(shape, (errors.get(shape) ?? 0) + 1);
   }
@@ -144,7 +149,7 @@ export function doctorReport(checks: readonly Check[], options: DoctorOptions = 
     '',
     tail === null
       ? 'recent errors: (daemon.log cannot be read)'
-      : `recent errors (last ${LOG_TAIL_BYTES / 1024 / 1024} MB of daemon.log):`,
+      : `recent errors (last ${LOG_TAIL_BYTES / 1024 / 1024} MB of daemon.log and crash.log):`,
     ...(tail === null
       ? []
       : errors.size > 0

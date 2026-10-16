@@ -3,7 +3,15 @@
  * crash log that start.sh empties at start once it is past its cap.
  */
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -41,8 +49,11 @@ describe('the crash log', () => {
     writeFileSync(crashLog, 'x'.repeat(1024 * 1024 + 1));
     expect(spawnSync('sh', ['-c', cap]).status).toBe(0);
     expect(readFileSync(crashLog, 'utf8')).toBe('');
-    writeFileSync(crashLog, 'a crash at load\n');
+    // launchd creates it with the user's umask before start.sh runs.
+    writeFileSync(crashLog, 'a crash at load\n', { mode: 0o644 });
+    chmodSync(crashLog, 0o644);
     expect(spawnSync('sh', ['-c', cap]).status).toBe(0);
     expect(readFileSync(crashLog, 'utf8')).toBe('a crash at load\n');
+    expect(statSync(crashLog).mode & 0o777).toBe(0o600);
   });
 });

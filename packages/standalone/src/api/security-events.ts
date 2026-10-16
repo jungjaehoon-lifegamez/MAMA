@@ -60,7 +60,12 @@ function appendSecurityEvent(path: string, event: object): boolean {
   try {
     mkdirSync(dirname(path), { recursive: true });
     const line = JSON.stringify(event) + '\n';
-    rotateBeforeWrite(path, Buffer.byteLength(line), SECURITY_LOG_LIMITS);
+    try {
+      rotateBeforeWrite(path, Buffer.byteLength(line), SECURITY_LOG_LIMITS);
+    } catch {
+      // An event is not lost because its archive could not be written; the file grows instead.
+      console.error('[security] security_events_rotation_failed');
+    }
     const fd = openSync(path, 'a', 0o600);
     try {
       fchmodSync(fd, 0o600);

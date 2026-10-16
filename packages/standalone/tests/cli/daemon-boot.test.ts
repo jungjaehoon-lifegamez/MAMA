@@ -417,30 +417,29 @@ describe('daemon bootstrap', () => {
   });
 
   it.each([false, true])(
-    'takes its output into the rotated log and tightens the crash log before starting runtime %#',
+    'takes its output into the rotated log before starting runtime %#',
     async (existing) => {
       const root = mkdtempSync(join(tmpdir(), 'daemon-log-'));
       roots.push(root);
       const options = config(root);
       options.logging.file = join(root, 'logs', 'daemon.log');
-      const crashLog = join(root, 'logs', 'crash.log');
       if (existing) {
         mkdirSync(join(root, 'logs'));
         writeFileSync(options.logging.file, 'retained\n', { mode: 0o644 });
-        // launchd creates the file it redirects to with the user's umask.
-        writeFileSync(crashLog, 'before boot\n', { mode: 0o644 });
       }
       let captured: string | undefined;
+      const order: string[] = [];
       const daemon = await bootDaemon({
         config: options,
         home: root,
         configPath: join(root, 'config.yaml'),
         mode: 'replay',
         replay: async () => {},
-        logger: { info: () => {}, error: () => {} },
+        logger: { info: (line) => order.push(line), error: () => {} },
         // What `mama daemon` passes, without taking over this test process's own output.
         captureOutput: (file) => {
           captured = file;
+          order.push('captured');
           openRotatingLog(file, DAEMON_LOG_LIMITS).write('taken over\n');
         },
         dependencies: {
@@ -451,13 +450,14 @@ describe('daemon bootstrap', () => {
             expect(readFileSync(options.logging.file, 'utf8')).toBe(
               `${existing ? 'retained\n' : ''}taken over\n`
             );
-            if (existing) expect(statSync(crashLog).mode & 0o777).toBe(0o600);
             return ownerDouble([]) as never;
           },
           createViewerServer: () => viewerDouble([]) as never,
         },
       });
       await daemon.stop();
+      // The first boot stage is in the daemon's own log, where doctor's report looks for it.
+      expect(order.indexOf('captured')).toBeLessThan(order.indexOf('boot stage=config'));
     }
   );
 

@@ -112,12 +112,14 @@ export const CRASH_LOG_NAME = 'crash.log';
 export const CRASH_LOG_CAP_BYTES = 1024 * 1024;
 
 /**
- * start.sh's crash log: only what comes before the daemon takes over its own output lands there,
- * and it is emptied at start once past the cap.
+ * start.sh's crash log: only what comes before the daemon takes over its own output lands there;
+ * it is made owner-only and emptied at start once past the cap.
  */
 function crashLogLines(root: string): string[] {
   return [
     `crash=${shellQuote(join(root, 'logs', CRASH_LOG_NAME))}`,
+    // launchd creates the file it redirects to before this script's umask applies.
+    `if [ -f "$crash" ]; then chmod 600 "$crash"; fi`,
     `if [ -f "$crash" ] && [ "$(wc -c < "$crash")" -gt ${CRASH_LOG_CAP_BYTES} ]; then : > "$crash"; fi`,
   ];
 }

@@ -726,15 +726,21 @@ describe('mama doctor', () => {
     expect(by.schema).toMatchObject({ status: 'fail', detail: 'the database cannot be read' });
   });
 
-  it('warns about a log past 50 MB', async () => {
+  it('warns about a log past its own cap', async () => {
     const installed = install();
     writeFileSync(join(installed.root, 'logs', 'daemon.log'), '');
-    truncateSync(join(installed.root, 'logs', 'daemon.log'), 51 * 1024 * 1024);
+    truncateSync(join(installed.root, 'logs', 'daemon.log'), 11 * 1024 * 1024);
+    writeFileSync(join(installed.root, 'logs', 'crash.log'), 'x'.repeat(1024 * 1024 + 1));
     const checks = await runDiagnostics(base(installed));
-    expect(checks.find((check) => check.name === 'logs')).toMatchObject({
-      status: 'warn',
-      detail: 'daemon.log is 51 MB',
-    });
+    const logs = checks.filter((check) => check.name === 'logs');
+    expect(logs).toEqual([
+      expect.objectContaining({
+        status: 'warn',
+        detail: 'daemon.log is 11.0 MB, past its 10 MB cap',
+      }),
+      expect.objectContaining({ status: 'warn', detail: 'crash.log is 1.0 MB, past its 1 MB cap' }),
+    ]);
+    expect(logs[1]!.fix).toMatch(/start\.sh empties it at the next start/);
   });
 
   it('survives a daemon.log it cannot read', async () => {
@@ -796,6 +802,11 @@ describe('mama doctor', () => {
         'reply failed: ERR_FIXTURE_NAME ECONNRESET',
       ].join('\n')
     );
+    // A config that does not load is in the crash log, before the daemon writes its own.
+    writeFileSync(
+      join(installed.root, 'logs', 'crash.log'),
+      "Error: EACCES: permission denied, open '/Volumes/fixture-volume/config.yaml'\n"
+    );
     const lines: string[] = [];
     const code = await runDoctor(['--report'], {
       ...base(installed),
@@ -812,6 +823,7 @@ describe('mama doctor', () => {
     expect(report).toContain('ENOENT');
     expect(report).toContain('ECONNRESET');
     expect(report).toContain('HTTP 502');
+    expect(report).toContain('EACCES');
     expect(report).toContain('fail source ical: 1 secret(s) it needs are not set');
     for (const secret of secrets) expect(report).not.toContain(secret);
   });

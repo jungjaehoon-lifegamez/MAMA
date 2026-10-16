@@ -41,7 +41,17 @@ describe('mama logs', () => {
     expect(out).toBe('two\nthree\n');
   });
 
-  it('follows the log across a rotation', async () => {
+  it('takes the last lines from the newest archive just after a rotation', async () => {
+    const { home, log } = install();
+    writeFileSync(log, 'one\ntwo\n');
+    rotateLogFile(log, 5);
+    writeFileSync(log, 'three\n');
+    let out = '';
+    await runLogs(['-n', '2'], { home, write: (text) => (out += text) });
+    expect(out).toBe('two\nthree\n');
+  });
+
+  it('follows the log across a rotation, without losing what was written just before it', async () => {
     const { home, log } = install();
     writeFileSync(log, 'before\n');
     let out = '';
@@ -54,9 +64,15 @@ describe('mama logs', () => {
     });
     appendFileSync(log, 'written\n');
     await vi.waitFor(() => expect(out).toBe('written\n'));
+    // Written and rotated away before the next poll, then the new file grows past the old position.
+    appendFileSync(log, 'just before the rotation\n');
     rotateLogFile(log, 3);
-    writeFileSync(log, 'after rotation\n');
-    await vi.waitFor(() => expect(out).toBe('written\nafter rotation\n'));
+    appendFileSync(log, 'after the rotation, long enough to pass the old position\n');
+    await vi.waitFor(() =>
+      expect(out).toBe(
+        'written\njust before the rotation\nafter the rotation, long enough to pass the old position\n'
+      )
+    );
     controller.abort();
     await following;
   });

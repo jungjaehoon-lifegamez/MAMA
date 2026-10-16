@@ -1,8 +1,7 @@
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import { readDocumentToolkit } from '../../tools/document-toolkit.js';
-import { chmodSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { CRASH_LOG_NAME } from '../launch-files.js';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import type { MailboxRow } from '@jungjaehoon/mama-core/runtime/mailbox';
@@ -550,19 +549,18 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         options.requestStop();
       },
     });
-    stage(logger, 'config', options.signal);
+    if (options.signal?.aborted) throw new StopDuringBootError();
     config = options.config ?? loadConfig({ path: configPath, home: options.home });
+    mkdirSync(dirname(config.logging.file), { recursive: true });
+    // The service manager redirects only what comes before this point, to the crash log. From here
+    // on the daemon's own log holds everything, from the first boot stage on.
+    options.captureOutput?.(config.logging.file);
+    stage(logger, 'config', options.signal);
     logger.info(
       `document toolkit: ${readDocumentToolkit(config.tools_root, (error) => logger.error(error.message)) ? 'present' : 'absent (run mama tools install)'}`
     );
     const timeZone = createTimeZoneSetting(config.timezone);
     validateDeliveryRoutes(config);
-    mkdirSync(dirname(config.logging.file), { recursive: true });
-    // The service manager redirects only what comes before this point, to the crash log; launchd
-    // creates that file before start.sh's umask applies, so it is tightened here.
-    const crashLog = join(dirname(configPath), 'logs', CRASH_LOG_NAME);
-    if (existsSync(crashLog)) chmodSync(crashLog, 0o600);
-    options.captureOutput?.(config.logging.file);
     declareModelCache();
     paths = pathsFor(configPath, config);
     currentStage = 'isolation';

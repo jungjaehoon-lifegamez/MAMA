@@ -1,8 +1,10 @@
 /**
  * Size-rotated log files. When a file would pass its limit, it is compressed to `<file>.1.gz`, the
- * older archives move up one number, and the oldest beyond `keep` is removed. Everything is
- * synchronous: a log line is on disk when write returns, and lines cannot reorder across a
- * rotation. Compressing a full file blocks for roughly a tenth of a second once per limit.
+ * older archives move up one number, the oldest beyond `keep` is removed, and the file is emptied in
+ * place. It is never removed or replaced, so every descriptor open on it, such as a service manager
+ * that still redirects into it, keeps writing to the file everyone reads. Everything is synchronous:
+ * a log line is on disk when write returns, and lines cannot reorder across a rotation. Compressing a
+ * full file blocks for roughly a tenth of a second once per limit.
  */
 import {
   closeSync,
@@ -14,10 +16,11 @@ import {
   renameSync,
   rmSync,
   statSync,
+  truncateSync,
   writeFileSync,
   writeSync,
 } from 'node:fs';
-import { gzipSync } from 'node:zlib';
+import { gunzipSync, gzipSync } from 'node:zlib';
 
 export interface RotatingLogLimits {
   /** Rotate before a write would take the file past this many bytes. */
@@ -37,21 +40,38 @@ export function archivePath(path: string, n: number): string {
 }
 
 /**
- * Compress the file into its first archive and leave no file behind. The archive is written under a
- * temporary name and renamed, so a crash leaves either the old archives or the new one, never a
- * half-written one; at worst the file's lines are in both the archive and the file.
+ * Compress the file into its first archive and empty it. The new archive is written in full under a
+ * temporary name before any kept archive moves, so a failure (a full disk) changes nothing; a crash
+ * after that leaves at worst the file's lines in both the archive and the file.
  */
 export function rotateLogFile(path: string, keep: number): void {
   if (!existsSync(path)) return;
+  const temporary = `${archivePath(path, 1)}.tmp`;
+  writeFileSync(temporary, gzipSync(readFileSync(path)), { mode: 0o600 });
   rmSync(archivePath(path, keep), { force: true });
   for (let n = keep - 1; n >= 1; n -= 1) {
     if (existsSync(archivePath(path, n)))
       renameSync(archivePath(path, n), archivePath(path, n + 1));
   }
-  const temporary = `${archivePath(path, 1)}.tmp`;
-  writeFileSync(temporary, gzipSync(readFileSync(path)), { mode: 0o600 });
   renameSync(temporary, archivePath(path, 1));
-  rmSync(path, { force: true });
+  truncateSync(path, 0);
+}
+
+/** The newest `count` lines across the file and its archives, oldest first. */
+export function readLastLines(path: string, keep: number, count: number): string[] {
+  const lines: string[] = [];
+  for (let n = 0; n <= keep && lines.length < count; n += 1) {
+    const source = n === 0 ? path : archivePath(path, n);
+    if (!existsSync(source)) {
+      if (n === 0) continue;
+      break;
+    }
+    const raw = readFileSync(source);
+    const text = (n === 0 ? raw : gunzipSync(raw)).toString('utf8');
+    const own = text.split(/(?<=\n)/).filter((line) => line !== '');
+    lines.unshift(...own.slice(-(count - lines.length)));
+  }
+  return lines;
 }
 
 /** Rotate first when this write would take the file past its limit. */
@@ -66,32 +86,39 @@ export interface RotatingLog {
   close(): void;
 }
 
-/** One open log file, rotated by size, owner-only. */
+/**
+ * One open log file, rotated by size, owner-only. Its size is read from the file at each write, so
+ * lines another descriptor appends count too. A rotation that fails leaves the file as it is and
+ * writing goes on: the failure is written to the log itself, and rotation is tried again once
+ * another limit's worth has been written.
+ */
 export function openRotatingLog(path: string, limits: RotatingLogLimits): RotatingLog {
-  let fd = -1;
-  let size = 0;
-  const open = (): void => {
-    fd = openSync(path, 'a', 0o600);
-    // The service manager or an older daemon may have created it with the user's umask.
-    fchmodSync(fd, 0o600);
-    size = fstatSync(fd).size;
+  const fd = openSync(path, 'a', 0o600);
+  // The service manager or an older daemon may have created it with the user's umask.
+  fchmodSync(fd, 0o600);
+  let retryAt = limits.maxBytes;
+  const rotateIfFull = (bytes: number): void => {
+    const size = fstatSync(fd).size;
+    if (size === 0 || size + bytes <= retryAt) return;
+    try {
+      rotateLogFile(path, limits.keep);
+      retryAt = limits.maxBytes;
+    } catch (error) {
+      retryAt = size + limits.maxBytes;
+      writeSync(
+        fd,
+        `[rotating-log] rotating ${path} failed; it grows until the next try: ${
+          error instanceof Error ? error.message : String(error)
+        }\n`
+      );
+    }
   };
-  open();
-  if (size > limits.maxBytes) {
-    closeSync(fd);
-    rotateLogFile(path, limits.keep);
-    open();
-  }
+  rotateIfFull(0);
   return {
     write(chunk) {
       const bytes = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
-      if (size > 0 && size + bytes.length > limits.maxBytes) {
-        closeSync(fd);
-        rotateLogFile(path, limits.keep);
-        open();
-      }
+      rotateIfFull(bytes.length);
       writeSync(fd, bytes);
-      size += bytes.length;
     },
     close() {
       closeSync(fd);
