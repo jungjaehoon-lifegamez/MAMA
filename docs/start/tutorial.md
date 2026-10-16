@@ -43,17 +43,17 @@ mama init
 ```
 
 At the prompts, enter `claude` or `codex`, the model name, your timezone (press Enter to keep this
-machine's timezone) and the Telegram bot token. Setup then pairs you through the bot, so no chat or
-user ID is typed:
+machine's timezone), the Telegram bot token and the two folders (press Enter to keep the
+defaults). Tokens are typed into hidden prompts. Do not paste them into chat or a configuration
+file. When asked which connectors to enable, type `slack` (or `chatwork`) and enter its token and
+channel ids. To skip a source for now, leave the connector list blank.
+
+Last, setup pairs you through the bot, so no chat or user ID is typed:
 
 1. Send the bot any private message. It answers with a six-digit pairing code; type that code at
    the prompt. This makes you the first owner, and that private chat your personal session.
 2. Add the bot to the group as an administrator, so it reads the group, and send `/bind` there.
    The bot answers that the group is now MAMA's common channel. Only your `/bind` counts.
-
-Then enter the two folders (press Enter to keep the defaults). Tokens are typed into hidden
-prompts. Do not paste them into chat or a configuration file. When asked which connectors to enable, type `slack` (or `chatwork`) and enter its token
-and channel ids. To skip a source for now, leave the connector list blank.
 
 **You should see:** `Setup written. Credentials are stored only in auth.env (0600).`, then the
 owner registration, the document toolkit, the service start, and finally `MAMA is running`.

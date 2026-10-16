@@ -13,6 +13,8 @@ export interface Update {
   message?: {
     chat?: { id: number; type?: string };
     from?: { id: number; is_bot?: boolean };
+    /** Set when an anonymous administrator posts as the group itself. */
+    sender_chat?: { id: number };
     text?: string;
     entities?: Array<{ type: string; offset: number; length: number }>;
   };
@@ -22,8 +24,6 @@ interface PairingOptions {
   token: string;
   call: TelegramCall;
   write: (line: string) => void;
-  /** Seconds each getUpdates waits for news; doctor's call gives up after eight. */
-  pollSeconds?: number;
 }
 
 /** At most this many people get a code in one window; anyone after that is ignored. */
@@ -31,10 +31,32 @@ const MAX_CODES = 10;
 /** How long init waits for /bind before it stops and says how to continue. */
 const BIND_WAIT_MS = 15 * 60_000;
 
-async function updates(options: PairingOptions, offset: number): Promise<Update[]> {
-  const reply = await options.call(options.token, 'getUpdates', {
+/** A call whose network failure ends init with a sentence, not an unnamed error. */
+async function request(
+  options: PairingOptions,
+  method: string,
+  params: Record<string, string>
+): Promise<Record<string, unknown>> {
+  try {
+    return await options.call(options.token, method, params);
+  } catch (error) {
+    const cause = (error as { cause?: { code?: unknown } }).cause?.code;
+    const name = error instanceof Error ? error.name : 'Error';
+    throw new CliInputError(
+      `Could not reach Telegram (${typeof cause === 'string' ? cause : name}); check the network and run mama init again.`
+    );
+  }
+}
+
+/** Each getUpdates waits up to five seconds for news; doctor's call gives up after eight. */
+async function updates(
+  options: PairingOptions,
+  offset: number,
+  pollSeconds = 5
+): Promise<Update[]> {
+  const reply = await request(options, 'getUpdates', {
     offset: String(offset),
-    timeout: String(options.pollSeconds ?? 5),
+    timeout: String(pollSeconds),
     allowed_updates: JSON.stringify(['message']),
   });
   if (reply.ok === true) return (reply.result as Update[] | undefined) ?? [];
@@ -49,16 +71,17 @@ async function updates(options: PairingOptions, offset: number): Promise<Update[
   );
 }
 
-async function send(options: PairingOptions, chatId: number, text: string): Promise<void> {
-  const reply = await options.call(options.token, 'sendMessage', { chat_id: String(chatId), text });
-  if (reply.ok !== true)
-    throw new CliInputError(`Telegram refused to send a message (${String(reply.error_code)}).`);
+async function send(options: PairingOptions, chatId: number, text: string): Promise<boolean> {
+  const reply = await request(options, 'sendMessage', { chat_id: String(chatId), text });
+  return reply.ok === true;
 }
 
 /**
  * Make the person at the terminal the first owner without a typed user ID: everyone who messages
  * the bot privately while init waits gets a code, and the code typed here names the owner. A
  * code reaches only the chat it was sent to, so typing it proves that chat is this person's.
+ * Messages the bot held from before are dropped first: they were not sent to this setup, and an
+ * old /bind would otherwise name a group without a new word from the owner.
  */
 export async function pairOwner(
   options: PairingOptions & {
@@ -67,6 +90,9 @@ export async function pairOwner(
     ask: (label: string, signal: AbortSignal) => Promise<string>;
   }
 ): Promise<{ ownerId: string; offset: number; groupMessages: Update[] }> {
+  // offset -1 returns only the newest held update and drops the rest; the next poll drops it too.
+  const held = await updates(options, -1, 0);
+  let offset = held.length > 0 ? held[held.length - 1].update_id + 1 : 0;
   options.write(
     `Open Telegram and send any message to @${options.botUsername}. It answers with a pairing code; type that code here.`
   );
@@ -74,7 +100,6 @@ export async function pairOwner(
   const senders = new Set<string>();
   // Group messages read while waiting for the code: a /bind sent early must not be lost.
   const groupMessages: Update[] = [];
-  let offset = 0;
   let stopped = false;
   let failure: unknown;
   const pollingFailed = new AbortController();
@@ -89,14 +114,25 @@ export async function pairOwner(
         if (message.from.is_bot) continue;
         const sender = String(message.from.id);
         if (senders.has(sender) || senders.size >= MAX_CODES) continue;
-        const code = String(randomInt(100_000, 1_000_000));
+        let code: string;
+        do code = String(randomInt(100_000, 1_000_000));
+        while (codes.has(code));
         senders.add(sender);
         codes.set(code, sender);
-        await send(
+        const sent = await send(
           options,
           message.chat.id,
           `Your MAMA pairing code: ${code}\nType it in the terminal where mama init runs.`
         );
+        // A chat that refuses the bot (blocked it, account gone) cannot show its code; that sender
+        // may unblock the bot and write again.
+        if (!sent) {
+          senders.delete(sender);
+          codes.delete(code);
+          options.write(
+            'Telegram refused to deliver a pairing code to one chat. If it was yours, unblock the bot and send it another message.'
+          );
+        }
       }
     }
   })().catch((error: unknown) => {
@@ -158,16 +194,29 @@ export async function bindCommonGroup(
   const deadline = now() + (options.waitMs ?? BIND_WAIT_MS);
   let offset = options.offset;
   let batch: readonly Update[] = options.earlier ?? [];
+  let toldAnonymous = false;
   for (;;) {
     for (const update of batch) {
       offset = Math.max(offset, update.update_id + 1);
       const message = update.message;
       if (!message?.chat || !message.from) continue;
       if (message.chat.type !== 'group' && message.chat.type !== 'supergroup') continue;
-      if (String(message.from.id) !== options.ownerId || !isBind(message, options.botUsername))
+      if (!isBind(message, options.botUsername)) continue;
+      // An anonymous administrator's message names the group, not the person, so it cannot count.
+      if (message.sender_chat !== undefined && !toldAnonymous) {
+        toldAnonymous = true;
+        options.write(
+          "A /bind came from an anonymous administrator, so it cannot count as yours. Turn off 'Remain anonymous' for yourself in the group's administrator settings and send /bind again."
+        );
+      }
+      if (message.sender_chat !== undefined || String(message.from.id) !== options.ownerId)
         continue;
-      await send(options, message.chat.id, "This group is now MAMA's common channel.");
-      return { chatId: String(message.chat.id), offset };
+      // MAMA posts reports and notices there, so a group the bot cannot post in cannot be it.
+      if (await send(options, message.chat.id, "This group is now MAMA's common channel."))
+        return { chatId: String(message.chat.id), offset };
+      options.write(
+        'Telegram refused to let the bot post in that group. Let it post there, then send /bind again.'
+      );
     }
     if (now() >= deadline)
       throw new CliInputError('No /bind arrived in the group; run mama init again to pair again.');
@@ -181,5 +230,5 @@ export async function bindCommonGroup(
  */
 export async function confirmUpdates(options: PairingOptions & { offset: number }): Promise<void> {
   if (options.offset === 0) return;
-  await updates({ ...options, pollSeconds: 0 }, options.offset);
+  await updates(options, options.offset, 0);
 }

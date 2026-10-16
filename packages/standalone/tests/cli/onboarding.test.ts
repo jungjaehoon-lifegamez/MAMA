@@ -44,12 +44,13 @@ const fixtureSecrets = {
 };
 
 /**
- * The new bot: the owner messages it privately, then sends /bind in the common group. Codes the
- * pairing step sends are kept, so the terminal can type the owner's.
+ * The new bot: nothing waits when setup starts; then the owner messages it privately and sends
+ * /bind in the common group. Codes the pairing step sends are kept, so the terminal can type the
+ * owner's.
  */
 function fakeBot() {
   const sent: Array<{ chat_id: string; text: string }> = [];
-  const offsets: string[] = [];
+  const polls: Array<{ offset: string; timeout: string }> = [];
   const updates = [
     {
       update_id: 1,
@@ -81,7 +82,8 @@ function fakeBot() {
       return { ok: true, result: {} };
     }
     if (method === 'getUpdates') {
-      offsets.push(params.offset);
+      polls.push({ offset: params.offset, timeout: params.timeout });
+      if (params.offset === '-1') return { ok: true, result: [] };
       const pending = updates.filter((update) => update.update_id >= Number(params.offset ?? 0));
       if (pending.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
       return { ok: true, result: pending };
@@ -100,7 +102,7 @@ function fakeBot() {
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
   };
-  return { call, sent, offsets, code };
+  return { call, sent, polls, code };
 }
 let telegram: ReturnType<typeof fakeBot>;
 
@@ -453,16 +455,20 @@ describe('mama init', () => {
     expect(telegram.sent.map((entry) => entry.chat_id)).toEqual([OWNER_ID, '-100']);
     expect(p.output.join('\n')).toContain('send any message to @fixture_bot');
     expect(p.output.join('\n')).toContain('send /bind in that group');
-    // Every update init read is confirmed, so the daemon never takes the pairing messages.
-    expect(telegram.offsets.at(-1)).toBe('3');
+    // Held messages are dropped first, and every update init read is confirmed at the end, so
+    // the daemon never takes the pairing messages.
+    expect(telegram.polls[0]).toEqual({ offset: '-1', timeout: '0' });
+    expect(telegram.polls.at(-1)).toEqual({ offset: '3', timeout: '0' });
   });
 
-  it('refuses a member folder inside HOME before writing anything', async () => {
+  it('refuses a member folder inside HOME before writing anything or pairing', async () => {
     const answers = minimal();
     answers[2] = join(home, 'members');
     const p = prompt(answers, [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
     await expect(runInit([], options(p.adapter))).rejects.toThrow(/must not overlap HOME/);
     expect(existsSync(root)).toBe(false);
+    // Pairing is the last question, so the owner is not asked to pair for a setup that stops.
+    expect(telegram.sent).toEqual([]);
   });
 
   it('reports a toolkit that cannot be installed and still starts MAMA', async () => {

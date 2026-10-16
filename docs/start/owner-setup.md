@@ -47,16 +47,19 @@ It asks for:
 
 - the backend and model;
 - the Telegram bot token;
-- the pairing code the bot sends when you message it privately, which makes you the first owner;
-- `/bind`, sent by you in the common group after you add the bot there as an administrator;
 - two folders outside your home, one for member workspaces and one for the document tools;
-- any sources and other messengers you want.
+- any sources and other messengers you want;
+- last, the pairing code the bot sends when you message it privately, which makes you the first
+  owner, and `/bind`, sent by you in the common group after you add the bot there as an
+  administrator.
 
 Tokens are entered with terminal echo off; do not send them to the agent.
 
-Everyone who messages the bot privately while setup waits gets a code, but only the code typed at
-your terminal counts, and only that person's `/bind` names the group. If no `/bind` arrives within
-15 minutes, setup stops without writing anything; run `mama init` again.
+Pairing comes last, so a refused answer never makes you pair twice. Messages the bot held from
+before are dropped. Everyone who messages the bot privately while setup waits gets a code, but
+only the code typed at your terminal counts, and only that person's `/bind` names the group. A
+`/bind` sent as an anonymous administrator cannot count; setup says so. If no `/bind` arrives
+within 15 minutes, setup stops without writing anything; run `mama init` again.
 
 Before writing anything, `mama init` checks three things:
 
