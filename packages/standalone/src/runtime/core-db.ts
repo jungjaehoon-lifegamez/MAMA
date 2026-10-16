@@ -22,5 +22,7 @@ export async function openCoreDatabase(config: CoreDatabaseConfig): Promise<Core
   return openDatabase({
     path: config.path,
     migrations: [STANDALONE_MIGRATION_SOURCE],
+    // MAMA OS alone opens this database, so a newer schema means an older install.
+    refuseNewerSchema: true,
   });
 }

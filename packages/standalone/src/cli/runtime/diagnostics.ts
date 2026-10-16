@@ -156,8 +156,9 @@ function secretFix(name: string): string {
 }
 
 /**
- * Check an install as its service would run it. Nothing here writes MAMA's files, opens its
- * database or starts a service; the backend's own status command may update the backend's config.
+ * Check an install as its service would run it. Nothing here writes MAMA's files or starts a
+ * service; the database is opened read-only (which can leave its -wal and -shm beside it), and the
+ * backend's own status command may update the backend's config.
  * Each check names what it found and, when it is not ok, what to do.
  */
 export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<Check[]> {
@@ -448,35 +449,28 @@ function schemaCheck(databasePath: string): Check {
     { name: CORE_MIGRATION_SOURCE, dir: MIGRATIONS_DIR },
     STANDALONE_MIGRATION_SOURCE,
   ];
-  let db: Database.Database;
+  // better-sqlite3 opens lazily: a file that is not a database fails at the first query.
+  let db: Database.Database | null = null;
   try {
     db = new Database(databasePath, { readonly: true, fileMustExist: true });
-  } catch (error) {
-    return {
-      name: 'schema',
-      status: 'fail',
-      detail: 'the database cannot be opened',
-      context: message(error),
-    };
-  }
-  try {
     const table = db
       .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'")
       .get();
+    const reader = db;
     const bySource =
       table !== undefined &&
-      (db.prepare('PRAGMA table_info(schema_version)').all() as { name: string }[]).some(
+      (reader.prepare('PRAGMA table_info(schema_version)').all() as { name: string }[]).some(
         (column) => column.name === 'source'
       );
     const states = sources.map((source) => {
       const row = !table
         ? undefined
         : ((bySource
-            ? db
+            ? reader
                 .prepare('SELECT MAX(version) AS version FROM schema_version WHERE source = ?')
                 .get(source.name)
             : source.name === CORE_MIGRATION_SOURCE
-              ? db.prepare('SELECT MAX(version) AS version FROM schema_version').get()
+              ? reader.prepare('SELECT MAX(version) AS version FROM schema_version').get()
               : undefined) as { version: number | null } | undefined);
       return {
         name: source.name,
@@ -502,8 +496,15 @@ function schemaCheck(databasePath: string): Check {
       status: 'ok',
       detail: pending > 0 ? `${summary}; the next start migrates it` : summary,
     };
+  } catch (error) {
+    return {
+      name: 'schema',
+      status: 'fail',
+      detail: 'the database cannot be read',
+      context: message(error),
+    };
   } finally {
-    db.close();
+    db?.close();
   }
 }
 

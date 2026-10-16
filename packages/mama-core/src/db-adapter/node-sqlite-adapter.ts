@@ -298,7 +298,25 @@ export interface MigrationSource {
 /** The core is one source among others; it is only first because others build on it. */
 export const CORE_MIGRATION_SOURCE = 'core';
 
-/** The highest migration number among a source's files. */
+/**
+ * A database a newer version migrated: older code cannot read a schema it does not know. The
+ * code is stable so a consumer can stop cleanly instead of being restarted into the refusal.
+ */
+export class NewerSchemaError extends Error {
+  readonly code = 'MAMA_SCHEMA_NEWER';
+  constructor(
+    readonly source: string,
+    readonly stored: number,
+    readonly highest: number
+  ) {
+    super(
+      `This database's ${source} schema is at ${stored}, newer than this version knows (${highest}); install the version that wrote it, or restore a backup taken with this one`
+    );
+    this.name = 'NewerSchemaError';
+  }
+}
+
+/** The highest migration number among a source's files; deferred migrations are files too. */
 export function highestMigrationVersion(migrationsDir: string): number {
   return fs
     .readdirSync(migrationsDir)
@@ -771,12 +789,47 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
     this.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (?)').run(version);
   }
 
-  runMigrations(sources: string | readonly MigrationSource[]): void {
+  runMigrations(
+    sources: string | readonly MigrationSource[],
+    options: { refuseNewer?: boolean } = {}
+  ): void {
     const list: readonly MigrationSource[] =
       typeof sources === 'string' ? [{ name: CORE_MIGRATION_SOURCE, dir: sources }] : sources;
+    if (options.refuseNewer) {
+      // Every source is checked before any runs: a newer schema anywhere means older code
+      // cannot read this database, and no repair or migration may write to it first.
+      for (const source of list) {
+        if (!this.isConnected()) throw new Error('Database not connected');
+        const stored = this.storedSchemaVersion(source.name);
+        const highest = highestMigrationVersion(source.dir);
+        if (stored > highest) throw new NewerSchemaError(source.name, stored, highest);
+      }
+    }
     for (const source of list) {
       this.runMigrationSource(source.dir, source.name);
     }
+  }
+
+  /** The highest version a source has recorded, or 0 before it has any. */
+  private storedSchemaVersion(sourceName: string): number {
+    const tables = this.prepare(
+      `
+      SELECT name FROM sqlite_master
+      WHERE type='table' AND name='schema_version'
+    `
+    ).all() as Array<{ name: string }>;
+    if (tables.length === 0) return 0;
+    // Progress is per source. A shared MAX() would let one author's numbering
+    // declare another author's migrations already applied.
+    const hasSource = this.tableColumns('schema_version').has('source');
+    const version = (
+      hasSource
+        ? this.prepare('SELECT MAX(version) as version FROM schema_version WHERE source = ?').get(
+            sourceName
+          )
+        : this.prepare('SELECT MAX(version) as version FROM schema_version').get()
+    ) as { version: number | null } | undefined;
+    return version?.version || 0;
   }
 
   private runMigrationSource(migrationsDir: string, sourceName: string): void {
@@ -784,28 +837,7 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
       throw new Error('Database not connected');
     }
     const isCore = sourceName === CORE_MIGRATION_SOURCE;
-
-    const tables = this.prepare(
-      `
-      SELECT name FROM sqlite_master
-      WHERE type='table' AND name='schema_version'
-    `
-    ).all() as Array<{ name: string }>;
-
-    let currentVersion = 0;
-    if (tables.length > 0) {
-      // Progress is per source. A shared MAX() would let one author's numbering
-      // declare another author's migrations already applied.
-      const hasSource = this.tableColumns('schema_version').has('source');
-      const version = (
-        hasSource
-          ? this.prepare('SELECT MAX(version) as version FROM schema_version WHERE source = ?').get(
-              sourceName
-            )
-          : this.prepare('SELECT MAX(version) as version FROM schema_version').get()
-      ) as { version: number | null } | undefined;
-      currentVersion = version?.version || 0;
-    }
+    const currentVersion = this.storedSchemaVersion(sourceName);
 
     info(`[node-sqlite-adapter] Current schema version (${sourceName}): ${currentVersion}`);
 
@@ -813,14 +845,6 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
       .readdirSync(migrationsDir)
       .filter((file) => file.endsWith('.sql'))
       .sort();
-    // A database a newer version migrated cannot be read by older code: refuse it before any
-    // repair or migration writes to it. Deferred migrations are files too, so they count.
-    const highest = highestMigrationVersion(migrationsDir);
-    if (currentVersion > highest) {
-      throw new Error(
-        `This database's ${sourceName} schema is at ${currentVersion}, newer than this version knows (${highest}); install the version that wrote it, or restore a backup taken with this one`
-      );
-    }
 
     if (
       isCore &&

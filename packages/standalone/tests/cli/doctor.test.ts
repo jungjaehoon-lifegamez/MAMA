@@ -674,6 +674,33 @@ describe('mama doctor', () => {
     by = byName(await runDiagnostics(base(installed)));
     expect(by.schema).toMatchObject({ status: 'fail' });
     expect(by.schema.detail).toContain(`core ${highest + 1} of ${highest}`);
+
+    // A newer product schema counts the same as a newer core one.
+    const product = new Database(join(installed.root, 'memory.db'));
+    product.exec('DELETE FROM schema_version WHERE version > ' + String(highest - 1));
+    product.prepare("INSERT INTO schema_version VALUES ('standalone', 99)").run();
+    product.close();
+    by = byName(await runDiagnostics(base(installed)));
+    expect(by.schema).toMatchObject({ status: 'fail' });
+    expect(by.schema.detail).toContain('standalone 99 of');
+  });
+
+  it('reports a database it cannot read, or one with no schema table yet, instead of failing', async () => {
+    const installed = install();
+    writeFileSync(
+      join(installed.root, 'memory.db'),
+      'not a database, only bytes that look like one'
+    );
+    let by = byName(await runDiagnostics(base(installed)));
+    expect(by.schema).toMatchObject({ status: 'fail', detail: 'the database cannot be read' });
+    expect(by.daemon).toBeDefined();
+    rmSync(join(installed.root, 'memory.db'));
+    const empty = new Database(join(installed.root, 'memory.db'));
+    empty.exec('CREATE TABLE x (y TEXT)');
+    empty.close();
+    by = byName(await runDiagnostics(base(installed)));
+    expect(by.schema.status).toBe('ok');
+    expect(by.schema.detail).toContain('core 0 of');
   });
 
   it('warns about a log past 50 MB', async () => {

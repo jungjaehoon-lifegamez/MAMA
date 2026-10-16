@@ -34,7 +34,13 @@ async function main(): Promise<void> {
     } catch (error) {
       // Another process already holds this install, or a restore is unfinished: a clean exit,
       // which the service files leave stopped (they restart only after a failure).
-      if (!(error instanceof InstallBusyError) && !(error instanceof RestorePendingError)) {
+      // A newer schema stays newer too; restarting into the refusal would only repeat it.
+      const newerSchema = (error as { code?: unknown } | null)?.code === 'MAMA_SCHEMA_NEWER';
+      if (
+        !(error instanceof InstallBusyError) &&
+        !(error instanceof RestorePendingError) &&
+        !newerSchema
+      ) {
         // The log line above names the error; this names the stage and the next step.
         const stage = (error as { bootStage?: unknown }).bootStage;
         if (typeof stage === 'string') {
@@ -44,7 +50,7 @@ async function main(): Promise<void> {
         }
         throw error;
       }
-      console.error(error.message);
+      console.error((error as Error).message);
     }
     return;
   }

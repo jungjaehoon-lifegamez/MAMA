@@ -12,6 +12,7 @@
 
 import path from 'node:path';
 import { createAdapter } from '../db-adapter/index.js';
+import { NewerSchemaError } from '../db-adapter/node-sqlite-adapter.js';
 import type { DatabaseInstance } from '../db-manager.js';
 import { assertEmbeddingSchemeCurrent } from '../db-manager.js';
 import { info } from '../debug-logger.js';
@@ -33,6 +34,12 @@ export interface OpenDatabaseOptions {
    * number is not spoken for by somebody else.
    */
   migrations?: ReadonlyArray<{ name: string; dir: string }>;
+  /**
+   * Refuse a database whose schema, for any source, is newer than this version's migrations,
+   * before anything writes to it (NewerSchemaError). Off by default: consumers that share one
+   * database at different core versions would refuse each other until they run one core.
+   */
+  refuseNewerSchema?: boolean;
 }
 
 export interface DatabaseHandle {
@@ -165,10 +172,13 @@ export async function openDatabase(options: OpenDatabaseOptions = {}): Promise<D
   let connection: unknown;
   try {
     connection = await adapter.connect();
-    await adapter.runMigrations([
-      { name: 'core', dir: options.migrationsDir ?? MIGRATIONS_DIR },
-      ...(options.migrations ?? []),
-    ]);
+    await adapter.runMigrations(
+      [
+        { name: 'core', dir: options.migrationsDir ?? MIGRATIONS_DIR },
+        ...(options.migrations ?? []),
+      ],
+      { refuseNewer: options.refuseNewerSchema === true }
+    );
 
     // New tables and rows exist only after migrations run.
     if (typeof adapter.reloadVectorCache === 'function') {
@@ -183,6 +193,8 @@ export async function openDatabase(options: OpenDatabaseOptions = {}): Promise<D
     } catch {
       // The open already failed; a disconnect error would only mask it.
     }
+    // A newer schema is a refusal with its own code, not an initialization failure.
+    if (error instanceof NewerSchemaError) throw error;
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to initialize database: ${message}`);
   }

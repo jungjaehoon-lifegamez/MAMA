@@ -29,6 +29,7 @@ export { openDatabase, MIGRATIONS_DIR } from './storage/database.js';
 export {
   CORE_MIGRATION_SOURCE,
   highestMigrationVersion,
+  NewerSchemaError,
 } from './db-adapter/node-sqlite-adapter.js';
 export type { DatabaseHandle, OpenDatabaseOptions } from './storage/database.js';
 import type { PreparedStatement } from './db-adapter/statement.js';
@@ -69,7 +70,10 @@ export interface DatabaseAdapter {
 export interface DatabaseInstance extends DatabaseAdapter {
   connect: () => unknown;
   disconnect: () => void;
-  runMigrations: (sources: string | ReadonlyArray<{ name: string; dir: string }>) => void;
+  runMigrations: (
+    sources: string | ReadonlyArray<{ name: string; dir: string }>,
+    options?: { refuseNewer?: boolean }
+  ) => void;
   insertEmbedding: (rowid: number, embedding: Float32Array | number[]) => void;
   vectorSearch: (
     embedding: Float32Array | number[],
