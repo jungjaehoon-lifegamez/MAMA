@@ -81,6 +81,25 @@ describe('persistent CLI interrupt', () => {
     await expect(next).rejects.not.toBeInstanceOf(NativeTurnStoppedError);
   });
 
+  it('waits for the input acknowledgement, which a stopped result before it would kill', async () => {
+    const { proc, child, emit } = readyProcess();
+    const pending = proc.sendMessage('fixture', { onAccepted: () => {} } as never);
+    void pending.catch(() => {});
+    expect(proc.interrupt()).toBe(false);
+    expect(child.lines.some((line) => line.includes('control_request'))).toBe(false);
+    const input = JSON.parse(child.lines.at(-1)!) as { uuid?: string };
+    emit({
+      type: 'user',
+      uuid: input.uuid,
+      session_id: 'fixture-session',
+      message: { role: 'user', content: 'fixture' },
+    });
+    expect(proc.interrupt()).toBe(true);
+    emit({ type: 'result', subtype: 'error_during_execution', is_error: true });
+    await expect(pending).rejects.toBeInstanceOf(NativeTurnStoppedError);
+    expect(child.signals).toEqual([]);
+  });
+
   it('keeps an unrequested failed turn an ordinary error', async () => {
     const { proc, emit } = readyProcess();
     const pending = proc.sendMessage('fixture');
