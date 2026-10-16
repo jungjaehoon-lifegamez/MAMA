@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `openDatabase({ refuseNewerSchema: true })` refuses a database whose schema is newer than this
+  version: a migration source recorded above the highest file this version ships (deferred
+  migrations count, since they are files), or a source this version does not know. It reads the
+  file read-only before connecting, so nothing writes to it or reads its tables first. A version
+  table from before 085, which has no source column, is the core's alone. It throws
+  `NewerSchemaError` (code `MAMA_SCHEMA_NEWER`), which names both numbers and the way out. Off by
+  default: consumers that share one database at different core versions would refuse each other.
+- `@jungjaehoon/mama-core/db-manager` exports `MIGRATIONS_DIR`, `CORE_MIGRATION_SOURCE`,
+  `highestMigrationVersion(dir)`, `readSchemaState(path, sources)` (the same read-only read, per
+  source) and `NewerSchemaError`.
+
 ## [8.7.0] - 2026-10-14
 
 ### Added

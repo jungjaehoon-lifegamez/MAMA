@@ -10,8 +10,10 @@
  * @module storage/database
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 import { createAdapter } from '../db-adapter/index.js';
+import { NewerSchemaError, readSchemaState } from '../db-adapter/node-sqlite-adapter.js';
 import type { DatabaseInstance } from '../db-manager.js';
 import { assertEmbeddingSchemeCurrent } from '../db-manager.js';
 import { info } from '../debug-logger.js';
@@ -33,6 +35,14 @@ export interface OpenDatabaseOptions {
    * number is not spoken for by somebody else.
    */
   migrations?: ReadonlyArray<{ name: string; dir: string }>;
+  /**
+   * Refuse a database whose schema, for any source, is newer than this version's migrations, or
+   * that records a source this version does not know (NewerSchemaError). It reads the database
+   * read-only before connecting, so nothing writes to it or reads its tables first. Off by
+   * default: consumers that share one database at different core versions would refuse each
+   * other until they run one core.
+   */
+  refuseNewerSchema?: boolean;
 }
 
 export interface DatabaseHandle {
@@ -161,14 +171,21 @@ export async function openDatabase(options: OpenDatabaseOptions = {}): Promise<D
     options.path ? { dbPath: options.path } : {}
   ) as unknown as DatabaseInstance;
   assertTestProcessIsNotUsingRealDb(resolveAdapterDbPath(adapter), 'adapter.getDbPath()');
+  const sources = [
+    { name: 'core', dir: options.migrationsDir ?? MIGRATIONS_DIR },
+    ...(options.migrations ?? []),
+  ];
+  // Only a file that exists records a schema; a new one is created by the connection.
+  const dbPath = resolveAdapterDbPath(adapter);
+  if (options.refuseNewerSchema === true && dbPath !== undefined && fs.existsSync(dbPath)) {
+    const newer = readSchemaState(dbPath, sources).find((state) => state.stored > state.highest);
+    if (newer) throw new NewerSchemaError(newer.name, newer.stored, newer.highest);
+  }
 
   let connection: unknown;
   try {
     connection = await adapter.connect();
-    await adapter.runMigrations([
-      { name: 'core', dir: options.migrationsDir ?? MIGRATIONS_DIR },
-      ...(options.migrations ?? []),
-    ]);
+    await adapter.runMigrations(sources);
 
     // New tables and rows exist only after migrations run.
     if (typeof adapter.reloadVectorCache === 'function') {

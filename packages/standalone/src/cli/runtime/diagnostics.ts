@@ -28,6 +28,12 @@ import {
 } from '../commands/daemon.js';
 import { probeBackend, type BackendName, type ProbeRun, defaultProbeRun } from './backend-probe.js';
 import { restoreJournalPath, type DaemonControlReply } from './daemon-control.js';
+import {
+  CORE_MIGRATION_SOURCE,
+  MIGRATIONS_DIR,
+  readSchemaState,
+} from '@jungjaehoon/mama-core/db-manager';
+import { STANDALONE_MIGRATION_SOURCE } from '../../storage/migrations-source.js';
 import { systemdUnitState, type ServiceRun, defaultServiceRun } from './systemd-service.js';
 
 export type CheckStatus = 'ok' | 'warn' | 'fail';
@@ -149,8 +155,9 @@ function secretFix(name: string): string {
 }
 
 /**
- * Check an install as its service would run it. Nothing here writes MAMA's files, opens its
- * database or starts a service; the backend's own status command may update the backend's config.
+ * Check an install as its service would run it. Nothing here writes MAMA's files or starts a
+ * service; the database is opened read-only (which can leave its -wal and -shm beside it), and the
+ * backend's own status command may update the backend's config.
  * Each check names what it found and, when it is not ok, what to do.
  */
 export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<Check[]> {
@@ -194,6 +201,8 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
       fix: `correct ${configPath}; the daemon refuses to boot until this passes`,
     });
   }
+
+  if (config) checks.push(schemaCheck(config.database.path));
 
   if (config) {
     checks.push(
@@ -425,6 +434,64 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
     }
   }
   return checks;
+}
+
+/**
+ * The database's schema against what this version knows, per migration source, read-only. A
+ * newer one, or a source this version does not know, is what boot refuses; an older one migrates
+ * at the next start.
+ */
+function schemaCheck(databasePath: string): Check {
+  try {
+    statSync(databasePath);
+  } catch (error) {
+    // Only a confirmed absence is a fresh install; a path the service cannot reach is not.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return {
+        name: 'schema',
+        status: 'ok',
+        detail: 'no database yet; the first start creates it',
+      };
+    }
+    return {
+      name: 'schema',
+      status: 'fail',
+      detail: 'the database cannot be read',
+      context: message(error),
+    };
+  }
+  try {
+    // The same read boot makes before it connects, so the two cannot disagree.
+    const states = readSchemaState(databasePath, [
+      { name: CORE_MIGRATION_SOURCE, dir: MIGRATIONS_DIR },
+      STANDALONE_MIGRATION_SOURCE,
+    ]);
+    const summary = states
+      .map((state) => `${state.name} ${state.stored} of ${state.highest}`)
+      .join(', ');
+    if (states.some((state) => state.stored > state.highest)) {
+      return {
+        name: 'schema',
+        status: 'fail',
+        detail: `the database is newer than this MAMA (${summary}); boot refuses it`,
+        fix: 'install the version that wrote it, or mama restore a backup taken with this one',
+      };
+    }
+    const pending = states.reduce((sum, state) => sum + (state.highest - state.stored), 0);
+    return {
+      name: 'schema',
+      status: 'ok',
+      detail: pending > 0 ? `${summary}; the next start migrates it` : summary,
+    };
+  } catch (error) {
+    // A file that is not a database fails at its first query, not at open.
+    return {
+      name: 'schema',
+      status: 'fail',
+      detail: 'the database cannot be read',
+      context: message(error),
+    };
+  }
 }
 
 /** start.sh's Node: still there, outside one version's folder, and able to load MAMA's SQLite. */

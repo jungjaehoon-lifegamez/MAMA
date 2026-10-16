@@ -25,7 +25,14 @@ export {
   declareProductionDatabasePath,
   isTestMode,
 } from './storage/database.js';
-export { openDatabase } from './storage/database.js';
+export { openDatabase, MIGRATIONS_DIR } from './storage/database.js';
+export {
+  CORE_MIGRATION_SOURCE,
+  highestMigrationVersion,
+  NewerSchemaError,
+  readSchemaState,
+} from './db-adapter/node-sqlite-adapter.js';
+export type { SchemaSourceState } from './db-adapter/node-sqlite-adapter.js';
 export type { DatabaseHandle, OpenDatabaseOptions } from './storage/database.js';
 import type { PreparedStatement } from './db-adapter/statement.js';
 import { EMBEDDING_PREFIX_SCHEME } from './embedding/embedder.js';

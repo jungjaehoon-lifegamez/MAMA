@@ -1,3 +1,4 @@
+import { NewerSchemaError } from '@jungjaehoon/mama-core/db-manager';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const failure = vi.hoisted(() => ({ value: null as unknown }));
@@ -22,5 +23,17 @@ describe('CLI failure diagnostics', () => {
     await import('../../src/cli/index.js');
     await vi.waitFor(() => expect(process.exitCode).toBe(1));
     expect(error).toHaveBeenCalledWith('mama command failed (TypeError, EACCES)');
+  });
+
+  it("prints core's newer-schema refusal, whose text says what to do", async () => {
+    vi.resetModules();
+    failure.value = new NewerSchemaError('core', 107, 106);
+    process.argv = [process.execPath, 'mama', 'status'];
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await import('../../src/cli/index.js');
+    await vi.waitFor(() => expect(process.exitCode).toBe(1));
+    expect(error).toHaveBeenCalledWith(
+      expect.stringMatching(/core schema is at 107, newer than this version knows \(106\)/)
+    );
   });
 });

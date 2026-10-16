@@ -6,12 +6,15 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   truncateSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import Database from 'better-sqlite3';
+import { highestMigrationVersion, MIGRATIONS_DIR } from '@jungjaehoon/mama-core/db-manager';
 import { runDoctor } from '../../src/cli/commands/doctor.js';
 import { loadConnector } from '../../src/connectors/index.js';
 import { compareVersions, probeBackend } from '../../src/cli/runtime/backend-probe.js';
@@ -648,6 +651,79 @@ describe('mama doctor', () => {
       detail: 'could not be asked whether its credentials work',
       context: 'no answer within 0.05 s',
     });
+  });
+
+  it("holds the database's schema to what this version knows", async () => {
+    const installed = install();
+    let by = byName(await runDiagnostics(base(installed)));
+    expect(by.schema).toMatchObject({
+      status: 'ok',
+      detail: 'no database yet; the first start creates it',
+    });
+    const highest = highestMigrationVersion(MIGRATIONS_DIR);
+    const db = new Database(join(installed.root, 'memory.db'));
+    db.exec('CREATE TABLE schema_version (source TEXT, version INTEGER)');
+    db.prepare("INSERT INTO schema_version VALUES ('core', ?)").run(highest - 1);
+    db.close();
+    by = byName(await runDiagnostics(base(installed)));
+    expect(by.schema.status).toBe('ok');
+    expect(by.schema.detail).toContain(`core ${highest - 1} of ${highest}`);
+    expect(by.schema.detail).toContain('the next start migrates it');
+    const newer = new Database(join(installed.root, 'memory.db'));
+    newer.prepare("INSERT INTO schema_version VALUES ('core', ?)").run(highest + 1);
+    newer.close();
+    by = byName(await runDiagnostics(base(installed)));
+    expect(by.schema).toMatchObject({ status: 'fail' });
+    expect(by.schema.detail).toContain(`core ${highest + 1} of ${highest}`);
+
+    // A newer product schema counts the same as a newer core one.
+    const product = new Database(join(installed.root, 'memory.db'));
+    product.exec('DELETE FROM schema_version WHERE version > ' + String(highest - 1));
+    product.prepare("INSERT INTO schema_version VALUES ('standalone', 99)").run();
+    product.close();
+    by = byName(await runDiagnostics(base(installed)));
+    expect(by.schema).toMatchObject({ status: 'fail' });
+    expect(by.schema.detail).toContain('standalone 99 of');
+
+    // A source this version does not know is a later version's schema, as boot reads it.
+    const later = new Database(join(installed.root, 'memory.db'));
+    later.exec("DELETE FROM schema_version WHERE source = 'standalone'");
+    later.prepare("INSERT INTO schema_version VALUES ('later', 2)").run();
+    later.close();
+    by = byName(await runDiagnostics(base(installed)));
+    expect(by.schema).toMatchObject({ status: 'fail' });
+    expect(by.schema.detail).toContain('later 2 of 0');
+  });
+
+  it('reports a database it cannot read, or one with no schema table yet, instead of failing', async () => {
+    const installed = install();
+    writeFileSync(
+      join(installed.root, 'memory.db'),
+      'not a database, only bytes that look like one'
+    );
+    let by = byName(await runDiagnostics(base(installed)));
+    expect(by.schema).toMatchObject({ status: 'fail', detail: 'the database cannot be read' });
+    expect(by.daemon).toBeDefined();
+    rmSync(join(installed.root, 'memory.db'));
+    const empty = new Database(join(installed.root, 'memory.db'));
+    empty.exec('CREATE TABLE x (y TEXT)');
+    empty.close();
+    by = byName(await runDiagnostics(base(installed)));
+    expect(by.schema.status).toBe('ok');
+    expect(by.schema.detail).toContain('core 0 of');
+
+    // A path the service cannot reach is not a fresh install.
+    rmSync(join(installed.root, 'memory.db'));
+    const locked = join(installed.root, 'locked');
+    mkdirSync(locked);
+    symlinkSync(join(locked, 'memory.db'), join(installed.root, 'memory.db'));
+    chmodSync(locked, 0o000);
+    try {
+      by = byName(await runDiagnostics(base(installed)));
+    } finally {
+      chmodSync(locked, 0o700);
+    }
+    expect(by.schema).toMatchObject({ status: 'fail', detail: 'the database cannot be read' });
   });
 
   it('warns about a log past 50 MB', async () => {

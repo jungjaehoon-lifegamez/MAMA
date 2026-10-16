@@ -298,6 +298,135 @@ export interface MigrationSource {
 /** The core is one source among others; it is only first because others build on it. */
 export const CORE_MIGRATION_SOURCE = 'core';
 
+/**
+ * A database a newer version migrated: older code cannot read a schema it does not know. The
+ * code is stable so a consumer can stop cleanly instead of being restarted into the refusal.
+ */
+export class NewerSchemaError extends Error {
+  readonly code = 'MAMA_SCHEMA_NEWER';
+  constructor(
+    readonly source: string,
+    readonly stored: number,
+    readonly highest: number
+  ) {
+    super(
+      `This database's ${source} schema is at ${stored}, newer than this version knows (${highest}); install the version that wrote it, or restore a backup taken with this one`
+    );
+    this.name = 'NewerSchemaError';
+  }
+}
+
+/** The highest migration number among a source's files; deferred migrations are files too. */
+export function highestMigrationVersion(migrationsDir: string): number {
+  return fs
+    .readdirSync(migrationsDir)
+    .map((file) => /^(\d+)-.*\.sql$/.exec(file)?.[1])
+    .filter((version): version is string => version !== undefined)
+    .reduce((highest, version) => Math.max(highest, Number.parseInt(version, 10)), 0);
+}
+
+interface SchemaReader {
+  prepare(sql: string): {
+    all: (...params: unknown[]) => unknown[];
+    get: (...params: unknown[]) => unknown;
+  };
+}
+
+/**
+ * The highest version a source has recorded, or 0 before it has any. A table without the
+ * source column (before 085) is the core's alone, as stampMigration writes it; another
+ * source has recorded nothing there yet.
+ */
+function storedVersion(db: SchemaReader, sourceName: string): number {
+  if (!hasSchemaVersionTable(db)) return 0;
+  // Progress is per source. A shared MAX() would let one author's numbering
+  // declare another author's migrations already applied.
+  if (!schemaVersionHasSource(db)) {
+    if (sourceName !== CORE_MIGRATION_SOURCE) return 0;
+    const row = db.prepare('SELECT MAX(version) AS version FROM schema_version').get() as
+      | { version: number | null }
+      | undefined;
+    return row?.version || 0;
+  }
+  const row = db
+    .prepare('SELECT MAX(version) AS version FROM schema_version WHERE source = ?')
+    .get(sourceName) as { version: number | null } | undefined;
+  return row?.version || 0;
+}
+
+function hasSchemaVersionTable(db: SchemaReader): boolean {
+  return (
+    db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_version'").all()
+      .length > 0
+  );
+}
+
+function schemaVersionHasSource(db: SchemaReader): boolean {
+  return (db.prepare('PRAGMA table_info(schema_version)').all() as Array<{ name: string }>).some(
+    (column) => column.name === 'source'
+  );
+}
+
+/** One migration source as a database records it, beside what this version ships. */
+export interface SchemaSourceState {
+  readonly name: string;
+  /** The highest version the database records for this source. */
+  readonly stored: number;
+  /** The highest migration file this version ships for it; 0 for a source it does not know. */
+  readonly highest: number;
+}
+
+/**
+ * Read a database's schema per migration source without writing to it: the sources given, then
+ * any other source the database records, which a later version brought and this one does not
+ * know. It opens its own read-only connection, so it runs before anything else touches the file.
+ */
+export function readSchemaState(
+  dbPath: string,
+  sources: readonly MigrationSource[]
+): SchemaSourceState[] {
+  const db = openReadOnly(dbPath);
+  try {
+    const known = sources.map((source) => ({
+      name: source.name,
+      stored: storedVersion(db, source.name),
+      highest: highestMigrationVersion(source.dir),
+    }));
+    if (!hasSchemaVersionTable(db) || !schemaVersionHasSource(db)) return known;
+    const names = new Set(sources.map((source) => source.name));
+    const unknown = (
+      db.prepare('SELECT DISTINCT source FROM schema_version ORDER BY source').all() as Array<{
+        source: string;
+      }>
+    )
+      .filter((row) => !names.has(row.source))
+      .map((row) => ({ name: row.source, stored: storedVersion(db, row.source), highest: 0 }));
+    return [...known, ...unknown];
+  } finally {
+    db.close();
+  }
+}
+
+function openReadOnly(dbPath: string): NodeSQLiteDatabaseLike {
+  if (BetterSQLite3) {
+    const Driver = BetterSQLite3 as unknown as new (
+      path: string,
+      options: { readonly: boolean; fileMustExist: boolean }
+    ) => NodeSQLiteDatabaseLike;
+    return new Driver(dbPath, { readonly: true, fileMustExist: true });
+  }
+  if (DatabaseSync) {
+    const Driver = DatabaseSync as unknown as new (
+      path: string,
+      options: { readOnly: boolean }
+    ) => NodeSQLiteDatabaseLike;
+    return new Driver(dbPath, { readOnly: true });
+  }
+  throw new Error(
+    'No SQLite driver available. Install better-sqlite3 or use Node 22.13+ (node:sqlite).'
+  );
+}
+
 /** The columns migration 101 adds to model_runs. */
 const MODEL_RUN_USAGE_COLUMNS = [
   'input_tokens',
@@ -775,28 +904,7 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
       throw new Error('Database not connected');
     }
     const isCore = sourceName === CORE_MIGRATION_SOURCE;
-
-    const tables = this.prepare(
-      `
-      SELECT name FROM sqlite_master
-      WHERE type='table' AND name='schema_version'
-    `
-    ).all() as Array<{ name: string }>;
-
-    let currentVersion = 0;
-    if (tables.length > 0) {
-      // Progress is per source. A shared MAX() would let one author's numbering
-      // declare another author's migrations already applied.
-      const hasSource = this.tableColumns('schema_version').has('source');
-      const version = (
-        hasSource
-          ? this.prepare('SELECT MAX(version) as version FROM schema_version WHERE source = ?').get(
-              sourceName
-            )
-          : this.prepare('SELECT MAX(version) as version FROM schema_version').get()
-      ) as { version: number | null } | undefined;
-      currentVersion = version?.version || 0;
-    }
+    const currentVersion = storedVersion(this, sourceName);
 
     info(`[node-sqlite-adapter] Current schema version (${sourceName}): ${currentVersion}`);
 
