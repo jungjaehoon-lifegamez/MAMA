@@ -96,7 +96,11 @@ After the questions, `mama init` takes these steps in order:
 3. installs the document tools;
 4. installs and starts the service (a LaunchAgent on macOS, a systemd user unit kept running
    after logout on Linux);
-5. waits until MAMA reports it is running.
+5. waits until MAMA reports it is running;
+6. asks MAMA for one real turn of the backend, run as the service runs it. If it does not answer,
+   setup says so and points to `mama logs` and `mama doctor`; after a fix, `mama init` checks
+   again. This proves the backend as the common session runs it; your first message to the bot
+   proves your personal session.
 
 If a step fails, run `mama init` again: it continues from that step without asking again.
 Once setup is complete it does not run again. It also refuses to start while a MAMA daemon holds

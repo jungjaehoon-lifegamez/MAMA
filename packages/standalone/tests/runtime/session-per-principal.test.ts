@@ -1024,6 +1024,26 @@ it('stops the turn running in a conversation and keeps its session (/stop)', asy
   }
 });
 
+it('probes the backend with one turn in a session of its own, reset afterwards', async () => {
+  const f = await fixture('claude');
+  const runtime = await createOwnerRuntime(f.options);
+  try {
+    const probed = await runtime.probeBackend();
+    expect(f.turns.map((turn) => [turn.principal, turn.key])).toEqual([['owner', 'owner:probe']]);
+    expect(f.turns[0].prompt).toContain('setup check of the model connection');
+    // The turn has its receipt, and no conversation keeps anything of it.
+    const run = runtime.database.adapter
+      .prepare('SELECT status, input_refs_json FROM model_runs WHERE model_run_id = ?')
+      .get(probed.modelRunId) as { status: string; input_refs_json: string };
+    expect(run.status).toBe('committed');
+    expect(JSON.parse(run.input_refs_json)).toMatchObject({ sessionKey: 'owner:probe' });
+    expect(f.pool.peekSession('owner:probe').sessionId).toBeUndefined();
+    expect(f.pool.peekSession('owner:runtime').sessionId).toBeUndefined();
+  } finally {
+    await runtime.stop();
+  }
+});
+
 it('starts over with the DM a group conversation kept from before a restart (/new)', async () => {
   const f = await fixture('codex');
   f.options.roomChannels = ['-7001'];

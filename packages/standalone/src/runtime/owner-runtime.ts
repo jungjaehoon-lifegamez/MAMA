@@ -42,7 +42,10 @@ import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import type { OwnerAttachment } from '../gateways/telegram-attachments.js';
 import type { JsonValue } from '@jungjaehoon/mama-core/knowledge';
 import type { ServerResponse } from 'node:http';
-import type { NativeSessionHandle } from '@jungjaehoon/mama-core/runtime/runtime';
+import type {
+  NativeInvocationOptions,
+  NativeSessionHandle,
+} from '@jungjaehoon/mama-core/runtime/runtime';
 import type { NativeModelRunPort } from '@jungjaehoon/mama-core/runtime/native-turn';
 import { createStoredSourceReader } from '../api/stored-source-reader.js';
 import type { AttachmentActionPorts } from '../api/attachment-actions.js';
@@ -92,6 +95,11 @@ import {
   type StimulusIntake,
   type TurnLesson,
 } from './stimulus-delivery.js';
+
+/** The session a backend probe runs in; never a conversation's. */
+export const OWNER_PROBE_SESSION_KEY = 'owner:probe';
+const BACKEND_PROBE_PROMPT =
+  'This is a setup check of the model connection, not a request. Reply with the single word OK and use no tools.';
 
 export interface OwnerRuntimeOptions {
   prepareDeferredMemberInput?(id: string, input: OwnerMessageInput): Promise<OwnerMessageInput>;
@@ -217,6 +225,12 @@ export interface OwnerRuntime {
    * told it was interrupted. Inputs waiting behind it still run.
    */
   stopTurn(target: ConversationTarget): Promise<'stopped' | 'starting' | 'idle'>;
+  /**
+   * One real turn through the backend as this process runs it (the service's PATH, environment,
+   * sandbox and model), in a session of its own that is reset afterwards, so no conversation
+   * keeps anything of it. Setup uses it to prove the backend answers. A failure throws.
+   */
+  probeBackend(): Promise<{ modelRunId: string | null; ms: number }>;
   beginStop(): void;
   drain(): Promise<void>;
   stop(): Promise<void>;
@@ -1414,6 +1428,42 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         // The session is taken while its backend has no request open: the turn is starting or
         // finishing, so stopping it now would stop nothing.
         return sessionPool.peekSession(key).busy ? 'starting' : 'idle';
+      },
+      probeBackend: async () => {
+        if (stopping) throw new Error('Cannot probe the backend after runtime stop');
+        if (!nativeSession?.runTurn || !nativeSession.resetSession)
+          throw new Error('The owner session has no turn port');
+        const native = nativeSession;
+        // Turns of one workspace run one at a time (the web-fetch mode file relies on it), and a
+        // drain waits for this chain. The check goes next, as /new does, not behind queued work.
+        return sessions.turnChain(options.ownerPrincipalId).afterCurrent(async () => {
+          // A stop that began while the probe waited for its slot starts no new turn.
+          if (stopping) throw new Error('Cannot probe the backend after runtime stop');
+          const started = Date.now();
+          let modelRunId: string | null = null;
+          let turnError: unknown;
+          try {
+            const result = await native.runTurn!([{ type: 'text', text: BACKEND_PROBE_PROMPT }], {
+              sessionKey: OWNER_PROBE_SESSION_KEY,
+              onModelRunStarted: (id: string) => {
+                modelRunId = id;
+              },
+            } as NativeInvocationOptions);
+            // An answer is what shows the model replied; an empty one proves nothing.
+            if (!result.response.trim())
+              throw new Error('The backend finished the turn without an answer');
+          } catch (error) {
+            turnError = error;
+          }
+          try {
+            await native.resetSession!(OWNER_PROBE_SESSION_KEY);
+          } catch (error) {
+            // The turn's own failure says more than the reset that followed it.
+            throw turnError ?? error;
+          }
+          if (turnError !== undefined) throw turnError;
+          return { modelRunId, ms: Date.now() - started };
+        });
       },
       stop: () => {
         if (stopPromise) return stopPromise;

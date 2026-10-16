@@ -85,6 +85,8 @@ export interface InitOptions {
   startService?: (viewer: Record<string, string>) => Promise<void>;
   /** Asks the install's daemon for its status while init waits for its boot; tests replace it. */
   daemonStatus?: () => Promise<DaemonControlReply>;
+  /** Asks the started daemon for one real backend turn; tests replace it. */
+  daemonProbe?: () => Promise<DaemonControlReply>;
   /** Whether the viewer answers /health; tests replace it. */
   health?: () => Promise<boolean>;
   /** Whether something listens on a port; tests replace it. */
@@ -343,6 +345,9 @@ async function viewerHealth(port: number): Promise<boolean> {
     return false;
   }
 }
+
+/** How much longer than the daemon's own turn limit init waits for the backend check. */
+const PROBE_MARGIN_MS = 60_000;
 
 const initUsage = `Usage: mama init [--non-interactive] | mama init --section <${initSections.join('|')}>`;
 
@@ -654,6 +659,32 @@ export async function runInit(
       pollMs: options.pollMs ?? 1_000,
       write,
     });
+    // The backend's version and login were read from this terminal. One real turn through the
+    // daemon proves it answers as the service runs it: its PATH, environment, sandbox and model.
+    // The step is done only then, so mama init again checks once more after a fix.
+    write('Checking the backend with one real turn through MAMA…');
+    // A turn that keeps progressing may run until agent.max_turn_ms, and the daemon answers with its
+    // own error before then; wait a little longer than that.
+    const timeoutMs = loadConfig({ home, path: configPath }).agent.max_turn_ms + PROBE_MARGIN_MS;
+    const probe = await (
+      options.daemonProbe ?? (() => askDaemon('probe', { home, timeoutMs }))
+    )().catch((error: unknown) => {
+      throw new CliInputError(
+        `MAMA did not answer the backend check (${error instanceof Error ? error.message : 'no answer'}). mama logs shows why; then run mama init again.`
+      );
+    });
+    if (probe.state !== 'running')
+      throw new CliInputError(
+        'MAMA stopped before its backend could be checked. mama logs shows why; then run mama init again.'
+      );
+    if (probe.reply.ok !== true)
+      throw new CliInputError(
+        `The backend did not answer a real turn: ${String(probe.reply.error)}. mama logs shows more, and mama doctor checks the backend's login; fix it, then run mama init again.`
+      );
+    const probed = probe.reply.probe as { backend?: unknown; model?: unknown; ms?: unknown };
+    write(
+      `${String(probed.backend)} (${String(probed.model)}) answered a real turn in ${String(probed.ms)} ms.`
+    );
     delete progress.viewer;
     mark('service');
   }

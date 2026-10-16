@@ -94,9 +94,14 @@ describe('control socket', () => {
     const paths = daemonControlPaths(root());
     const lock = acquireInstallLock(paths, 'daemon');
     const stop = vi.fn();
+    let probeFails = false;
     const server = await startDaemonControl(paths, {
       status: () => ({ stage: 'running' }),
       stop,
+      probe: async () => {
+        if (probeFails) throw new Error('Not logged in · fixture backend');
+        return { ms: 3 };
+      },
     });
     expect(statSync(paths.socketPath).mode & 0o777).toBe(0o600);
     expect(statSync(paths.tokenPath).mode & 0o777).toBe(0o600);
@@ -108,6 +113,15 @@ describe('control socket', () => {
       reply: { ok: true },
     });
     expect(stop).toHaveBeenCalledTimes(1);
+    expect(await requestDaemonControl(paths, 'probe')).toEqual({
+      state: 'running',
+      reply: { ok: true, probe: { ms: 3 } },
+    });
+    probeFails = true;
+    expect(await requestDaemonControl(paths, 'probe')).toEqual({
+      state: 'running',
+      reply: { ok: false, error: 'Not logged in · fixture backend' },
+    });
 
     writeFileSync(paths.tokenPath, 'wrong-token\n');
     expect(await requestDaemonControl(paths, 'status')).toEqual({
@@ -125,6 +139,32 @@ describe('control socket', () => {
     });
     lock.release();
     expect(await requestDaemonControl(paths, 'status')).toEqual({ state: 'stopped', holder: null });
+  });
+
+  it('waits for a probe longer than a request may take to arrive', async () => {
+    const paths = daemonControlPaths(root());
+    const lock = acquireInstallLock(paths, 'daemon');
+    const server = await startDaemonControl(
+      paths,
+      {
+        status: () => ({}),
+        stop: () => {},
+        probe: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          return { ms: 150 };
+        },
+      },
+      50
+    );
+    try {
+      expect(await requestDaemonControl(paths, 'probe', 1_000)).toEqual({
+        state: 'running',
+        reply: { ok: true, probe: { ms: 150 } },
+      });
+    } finally {
+      await server.close();
+      lock.release();
+    }
   });
 
   it('reports stopped when a dead holder left its token behind', async () => {
@@ -169,6 +209,7 @@ function boot(home: string, logs: string[], extra: Partial<Parameters<typeof boo
     intake: { recordOwnerReply: () => {}, acceptOwnerMessage: vi.fn() },
     surface: { dispatch: vi.fn(), ownerAccess: { scopes: [{ kind: 'user', id: 'owner' }] } },
     acceptSourceDelta: vi.fn(),
+    probeBackend: vi.fn(async () => ({ modelRunId: 'fixture-run', ms: 7 })),
     stop: vi.fn(async () => {}),
   }));
   const run = bootDaemon({
@@ -223,7 +264,8 @@ describe('daemon boot holds the install', () => {
     const home = root('mama-boot-lock-');
     const firstLogs: string[] = [];
     const requestStop = vi.fn();
-    const first = await boot(home, firstLogs, { requestStop }).run;
+    const booted = boot(home, firstLogs, { requestStop });
+    const first = await booted.run;
 
     const secondLogs: string[] = [];
     const second = boot(home, secondLogs);
@@ -243,6 +285,30 @@ describe('daemon boot holds the install', () => {
           { name: 'chatwork', healthy: true, lastPoll: new Date(0).toISOString(), error: null },
         ],
       })
+    );
+    // A running daemon answers a probe with one turn of its own backend, and logs it.
+    const probe = await askDaemon('probe', { configPath: join(home, 'config.yaml') });
+    expect(probe.state === 'running' && probe.reply).toEqual({
+      ok: true,
+      probe: expect.objectContaining({ modelRunId: 'fixture-run', ms: 7 }),
+    });
+    expect(firstLogs).toContainEqual(expect.stringMatching(/^backend probe: .* answered in 7 ms/));
+    // A failed probe names what failed beneath the dispatch layer's wrapper.
+    const owner = (await booted.createOwnerRuntime.mock.results[0].value) as {
+      probeBackend: ReturnType<typeof vi.fn>;
+    };
+    owner.probeBackend.mockRejectedValueOnce(
+      new Error('Native input dispatch began', {
+        cause: new Error('Not logged in · fixture backend'),
+      })
+    );
+    const failed = await askDaemon('probe', { configPath: join(home, 'config.yaml') });
+    expect(failed.state === 'running' && failed.reply).toEqual({
+      ok: false,
+      error: expect.stringContaining('Not logged in · fixture backend'),
+    });
+    expect(firstLogs).toContainEqual(
+      expect.stringMatching(/^backend probe: .* failed: .*Not logged in · fixture backend/)
     );
     await askDaemon('stop', { configPath: join(home, 'config.yaml') });
     expect(requestStop).toHaveBeenCalledTimes(1);

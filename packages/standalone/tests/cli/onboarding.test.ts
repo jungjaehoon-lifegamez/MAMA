@@ -24,7 +24,11 @@ import { loadConfig } from '../../src/runtime/config.js';
 import { loadConnectorConfig } from '../../src/connectors/config-loader.js';
 import { defaultRoots, prepareRoot } from '../../src/cli/runtime/default-roots.js';
 import { initStatePath, readInitState } from '../../src/cli/runtime/init-state.js';
-import { acquireInstallLock, daemonControlPaths } from '../../src/cli/runtime/daemon-control.js';
+import {
+  acquireInstallLock,
+  daemonControlPaths,
+  type DaemonControlReply,
+} from '../../src/cli/runtime/daemon-control.js';
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
 
 let home: string;
@@ -171,6 +175,13 @@ function options(adapter: PromptAdapter, overrides: Partial<InitOptions> = {}) {
       reply: { ok: true, status: { stage: 'running' } },
     }),
     health: async () => true,
+    daemonProbe: async () => ({
+      state: 'running',
+      reply: {
+        ok: true,
+        probe: { backend: 'codex', model: 'fixture-model', ms: 5, modelRunId: 'fixture-run' },
+      },
+    }),
     // This machine's own MAMA may hold the default port; the fixture sees every port free.
     portAnswers: async () => false,
     pollMs: 1,
@@ -479,6 +490,43 @@ describe('mama init', () => {
     await expect(runInit([], options(p.adapter))).rejects.toThrow(/written by other accounts/);
     expect(existsSync(root)).toBe(false);
     expect(telegram.sent).toEqual([]);
+  });
+
+  it('proves the backend with one real turn through the started daemon', async () => {
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    await runInit([], options(p.adapter));
+    expect(p.output.join('\n')).toContain('codex (fixture-model) answered a real turn in 5 ms.');
+  });
+
+  it('says where to look when the backend does not answer, and checks again on a rerun', async () => {
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    let answer: () => Promise<DaemonControlReply> = async () => ({
+      state: 'running',
+      reply: { ok: false, error: 'Not logged in · fixture backend' },
+    });
+    const o = options(p.adapter, { daemonProbe: () => answer() });
+    await expect(runInit([], o)).rejects.toThrow(
+      /did not answer a real turn: Not logged in · fixture backend\. .*run mama init again/
+    );
+    // Everything before the service step is kept; that step is done only once the check passes.
+    expect(readInitState(root)?.done).toEqual(['config', 'owner', 'toolkit']);
+    answer = async () => {
+      throw new Error('The daemon did not answer within 660000 ms');
+    };
+    await expect(runInit([], o)).rejects.toThrow(
+      /MAMA did not answer the backend check \(The daemon did not answer within 660000 ms\)/
+    );
+    answer = async () => ({ state: 'stopped', holder: null });
+    await expect(runInit([], o)).rejects.toThrow(
+      /MAMA stopped before its backend could be checked/
+    );
+    answer = async () => ({
+      state: 'running',
+      reply: { ok: true, probe: { backend: 'codex', model: 'fixture-model', ms: 9 } },
+    });
+    await runInit([], o);
+    expect(readInitState(root)?.done).toEqual(['config', 'owner', 'toolkit', 'service']);
+    expect(p.output.join('\n')).toContain('codex (fixture-model) answered a real turn in 9 ms.');
   });
 
   it('reports a toolkit that cannot be installed and still starts MAMA', async () => {

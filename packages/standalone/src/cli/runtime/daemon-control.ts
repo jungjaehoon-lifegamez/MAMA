@@ -170,11 +170,13 @@ export function lockHolder(paths: DaemonControlPaths): LockOwner | null {
   }
 }
 
-export type DaemonControlOp = 'status' | 'stop';
+export type DaemonControlOp = 'status' | 'stop' | 'probe';
 
 export interface DaemonControlHandlers {
   status(): Promise<Record<string, unknown>> | Record<string, unknown>;
   stop(): void;
+  /** One real backend turn; it throws what failed. */
+  probe(): Promise<Record<string, unknown>>;
 }
 
 export interface DaemonControlServer {
@@ -184,13 +186,15 @@ export interface DaemonControlServer {
 const MAX_REQUEST_BYTES = 4096;
 
 /**
- * Serve status and stop to the CLI. Only the lock holder calls this, so removing a socket left by
+ * Serve status, stop and a backend probe to the CLI. Only the lock holder calls this, so removing a socket left by
  * a dead holder never removes a live one. Each boot writes a new token; a request without it is
  * refused.
  */
 export async function startDaemonControl(
   paths: DaemonControlPaths,
-  handlers: DaemonControlHandlers
+  handlers: DaemonControlHandlers,
+  /** How long a client may take to send its request; tests shorten it. */
+  requestTimeoutMs = 5_000
 ): Promise<DaemonControlServer> {
   const token = randomBytes(32).toString('hex');
   rmSync(paths.tokenPath, { force: true });
@@ -200,7 +204,7 @@ export async function startDaemonControl(
   const server: Server = createServer((socket) => {
     let buffer = '';
     socket.setEncoding('utf8');
-    socket.setTimeout(5_000, () => socket.destroy());
+    socket.setTimeout(requestTimeoutMs, () => socket.destroy());
     socket.on('error', () => socket.destroy());
     socket.on('data', (chunk: string) => {
       buffer += chunk;
@@ -212,6 +216,8 @@ export async function startDaemonControl(
       if (newline === -1) return;
       const line = buffer.slice(0, newline);
       buffer = '';
+      // The deadline is for sending a request; answering a probe takes a model turn.
+      socket.setTimeout(0);
       void answer(line).then(
         (reply) => socket.end(`${JSON.stringify(reply)}\n`),
         (error: unknown) =>
@@ -237,6 +243,7 @@ export async function startDaemonControl(
       handlers.stop();
       return { ok: true };
     }
+    if (request.op === 'probe') return { ok: true, probe: await handlers.probe() };
     return { ok: false, error: 'unknown op' };
   }
   try {
