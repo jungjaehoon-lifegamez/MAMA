@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A generated `start.sh` keeps the package manager's tool folders on PATH (`/opt/homebrew/bin`,
+  `/usr/local/bin`), when they exist, ahead of the system's. The agent's shell runs
+  the tools the owner installed there, such as python3 with its packages; they had been dropped.
+
 - `member_root` and `tools_root` are compared by their real letter case, so on a case-insensitive
   disk a root written as HOME in another case (`/USERS/name`) is refused as overlapping HOME,
   instead of being accepted and placing member workspaces inside the owner's home.

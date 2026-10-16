@@ -56,9 +56,10 @@ cd packages/mama-core && npx vitest run -t "pattern"
 
 ## Verification gotchas
 
-- launchd manages the daemon (`com.mama.server`, KeepAlive), so a killed process comes back. Stop
-  it before touching `~/.mama`: `launchctl bootout gui/$(id -u)/com.mama.server`. The daemon runs
-  whatever `DAEMON_JS` in `~/.mama/start.sh` points at.
+- launchd manages the daemon (`com.mama.server`), restarting it after a failure, so a killed
+  process comes back. Stop it before touching `~/.mama`: `mama stop`, or
+  `launchctl bootout gui/$(id -u)/com.mama.server`. The daemon runs the Node and the MAMA command
+  on the `exec` line of `~/.mama/start.sh`, which `mama service install` writes.
 - Live behaviour is proven by an owner turn, a clean `~/.mama/logs/daemon.log`, and a DB read-back.
   A row existing in the DB is not proof on its own.
 - `~/.mama` is a disposable testbed: no backups, compatibility windows or dual reads. Use

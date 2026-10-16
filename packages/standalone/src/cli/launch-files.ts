@@ -51,6 +51,8 @@ export function startScript(options: {
   nodePath: string;
   cliPath: string;
   executablePaths: string[];
+  /** Tests name which tool folders exist; by default the ones on this machine. */
+  exists?: (path: string) => boolean;
   viewer: Record<string, string>;
   /** config.yaml's logging.level; the core logger reads it only from MAMA_LOG_LEVEL. */
   logLevel: string;
@@ -77,15 +79,30 @@ export function startScript(options: {
   ].join('\n');
 }
 
-/** The PATH a generated start.sh sets: Node's folder, the tools' folders, then the system's. */
+/**
+ * Where a package manager installs the owner's command-line tools: Homebrew on Apple silicon
+ * (/opt/homebrew) and on Intel Macs and most Linux installs (/usr/local). The agent's shell runs
+ * those tools (python3 with its packages, sqlite3) and expects them ahead of the system's own, as
+ * in the owner's terminal.
+ */
+export const TOOL_DIRECTORIES = ['/opt/homebrew/bin', '/usr/local/bin'];
+
+/**
+ * The PATH a generated start.sh sets: Node's folder, the backend's and gws's, the package
+ * manager's folders that exist on this machine, then the system's.
+ */
 export function startPathEntries(options: {
   nodePath: string;
   executablePaths: string[];
+  /** Tests name what exists; by default the folders on this machine. */
+  exists?: (path: string) => boolean;
 }): string[] {
+  const exists = options.exists ?? existsSync;
   return [
     ...new Set([
       dirname(options.nodePath),
       ...options.executablePaths.map(dirname),
+      ...TOOL_DIRECTORIES.filter((directory) => exists(directory)),
       '/usr/bin',
       '/bin',
       '/usr/sbin',

@@ -83,6 +83,8 @@ const options = (home: string, lines: string[], extra: Record<string, unknown> =
   cliPath: '/fixture/mama/dist/cli/index.js',
   findExecutable: (name: string) => `/fixture/bin/${name}`,
   now: () => new Date('2026-10-16T01:00:00Z'),
+  // The same result on every machine: no package-manager tool folder unless a test names one.
+  toolDirectoryExists: () => false,
   ...extra,
 });
 
@@ -153,6 +155,19 @@ describe('mama service install on macOS', () => {
     expect(lines).toContain('it runs now: exec /old/node "$DAEMON_JS" daemon');
     expect(lines).toContain('carried over: MAMA_VIEWER_HOSTNAMES, MAMA_NOTE, MAX_THINKING_TOKENS');
     expect(lines).toContain('PATH no longer includes: /old/bin, /opt/homebrew/bin');
+
+    // Where Homebrew is installed, its folder stays on PATH.
+    const withHomebrew: string[] = [];
+    await expect(
+      installService(
+        [],
+        options(home, withHomebrew, {
+          platform: 'darwin',
+          toolDirectoryExists: (path: string) => path === '/opt/homebrew/bin',
+        })
+      )
+    ).rejects.toThrow('was not written by mama');
+    expect(withHomebrew).toContain('PATH no longer includes: /old/bin');
     expect(lines).toContain(
       "MAMA_LOG_LEVEL now follows config.yaml's logging.level (info); it was DEBUG"
     );

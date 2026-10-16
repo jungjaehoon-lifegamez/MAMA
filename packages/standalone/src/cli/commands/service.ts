@@ -45,6 +45,8 @@ export interface ServiceOptions {
   now?: () => Date;
   /** Where systemd keeps linger markers; tests point it elsewhere. */
   lingerRoot?: string;
+  /** Which package-manager tool folders exist; tests name them, by default this machine's. */
+  toolDirectoryExists?: (path: string) => boolean;
 }
 
 const LAUNCHD_LABEL = 'com.mama.server';
@@ -156,6 +158,7 @@ export async function installService(
     nodePath,
     cliPath,
     executablePaths,
+    ...(options.toolDirectoryExists ? { exists: options.toolDirectoryExists } : {}),
     viewer: {},
     logLevel: config.logging.level,
     carried: reading?.carried ?? [],
@@ -172,7 +175,11 @@ export async function installService(
       const names = reading.carried.map((line) => line.replace(/^export\s+/, '').split('=')[0]);
       write(`carried over: ${names.join(', ')}`);
     }
-    const kept = startPathEntries({ nodePath, executablePaths });
+    const kept = startPathEntries({
+      nodePath,
+      executablePaths,
+      ...(options.toolDirectoryExists ? { exists: options.toolDirectoryExists } : {}),
+    });
     // $HOME in the old PATH is the same folder the new one names in full.
     let oldPath: string[] = [];
     try {
