@@ -118,7 +118,7 @@ function readAuthEnv(root: string): Record<string, string> {
   return values;
 }
 
-async function defaultTelegramCall(
+export async function defaultTelegramCall(
   token: string,
   method: string,
   params: Record<string, string> = {}
@@ -629,7 +629,7 @@ function sandboxCheck(
     : { name: 'sandbox', status: 'ok', detail: 'starts' };
 }
 
-async function telegramCheck(
+export async function telegramCheck(
   token: string | undefined,
   commonChat: string | number | undefined,
   call: NonNullable<DiagnosticsOptions['telegramCall']>

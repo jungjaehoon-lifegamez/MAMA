@@ -47,6 +47,8 @@ export interface ServiceOptions {
   lingerRoot?: string;
   /** Which package-manager tool folders exist; tests name them, by default this machine's. */
   toolDirectoryExists?: (path: string) => boolean;
+  /** The viewer's tunnel settings `mama init` collected, written into start.sh. */
+  viewer?: Record<string, string>;
 }
 
 const LAUNCHD_LABEL = 'com.mama.server';
@@ -159,7 +161,7 @@ export async function installService(
     cliPath,
     executablePaths,
     ...(options.toolDirectoryExists ? { exists: options.toolDirectoryExists } : {}),
-    viewer: {},
+    viewer: options.viewer ?? {},
     logLevel: config.logging.level,
     carried: reading?.carried ?? [],
   });

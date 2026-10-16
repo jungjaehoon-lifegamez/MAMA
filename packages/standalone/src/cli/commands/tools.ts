@@ -1,19 +1,20 @@
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import * as yaml from 'js-yaml';
 import { loadConfig, parseConfig, type W1Config } from '../../runtime/config.js';
 import { installDocumentToolkit } from '../../tools/document-toolkit.js';
 import { onToolkitSignal } from '../../tools/toolkit-process.js';
 import { CliInputError } from '../prompt.js';
+import { defaultRoots, prepareRoot } from '../runtime/default-roots.js';
 
-/** macOS keeps a Shared folder beside the home folders, readable by every session. */
+/** The per-user tools folder a new install gets (`defaultRoots`), when the config names none. */
 export function defaultToolsRoot(
   platform: NodeJS.Platform = process.platform,
   home: string = homedir()
 ): string | undefined {
-  return platform === 'darwin' ? join(dirname(home), 'Shared', 'mama-tools') : undefined;
+  return defaultRoots({ platform, home })?.toolsRoot;
 }
 
 export async function runTools(
@@ -32,11 +33,18 @@ export async function runTools(
   const home = options.home ?? homedir();
   const configPath = options.configPath ?? join(home, '.mama', 'config.yaml');
   const config = loadConfig({ path: configPath, home });
-  const root = config.tools_root ?? options.toolsRoot ?? defaultToolsRoot(options.platform, home);
+  const fallback = options.toolsRoot ?? defaultToolsRoot(options.platform, home);
+  const root = config.tools_root ?? fallback;
   if (!root)
     throw new CliInputError(
       'Set tools_root to a writable directory outside HOME in config.yaml, then run mama tools install on the host'
     );
+  // The default is a folder of this user's; on Linux the installer creates it, as for mama init.
+  if (config.tools_root === undefined && options.toolsRoot === undefined)
+    prepareRoot(root, {
+      ownParent: true,
+      ...(options.platform ? { platform: options.platform } : {}),
+    });
   const next = parseConfig({ ...config, tools_root: root }, { home });
   const needsRestart = config.tools_root === undefined || !existsSync(root);
   const unregister = onToolkitSignal(() => {}, { exit: true });

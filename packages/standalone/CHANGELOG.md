@@ -17,6 +17,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/help`. In the common group an owner's commands act on the common session and a member's on
   their own group conversation. Unregistered senders still get no answer, a command addressed to
   another bot is left alone, and any other command goes to MAMA as a message.
+- `mama init` sets up a new install and starts it:
+  - **Checks first, before writing anything:** the backend is installed, at least the verified
+    version, and signed in; Telegram accepts the bot token; the member and tool folders stay
+    outside HOME. Those folders default to a folder of the user's (`Shared/mama-<user>/…` in the Shared folder beside the home folders
+    on macOS, `/var/lib/mama/<user>/…` on Linux), and init refuses one another account owns or can
+    write.
+  - **Then in order:** writes the setup, registers the person running it as the first owner,
+    installs the document tools, installs and starts the service through `mama service`, and
+    waits until the daemon reports it is running and the viewer answers `/health`.
+  - **Repeat-safe:** a failed run continues from its last finished step without asking again,
+    and a finished setup is refused.
+  - **Without a terminal:** `mama init --non-interactive` reads `MAMA_INIT_*` variables, with the
+    token from `MAMA_TELEGRAM_TOKEN`.
+  - **No longer offered:** the Kagemusha bridge, which a fresh install cannot use, and the
+    launch-agent question, since the service is installed for you.
 - `/stop` in Telegram stops the turn running in that conversation and keeps the conversation: the
   message it was answering is told it was interrupted and is not run again, and messages sent
   after it still run. In the common group an owner stops the common session's turn and a member

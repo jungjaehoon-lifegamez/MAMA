@@ -123,14 +123,14 @@ it.each([{ args: [] }, { args: ['update'] }, { args: ['install', 'extra'] }])(
   }
 );
 
-it('requires an explicit tools_root on Linux without invoking installation', async () => {
+it('on Linux uses the per-user default only once the installer made it, and installs nothing before', async () => {
   const raw = JSON.parse(readFileSync(configPath, 'utf8'));
   delete raw.tools_root;
   writeFileSync(configPath, JSON.stringify(raw));
   const install = vi.fn();
   await expect(
     runTools(['install'], { home, configPath, platform: 'linux', install })
-  ).rejects.toThrow(/tools_root.*mama tools install/);
+  ).rejects.toThrow(/does not exist\. The installer creates it once: sudo install -d/);
   expect(install).not.toHaveBeenCalled();
 });
 

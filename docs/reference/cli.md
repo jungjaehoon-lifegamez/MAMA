@@ -11,7 +11,7 @@ Use `mama` from `@jungjaehoon/mama-os` to configure and run the owner agent. Sta
 
 | Command                                                | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mama init`                                            | Prompts in a terminal and writes a new installation. No flags are supported.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `mama init [--non-interactive]`                        | Sets up a new installation and starts it: from a terminal, or from `MAMA_INIT_*` variables.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `mama secret set <NAME>`                               | Prompts with echo disabled and atomically updates one supported secret in `~/.mama/auth.env`. Restart the daemon afterward.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `mama secret list`                                     | Prints configured secret names only. It does not print values.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `mama register-owner <telegram id>`                    | Registers one active member with the owner role, leaving the common principal without a Telegram identity. Refused while the daemon or another command holds the install; prints counts only.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
@@ -32,18 +32,40 @@ Use `mama` from `@jungjaehoon/mama-os` to configure and run the owner agent. Sta
 
 ## Create an installation
 
-Run `mama init` yourself in a terminal. It asks for the backend (`claude` or `codex`), model,
-negative Telegram common group or supergroup chat ID, and optional connectors and viewer access
-settings. A solo owner creates a group with the bot for common changes; a private chat cannot
-reach the common session. Set `member_root` outside HOME, then register each owner with
-`mama register-owner <telegram id>` while the daemon is stopped, before starting it. Enter tokens
-only at the hidden prompts. Both `init` and `secret set` reject non-terminal input.
+Run `mama init` yourself in a terminal. It asks for:
 
-`init` writes `config.yaml`, `connectors.json`, `auth.env`, `start.sh`, and the workspace beneath
-`~/.mama/`. It generates a viewer token and can write the macOS launchd file
-`~/Library/LaunchAgents/com.mama.server.plist`. It refuses to overwrite existing configuration,
-connector, startup or selected launchd files. It prints login and start instructions; it does not
-log into a backend, start the daemon or prove that Telegram works.
+- the backend (`claude` or `codex`) and model;
+- the Telegram bot token;
+- the negative chat ID of the Telegram common group or supergroup;
+- your numeric Telegram user ID;
+- the member workspace and document tool folders (defaults outside HOME);
+- optional connectors, messengers and viewer access settings.
+
+A solo owner creates a group with the bot for common changes; a private chat cannot reach the
+common session. Enter tokens only at the hidden prompts.
+
+Before writing anything it checks three things:
+
+- the backend is installed, at least the verified version, and signed in;
+- Telegram accepts the token;
+- the folders stay outside HOME and the MAMA home.
+
+It then writes `config.yaml`, `connectors.json`, `auth.env` (with a generated viewer token) and the
+workspace beneath `~/.mama/`, and continues in this order:
+
+1. registers you as the first owner;
+2. installs the document toolkit;
+3. installs and starts the service through `mama service`;
+4. waits until the daemon reports it is running and the viewer answers `/health`.
+
+Each finished step is recorded in `~/.mama/runtime/init-state.json`. A failed run continues from
+its last step when `mama init` runs again. A finished setup, an existing `config.yaml` without that
+record, or a daemon holding the install is refused.
+
+`mama init --non-interactive` reads its answers from `MAMA_INIT_BACKEND`, `MAMA_INIT_MODEL`,
+`MAMA_TELEGRAM_TOKEN`, `MAMA_INIT_COMMON_CHAT_ID` and `MAMA_INIT_OWNER_TELEGRAM_ID`. Three are
+optional: `MAMA_INIT_MEMBER_ROOT`, `MAMA_INIT_TOOLS_ROOT` and `MAMA_INIT_TIMEZONE`. A missing
+required variable is named. `secret set` rejects non-terminal input.
 
 Allowed secret names are `MAMA_TELEGRAM_TOKEN`, `MAMA_TELEGRAM_SOURCE_TOKEN`, `MAMA_SLACK_TOKEN`,
 `MAMA_SLACK_APP_TOKEN`, `MAMA_CHATWORK_TOKEN`, `MAMA_DISCORD_TOKEN`, `MAMA_NOTION_TOKEN`,
@@ -55,8 +77,8 @@ Allowed secret names are `MAMA_TELEGRAM_TOKEN`, `MAMA_TELEGRAM_SOURCE_TOKEN`, `M
 its checks pass; the previous version is kept. The toolkit holds a Python environment with
 python-pptx, python-docx, openpyxl, xlsxwriter, PyMuPDF, pdfplumber, reportlab, Pillow, numpy, pandas and
 matplotlib, plus LibreOffice and Noto CJK fonts. A release that changes the package list takes effect
-only after `mama tools install` runs again; until then sessions keep the previous version. On macOS `tools_root` defaults to the Shared folder beside the home folders; set it
-elsewhere in `config.yaml` if needed, outside HOME. `mama init` runs the install last. The first
+only after `mama tools install` runs again; until then sessions keep the previous version. `tools_root` defaults to a folder of yours outside HOME (`Shared/mama-<you>/tools` in the Shared folder beside the home folders on macOS,
+`/var/lib/mama/<you>/tools` on Linux); set it elsewhere in `config.yaml` if needed. `mama init` runs the install before it starts the service. The first
 install adds `tools_root` to `config.yaml`; restart the daemon once after it. Later installs need no
 restart. The daemon log says `document toolkit: present` at start. The page renderer
 (`document.render`) runs only on macOS.
