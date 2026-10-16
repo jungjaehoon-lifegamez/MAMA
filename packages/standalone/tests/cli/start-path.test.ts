@@ -34,6 +34,16 @@ describe('the PATH a generated start.sh sets', () => {
     ).toEqual(SYSTEM);
   });
 
+  it('keeps the tool folders ahead of a system folder holding Node', () => {
+    expect(
+      startPathEntries({
+        nodePath: '/usr/bin/node',
+        executablePaths: ['/usr/bin/codex'],
+        exists: (path) => path === '/usr/local/bin',
+      })
+    ).toEqual(['/usr/local/bin', ...SYSTEM]);
+  });
+
   it('writes it into start.sh', () => {
     const script = startScript({
       home: '/fixture/home',

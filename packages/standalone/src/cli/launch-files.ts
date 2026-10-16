@@ -98,16 +98,14 @@ export function startPathEntries(options: {
   exists?: (path: string) => boolean;
 }): string[] {
   const exists = options.exists ?? existsSync;
+  const system = ['/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+  // A Node or backend in a system folder (/usr/bin/node on Linux) keeps the system's place, after
+  // the tool folders; start.sh runs Node by its full path either way.
+  const own = [dirname(options.nodePath), ...options.executablePaths.map(dirname)].filter(
+    (directory) => !system.includes(directory)
+  );
   return [
-    ...new Set([
-      dirname(options.nodePath),
-      ...options.executablePaths.map(dirname),
-      ...TOOL_DIRECTORIES.filter((directory) => exists(directory)),
-      '/usr/bin',
-      '/bin',
-      '/usr/sbin',
-      '/sbin',
-    ]),
+    ...new Set([...own, ...TOOL_DIRECTORIES.filter((directory) => exists(directory)), ...system]),
   ];
 }
 
