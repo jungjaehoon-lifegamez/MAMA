@@ -38,11 +38,14 @@ live check passes.
    `/var/lib/mama/<user>/tools`, created once by the installer with `sudo`. Docker: volumes.
 4. **Minimum backend versions are the versions a release was verified on** (today Claude Code
    2.1.299 and Codex 0.160.1), in one constant, raised only with a verification.
-5. **Backups are taken from a stopped install, and restore makes paths follow their roots.** New
-   writes store paths relative to the root that owns them (the MAMA root, `member_root` for a
-   person's downloads, `tools_root` for common skills); restore rewrites older absolute paths in
-   config, payloads and ledgers by each old prefix. A restore keeps the target's credentials when
-   the archive holds none, and refuses to start a target that has neither.
+5. **Backups are taken from a stopped install, and restore makes paths follow their roots.**
+   Restore rewrites the stored absolute paths that are read back to open files (mailbox payloads,
+   the connector event index) by each old root's prefix, and sets the config's paths to the target's
+   (#509). Writes keep absolute paths: a second, root-relative scheme would duplicate that rewrite,
+   which older rows need anyway (owner, 2026-10-16). A restore keeps the target's credentials when
+   the archive holds none, and refuses to start a target that has neither. Restoring an older
+   backup brings back what was erased after it was taken; this is documented, not undone (P9,
+   owner, 2026-10-16).
 6. **`mama update` serves npm installs.** Docker refuses and prints the pull-and-recreate steps; a
    checkout install (this Mac) updates by git, as the deploy procedure does.
 7. **Services restart on failure only.** launchd `KeepAlive` with `SuccessfulExit=false` and
@@ -125,8 +128,8 @@ live check passes.
 - Restore stages each root beside its destination (the roots may sit on different filesystems,
   such as Docker volumes), switches them under a journal that rolls every root back if one switch
   fails, and rewrites the old prefixes of the three roots
-  (decision 5), keeping the target's credentials when the archive has none; new attachment writes
-  store root-relative paths (`gateways/telegram-attachments.ts:117`).
+  (decision 5), keeping the target's credentials when the archive has none. Done (#508, #509);
+  W1.3c, root-relative attachment writes, is dropped (decision 5).
 - Proof: back up a copy of this Mac's home, restore it under another HOME and another
   `member_root`, `mama doctor` clean, `work.list` counts equal, a common skill listed, and an old
   owner and member attachment open.
