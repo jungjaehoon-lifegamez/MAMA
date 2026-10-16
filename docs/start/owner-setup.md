@@ -83,7 +83,7 @@ Setup then asks whether to use Jev (TypeSafe). With it, the agent can ask Jev ty
 inside its scripts (the `judge` action) to narrow many messages or items without reading them all.
 Owner text in those calls goes to the Jev service, so it is off unless you choose it. Choosing it
 asks for a Jev API key, stored in `~/.mama/jev-key` (0600), and sets `jev.enabled: true` in
-`config.yaml`; remove that line to turn it off. MAMA works the same without it.
+`config.yaml`; `mama init --section jev` turns it off. MAMA works the same without it.
 
 The optional tunnel prompts collect the Cloudflare Access issuer, audience and
 viewer hostname. Configure that Access application and tunnel separately; see
@@ -135,6 +135,24 @@ The OS database defaults to `~/.mama/memory.db`. Development memory uses
 Each owner gets a personal member session; the common group keeps the common session. Private
 chats cannot serve as the common channel: they always enter that person's intake. To add more
 owners or members later, see [People and their DMs](../guides/people.md).
+
+## Change one part later
+
+`mama init --section <part>` asks one part of the setup again and saves it:
+
+| Part               | What it asks                                                              |
+| ------------------ | ------------------------------------------------------------------------- |
+| `telegram`         | A new bot token, checked against the common group                         |
+| `model`            | The backend and model, checked as setup checks them                       |
+| `timezone`         | Your time zone                                                            |
+| `connectors`       | Sources to set up; those you name are set up again, the others stay as is |
+| `discord`, `slack` | Owner messages on Discord or Slack, on or off                             |
+| `jev`              | Jev on or off; its key file stays when you turn it off                    |
+
+Stop MAMA first with `mama stop`, and start it again with `mama service start`. Answers are
+checked before anything is saved, and tokens go only to `auth.env`. The folders cannot be changed
+this way, since member data lives in them. `config.yaml` is written again whole, so comments in it
+are not kept.
 
 ## The running service
 

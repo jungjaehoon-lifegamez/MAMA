@@ -189,7 +189,11 @@ function connector(value: unknown, field: string, state: ValidationState): Conne
   };
 }
 
-function validate(value: unknown): { config: ConnectorsConfig; ignored: readonly string[] } {
+/** The daemon's check of connectors.json, for a writer that checks before it saves. */
+export function validateConnectorConfig(value: unknown): {
+  config: ConnectorsConfig;
+  ignored: readonly string[];
+} {
   const raw = record(value, 'connectors');
   const result = Object.create(null) as ConnectorsConfig;
   const ignored: string[] = [];
@@ -269,7 +273,7 @@ export function loadConnectorConfig(
   }
 
   try {
-    const validated = validate(parsed);
+    const validated = validateConnectorConfig(parsed);
     const config = validated.config;
     onIgnored(validated.ignored);
     return {

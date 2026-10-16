@@ -13,6 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import * as yaml from 'js-yaml';
 import { tmpdir } from 'node:os';
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import { defaultToolsRoot } from '../../src/cli/commands/tools.js';
@@ -882,6 +883,146 @@ describe('mama init', () => {
     };
     await expect(runInit([], options(p.adapter))).rejects.toThrow(/cancelled/);
     expect(existsSync(root)).toBe(false);
+  });
+});
+
+describe('mama init --section', () => {
+  const readDoc = () =>
+    yaml.load(readFileSync(join(root, 'config.yaml'), 'utf8')) as Record<string, unknown>;
+  /** A value auth.env holds, read as start.sh reads it. */
+  const secret = (name: string) =>
+    new RegExp(`^export ${name}='([^']*)'$`, 'm').exec(
+      readFileSync(join(root, 'auth.env'), 'utf8')
+    )?.[1];
+
+  /** A finished setup, as the sections find it. */
+  async function setUp(): Promise<void> {
+    await runInit([], options(prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]).adapter));
+  }
+
+  it('changes only the part asked for, with its token in auth.env', async () => {
+    await setUp();
+    const before = readDoc();
+    const p = prompt(['y', 'fixture-channel', 'fixture-user'], ['fixture-discord-token']);
+    await runInit(['--section', 'discord'], options(p.adapter));
+    const after = readDoc();
+    expect(after.discord).toEqual({
+      enabled: true,
+      owner_channel_id: 'fixture-channel',
+      allowed_channels: ['fixture-channel'],
+      owner_user_ids: ['fixture-user'],
+    });
+    expect({ ...after, discord: before.discord }).toEqual(before);
+    expect(secret('MAMA_DISCORD_TOKEN')).toBe('fixture-discord-token');
+    expect(readFileSync(join(root, 'config.yaml'), 'utf8')).not.toContain('fixture-discord-token');
+    expect(statSync(join(root, 'config.yaml')).mode & 0o777).toBe(0o600);
+    expect(p.output.join('\n')).toContain('Saved discord. MAMA uses it from its next start');
+  });
+
+  it('sets up the sources named and keeps the others', async () => {
+    await setUp();
+    await runInit(
+      ['--section', 'connectors'],
+      options(prompt(['trello', 'board-1'], ['fixture-trello-key', 'fixture-trello']).adapter)
+    );
+    await runInit(
+      ['--section', 'connectors'],
+      options(prompt(['chatwork', 'room-1'], ['fixture-chatwork']).adapter)
+    );
+    const loaded = loadConnectorConfig(join(root, 'connectors.json'));
+    expect(loaded.ok && Object.keys(loaded.config).sort()).toEqual(['chatwork', 'trello']);
+    expect(secret('MAMA_TRELLO_TOKEN')).toBe('fixture-trello');
+    expect(secret('MAMA_CHATWORK_TOKEN')).toBe('fixture-chatwork');
+    expect(secret('MAMA_TELEGRAM_TOKEN')).toBe('fixture-telegram');
+  });
+
+  it('checks a new backend and model as init does, keeping the other agent settings', async () => {
+    await setUp();
+    const before = readDoc().agent as Record<string, unknown>;
+    await runInit(
+      ['--section', 'model'],
+      options(prompt(['claude', 'fixture-model-2'], []).adapter)
+    );
+    expect(readDoc().agent).toEqual({ ...before, backend: 'claude', model: 'fixture-model-2' });
+    const missing = prompt(['claude'], []);
+    await expect(
+      runInit(['--section', 'model'], options(missing.adapter, { findExecutable: () => undefined }))
+    ).rejects.toThrow(/claude is not on this PATH/);
+  });
+
+  it('refuses an answer the setup would refuse, writing nothing', async () => {
+    await setUp();
+    const before = readFileSync(join(root, 'config.yaml'), 'utf8');
+    await expect(
+      runInit(['--section', 'timezone'], options(prompt([], [], [true, true], 'Mars/Base').adapter))
+    ).rejects.toThrow(/not a valid IANA time zone/);
+    expect(readFileSync(join(root, 'config.yaml'), 'utf8')).toBe(before);
+    await runInit(
+      ['--section', 'timezone'],
+      options(prompt([], [], [true, true], 'Asia/Tokyo').adapter)
+    );
+    expect(readDoc().timezone).toBe('Asia/Tokyo');
+  });
+
+  it('turns Jev on with its key file and off again, keeping the key', async () => {
+    await setUp();
+    await runInit(
+      ['--section', 'jev'],
+      options(prompt([], ['fixture-jev-key'], [true, true], undefined, 'y').adapter)
+    );
+    expect(loadConfig({ home }).jev).toMatchObject({ enabled: true });
+    expect(statSync(join(root, 'jev-key')).mode & 0o777).toBe(0o600);
+    await runInit(
+      ['--section', 'jev'],
+      options(prompt([], [], [true, true], undefined, 'n').adapter)
+    );
+    expect(readDoc().jev).toMatchObject({ enabled: false });
+    expect(readFileSync(join(root, 'jev-key'), 'utf8')).toBe('fixture-jev-key\n');
+  });
+
+  it('checks a new bot token against the common group before saving it', async () => {
+    await setUp();
+    const refused = options(prompt([], ['fixture-telegram-2']).adapter, {
+      telegramCall: async () => ({ ok: false, error_code: 401 }),
+    });
+    await expect(runInit(['--section', 'telegram'], refused)).rejects.toThrow(
+      /refused the bot token/
+    );
+    expect(secret('MAMA_TELEGRAM_TOKEN')).toBe('fixture-telegram');
+    await runInit(['--section', 'telegram'], options(prompt([], ['fixture-telegram-2']).adapter));
+    expect(secret('MAMA_TELEGRAM_TOKEN')).toBe('fixture-telegram-2');
+    expect(readDoc().telegram).toMatchObject({ owner_chat_id: '-100' });
+  });
+
+  it('says the comments in config.yaml were not kept', async () => {
+    await setUp();
+    const path = join(root, 'config.yaml');
+    writeFileSync(path, `# a note of the owner's\n${readFileSync(path, 'utf8')}`);
+    const p = prompt([], [], [true, true], 'Asia/Tokyo');
+    await runInit(['--section', 'timezone'], options(p.adapter));
+    expect(p.output.join('\n')).toContain('its comments were not kept');
+  });
+
+  it('refuses without a setup, beside a running MAMA, and for an unknown part', async () => {
+    const p = prompt([], []);
+    await expect(runInit(['--section', 'timezone'], options(p.adapter))).rejects.toThrow(
+      /not set up here; run mama init first/
+    );
+    await setUp();
+    const held = acquireInstallLock(daemonControlPaths(root), 'daemon');
+    try {
+      await expect(runInit(['--section', 'timezone'], options(p.adapter))).rejects.toThrow(
+        /already running here.*stop it first/
+      );
+    } finally {
+      held.release();
+    }
+    await expect(runInit(['--section', 'folders'], options(p.adapter))).rejects.toThrow(
+      /Choose a section: telegram, model/
+    );
+    await expect(runInit(['--section'], options(p.adapter))).rejects.toThrow(
+      /mama init --section <telegram\|model/
+    );
   });
 });
 
