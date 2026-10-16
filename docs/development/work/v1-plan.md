@@ -160,8 +160,11 @@ live check passes.
 
 ### W1.6 This Mac on generated launch files
 
-- `mama service install` replaces the hand-edited `start.sh` (legacy flags, a PID file, a port-wait
-  loop), still pointing at the checkout's `dist`; deploy idle checks use `mama status`.
+- Done (#516, 2026-10-16): `mama service install --replace`, run with a clean PATH, replaced the
+  hand-edited `start.sh` (legacy flags, a PID file, a port-wait loop) and the LaunchAgent (KeepAlive
+  true, output into `daemon.log`), still pointing at the checkout's `dist`. Three exports nothing
+  reads were dropped first; the previous files are kept under `runtime/`. The generator first had to
+  keep Homebrew's folder on PATH (#516), where the agent's shell finds python3 with its packages.
 
 ## Wave 2 — onboarding, chat commands and update (this Mac and a clean macOS account)
 

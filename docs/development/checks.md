@@ -2543,3 +2543,27 @@ The implementation writes raw/index data during import only. Replay is the owner
   - Deployed 15:19:45 KST: eight boot stages, no errors, doctor 15 ok and 1 warn.
   - A dry run on the live install listed two people's folders and temporary folders, the MAMA home (3.7 GB), and `member_root` only if empty. Nothing changed.
 - Still open: retired temporary folders under `/tmp/mama-m` and `/tmp/m` stay (the system clears /tmp). This Mac moves to the generated launch files at W1.6.
+
+### W1.6: this Mac on the generated launch files (#516, 2026-10-16)
+
+- Result: the live install runs from the `start.sh` and LaunchAgent that `mama service install` writes:
+  - a Node path that survives upgrades (`/opt/homebrew/opt/node`);
+  - a restart only after a failure;
+  - early output into an owner-only `crash.log`, emptied at start past 1 MB;
+  - the daemon writing its own rotated `daemon.log`;
+  - PATH keeping `/opt/homebrew/bin` and `/usr/local/bin`.
+
+  Closes v1.md I6.
+
+- Evidence:
+  - The preview, run before any change, showed that the generator dropped `/opt/homebrew/bin`. The owner chose to fix the generator first (#516, with a Codex fix for Node in a system folder).
+  - `MAMA_SECURITY_ALERT_CHANNELS`, `MAMA_DAEMON` and `MAMA_CONNECTOR_POLL_MINUTES` were dropped; nothing reads them in the daemon. The hand-written script is kept as `runtime/start.sh.20261016T171552.hand-written`, plus the installer's own `.previous` copies.
+  - `service install --replace` ran with a clean PATH, so the backend resolved to `~/.local/bin/claude` and not a terminal session's shim. `mama service restart` at 17:16:17 KST.
+  - After the restart:
+    - eight boot stages and no errors;
+    - fds 1 and 2 go to `crash.log` (0600, holding only the ignored-keys notice) and fd 17 to `daemon.log`;
+    - launchd runs `start.sh` with its stdout at `crash.log`;
+    - doctor shows 16 ok and no warning;
+    - under the new PATH, python3 is Homebrew's and imports fitz 1.27.2;
+    - `mama status` shows the daemon and its connectors polling.
+- Still open: an owner turn on the new launch files (next message).
