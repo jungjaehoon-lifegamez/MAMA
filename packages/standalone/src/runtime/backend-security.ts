@@ -1,4 +1,5 @@
 import { realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { homedir, userInfo } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type { OwnerRuntimeOptions } from './owner-runtime.js';
@@ -22,10 +23,11 @@ export function normalizeReadPaths(paths: readonly string[]): string[] {
 }
 
 /**
- * The OS account in temp names, in base 36 so a ten-digit uid (directory-bound accounts) takes
- * seven characters and the paths below still fit Claude's 44-byte sandbox socket limit.
+ * The OS account in temp names: three hex of its uid's hash, short enough that a ten-digit uid
+ * (directory-bound accounts) still fits Claude's 44-byte sandbox socket limit below. Two accounts
+ * that share it are not mixed: the second finds a parent another uid owns and refuses.
  */
-const ACCOUNT = userInfo().uid.toString(36);
+const ACCOUNT = createHash('sha256').update(String(userInfo().uid)).digest('hex').slice(0, 3);
 /**
  * Parent of each member's short Claude temp root (member-paths.ts). One per OS account: a parent
  * another account created first is refused, so a shared one kept a second account's MAMA on the
@@ -34,6 +36,15 @@ const ACCOUNT = userInfo().uid.toString(36);
 export const MEMBER_CLAUDE_TMP_PARENT = join('/tmp', `mm${ACCOUNT}`);
 /** Short enough for a principal and room component plus Claude's sandbox suffix; per account. */
 export const MEMBER_ROOM_TMP_PARENT = join('/tmp', `m${ACCOUNT}`);
+/**
+ * The machine-wide parents every account's MAMA used before they were per account. Member temp
+ * data left there is no longer under any session deny, so the daemon removes this account's at
+ * boot (removeRetiredMemberTemp).
+ */
+export const RETIRED_MEMBER_TMP_PARENTS: readonly string[] = [
+  join('/tmp', 'mama-m'),
+  join('/tmp', 'm'),
+];
 
 /** Host renders contain every principal's staged input and trusted LibreOffice profile. */
 export const HOST_DOCUMENT_RENDER_ROOT = join('/tmp', `mama-office-host-${userInfo().uid}`);

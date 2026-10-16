@@ -2,10 +2,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
-  mkdirSync,
   lstatSync,
+  mkdirSync,
   readdirSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -14,6 +15,7 @@ import { sessionCredentialPath } from './session-credential.js';
 import {
   MEMBER_CLAUDE_TMP_PARENT,
   MEMBER_ROOM_TMP_PARENT,
+  RETIRED_MEMBER_TMP_PARENTS,
   HOST_DOCUMENT_RENDER_ROOT,
   normalizeReadPaths,
   physicalReadPath,
@@ -33,7 +35,7 @@ const physical = physicalReadPath;
  * this OS user shares. A member workspace path is far longer, so each member gets a short one.
  */
 export function memberClaudeTmpDir(principalId: string): string {
-  const id = createHash('sha256').update(principalId).digest('hex').slice(0, 10);
+  const id = createHash('sha256').update(principalId).digest('hex').slice(0, 12);
   return join(MEMBER_CLAUDE_TMP_PARENT, id);
 }
 
@@ -41,7 +43,7 @@ export function memberClaudeTmpDir(principalId: string): string {
 export function memberRoomTmpRoot(principalId: string): string {
   return join(
     MEMBER_ROOM_TMP_PARENT,
-    createHash('sha256').update(principalId).digest('hex').slice(0, 5)
+    createHash('sha256').update(principalId).digest('hex').slice(0, 7)
   );
 }
 
@@ -53,15 +55,35 @@ export function memberRoomClaudeTmpDir(
   const path = join(
     options.parent === undefined
       ? memberRoomTmpRoot(principalId)
-      : join(options.parent, createHash('sha256').update(principalId).digest('hex').slice(0, 5)),
+      : join(options.parent, createHash('sha256').update(principalId).digest('hex').slice(0, 7)),
     createHash('sha256')
       .update(JSON.stringify([principalId, channel]))
       .digest('hex')
-      .slice(0, 6)
+      .slice(0, 8)
   );
   if (Buffer.byteLength(join(path, `claude-${options.uid ?? userInfo().uid}`)) > 44)
     throw new Error('Room Claude temp path exceeds the 44-byte sandbox limit');
   return path;
+}
+
+/**
+ * Remove this account's member temp parents from before they were per account; another
+ * account's, a link or a file stay. Called at daemon boot, before any member session runs.
+ */
+export function removeRetiredMemberTemp(
+  parents: readonly string[] = RETIRED_MEMBER_TMP_PARENTS
+): void {
+  for (const parent of parents) {
+    let entry: ReturnType<typeof lstatSync>;
+    try {
+      entry = lstatSync(parent);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      throw error;
+    }
+    if (entry.isSymbolicLink() || !entry.isDirectory() || entry.uid !== userInfo().uid) continue;
+    rmSync(parent, { recursive: true, force: true });
+  }
 }
 
 /** A shared /tmp name must never adopt another user's directory or a symlink. */

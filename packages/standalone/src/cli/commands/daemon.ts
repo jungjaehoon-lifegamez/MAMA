@@ -37,6 +37,7 @@ import {
   type W1Config,
 } from '../../runtime/config.js';
 import { declareModelCache } from '../../runtime/model-cache.js';
+import { removeRetiredMemberTemp } from '../../runtime/member-paths.js';
 import { physicalReadPath } from '../../runtime/backend-security.js';
 import { sessionCredentialPath } from '../../runtime/session-credential.js';
 import { ensureMamaMcpConfig, resolveActionServerPath } from '../runtime/action-mcp-config.js';
@@ -362,6 +363,8 @@ export function pathsFor(configPath: string, config: W1Config): DaemonPaths {
 /** Create only the native-process isolation files; never remove product state. */
 export function ensureDaemonIsolation(options: DaemonIsolationOptions): void {
   const { config, paths } = options;
+  // Member temp data under the old machine-wide parents is no longer under any session deny.
+  removeRetiredMemberTemp();
   mkdirSync(paths.downloadsDir, { recursive: true, mode: 0o700 });
   mkdirSync(paths.workspaceDir, { recursive: true });
   const gitDir = join(paths.workspaceDir, '.git');
