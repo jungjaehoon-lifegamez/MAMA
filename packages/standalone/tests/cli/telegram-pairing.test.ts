@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   bindCommonGroup,
+  botName,
   confirmUpdates,
   pairOwner,
   type Update,
@@ -101,7 +102,9 @@ describe('pairing the first owner', () => {
     expect(telegram.sent.map((entry) => entry.chat_id).sort()).toEqual(
       [String(OWNER), String(STRANGER)].sort()
     );
-    expect(lines).toContainEqual(expect.stringContaining('send any message to @fixture_bot'));
+    expect(lines).toContainEqual(
+      expect.stringContaining('send @fixture_bot a new private message')
+    );
     expect(lines).toContainEqual(expect.stringContaining('not a code the bot sent'));
   });
 
@@ -153,6 +156,17 @@ describe('pairing the first owner', () => {
           ),
       })
     ).rejects.toThrow(/Another program is reading this bot's messages/);
+  });
+
+  it("reads the bot's name, and names a refused token", async () => {
+    const reply = (ok: boolean) => async () =>
+      ok ? { ok: true, result: { username: 'fixture_bot' } } : { ok: false, error_code: 401 };
+    expect(await botName({ token: 'fixture', call: reply(true), write: () => {} })).toBe(
+      'fixture_bot'
+    );
+    await expect(
+      botName({ token: 'fixture', call: reply(false), write: () => {} })
+    ).rejects.toThrow(/refused the bot token/);
   });
 
   it('names a network failure in a sentence', async () => {

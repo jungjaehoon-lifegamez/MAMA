@@ -55,8 +55,8 @@ It asks for:
 
 Tokens are entered with terminal echo off; do not send them to the agent.
 
-Pairing comes last, so a refused answer never makes you pair twice. Messages the bot held from
-before are dropped. Everyone who messages the bot privately while setup waits gets a code, but
+Pairing comes last, after your answers and folders are checked, so a refused answer does not make
+you pair again. Messages the bot held from before are dropped, so send it a new one. Everyone who messages the bot privately while setup waits gets a code, but
 only the code typed at your terminal counts, and only that person's `/bind` names the group. A
 `/bind` sent as an anonymous administrator cannot count; setup says so. If no `/bind` arrives
 within 15 minutes, setup stops without writing anything; run `mama init` again.
@@ -76,7 +76,8 @@ The folders have defaults, so press Enter to keep them:
 | macOS    | `Shared/mama-<you>/members` (the Shared folder beside home folders) | `Shared/mama-<you>/tools`   |
 | Linux    | `/var/lib/mama/<you>/members`                                       | `/var/lib/mama/<you>/tools` |
 
-On Linux they must exist first. The installer creates them once with `sudo`.
+Setup makes them as soon as you name them, and refuses one that another account owns or can
+write. On Linux they must exist first. The installer creates them once with `sudo`.
 
 Setup then asks whether to use Jev (TypeSafe). With it, the agent can ask Jev typed questions
 inside its scripts (the `judge` action) to narrow many messages or items without reading them all.

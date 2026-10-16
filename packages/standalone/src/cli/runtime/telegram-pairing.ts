@@ -71,6 +71,15 @@ async function updates(
   );
 }
 
+/** The bot's @name, which the pairing instructions give. */
+export async function botName(options: PairingOptions): Promise<string> {
+  const reply = await request(options, 'getMe', {});
+  const name = (reply.result as { username?: unknown } | undefined)?.username;
+  if (reply.ok !== true || typeof name !== 'string')
+    throw new CliInputError('Telegram refused the bot token; copy it again from BotFather.');
+  return name;
+}
+
 async function send(options: PairingOptions, chatId: number, text: string): Promise<boolean> {
   const reply = await request(options, 'sendMessage', { chat_id: String(chatId), text });
   return reply.ok === true;
@@ -94,7 +103,7 @@ export async function pairOwner(
   const held = await updates(options, -1, 0);
   let offset = held.length > 0 ? held[held.length - 1].update_id + 1 : 0;
   options.write(
-    `Open Telegram and send any message to @${options.botUsername}. It answers with a pairing code; type that code here.`
+    `Open Telegram and send @${options.botUsername} a new private message (one sent before now is dropped). It answers with a pairing code; type that code here.`
   );
   const codes = new Map<string, string>();
   const senders = new Set<string>();

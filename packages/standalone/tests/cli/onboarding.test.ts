@@ -453,7 +453,7 @@ describe('mama init', () => {
     expect(config.telegram).toMatchObject({ owner_chat_id: '-100', allowed_chats: ['-100'] });
     // The owner got the code; the group was told it is the common channel.
     expect(telegram.sent.map((entry) => entry.chat_id)).toEqual([OWNER_ID, '-100']);
-    expect(p.output.join('\n')).toContain('send any message to @fixture_bot');
+    expect(p.output.join('\n')).toContain('send @fixture_bot a new private message');
     expect(p.output.join('\n')).toContain('send /bind in that group');
     // Held messages are dropped first, and every update init read is confirmed at the end, so
     // the daemon never takes the pairing messages.
@@ -468,6 +468,15 @@ describe('mama init', () => {
     await expect(runInit([], options(p.adapter))).rejects.toThrow(/must not overlap HOME/);
     expect(existsSync(root)).toBe(false);
     // Pairing is the last question, so the owner is not asked to pair for a setup that stops.
+    expect(telegram.sent).toEqual([]);
+  });
+
+  it('refuses a folder other accounts can write when it is named, before pairing', async () => {
+    mkdirSync(memberRoot, { recursive: true });
+    chmodSync(memberRoot, 0o777);
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    await expect(runInit([], options(p.adapter))).rejects.toThrow(/written by other accounts/);
+    expect(existsSync(root)).toBe(false);
     expect(telegram.sent).toEqual([]);
   });
 

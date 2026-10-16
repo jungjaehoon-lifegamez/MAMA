@@ -50,7 +50,7 @@ channel ids. To skip a source for now, leave the connector list blank.
 
 Last, setup pairs you through the bot, so no chat or user ID is typed:
 
-1. Send the bot any private message. It answers with a six-digit pairing code; type that code at
+1. Send the bot a new private message (one sent before this step is dropped). It answers with a six-digit pairing code; type that code at
    the prompt. This makes you the first owner, and that private chat your personal session.
 2. Add the bot to the group as an administrator, so it reads the group, and send `/bind` there.
    The bot answers that the group is now MAMA's common channel. Only your `/bind` counts.
