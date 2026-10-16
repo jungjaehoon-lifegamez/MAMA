@@ -2,10 +2,11 @@ import * as fs from 'node:fs';
 import { MEMBER_ROOM_TMP_PARENT } from '../../src/runtime/backend-security.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, realpathSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { basename, join } from 'node:path';
+import { tmpdir, userInfo } from 'node:os';
 import {
   ensureMemberPaths,
+  memberClaudeTmpDir,
   memberRoomTmpRoot,
   memberRoomClaudeTmpDir,
   ensureMemberClaudeTmpDir,
@@ -43,14 +44,26 @@ it('separates backend state and host runtime paths, creates private roots and a 
 });
 
 it('fits the room sandbox suffix for a ten-digit uid and separates people in the same room', () => {
-  const path = memberRoomClaudeTmpDir('fixture-member', '-100', {
-    parent: '/tmp/m',
-    uid: 9999999999,
-  });
+  // The per-account parent names the uid in base 36: seven characters for ten digits.
+  const parent = `/tmp/m${(9999999999).toString(36)}`;
+  const path = memberRoomClaudeTmpDir('fixture-member', '-100', { parent, uid: 9999999999 });
   expect(Buffer.byteLength(join(path, 'claude-9999999999'))).toBeLessThanOrEqual(44);
   expect(path).not.toBe(
-    memberRoomClaudeTmpDir('fixture-other', '-100', { parent: '/tmp/m', uid: 9999999999 })
+    memberRoomClaudeTmpDir('fixture-other', '-100', { parent, uid: 9999999999 })
   );
+});
+
+it("keeps each OS account's member temp parents apart, and a member's fits a ten-digit uid", async () => {
+  // The test setup points these at per-file folders; the module's own values are the daemon's.
+  const actual = await vi.importActual<typeof import('../../src/runtime/backend-security.js')>(
+    '../../src/runtime/backend-security.js'
+  );
+  const uid = userInfo().uid.toString(36);
+  expect(actual.MEMBER_CLAUDE_TMP_PARENT).toBe(`/tmp/mm${uid}`);
+  expect(actual.MEMBER_ROOM_TMP_PARENT).toBe(`/tmp/m${uid}`);
+  const parent = `/tmp/mm${(9999999999).toString(36)}`;
+  const dm = join(parent, basename(memberClaudeTmpDir('fixture-member')));
+  expect(Buffer.byteLength(join(dm, 'claude-9999999999'))).toBeLessThanOrEqual(44);
 });
 
 it('creates and repairs managed room temp directories as 0700', () => {

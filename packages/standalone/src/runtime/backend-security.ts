@@ -21,10 +21,19 @@ export function normalizeReadPaths(paths: readonly string[]): string[] {
   return [...new Set(paths.map(physicalReadPath))];
 }
 
-/** Parent of each member's short Claude temp root (member-paths.ts). */
-export const MEMBER_CLAUDE_TMP_PARENT = join('/tmp', 'mama-m');
-/** Short enough for a principal and room component plus Claude's sandbox suffix. */
-export const MEMBER_ROOM_TMP_PARENT = join('/tmp', 'm');
+/**
+ * The OS account in temp names, in base 36 so a ten-digit uid (directory-bound accounts) takes
+ * seven characters and the paths below still fit Claude's 44-byte sandbox socket limit.
+ */
+const ACCOUNT = userInfo().uid.toString(36);
+/**
+ * Parent of each member's short Claude temp root (member-paths.ts). One per OS account: a parent
+ * another account created first is refused, so a shared one kept a second account's MAMA on the
+ * same machine from serving any member.
+ */
+export const MEMBER_CLAUDE_TMP_PARENT = join('/tmp', `mm${ACCOUNT}`);
+/** Short enough for a principal and room component plus Claude's sandbox suffix; per account. */
+export const MEMBER_ROOM_TMP_PARENT = join('/tmp', `m${ACCOUNT}`);
 
 /** Host renders contain every principal's staged input and trusted LibreOffice profile. */
 export const HOST_DOCUMENT_RENDER_ROOT = join('/tmp', `mama-office-host-${userInfo().uid}`);

@@ -33,7 +33,7 @@ const physical = physicalReadPath;
  * this OS user shares. A member workspace path is far longer, so each member gets a short one.
  */
 export function memberClaudeTmpDir(principalId: string): string {
-  const id = createHash('sha256').update(principalId).digest('hex').slice(0, 12);
+  const id = createHash('sha256').update(principalId).digest('hex').slice(0, 10);
   return join(MEMBER_CLAUDE_TMP_PARENT, id);
 }
 
@@ -41,7 +41,7 @@ export function memberClaudeTmpDir(principalId: string): string {
 export function memberRoomTmpRoot(principalId: string): string {
   return join(
     MEMBER_ROOM_TMP_PARENT,
-    createHash('sha256').update(principalId).digest('hex').slice(0, 8)
+    createHash('sha256').update(principalId).digest('hex').slice(0, 5)
   );
 }
 
@@ -53,11 +53,11 @@ export function memberRoomClaudeTmpDir(
   const path = join(
     options.parent === undefined
       ? memberRoomTmpRoot(principalId)
-      : join(options.parent, createHash('sha256').update(principalId).digest('hex').slice(0, 8)),
+      : join(options.parent, createHash('sha256').update(principalId).digest('hex').slice(0, 5)),
     createHash('sha256')
       .update(JSON.stringify([principalId, channel]))
       .digest('hex')
-      .slice(0, 10)
+      .slice(0, 6)
   );
   if (Buffer.byteLength(join(path, `claude-${options.uid ?? userInfo().uid}`)) > 44)
     throw new Error('Room Claude temp path exceeds the 44-byte sandbox limit');
