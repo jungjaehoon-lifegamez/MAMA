@@ -2485,3 +2485,13 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Still open:
   - Nothing reaches users before a core, server and plugin release (owner approval). The plugin must move past 2.2.0, whose marketplace copy carries `workspace:*` from the retired sync. Copy `~/.claude/mama-memory.db` before updating the plugin: its first session migrates core 100 forward.
   - W1.4b-2: CI boots this release on a database the previous release wrote (R5).
+
+### A backend that goes away mid-write no longer ends the daemon (#513, 2026-10-16)
+
+- Result: an error on a backend child's stdin (EPIPE when it stopped reading) fails the request in flight and stops that backend. Codex goes through `shutdown`; Claude goes through `handleError` plus `stop()`. Before, it was an uncaught exception that ended the whole process.
+- Evidence:
+  - Found by the upgrade check's first Linux run (#512, CI run 38842886593). The current build's Codex driver wrote `initialize` to a stand-in that had exited, and the job died on `write EPIPE … requestOnce`. On macOS the exit came first, so only the turn failed.
+  - The test starts each driver on a real backend that closes its stdin and would stay up 30 s. The request rejects and the pid is gone within 5 s; before the fix there were two unhandled EPIPE errors.
+  - Codex review: two P2s fixed (the backend was left running after its stdin closed), then no findings.
+  - Deployed 12:45:37 KST: eight boot stages, no errors, doctor 15 ok and 1 warn (hand-written `start.sh`).
+- Still open: X4. One full-suite run timed out in `codex-app-server-process.test.ts` ("interrupts a late acknowledged turn…", 1000 ms under load); the file passed 3/3 alone.
