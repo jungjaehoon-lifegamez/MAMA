@@ -196,11 +196,18 @@ live check passes.
   `/new` (refused while a turn runs, as `resetSession` refuses a busy session,
   `c/runtime/native-turn.ts:412-434`), `/stop`. In the common group only owners stop the common
   session's turn.
-- `/stop` builds on the driver interrupts (Codex `turn/interrupt`, the Claude timeout stop) and on
-  member suspension's stop path (`owner-runtime.ts:563-570`): the turn's native delivery is settled
-  with a cancelled result and the input acked, so recovery does not run it again
-  (`c/runtime/mailbox.ts:620-644`); queued inputs go through `cancelQueued`; the gateway records the
-  interruption so the message counts as answered (`daemon.ts:86-90`).
+- Built (#520, #521). `/stop` stops a turn through a driver interrupt that keeps the session:
+  - Codex: `turn/interrupt`;
+  - Claude: the CLI's `interrupt` control request, not the timeout's process kill, which would end
+    the conversation.
+
+  The stopped input then takes the existing uncertain path: never run again, its message told it was
+  interrupted, closed once that notice is delivered. Since #521 that recovery reaches only the
+  stopped message; the startup sweep it used to run also interrupted every other message in flight.
+
+- Queued inputs are not cancelled. `cancelQueued` is per person and kind-blind, so in the common
+  session it would drop source deltas, and for a member the correction they sent after the request.
+  Each further `/stop` stops the next turn (amended 2026-10-16).
 
 ### W2.3 Update and `/update` (R3, R7)
 
