@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import * as yaml from 'js-yaml';
 import type { ConnectorsConfig } from '../../connectors/framework/types.js';
-import { validateConnectorConfig } from '../../connectors/config-loader.js';
 import { loadConfig, parseConfig } from '../../runtime/config.js';
+import { planConnectors } from '../../runtime/connectors.js';
 import { findExecutable } from '../launch-files.js';
 import { CliInputError, createTerminalPrompt, nonblankLine, requireTTY } from '../prompt.js';
 import { updateSecrets, type SecretName } from '../secrets.js';
@@ -15,7 +15,7 @@ import {
   daemonControlPaths,
   refuseWhileRestoring,
 } from '../runtime/daemon-control.js';
-import { validateDeliveryRoutes } from './daemon.js';
+import { pathsFor, validateDeliveryRoutes } from './daemon.js';
 import type { InitOptions } from './init.js';
 import {
   askBackend,
@@ -39,20 +39,6 @@ export const initSections = [
   'slack',
   'jev',
 ] as const;
-
-/**
- * Replace a file whole: a reader sees the old file or the new one. The temporary copy never
- * outlives the call, since the agent's read denies name config.yaml itself, not copies of it.
- */
-function replaceFile(path: string, content: string): void {
-  const temporary = `${path}.${randomUUID()}.tmp`;
-  try {
-    writeFileSync(temporary, content, { flag: 'wx', mode: 0o600 });
-    renameSync(temporary, path);
-  } finally {
-    rmSync(temporary, { force: true });
-  }
-}
 
 /**
  * A messenger block asked again keeps the settings the questions do not cover (file_delivery);
@@ -139,55 +125,74 @@ export async function runInitSection(section: string, options: InitOptions = {})
         doc.jev = { ...(doc.jev as Record<string, unknown> | undefined), enabled: jev.enabled };
       };
     }
-    // Every answer is in, and what will be written passes the daemon's own checks, before
-    // anything is written.
-    let configText: string | undefined;
-    let reshaped = false;
-    if (change) {
-      const raw = readFileSync(configPath, 'utf8');
-      const doc = yaml.load(raw) as Record<string, unknown>;
-      // A file init wrote reads back the same; one written by hand loses its comments and layout.
-      reshaped = yaml.dump(doc) !== raw;
-      change(doc);
-      const changed = parseConfig(doc, { home });
-      try {
-        validateDeliveryRoutes(changed);
-      } catch (error) {
-        throw new CliInputError(
-          `${(error as Error).message}; set that route in config.yaml to a messenger that stays on, then run this again.`
-        );
+    // Every answer is in. The new files are staged in runtime/, which the agent may not read, and
+    // must pass the checks MAMA runs at boot before anything takes their place.
+    const staging = join(root, 'runtime');
+    mkdirSync(staging, { recursive: true, mode: 0o700 });
+    const staged: Array<{ temporary: string; path: string }> = [];
+    const stage = (path: string, content: string): string => {
+      const temporary = join(staging, `init-section.${randomUUID()}.tmp`);
+      staged.push({ temporary, path });
+      writeFileSync(temporary, content, { flag: 'wx', mode: 0o600 });
+      return temporary;
+    };
+    try {
+      let reshaped = false;
+      if (change) {
+        const raw = readFileSync(configPath, 'utf8');
+        const doc = yaml.load(raw) as Record<string, unknown>;
+        // A file init wrote reads back the same; one written by hand loses comments and layout.
+        reshaped = yaml.dump(doc) !== raw;
+        change(doc);
+        const changed = parseConfig(doc, { home });
+        try {
+          validateDeliveryRoutes(changed);
+        } catch (error) {
+          throw new CliInputError(
+            `${(error as Error).message}; set that route in config.yaml to a messenger that stays on, then run this again.`
+          );
+        }
+        stage(configPath, yaml.dump(doc));
       }
-      configText = yaml.dump(doc);
-    }
-    const connectorsPath = join(root, 'connectors.json');
-    let connectorsText: string | undefined;
-    if (connectors) {
-      const merged = {
-        ...(existsSync(connectorsPath)
+      if (connectors) {
+        const connectorsPath = pathsFor(configPath, config).connectorsConfigPath;
+        const current = existsSync(connectorsPath)
           ? (JSON.parse(readFileSync(connectorsPath, 'utf8')) as ConnectorsConfig)
-          : {}),
-        ...connectors,
-      };
-      try {
-        validateConnectorConfig(merged);
-      } catch (error) {
-        throw new CliInputError(`connectors.json would be refused: ${(error as Error).message}`);
+          : {};
+        // The loader reads names in any case; a source asked again replaces its entry whatever
+        // case the file gave it.
+        for (const name of Object.keys(current))
+          if (Object.hasOwn(connectors, name.toLowerCase())) delete current[name];
+        const temporary = stage(
+          connectorsPath,
+          `${JSON.stringify({ ...current, ...connectors }, null, 2)}\n`
+        );
+        try {
+          planConnectors({
+            configPath: temporary,
+            onIgnored: () => {},
+            ...(config.wiki?.enabled
+              ? { wikiRoot: resolve(config.wiki.vaultPath!, config.wiki.wikiDir!) }
+              : {}),
+          });
+        } catch (error) {
+          throw new CliInputError(
+            `connectors.json would be refused at boot: ${(error as Error).message.split(temporary).join(connectorsPath)}`
+          );
+        }
       }
-      connectorsText = `${JSON.stringify(merged, null, 2)}\n`;
-    }
-    if (Object.keys(secrets).length > 0) updateSecrets(home, secrets);
-    if (connectorsText !== undefined) {
-      replaceFile(connectorsPath, connectorsText);
-      if (Object.keys(connectors!).some((name) => gwsConnectorNames.has(name)))
+      if (Object.keys(secrets).length > 0) updateSecrets(home, secrets);
+      if (jevKey !== undefined)
+        writeFileSync(jevKeyFile, `${jevKey}\n`, { flag: 'wx', mode: 0o600 });
+      for (const { temporary, path } of staged) renameSync(temporary, path);
+      if (connectors && Object.keys(connectors).some((name) => gwsConnectorNames.has(name)))
         write('Log in with the Google scopes your selected connectors need: gws auth login.');
-    }
-    if (jevKey !== undefined) writeFileSync(jevKeyFile, `${jevKey}\n`, { flag: 'wx', mode: 0o600 });
-    if (configText !== undefined) {
-      replaceFile(configPath, configText);
       if (reshaped)
         write(
           'config.yaml was written again in plain YAML; its comments and layout were not kept.'
         );
+    } finally {
+      for (const { temporary } of staged) rmSync(temporary, { force: true });
     }
   } finally {
     lock.release();

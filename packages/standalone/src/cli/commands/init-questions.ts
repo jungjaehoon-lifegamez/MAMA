@@ -271,9 +271,11 @@ export async function checkTelegram(
       `${check.detail}, so the token is unchecked; check the network, then run mama init again.`
     );
   }
-  // A new bot outside the install's common group would leave that channel silent.
-  if (options.groupRequired && check.status === 'fail')
-    throw new CliInputError(`${check.detail}: ${check.fix}, then run this again.`);
+  // A new bot the common group cannot be shown to hold, or to read, would leave that channel silent.
+  if (options.groupRequired && check.status !== 'ok')
+    throw new CliInputError(
+      `${check.detail}${check.fix ? `: ${check.fix}` : ''}; the token was not saved. Run this again once that is fixed.`
+    );
   report(check, write);
 }
 

@@ -1028,7 +1028,8 @@ describe('mama init --section', () => {
     });
     expect(readDoc()).toHaveProperty('legacy_block');
     expect(p.output.join('\n')).toContain('its comments and layout were not kept');
-    expect(readdirSync(root).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    for (const folder of [root, join(root, 'runtime')])
+      expect(readdirSync(folder).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
 
   it('refuses a new bot that is not in the common group, saving nothing', async () => {
@@ -1040,9 +1041,52 @@ describe('mama init --section', () => {
           : { ok: true, result: { status: 'left' } },
     });
     await expect(runInit(['--section', 'telegram'], outside)).rejects.toThrow(
-      /the bot is not in the common group: add the bot to the group/
+      /the bot is not in the common group: add the bot to the group.*token was not saved/
+    );
+    // Membership Telegram would not confirm is no better than none.
+    const unknown = options(prompt([], ['fixture-telegram-2']).adapter, {
+      telegramCall: async (_token, method) =>
+        method === 'getMe'
+          ? { ok: true, result: { id: 9002, username: 'fixture_bot_2' } }
+          : { ok: false, error_code: 500 },
+    });
+    await expect(runInit(['--section', 'telegram'], unknown)).rejects.toThrow(
+      /did not answer about the common group/
     );
     expect(secret('MAMA_TELEGRAM_TOKEN')).toBe('fixture-telegram');
+  });
+
+  it('refuses sources boot would refuse, and replaces an entry whatever its case', async () => {
+    await setUp();
+    // A vault holding the wiki would read MAMA's own wiki writes back as source changes.
+    const before = readFileSync(join(root, 'connectors.json'), 'utf8');
+    const vault = options(prompt(['obsidian', root], []).adapter);
+    await expect(runInit(['--section', 'connectors'], vault)).rejects.toThrow(
+      /connectors.json would be refused at boot: .*contains the configured wiki root/
+    );
+    expect(readFileSync(join(root, 'connectors.json'), 'utf8')).toBe(before);
+    expect(readdirSync(join(root, 'runtime')).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    writeFileSync(
+      join(root, 'connectors.json'),
+      JSON.stringify({
+        Trello: {
+          enabled: true,
+          pollIntervalMinutes: 5,
+          channels: { 'board-0': { role: 'hub', boardId: 'board-0' } },
+          auth: { type: 'token', tokenName: 'MAMA_TRELLO_TOKEN' },
+        },
+      })
+    );
+    await runInit(
+      ['--section', 'connectors'],
+      options(prompt(['trello', 'board-1'], ['fixture-trello-key', 'fixture-trello']).adapter)
+    );
+    const saved = JSON.parse(readFileSync(join(root, 'connectors.json'), 'utf8')) as Record<
+      string,
+      { channels: object }
+    >;
+    expect(Object.keys(saved)).toEqual(['trello']);
+    expect(Object.keys(saved.trello.channels)).toEqual(['board-1']);
   });
 
   it('checks a Codex login in the Codex home the daemon uses', async () => {
