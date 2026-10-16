@@ -5,7 +5,7 @@ Codex, watch connected work, keep task revisions and evidence, answer in Telegra
 and the common group), Discord or Slack, publish reports and a board, and recall corrections.
 [mama-core](../mama-core/README.md) supplies the shared engine.
 
-Current manifest: **0.77.0**. Install with `npm install -g @jungjaehoon/mama-os` (Node.js 22.13+)
+Current manifest: **0.78.0**. Install with `npm install -g @jungjaehoon/mama-os` (Node.js 22.13+)
 and follow [owner setup](../../docs/start/owner-setup.md).
 
 ## Start and operate
