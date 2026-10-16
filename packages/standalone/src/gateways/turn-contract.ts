@@ -79,4 +79,12 @@ export interface SessionDirectory {
 /** Kept as the neutral name used by gateway consumers. */
 export type TurnProcessor = TurnIntake;
 
+/**
+ * The conversation a chat's messages run in: the common session (owners in the common group),
+ * or a member's own session for their DM or for a group they write in.
+ */
+export type ConversationTarget =
+  | { kind: 'common' }
+  | { kind: 'member'; principalId: string; room?: string };
+
 export type { NativeTurnResultRecord, NormalizedMessage };

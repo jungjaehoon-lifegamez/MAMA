@@ -55,7 +55,7 @@ import { resolvePrincipalAccess } from '../../runtime/principal-access.js';
 import type { OwnerFileDeliveryResult } from '../../api/file-delivery.js';
 import { createReportScheduler, type ReportScheduler } from '../../runtime/report-scheduler.js';
 import { findDailyPages } from '../../wiki/wiki-read.js';
-import { createTimeZoneSetting } from '../../runtime/timezone.js';
+import { createTimeZoneSetting, localNow } from '../../runtime/timezone.js';
 import { createOutboundEventRecorder } from '../../api/security-events.js';
 import { startEgressProxy, type EgressProxy } from '../../runtime/egress-proxy.js';
 import {
@@ -945,6 +945,43 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         principalPaths: (principalId, room) => owner!.principalPaths(principalId, room),
         onMemberSelection: (selection) => owner!.completeMemberEnrollment(selection),
         recordMemberSelection: (exchange) => owner!.recordHostExchange(exchange),
+        hostCommands: {
+          status: async (target, isOwner) => {
+            const report = await statusReport();
+            const adapter = owner!.database.adapter;
+            const principalId = target.kind === 'member' ? target.principalId : OWNER_PRINCIPAL_ID;
+            const waiting = (
+              isOwner
+                ? adapter
+                    .prepare(
+                      "SELECT COUNT(*) AS count FROM mailbox_inputs WHERE status IN ('pending', 'claimed')"
+                    )
+                    .get()
+                : adapter
+                    .prepare(
+                      "SELECT COUNT(*) AS count FROM mailbox_inputs WHERE status IN ('pending', 'claimed') AND principal_id = ?"
+                    )
+                    .get(principalId)
+            ) as { count: number };
+            const turns = (report.runningTurns ?? []) as Array<{ count: number }>;
+            const sources = (report.connectors ?? []) as Array<{ name: string; healthy: boolean }>;
+            return {
+              version: String(report.version),
+              since: localNow(startedAt, timeZone.get()),
+              conversationRunning: owner!.turnRunning(target),
+              inputsWaiting: waiting.count,
+              ...(isOwner
+                ? {
+                    owner: {
+                      turnsRunning: turns.reduce((sum, turn) => sum + turn.count, 0),
+                      sources: sources.map(({ name, healthy }) => ({ name, healthy })),
+                    },
+                  }
+                : {}),
+            };
+          },
+          startOver: (target) => owner!.startOver(target),
+        },
         config: {
           enabled: true,
           allowedChats: config.telegram.allowed_chats,

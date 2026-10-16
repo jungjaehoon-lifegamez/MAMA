@@ -15,7 +15,11 @@ import {
 import { createMemberSession } from './member-session.js';
 import { ownerDataReadPaths, ownerNativeDataReadPaths } from './backend-security.js';
 import { memberPaths, validateMemberRoot, setAsideMemberPaths } from './member-paths.js';
-import { resolvePrincipalAccess } from './principal-access.js';
+import {
+  memberRoomSessionKey,
+  memberSessionKey,
+  resolvePrincipalAccess,
+} from './principal-access.js';
 import {
   beginModelRun,
   commitModelRun,
@@ -57,7 +61,11 @@ import { createActionSurface, type ActionSurface } from './action-surface.js';
 import type { OutboundAttemptEvent, MemberConnectionEvent } from '../api/security-events.js';
 import type { SandboxNetworkProxy } from '../cli/runtime/claude-caller-config.js';
 import { holdsOwnerRole, ownerRuleIds, RULE_KINDS } from './owner-authority.js';
-import { createNativeSession, type NativeSession } from './native-session.js';
+import {
+  createNativeSession,
+  OWNER_RUNTIME_SESSION_KEY,
+  type NativeSession,
+} from './native-session.js';
 import type { ActionDispatcher } from '@jungjaehoon/mama-core/api/dispatch';
 import type { Mailbox } from '@jungjaehoon/mama-core/runtime/mailbox';
 import type { TimeZoneSetting } from './timezone.js';
@@ -67,10 +75,12 @@ import { createOwnerPolicyProvider, type OwnerPolicyProvider } from './owner-pol
 import { readSessionStartInput } from './session-start-context.js';
 import { ChatSources } from '../storage/chat-sources.js';
 import type {
+  ConversationTarget,
   OwnerMessageInput,
   OwnerHostExchangeInput,
   TurnIntake,
 } from '../gateways/turn-contract.js';
+import { getSessionPool, type SessionPool } from '@jungjaehoon/mama-core/runtime/session-pool';
 import { createJevClient } from '../replay/jev-client.js';
 import { createRecordOrders, type RecordOrderEvent } from './record-orders.js';
 import { initTokenEstimator } from '@jungjaehoon/mama-core/runtime/token-estimator';
@@ -112,6 +122,8 @@ export interface OwnerRuntimeOptions {
   /** Additional configured owner locations (config, logging, custom MCP), denied only to members. */
   ownerDeniedReadPaths?: readonly string[];
   createSession?: typeof createNativeSession;
+  /** The pool this runtime's sessions take their turns from; the process-wide one by default. */
+  sessionPool?: SessionPool;
   onMemberResult?: StimulusDeliveryOptions['onOwnerResult'];
   nativeSession?: NativeSessionHandle & Partial<Pick<NativeSession, 'callAction'>>;
   modelRun?: NativeModelRunPort;
@@ -190,6 +202,14 @@ export interface OwnerRuntime {
   ): { workspaceDir: string; downloadsDir: string };
   completeMemberEnrollment(selection: MemberSelection): Promise<ActionResult>;
   recordHostExchange(input: OwnerHostExchangeInput): void;
+  /** Whether a turn is running in this conversation now. */
+  turnRunning(target: ConversationTarget): boolean;
+  /**
+   * Start a conversation over: its native context goes, its records stay. A member's own
+   * conversation is reset with their group conversations, as every member reset is, so a turn
+   * running in any of them makes it busy.
+   */
+  startOver(target: ConversationTarget): Promise<'started_over' | 'busy'>;
   beginStop(): void;
   drain(): Promise<void>;
   stop(): Promise<void>;
@@ -308,8 +328,17 @@ export function guidanceInSearchOrder(
     .slice(0, limit);
 }
 
+/** The session key a conversation's turns run under. */
+function conversationKey(target: ConversationTarget): string {
+  if (target.kind === 'common') return OWNER_RUNTIME_SESSION_KEY;
+  return target.room === undefined
+    ? memberSessionKey(target.principalId)
+    : memberRoomSessionKey(target.principalId, target.room);
+}
+
 /** Assemble the one owner database, catalog, native session and mailbox runtime. */
 export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<OwnerRuntime> {
+  const sessionPool = options.sessionPool ?? getSessionPool();
   // The session's system prompt is composed at its first turn; counting it before the tokenizer
   // loads used the byte estimate, which nearly doubles Korean text.
   await initTokenEstimator();
@@ -654,6 +683,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       nativeSession = (options.createSession ?? createNativeSession)({
         backend: options.backend,
         model: options.model,
+        ...(options.sessionPool === undefined ? {} : { sessionPool: options.sessionPool }),
         workspaceDir: options.workspaceDir,
         runtimeRoot: options.runtimeRoot,
         toolsRoot: options.toolsRoot,
@@ -1284,6 +1314,23 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           });
           chat.saveReply({ ...reply, messageRef: ref, author: 'host' });
         }
+      },
+      turnRunning: (target) => sessionPool.peekSession(conversationKey(target)).busy,
+      startOver: async (target) => {
+        if (stopping) throw new Error('Cannot start a conversation over after runtime stop');
+        if (target.kind === 'member') await serveMemberOnLane(target.principalId);
+        const key = conversationKey(target);
+        const rooms =
+          target.kind === 'member' && target.room === undefined
+            ? memberRoomSessionKey(target.principalId, '')
+            : undefined;
+        for (const [sessionKey, entry] of sessionPool.listSessions()) {
+          if (entry.inUse && (sessionKey === key || (rooms && sessionKey.startsWith(rooms))))
+            return 'busy';
+        }
+        // The principal sessions always route a reset to the session that owns the key.
+        await sessions.native.resetSession!(key);
+        return 'started_over';
       },
       stop: () => {
         if (stopPromise) return stopPromise;

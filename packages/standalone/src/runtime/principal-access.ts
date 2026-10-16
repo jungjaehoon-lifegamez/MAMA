@@ -34,6 +34,11 @@ export interface PrincipalAccessOptions {
   commonChannelId?: string;
 }
 
+/** A member's own conversation: their DM with MAMA. */
+export function memberSessionKey(principalId: string): string {
+  return `member:${principalId}:runtime`;
+}
+
 export function memberRoomSessionKey(principalId: string, channel: string): string {
   return `member:${principalId}:room:telegram:${channel}`;
 }

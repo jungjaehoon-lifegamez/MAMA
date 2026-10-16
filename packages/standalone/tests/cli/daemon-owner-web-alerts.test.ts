@@ -13,6 +13,7 @@ import { TelegramGateway, type TelegramGatewayOptions } from '../../src/gateways
 import type { MemberConnectionEvent, OutboundAttemptEvent } from '../../src/api/security-events.js';
 
 const transport = vi.hoisted(() => ({
+  setMyCommands: vi.fn(async () => true),
   handler: undefined as ((context: unknown) => Promise<void>) | undefined,
   sendMessage: vi.fn(),
   editMessageText: vi.fn(),

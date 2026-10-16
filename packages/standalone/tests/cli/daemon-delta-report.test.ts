@@ -9,7 +9,11 @@ import { bootDaemon, type DaemonHandle } from '../../src/cli/commands/daemon.js'
 import { createOwnerRuntime, type OwnerRuntimeOptions } from '../../src/runtime/owner-runtime.js';
 import { sourceDeltaStimulusId } from '../../src/runtime/stimulus-delivery.js';
 
-const telegram = vi.hoisted(() => ({ sendMessage: vi.fn(), editMessageText: vi.fn() }));
+const telegram = vi.hoisted(() => ({
+  sendMessage: vi.fn(),
+  editMessageText: vi.fn(),
+  setMyCommands: vi.fn(async () => true),
+}));
 vi.mock('grammy', () => ({
   Bot: vi.fn(() => ({
     on: vi.fn(),

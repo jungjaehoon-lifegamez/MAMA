@@ -5,6 +5,7 @@ import {
 } from '@jungjaehoon/mama-core/runtime/runtime';
 import type { NativeSessionRequest, NativeSession } from './native-session.js';
 import type { ReplayClockDelivery } from './stimulus-delivery.js';
+import { memberSessionKey } from './principal-access.js';
 
 interface SessionEntry {
   native: NativeSessionHandle & Partial<Pick<NativeSession, 'callAction'>>;
@@ -141,7 +142,7 @@ export function createPrincipalSessions(
     if (key === 'owner:runtime' || key === 'owner:replay') return get(ownerPrincipalId);
     for (const [id, entry] of entries)
       if (
-        key === `member:${id}:runtime` ||
+        key === memberSessionKey(id) ||
         key.startsWith(`member:${id}:job:`) ||
         key.startsWith(`member:${id}:notice:`) ||
         key.startsWith(`member:${id}:room:telegram:`)

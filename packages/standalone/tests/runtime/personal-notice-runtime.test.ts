@@ -28,6 +28,7 @@ vi.mock('grammy', () => ({
     init: vi.fn(async () => {}),
     stop: vi.fn(async () => {}),
     api: {
+      setMyCommands: vi.fn(async () => true),
       sendMessage: async (chatId: number, text: string) => {
         if (transport.reject)
           throw Object.assign(new Error('fixture rejected'), {

@@ -12,6 +12,7 @@ import { createOwnerRuntime } from '../../src/runtime/owner-runtime.js';
 import { OwnerMessageLedger } from '../../src/gateways/telegram-message-ledger.js';
 
 const transport = vi.hoisted(() => ({
+  setMyCommands: vi.fn(async () => true),
   handler: undefined as ((ctx: unknown) => Promise<void>) | undefined,
   sendMessage: vi.fn(),
   editMessageText: vi.fn(),

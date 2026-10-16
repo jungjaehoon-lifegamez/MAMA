@@ -27,6 +27,7 @@ import {
 import { MEMBER_VOICE } from './turn-orders.js';
 import {
   resolvePrincipalAccess,
+  memberSessionKey,
   memberRoomSessionKey,
   memberRoomChannel,
 } from './principal-access.js';
@@ -73,7 +74,7 @@ export function createMemberSession(
   const { options, database, rawStore, surface } = ports;
   const agentId = `member-agent:${principalId}`;
   const sessionKey =
-    room === undefined ? `member:${principalId}:runtime` : memberRoomSessionKey(principalId, room);
+    room === undefined ? memberSessionKey(principalId) : memberRoomSessionKey(principalId, room);
   const access = (): JudgmentAccess =>
     resolvePrincipalAccess(principalId, {
       adapter: database.adapter,
@@ -190,6 +191,7 @@ export function createMemberSession(
     (options.createSession ?? createNativeSession)({
       backend: options.backend,
       model: options.model,
+      ...(options.sessionPool === undefined ? {} : { sessionPool: options.sessionPool }),
       toolsRoot: options.toolsRoot,
       ...paths,
       socketPath: options.socketPath,

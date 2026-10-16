@@ -46,6 +46,7 @@ vi.mock('grammy', async (original) => ({
     stop: async () => {},
     botInfo: { id: 1, username: 'fixture_bot' },
     api: {
+      setMyCommands: vi.fn(async () => true),
       sendMessage: transport.send,
       editMessageText: async () => {},
       deleteMessage: async () => {},

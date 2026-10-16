@@ -161,6 +161,7 @@ async function fixture(backend: 'codex' | 'claude' = 'codex', withRoot = true) {
       loaded: true,
     }),
     ...(withRoot ? { memberRoot: root } : {}),
+    sessionPool: pool,
     createSession: (nativeOptions: NativeSessionOptions) => {
       const principal = nativeOptions.principal?.principalId ?? 'owner';
       const started = new Set<string>();
@@ -865,6 +866,40 @@ it.each(['codex', 'claude'] as const)(
     expect(f.stopped.sort()).toEqual(['owner', f.member].sort());
   }
 );
+
+it('starts a conversation over only while no turn runs in it (/new)', async () => {
+  const f = await fixture('claude');
+  f.options.roomChannels = ['-7001'];
+  const runtime = await createOwnerRuntime(f.options);
+  try {
+    const dm = { kind: 'member' as const, principalId: f.member };
+    const room = { ...dm, room: '-7001' };
+    const roomKey = `member:${f.member}:room:telegram:-7001`;
+    const dmKey = `member:${f.member}:runtime`;
+    // The member's group conversation exists once its room session has been opened.
+    await runtime.serveMember(f.member);
+    runtime.memberIntake(f.member, '-7001');
+    f.pool.getSession(roomKey);
+    expect(runtime.turnRunning(room)).toBe(true);
+    expect(runtime.turnRunning(dm)).toBe(false);
+    // A DM reset takes the member's group conversations with it, so their turn makes it busy.
+    expect(await runtime.startOver(dm)).toBe('busy');
+    expect(await runtime.startOver(room)).toBe('busy');
+    f.pool.releaseSession(roomKey);
+    f.pool.getSession(dmKey);
+    f.pool.releaseSession(dmKey);
+    f.pool.getSession('owner:runtime');
+    f.pool.releaseSession('owner:runtime');
+    expect(await runtime.startOver(dm)).toBe('started_over');
+    expect(f.pool.peekSession(dmKey).sessionId).toBeUndefined();
+    expect(f.pool.peekSession(roomKey).sessionId).toBeUndefined();
+    expect(f.pool.peekSession('owner:runtime').sessionId).toBeDefined();
+    expect(await runtime.startOver({ kind: 'common' })).toBe('started_over');
+    expect(f.pool.peekSession('owner:runtime').sessionId).toBeUndefined();
+  } finally {
+    await runtime.stop();
+  }
+});
 
 it('fails boot naming member_root with an active member, before starting a backend', async () => {
   const f = await fixture('codex', false);

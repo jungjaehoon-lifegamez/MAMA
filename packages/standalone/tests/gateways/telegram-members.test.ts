@@ -18,6 +18,7 @@ const transport = vi.hoisted(() => ({
   sent: [] as Array<{ chatId: number; text: string }>,
   edits: [] as Array<{ chatId: number; text: string }>,
   api: {
+    setMyCommands: vi.fn(async () => true),
     getFile: vi.fn(async () => ({ file_path: 'photos/image.jpg', file_size: 4 })),
     sendMessage: vi.fn(async (chatId: number, text: string) => {
       transport.sent.push({ chatId, text });
