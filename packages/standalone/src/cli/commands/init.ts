@@ -175,7 +175,7 @@ async function askAnswers(
   const discordConfig = await askDiscord(prompt, secrets);
   const slackConfig = await askSlack(prompt, secrets);
   const viewer: Record<string, string> = {};
-  const { enabled: jevEnabled, key: jevKey } = await askJev(prompt, root);
+  const { enabled: jevEnabled, key: jevKey } = await askJev(prompt, join(root, 'jev-key'));
   if (await yes(prompt, 'Expose the viewer through a tunnel')) {
     const issuer = await text(prompt, 'Access issuer (HTTPS URL)');
     let url: URL;
@@ -428,7 +428,8 @@ export async function runInit(
       });
       const call = options.telegramCall ?? defaultTelegramCall;
       const checks = {
-        backend: (name: 'claude' | 'codex') => checkBackend(name, root, locate, options.probeRun),
+        backend: (name: 'claude' | 'codex') =>
+          checkBackend(name, join(root, '.codex'), locate, options.probeRun),
         telegram: (token: string, chat?: string) => checkTelegram(token, chat, call, write),
         roots: (
           memberAnswer: string,

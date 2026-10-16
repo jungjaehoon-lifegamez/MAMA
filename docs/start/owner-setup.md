@@ -142,17 +142,18 @@ owners or members later, see [People and their DMs](../guides/people.md).
 
 | Part               | What it asks                                                              |
 | ------------------ | ------------------------------------------------------------------------- |
-| `telegram`         | A new bot token, checked against the common group                         |
+| `telegram`         | A new bot token; the bot must already be in the common group              |
 | `model`            | The backend and model, checked as setup checks them                       |
 | `timezone`         | Your time zone                                                            |
 | `connectors`       | Sources to set up; those you name are set up again, the others stay as is |
-| `discord`, `slack` | Owner messages on Discord or Slack, on or off                             |
+| `discord`, `slack` | Owner messages on Discord or Slack, on or off; other settings stay        |
 | `jev`              | Jev on or off; its key file stays when you turn it off                    |
 
 Stop MAMA first with `mama stop`, and start it again with `mama service start`. Answers are
-checked before anything is saved, and tokens go only to `auth.env`. The folders cannot be changed
-this way, since member data lives in them. `config.yaml` is written again whole, so comments in it
-are not kept.
+checked before anything is saved, as MAMA checks its settings when it starts, so a change that
+leaves a delivery route on a messenger you turned off is refused. Tokens go only to `auth.env`.
+The folders cannot be changed this way, since member data lives in them. A `config.yaml` written
+by hand is written again in plain YAML without its comments, and the command says so.
 
 ## The running service
 

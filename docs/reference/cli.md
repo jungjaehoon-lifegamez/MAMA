@@ -65,11 +65,13 @@ its last step when `mama init` runs again. A finished setup, an existing `config
 record, or a daemon holding the install is refused.
 
 `mama init --section <part>` asks one part of an existing setup again and saves it: `telegram`
-(bot token), `model` (backend and model), `timezone`, `connectors` (the sources named are set up
-again, the others kept), `discord`, `slack` or `jev`. It takes the install lock, so MAMA must be
-stopped (`mama stop`). The answers get init's checks, the new `config.yaml` and `connectors.json`
-must pass the daemon's own checks, and nothing is written until they do. Tokens go to `auth.env`
-only. `config.yaml` is written again whole and loses its comments.
+(a bot token; the bot must already be in the common group), `model` (backend and model, checked in
+the Codex home the daemon uses), `timezone`, `connectors` (the sources named are set up again, the
+others kept), `discord` or `slack` (the block's other settings, such as `file_delivery`, stay) or
+`jev`. It takes the install lock, so MAMA must be stopped (`mama stop`). The answers get init's
+checks, and the new `config.yaml` (with its delivery routes) and `connectors.json` must pass the
+checks MAMA runs at boot; nothing is written until they do. Tokens go to `auth.env` only. A
+`config.yaml` written by hand is written again in plain YAML and loses its comments.
 
 `mama init --non-interactive` reads its answers from `MAMA_INIT_BACKEND`, `MAMA_INIT_MODEL`,
 `MAMA_TELEGRAM_TOKEN`, `MAMA_INIT_COMMON_CHAT_ID` and `MAMA_INIT_OWNER_TELEGRAM_ID`. Three are

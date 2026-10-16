@@ -907,6 +907,7 @@ describe('mama init --section', () => {
     await runInit(['--section', 'discord'], options(p.adapter));
     const after = readDoc();
     expect(after.discord).toEqual({
+      ...(before.discord as object),
       enabled: true,
       owner_channel_id: 'fixture-channel',
       allowed_channels: ['fixture-channel'],
@@ -994,13 +995,70 @@ describe('mama init --section', () => {
     expect(readDoc().telegram).toMatchObject({ owner_chat_id: '-100' });
   });
 
-  it('says the comments in config.yaml were not kept', async () => {
+  it('keeps a hand-written config readable and refuses a change its delivery routes forbid', async () => {
     await setUp();
     const path = join(root, 'config.yaml');
-    writeFileSync(path, `# a note of the owner's\n${readFileSync(path, 'utf8')}`);
-    const p = prompt([], [], [true, true], 'Asia/Tokyo');
-    await runInit(['--section', 'timezone'], options(p.adapter));
-    expect(p.output.join('\n')).toContain('its comments were not kept');
+    const doc = readDoc();
+    doc.discord = {
+      enabled: true,
+      owner_channel_id: 'fixture-channel',
+      allowed_channels: ['fixture-channel'],
+      owner_user_ids: ['fixture-user'],
+      file_delivery: false,
+    };
+    doc.delivery = { ...(doc.delivery as object), reports: 'discord' };
+    // Written by hand: a comment at the end of a line, and a block MAMA does not read.
+    writeFileSync(
+      path,
+      `${yaml.dump(doc)}legacy_block:\n  since: 2026-07-01 # kept from an older setup\n`
+    );
+    const handWritten = readFileSync(path, 'utf8');
+    await expect(
+      runInit(['--section', 'discord'], options(prompt(['n'], []).adapter))
+    ).rejects.toThrow(/delivery\.reports targets discord.*set that route in config\.yaml/);
+    expect(readFileSync(path, 'utf8')).toBe(handWritten);
+    const p = prompt(['y', 'fixture-channel-2', 'fixture-user'], ['fixture-discord-token']);
+    await runInit(['--section', 'discord'], options(p.adapter));
+    expect(readDoc().discord).toEqual({
+      enabled: true,
+      owner_channel_id: 'fixture-channel-2',
+      allowed_channels: ['fixture-channel-2'],
+      owner_user_ids: ['fixture-user'],
+      file_delivery: false,
+    });
+    expect(readDoc()).toHaveProperty('legacy_block');
+    expect(p.output.join('\n')).toContain('its comments and layout were not kept');
+    expect(readdirSync(root).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('refuses a new bot that is not in the common group, saving nothing', async () => {
+    await setUp();
+    const outside = options(prompt([], ['fixture-telegram-2']).adapter, {
+      telegramCall: async (_token, method) =>
+        method === 'getMe'
+          ? { ok: true, result: { id: 9002, username: 'fixture_bot_2' } }
+          : { ok: true, result: { status: 'left' } },
+    });
+    await expect(runInit(['--section', 'telegram'], outside)).rejects.toThrow(
+      /the bot is not in the common group: add the bot to the group/
+    );
+    expect(secret('MAMA_TELEGRAM_TOKEN')).toBe('fixture-telegram');
+  });
+
+  it('checks a Codex login in the Codex home the daemon uses', async () => {
+    await setUp();
+    const doc = readDoc();
+    doc.agent = { ...(doc.agent as object), codex_home: join(home, 'codex-elsewhere') };
+    writeFileSync(join(root, 'config.yaml'), yaml.dump(doc));
+    const homes: Array<string | undefined> = [];
+    const probe = options(prompt(['codex', 'fixture-model'], []).adapter, {
+      probeRun: (command, args, env) => {
+        if (args[0] === 'login') homes.push(env?.CODEX_HOME);
+        return probeOk(command, args);
+      },
+    });
+    await runInit(['--section', 'model'], probe);
+    expect(homes).toEqual([join(home, 'codex-elsewhere')]);
   });
 
   it('refuses without a setup, beside a running MAMA, and for an unknown part', async () => {

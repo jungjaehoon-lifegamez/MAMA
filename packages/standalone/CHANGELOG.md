@@ -35,8 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     with the way to continue.
   - **One part again:** `mama init --section <part>` asks one part of a finished setup again
     (`telegram`, `model`, `timezone`, `connectors`, `discord`, `slack`, `jev`) while MAMA is
-    stopped. The answers get init's checks, the result must pass the daemon's own checks before
-    anything is written, tokens go only to `auth.env`, and the other parts stay as they were.
+    stopped. The answers get init's checks, the result must pass the checks MAMA runs at boot
+    (delivery routes included) before anything is written, tokens go only to `auth.env`, and the
+    other parts stay as they were. A new bot must already be in the common group.
   - **Without a terminal:** `mama init --non-interactive` reads `MAMA_INIT_*` variables, with the
     token from `MAMA_TELEGRAM_TOKEN` and the two Telegram IDs given directly.
   - **No longer offered:** the Kagemusha bridge, which a fresh install cannot use, and the

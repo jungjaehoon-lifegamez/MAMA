@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import type { ConnectorsConfig } from '../../connectors/framework/types.js';
 import { backendEnvironment } from '../../runtime/backend-security.js';
 import { CliInputError, nonblankLine, type PromptAdapter } from '../prompt.js';
@@ -223,15 +222,13 @@ export function validTimezone(timezone: string): string {
  */
 export function checkBackend(
   backend: 'claude' | 'codex',
-  root: string,
+  codexHome: string,
   locate: (name: string) => string | undefined,
   run: ProbeRun | undefined
 ): void {
   const executable = locate(backend);
   const login =
-    backend === 'claude'
-      ? 'claude auth login'
-      : `CODEX_HOME=${shellQuote(join(root, '.codex'))} codex login`;
+    backend === 'claude' ? 'claude auth login' : `CODEX_HOME=${shellQuote(codexHome)} codex login`;
   if (!executable) {
     throw new CliInputError(
       `${backend} is not on this PATH. Install it, sign in with: ${login}, then run mama init again.`
@@ -241,7 +238,7 @@ export function checkBackend(
   // shell's API key gives would pass here and fail every turn.
   const probe = probeBackend(backend, executable, {
     env: backendEnvironment(),
-    ...(backend === 'codex' ? { codexHome: join(root, '.codex') } : {}),
+    ...(backend === 'codex' ? { codexHome } : {}),
     ...(run ? { run } : {}),
   });
   if (probe.version === null) throw new CliInputError(`${probe.problem}; check ${executable}`);
@@ -262,7 +259,8 @@ export async function checkTelegram(
   token: string,
   chatId: string | undefined,
   call: TelegramCall,
-  write: (line: string) => void
+  write: (line: string) => void,
+  options: { groupRequired?: boolean } = {}
 ): Promise<void> {
   const check = await telegramCheck(token, chatId, call);
   if (check.detail === 'Telegram refused the bot token') {
@@ -273,6 +271,9 @@ export async function checkTelegram(
       `${check.detail}, so the token is unchecked; check the network, then run mama init again.`
     );
   }
+  // A new bot outside the install's common group would leave that channel silent.
+  if (options.groupRequired && check.status === 'fail')
+    throw new CliInputError(`${check.detail}: ${check.fix}, then run this again.`);
   report(check, write);
 }
 
@@ -324,13 +325,13 @@ export async function askSlack(
 /** Jev (TypeSafe) is the owner's choice: the agent's judge tool, off unless chosen here. */
 export async function askJev(
   prompt: PromptAdapter,
-  root: string
+  keyFile: string
 ): Promise<{ enabled: boolean; key: string | undefined }> {
   const enabled = await yes(
     prompt,
     'Use Jev (TypeSafe) so the agent can judge many messages or items without reading them all? Owner text in those calls goes to the Jev service'
   );
-  if (!enabled || existsSync(join(root, 'jev-key'))) return { enabled, key: undefined };
+  if (!enabled || existsSync(keyFile)) return { enabled, key: undefined };
   prompt.write('Get a Jev API key from TypeSafe: https://docs.typesafe.ai');
   return { enabled, key: nonblankLine(await prompt.secret('Jev API key')) };
 }

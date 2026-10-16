@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import * as yaml from 'js-yaml';
@@ -14,6 +15,7 @@ import {
   daemonControlPaths,
   refuseWhileRestoring,
 } from '../runtime/daemon-control.js';
+import { validateDeliveryRoutes } from './daemon.js';
 import type { InitOptions } from './init.js';
 import {
   askBackend,
@@ -38,11 +40,28 @@ export const initSections = [
   'jev',
 ] as const;
 
-/** Replace a file whole: a reader sees the old file or the new one. */
+/**
+ * Replace a file whole: a reader sees the old file or the new one. The temporary copy never
+ * outlives the call, since the agent's read denies name config.yaml itself, not copies of it.
+ */
 function replaceFile(path: string, content: string): void {
-  const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, content, { flag: 'wx', mode: 0o600 });
-  renameSync(temporary, path);
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(temporary, content, { flag: 'wx', mode: 0o600 });
+    renameSync(temporary, path);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+
+/**
+ * A messenger block asked again keeps the settings the questions do not cover (file_delivery);
+ * turned off, it also keeps its channels for turning it on again.
+ */
+function mergeBlock(current: unknown, answer: Record<string, unknown>): Record<string, unknown> {
+  const kept = current as Record<string, unknown> | undefined;
+  if (answer.enabled === false && kept) return { ...kept, enabled: false };
+  return { ...kept, ...answer };
 }
 
 /**
@@ -70,20 +89,27 @@ export async function runInitSection(section: string, options: InitOptions = {})
     let change: ((doc: Record<string, unknown>) => void) | undefined;
     let connectors: ConnectorsConfig | undefined;
     let jevKey: string | undefined;
+    const jevKeyFile = config.jev?.keyFile ?? join(root, 'jev-key');
     if (section === 'telegram') {
       const token = nonblankLine(await prompt.secret('Telegram bot token'));
-      // The owners and the common group stay; the new bot must be in that group.
+      // The owners and the common group stay, so the new bot must already be in that group.
       await checkTelegram(
         token,
         config.telegram?.owner_chat_id,
         options.telegramCall ?? defaultTelegramCall,
-        write
+        write,
+        { groupRequired: true }
       );
       secrets.MAMA_TELEGRAM_TOKEN = token;
     } else if (section === 'model') {
       const locate = options.findExecutable ?? findExecutable;
       const { backend, model } = await askBackend(prompt, (name) =>
-        checkBackend(name, root, locate, options.probeRun)
+        checkBackend(
+          name,
+          config.agent.codex_home ?? join(root, '.codex'),
+          locate,
+          options.probeRun
+        )
       );
       change = (doc) => {
         doc.agent = { ...(doc.agent as Record<string, unknown> | undefined), backend, model };
@@ -99,15 +125,15 @@ export async function runInitSection(section: string, options: InitOptions = {})
     } else if (section === 'discord') {
       const discord = await askDiscord(prompt, secrets);
       change = (doc) => {
-        doc.discord = discord;
+        doc.discord = mergeBlock(doc.discord, discord);
       };
     } else if (section === 'slack') {
       const slack = await askSlack(prompt, secrets);
       change = (doc) => {
-        doc.slack = slack;
+        doc.slack = mergeBlock(doc.slack, slack);
       };
     } else {
-      const jev = await askJev(prompt, root);
+      const jev = await askJev(prompt, jevKeyFile);
       jevKey = jev.key;
       change = (doc) => {
         doc.jev = { ...(doc.jev as Record<string, unknown> | undefined), enabled: jev.enabled };
@@ -116,14 +142,22 @@ export async function runInitSection(section: string, options: InitOptions = {})
     // Every answer is in, and what will be written passes the daemon's own checks, before
     // anything is written.
     let configText: string | undefined;
-    let hadComments = false;
+    let reshaped = false;
     if (change) {
       const raw = readFileSync(configPath, 'utf8');
       const doc = yaml.load(raw) as Record<string, unknown>;
+      // A file init wrote reads back the same; one written by hand loses its comments and layout.
+      reshaped = yaml.dump(doc) !== raw;
       change(doc);
-      parseConfig(doc, { home });
-      configText = yaml.dump(doc, { lineWidth: -1, noRefs: true });
-      hadComments = /^\s*#/m.test(raw);
+      const changed = parseConfig(doc, { home });
+      try {
+        validateDeliveryRoutes(changed);
+      } catch (error) {
+        throw new CliInputError(
+          `${(error as Error).message}; set that route in config.yaml to a messenger that stays on, then run this again.`
+        );
+      }
+      configText = yaml.dump(doc);
     }
     const connectorsPath = join(root, 'connectors.json');
     let connectorsText: string | undefined;
@@ -147,11 +181,13 @@ export async function runInitSection(section: string, options: InitOptions = {})
       if (Object.keys(connectors!).some((name) => gwsConnectorNames.has(name)))
         write('Log in with the Google scopes your selected connectors need: gws auth login.');
     }
-    if (jevKey !== undefined)
-      writeFileSync(join(root, 'jev-key'), `${jevKey}\n`, { flag: 'wx', mode: 0o600 });
+    if (jevKey !== undefined) writeFileSync(jevKeyFile, `${jevKey}\n`, { flag: 'wx', mode: 0o600 });
     if (configText !== undefined) {
       replaceFile(configPath, configText);
-      if (hadComments) write('config.yaml was written again; its comments were not kept.');
+      if (reshaped)
+        write(
+          'config.yaml was written again in plain YAML; its comments and layout were not kept.'
+        );
     }
   } finally {
     lock.release();
