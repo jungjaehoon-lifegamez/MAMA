@@ -1601,13 +1601,12 @@ export class PersistentClaudeProcess extends EventEmitter {
   /**
    * Stop the running request and keep the process and its session: the CLI ends the turn with a
    * non-success result, which rejects the request with `NativeTurnStoppedError` and its usage.
-   * False when no request is running, or while the CLI has not acknowledged a request's input:
-   * a result before that acknowledgement ends the process, and its session with it.
+   * False when no request is running. The CLI replays (acknowledges) the input only with the
+   * model's first output, so most of a turn runs unacknowledged; an interrupt then makes it
+   * replay the input before the stopped result (CLI 2.1.299), and the session keeps it.
    */
   interrupt(): boolean {
     if (!this.currentReject || !this.process?.stdin || this.state === 'dead') return false;
-    if (this.currentInputUuid && this.currentCallbacks?.onAccepted && !this.inputAcknowledged)
-      return false;
     this.stopRequested = true;
     persistentLogger.info('[PersistentCLI] Interrupting the running request');
     // A failed write raises the stdin error event, which handleError takes.
