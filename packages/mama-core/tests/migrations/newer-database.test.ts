@@ -7,17 +7,21 @@ import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  closeDB,
   highestMigrationVersion,
+  initDB,
   MIGRATIONS_DIR,
   NewerSchemaError,
   openDatabase,
 } from '../../src/db-manager.js';
 
 const roots: string[] = [];
-afterEach(() => {
+afterEach(async () => {
+  await closeDB();
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -132,5 +136,23 @@ describe('a database newer than the code', () => {
     );
     const opened = await openDatabase({ path });
     opened.adapter.disconnect();
+  });
+
+  it('is refused through initDB when the consumer asks', async () => {
+    // The plugin hooks and the MCP server open their database through initDB.
+    const root = mkdtempSync(join(tmpdir(), 'mama-newer-db-'));
+    roots.push(root);
+    const path = join(root, 'memory.db');
+    const first = await openDatabase({ path });
+    first.adapter.disconnect();
+    const db = new Database(path);
+    db.prepare("INSERT INTO schema_version (source, version) VALUES ('core', ?)").run(
+      highestMigrationVersion(MIGRATIONS_DIR) + 1
+    );
+    db.close();
+    vi.stubEnv('MAMA_DB_PATH', path);
+
+    await expect(initDB({ refuseNewerSchema: true })).rejects.toBeInstanceOf(NewerSchemaError);
+    await initDB();
   });
 });

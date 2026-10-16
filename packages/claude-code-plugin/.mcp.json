@@ -2,7 +2,7 @@
   "mcpServers": {
     "mama": {
       "command": "npx",
-      "args": ["-y", "@jungjaehoon/mama-server"],
+      "args": ["-y", "@jungjaehoon/mama-server@2.5.0"],
       "description": "MAMA - Memory-Augmented MCP Assistant"
     }
   }

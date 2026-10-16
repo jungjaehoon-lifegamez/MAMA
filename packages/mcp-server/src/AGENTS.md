@@ -7,8 +7,10 @@ exports of `@jungjaehoon/mama-core`.
 Architecture: MCP SDK → tool handlers → core API → local SQLite and embeddings.
 
 - `server.js` selects `MAMA_DB_PATH`, or `~/.claude/mama-memory.db` when unset,
-  before calling `initDB()`. Keep this default consistent with the plugin's
-  `scripts/db-path.js`.
+  before calling `initDB({ refuseNewerSchema: true })`. Keep this default consistent
+  with the plugin's `scripts/db-path.js`. The plugin pins this server's version, and
+  this server is published with an exact core version, so the plugin's hooks and this
+  server run one core and both refuse a database a newer version migrated.
 - Declare the model cache at `~/.cache/huggingface/transformers` before embedding.
 - `tools/index.js` provides the shared tool registry. Handlers use `mama-api`,
   `db-manager`, `embeddings`, `knowledge`, and the root public export.

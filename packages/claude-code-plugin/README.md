@@ -17,9 +17,11 @@ Build with `pnpm install` and `pnpm build` from the repository root, then run in
 /plugin install mama@mama-dev
 ```
 
-Restart Claude Code. These commands select local plugin files, but the manifest
-([plugin.json](.claude-plugin/plugin.json) and [.mcp.json](.mcp.json)) launches the
-published MCP package with `npx -y @jungjaehoon/mama-server`.
+Restart Claude Code. These commands select local plugin files, but [.mcp.json](.mcp.json)
+launches the published MCP package with `npx -y @jungjaehoon/mama-server@<version>`, the server
+released with this plugin. The server is published with the exact core version the plugin's hooks
+install, so both read the database with one core, and both refuse a database a newer version
+migrated.
 For this branch's server code, use the local stdio configuration in
 [development-memory setup](../../docs/start/claude-code-plugin.md). That guide also describes the
 released marketplace path; published packages may lag this checkout.

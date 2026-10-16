@@ -93,6 +93,17 @@ function buildRules(versions) {
     { file: 'packages/mama-core/README.md', patterns: [header(core)] },
     { file: 'packages/mcp-server/README.md', patterns: [header(server)] },
     { file: 'packages/claude-code-plugin/README.md', patterns: [header(plugin)] },
+    {
+      // The plugin runs the server released with it.
+      file: 'packages/claude-code-plugin/.mcp.json',
+      patterns: [
+        {
+          regex: new RegExp(`("@jungjaehoon/mama-server@)${SEMVER}(")`, 'g'),
+          version: server,
+          suffix: true,
+        },
+      ],
+    },
   ];
 }
 

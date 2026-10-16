@@ -754,9 +754,10 @@ the other id.`,
     try {
       validateEnvironment();
 
-      // Initialize database
+      // Initialize database. The plugin pins this server and the core it runs to the same
+      // versions its hooks run, so a database a newer version migrated is refused here.
       console.error('[MAMA MCP] Initializing database...');
-      await initDB();
+      await initDB({ refuseNewerSchema: true });
       console.error('[MAMA MCP] Database initialized');
 
       // Start the stdio MCP server.

@@ -95,30 +95,13 @@ git push origin os-v0.1.1
 
 ---
 
-### `sync-plugin.yml` - Sync Claude Code Plugin
-
-**Purpose:** Sync plugin changes to Claude Code plugin marketplace.
-
-**Trigger:**
-
-- Push to `main` branch
-- Changes to `packages/claude-code-plugin/**`
-
-**What it does:**
-
-1. Copies plugin files to `jungjaehoon-lifegamez/claude-plugins` repo
-2. Updates marketplace.json with new version
-3. Commits and pushes to plugin repo
-
-**Required Secret:** `PLUGIN_DEPLOY_TOKEN`
-
 ## Secrets
 
-| Secret                | Used By           | Purpose                     |
-| --------------------- | ----------------- | --------------------------- |
-| `GITHUB_TOKEN`        | All               | Auto-provided by GitHub     |
-| `NPM_TOKEN`           | `publish.yml`     | npm registry auth           |
-| `PLUGIN_DEPLOY_TOKEN` | `sync-plugin.yml` | Push to claude-plugins repo |
+| Secret                | Used By       | Purpose                     |
+| --------------------- | ------------- | --------------------------- |
+| `GITHUB_TOKEN`        | All           | Auto-provided by GitHub     |
+| `NPM_TOKEN`           | `publish.yml` | npm registry auth           |
+| `PLUGIN_DEPLOY_TOKEN` | `release.yml` | Push to claude-plugins repo |
 
 ## Adding New Workflows
 

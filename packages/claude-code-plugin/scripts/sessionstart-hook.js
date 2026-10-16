@@ -62,7 +62,8 @@ async function queryRecentContext() {
   const { initDB, getAdapter } = require('@jungjaehoon/mama-core/db-manager');
   const { usePluginDatabase } = require('./db-path.js');
   usePluginDatabase();
-  await initDB();
+  // The hooks and the pinned MCP server run one core, so a newer database is refused by both.
+  await initDB({ refuseNewerSchema: true });
   const adapter = getAdapter();
 
   const createdMs = `CASE WHEN typeof(created_at) = 'text'
