@@ -133,7 +133,7 @@ export async function defaultTelegramCall(
 
 /** True when something listens; a refusal means free; any other error (a host that cannot be
  * reached or bound) rejects, since the viewer would fail on it too. */
-function portAnswers(port: number, host: string): Promise<boolean> {
+export function portAnswers(port: number, host: string): Promise<boolean> {
   return new Promise((resolve, reject) => {
     const socket = connect({ port, host });
     socket.setTimeout(1_000, () => {

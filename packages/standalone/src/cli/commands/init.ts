@@ -1,12 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import * as yaml from 'js-yaml';
 import type { ConnectorsConfig } from '../../connectors/framework/types.js';
 import { loadConfig, parseConfig, type W1Config } from '../../runtime/config.js';
 import { validateMemberRoot } from '../../runtime/member-paths.js';
-import { validateToolsRoot } from '../../runtime/tools-paths.js';
+import { assertRootAncestors, validateToolsRoot } from '../../runtime/tools-paths.js';
+import { backendEnvironment, physicalReadPath } from '../../runtime/backend-security.js';
 import { resolveApiPort } from '../../api/viewer-server.js';
 import { installDocumentToolkit } from '../../tools/document-toolkit.js';
 import { findExecutable } from '../launch-files.js';
@@ -19,7 +20,7 @@ import {
 } from '../prompt.js';
 import { shellQuote, updateSecrets, type SecretName } from '../secrets.js';
 import { probeBackend, type ProbeRun } from '../runtime/backend-probe.js';
-import { defaultTelegramCall, telegramCheck } from '../runtime/diagnostics.js';
+import { defaultTelegramCall, portAnswers, telegramCheck } from '../runtime/diagnostics.js';
 import { defaultRoots, prepareRoot, type DefaultRoots } from '../runtime/default-roots.js';
 import {
   initComplete,
@@ -34,7 +35,7 @@ import {
   refuseWhileRestoring,
   type DaemonControlReply,
 } from '../runtime/daemon-control.js';
-import type { ServiceRun } from '../runtime/systemd-service.js';
+import { defaultServiceRun, type ServiceRun } from '../runtime/systemd-service.js';
 import { askDaemon } from './daemon.js';
 import { registerOwnerHolding } from './register-owner.js';
 import { installService, startService } from './service.js';
@@ -64,6 +65,8 @@ export interface InitOptions {
   daemonStatus?: () => Promise<DaemonControlReply>;
   /** Whether the viewer answers /health; tests replace it. */
   health?: () => Promise<boolean>;
+  /** Whether something listens on a port; tests replace it. */
+  portAnswers?: (port: number, host: string) => Promise<boolean>;
   bootTimeoutMs?: number;
   pollMs?: number;
 }
@@ -274,8 +277,9 @@ interface InitAnswers {
   ownerTelegramId: string;
   memberRoot: string;
   toolsRoot: string;
-  /** Whether the roots are the per-user defaults, whose parent folder is this user's too. */
-  defaultRootsChosen: boolean;
+  /** Which roots are the per-user defaults, whose parent folder is this user's too. */
+  memberRootIsDefault: boolean;
+  toolsRootIsDefault: boolean;
   connectors: ConnectorsConfig;
   discordConfig: Record<string, unknown>;
   slackConfig: Record<string, unknown>;
@@ -337,7 +341,10 @@ function checkBackend(
       `${backend} is not on this PATH. Install it, sign in with: ${login}, then run mama init again.`
     );
   }
+  // The daemon starts the backend without secret-shaped variables; a login that only this
+  // shell's API key gives would pass here and fail every turn.
   const probe = probeBackend(backend, executable, {
+    env: backendEnvironment(),
     ...(backend === 'codex' ? { codexHome: join(root, '.codex') } : {}),
     ...(run ? { run } : {}),
   });
@@ -364,6 +371,11 @@ async function checkTelegram(
   const check = await telegramCheck(token, chatId, call);
   if (check.detail === 'Telegram refused the bot token') {
     throw new CliInputError(`Telegram refused the bot token; copy it again from BotFather.`);
+  }
+  if (check.detail.startsWith('could not reach Telegram')) {
+    throw new CliInputError(
+      `${check.detail}, so the token is unchecked; check the network, then run mama init again.`
+    );
   }
   if (check.status !== 'ok')
     write(`telegram: ${check.detail}${check.fix ? ` (${check.fix})` : ''}`);
@@ -497,7 +509,8 @@ async function askAnswers(
     ownerTelegramId,
     memberRoot,
     toolsRoot,
-    defaultRootsChosen: !memberAnswer && !toolsAnswer,
+    memberRootIsDefault: !memberAnswer,
+    toolsRootIsDefault: !toolsAnswer,
     connectors,
     discordConfig,
     slackConfig,
@@ -544,7 +557,8 @@ async function environmentAnswers(
     ownerTelegramId: validTelegramId(requiredVariable(env, 'MAMA_INIT_OWNER_TELEGRAM_ID')),
     memberRoot,
     toolsRoot,
-    defaultRootsChosen: !env.MAMA_INIT_MEMBER_ROOT?.trim() && !env.MAMA_INIT_TOOLS_ROOT?.trim(),
+    memberRootIsDefault: !env.MAMA_INIT_MEMBER_ROOT?.trim(),
+    toolsRootIsDefault: !env.MAMA_INIT_TOOLS_ROOT?.trim(),
     connectors: {},
     discordConfig: { enabled: false, allowed_channels: [], owner_user_ids: [] },
     slackConfig: { enabled: false, allowed_channels: [], owner_user_ids: [] },
@@ -566,8 +580,9 @@ async function waitForBoot(options: {
   let reported = started;
   let stage = 'not started';
   for (;;) {
-    const reply = await options.status();
-    if (reply.state === 'running' && reply.reply.ok === true) {
+    // A daemon busy booting may miss one status deadline; that is no answer yet, not a failure.
+    const reply = await options.status().catch(() => null);
+    if (reply?.state === 'running' && reply.reply.ok === true) {
       stage = String((reply.reply.status as { stage?: unknown } | undefined)?.stage);
       if (stage === 'running') break;
     }
@@ -589,9 +604,20 @@ async function waitForBoot(options: {
   }
 }
 
-async function viewerHealth(): Promise<boolean> {
+const DEFAULT_VIEWER_PORT = resolveApiPort(undefined);
+
+/** The first viewer port nothing listens on, from the default up. */
+async function freeViewerPort(answers: (port: number, host: string) => Promise<boolean>) {
+  for (let port = DEFAULT_VIEWER_PORT; port < DEFAULT_VIEWER_PORT + 50; port += 1) {
+    if (!(await answers(port, '127.0.0.1'))) return port;
+  }
+  throw new CliInputError(
+    `Ports ${DEFAULT_VIEWER_PORT}-${DEFAULT_VIEWER_PORT + 49} are all in use; free one, then run mama init again.`
+  );
+}
+
+async function viewerHealth(port: number): Promise<boolean> {
   try {
-    const port = resolveApiPort(process.env.MAMA_API_PORT);
     const response = await fetch(`http://127.0.0.1:${port}/health`, {
       signal: AbortSignal.timeout(5_000),
     });
@@ -616,6 +642,13 @@ export async function runInit(
   const root = join(home, '.mama');
   const configPath = join(root, 'config.yaml');
   let state = readInitState(root);
+  // The record is written before the setup's files, so one without the config step means an
+  // init stopped part-way through writing them; only that init wrote anything here.
+  if (state !== null && !state.done.includes('config')) {
+    throw new CliInputError(
+      `An earlier mama init stopped while writing its files. Remove ${root}, which holds nothing else yet, and run mama init again.`
+    );
+  }
   if (existsSync(configPath)) {
     // An install set up before init kept its steps, or by hand: init will not take it over.
     if (state === null)
@@ -660,6 +693,7 @@ export async function runInit(
     answers.toolsRoot = resolve(answers.toolsRoot);
     try {
       validateMemberRoot(answers.memberRoot, [home, root]);
+      assertRootAncestors(physicalReadPath(answers.memberRoot), 'member_root');
       validateToolsRoot(answers.toolsRoot, [home, root, answers.memberRoot]);
     } catch (error) {
       throw new CliInputError((error as Error).message);
@@ -667,20 +701,27 @@ export async function runInit(
   }
   mkdirSync(root, { recursive: true, mode: 0o700 });
   // While init writes the install, no daemon, restore or second init may run beside it; a daemon
-  // polling the same bot would also take the messages pairing reads.
-  const lock = acquireInstallLock(daemonControlPaths(root), 'init');
+  // polling the same bot would also take the messages pairing reads. Once only the service step
+  // is left there is nothing to write, and the daemon a failed wait left starting holds the lock.
+  const writing = !done('config') || !done('owner') || !done('toolkit');
+  const lock = writing ? acquireInstallLock(daemonControlPaths(root), 'init') : undefined;
   let config: W1Config;
   try {
-    refuseWhileRestoring(root);
+    if (writing) refuseWhileRestoring(root);
     if (answers !== undefined) {
       const { memberRoot, toolsRoot } = answers;
-      for (const folder of [memberRoot, toolsRoot]) {
+      for (const [folder, isDefault] of [
+        [memberRoot, answers.memberRootIsDefault],
+        [toolsRoot, answers.toolsRootIsDefault],
+      ] as const) {
         prepareRoot(folder, {
-          platform,
-          ownParent: answers.defaultRootsChosen,
+          ownParent: isDefault,
           ...(options.uid === undefined ? {} : { uid: options.uid }),
         });
       }
+      // Each account on a machine runs its own MAMA; another's viewer may already hold the port.
+      const port = await freeViewerPort(options.portAnswers ?? portAnswers);
+      if (port !== DEFAULT_VIEWER_PORT) answers.viewer.MAMA_API_PORT = String(port);
       config = parseConfig(
         {
           version: 1,
@@ -719,6 +760,7 @@ export async function runInit(
         { home }
       );
       answers.secrets.MAMA_AUTH_TOKEN = randomBytes(32).toString('hex');
+      writeInitState(root, progress);
       mkdirSync(join(root, 'logs'), { recursive: true, mode: 0o700 });
       mkdirSync(join(root, 'workspace', 'wiki'), { recursive: true, mode: 0o700 });
       // All answers are in before any write; the step is marked done once config.yaml exists.
@@ -765,17 +807,19 @@ export async function runInit(
             memberRoot: config.member_root,
             write,
           });
+        write('Document toolkit installed for owner and member sessions.');
       } catch (error) {
-        throw new CliInputError(
-          `Document toolkit setup failed. Run mama init again to continue. ${error instanceof Error ? error.message : ''}`
+        // MAMA runs without the document tools; their host requirements must not keep it from
+        // starting. The daemon log names them as absent until mama tools install succeeds.
+        write(
+          `The document tools could not be installed: ${error instanceof Error ? error.message : 'unknown error'}. MAMA runs without them; run mama tools install once that is fixed.`
         );
       }
       mark('toolkit');
-      write('Document toolkit installed for owner and member sessions.');
     }
   } finally {
     // The daemon takes this lock at boot; it must be free before the service starts it.
-    lock.release();
+    lock?.release();
   }
   if (!done('service')) {
     const startServiceFor =
@@ -791,14 +835,27 @@ export async function runInit(
           ...(options.nodePath ? { nodePath: options.nodePath } : {}),
           ...(options.cliPath ? { cliPath: options.cliPath } : {}),
         };
-        // Linux keeps the user's services running after logout only with linger (B4).
-        await installService(platform === 'linux' ? ['--enable-linger'] : [], serviceOptions);
+        // Linux keeps the user's services running after logout only with linger (B4). Enabling it
+        // can need privileges this account lacks; that must not stop the service from starting.
+        if (platform === 'linux') {
+          const user = options.user ?? userInfo().username;
+          const result = (options.serviceRun ?? defaultServiceRun)('loginctl', [
+            'enable-linger',
+            user,
+          ]);
+          if (result.error || result.status !== 0)
+            write(
+              `Linger could not be enabled, so MAMA stops when you log out. Run once: sudo loginctl enable-linger ${user}`
+            );
+        }
+        await installService([], serviceOptions);
         await startService(serviceOptions);
       });
     await startServiceFor(progress.viewer ?? {});
+    const viewerPort = resolveApiPort(progress.viewer?.MAMA_API_PORT);
     await waitForBoot({
       status: options.daemonStatus ?? (() => askDaemon('status', { home })),
-      health: options.health ?? viewerHealth,
+      health: options.health ?? (() => viewerHealth(viewerPort)),
       timeoutMs: options.bootTimeoutMs ?? 600_000,
       pollMs: options.pollMs ?? 1_000,
       write,

@@ -130,7 +130,7 @@ it('on Linux uses the per-user default only once the installer made it, and inst
   const install = vi.fn();
   await expect(
     runTools(['install'], { home, configPath, platform: 'linux', install })
-  ).rejects.toThrow(/does not exist\. The installer creates it once: sudo install -d/);
+  ).rejects.toThrow(/cannot be created\. Create .+ for this account once: sudo install -d/);
   expect(install).not.toHaveBeenCalled();
 });
 

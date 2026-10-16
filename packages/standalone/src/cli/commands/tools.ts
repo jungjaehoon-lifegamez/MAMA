@@ -41,10 +41,7 @@ export async function runTools(
     );
   // The default is a folder of this user's; on Linux the installer creates it, as for mama init.
   if (config.tools_root === undefined && options.toolsRoot === undefined)
-    prepareRoot(root, {
-      ownParent: true,
-      ...(options.platform ? { platform: options.platform } : {}),
-    });
+    prepareRoot(root, { ownParent: true });
   const next = parseConfig({ ...config, tools_root: root }, { home });
   const needsRestart = config.tools_root === undefined || !existsSync(root);
   const unregister = onToolkitSignal(() => {}, { exit: true });

@@ -34,22 +34,26 @@ export function defaultRoots(
 /**
  * Make a root that this user alone owns and writes, or refuse one that is not: the agent runs
  * what tools_root holds and reads what member_root holds, and the Shared folder lets any account
- * create a folder first. `ownParent` also checks the per-user folder a default sits in. On Linux
- * nothing is created here: the folder above needs sudo, which the installer runs once.
+ * create a folder first. `ownParent` also checks the per-user folder a default sits in. A root
+ * this account cannot create (Linux's /var/lib/mama) names the one sudo step that makes its
+ * per-user folder; the subfolders are made here.
  */
 export function prepareRoot(
   path: string,
-  options: { platform?: NodeJS.Platform; uid?: number; ownParent?: boolean } = {}
+  options: { uid?: number; ownParent?: boolean } = {}
 ): void {
-  const platform = options.platform ?? process.platform;
   const uid = options.uid ?? process.getuid?.();
   if (!existsSync(path)) {
-    if (platform === 'linux') {
+    try {
+      mkdirSync(path, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'EACCES' && code !== 'EPERM' && code !== 'EROFS') throw error;
+      const folder = options.ownParent ? dirname(path) : path;
       throw new CliInputError(
-        `${path} does not exist. The installer creates it once: sudo install -d -o "$USER" -m 0700 ${path}`
+        `${path} cannot be created. Create ${folder} for this account once: sudo install -d -o "$USER" -m 0700 ${folder}`
       );
     }
-    mkdirSync(path, { recursive: true, mode: 0o700 });
   }
   for (const folder of options.ownParent ? [dirname(path), path] : [path]) {
     const stat = lstatSync(folder);
