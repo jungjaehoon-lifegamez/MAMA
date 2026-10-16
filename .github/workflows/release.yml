@@ -122,6 +122,11 @@ jobs:
             jq --arg v "$PLUGIN_NEW" '.version = $v' packages/claude-code-plugin/.claude-plugin/plugin.json > tmp.json && mv tmp.json packages/claude-code-plugin/.claude-plugin/plugin.json
           fi
 
+          # The plugin's .mcp.json pins the server version, and docs carry versions too.
+          if [[ "$BUMP_VERSIONS" == "true" ]]; then
+            node scripts/sync-versions.js
+          fi
+
           # Determine release tag (use mama-os version as primary)
           RELEASE_TAG="v${OS_NEW}"
 
@@ -162,7 +167,8 @@ jobs:
             echo "::error::Inline version bumps are disabled for protected main. Prepare version bumps in a PR, merge it, then rerun this workflow with bump_versions=false."
             exit 1
           fi
-          git add packages/*/package.json packages/claude-code-plugin/.claude-plugin/plugin.json
+          git add packages/*/package.json packages/claude-code-plugin/.claude-plugin/plugin.json \
+            packages/claude-code-plugin/.mcp.json README.md packages/*/README.md
           git commit -m "chore: bump versions for ${{ steps.versions.outputs.release_tag }}" || echo "No changes to commit"
 
       - name: Create release tag
