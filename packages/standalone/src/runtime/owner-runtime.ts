@@ -1437,16 +1437,21 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         // Turns of one workspace run one at a time (the web-fetch mode file relies on it), and a
         // drain waits for this chain. The check goes next, as /new does, not behind queued work.
         return sessions.turnChain(options.ownerPrincipalId).afterCurrent(async () => {
+          // A stop that began while the probe waited for its slot starts no new turn.
+          if (stopping) throw new Error('Cannot probe the backend after runtime stop');
           const started = Date.now();
           let modelRunId: string | null = null;
           let turnError: unknown;
           try {
-            await native.runTurn!([{ type: 'text', text: BACKEND_PROBE_PROMPT }], {
+            const result = await native.runTurn!([{ type: 'text', text: BACKEND_PROBE_PROMPT }], {
               sessionKey: OWNER_PROBE_SESSION_KEY,
               onModelRunStarted: (id: string) => {
                 modelRunId = id;
               },
             } as NativeInvocationOptions);
+            // An answer is what shows the model replied; an empty one proves nothing.
+            if (!result.response.trim())
+              throw new Error('The backend finished the turn without an answer');
           } catch (error) {
             turnError = error;
           }

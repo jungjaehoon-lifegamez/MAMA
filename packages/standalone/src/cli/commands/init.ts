@@ -346,7 +346,7 @@ async function viewerHealth(port: number): Promise<boolean> {
   }
 }
 
-/** How much longer than the daemon's own turn deadline init waits for the backend check. */
+/** How much longer than the daemon's own turn limit init waits for the backend check. */
 const PROBE_MARGIN_MS = 60_000;
 
 const initUsage = `Usage: mama init [--non-interactive] | mama init --section <${initSections.join('|')}>`;
@@ -663,8 +663,9 @@ export async function runInit(
     // daemon proves it answers as the service runs it: its PATH, environment, sandbox and model.
     // The step is done only then, so mama init again checks once more after a fix.
     write('Checking the backend with one real turn through MAMA…');
-    // The daemon gives up on a turn after agent.timeout without progress; wait a little longer.
-    const timeoutMs = loadConfig({ home, path: configPath }).agent.timeout + PROBE_MARGIN_MS;
+    // A turn that keeps progressing may run until agent.max_turn_ms, and the daemon answers with its
+    // own error before then; wait a little longer than that.
+    const timeoutMs = loadConfig({ home, path: configPath }).agent.max_turn_ms + PROBE_MARGIN_MS;
     const probe = await (
       options.daemonProbe ?? (() => askDaemon('probe', { home, timeoutMs }))
     )().catch((error: unknown) => {
