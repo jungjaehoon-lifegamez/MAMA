@@ -2567,3 +2567,17 @@ The implementation writes raw/index data during import only. Replay is the owner
     - under the new PATH, python3 is Homebrew's and imports fitz 1.27.2;
     - `mama status` shows the daemon and its connectors polling.
 - Still open: an owner turn on the new launch files (next message).
+
+### Release: mama-os 0.78.0, mama-core 8.8.0, mama-server 2.6.0, plugin 2.3.0 (#518, #519, 2026-10-16)
+
+- Result: the W1 wave (W1.3b–W1.6) is on npm, in the plugin marketplace and live on this Mac. It is the first release through the single `release.yml` path that #511 left.
+- Evidence:
+  - The first run (38875447814) stopped at "Extract changelog": the root `CHANGELOG.md` had no `mama-os [0.78.0]` section. Nothing was tagged or published. #519 added the section, and the second run (38875834471) passed every job, including `sync-plugin`.
+  - npm shows mama-core 8.8.0, mama-server 2.6.0 (depends on core exactly `8.8.0`) and mama-os 0.78.0 (core `^8.8.0`). GitHub release `v0.78.0`.
+  - The marketplace copy is plugin 2.3.0. Its `.mcp.json` pins `@jungjaehoon/mama-server@2.6.0`, its `package.json` names core `8.8.0`, and no `workspace:` dependency remains.
+  - Deployed 17:52:58 KST: eight boot stages, no errors. doctor shows all ok and schema core 106 of 106.
+  - Before the plugin update on this Mac, the development memory database (core schema 100) was copied with `.backup`. The copy passes `integrity_check`.
+  - Under the W1.6 launch files, three source-delta turns ran and committed between 17:28 and 17:46 KST.
+- Still open:
+  - An owner chat turn on the new launch files.
+  - This Mac's plugin update. The owner runs it, and it moves the development memory from schema 100 to 106.
