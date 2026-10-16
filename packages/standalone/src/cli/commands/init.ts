@@ -641,76 +641,89 @@ export async function runInit(
   const platform = options.platform ?? process.platform;
   const root = join(home, '.mama');
   const configPath = join(root, 'config.yaml');
-  let state = readInitState(root);
-  // The record is written before the setup's files, so one without the config step means an
-  // init stopped part-way through writing them. The files only init creates are removed and the
-  // step starts over; auth.env is merged, and a Codex login made before init stays.
-  if (state !== null && !state.done.includes('config')) {
-    for (const name of ['config.yaml', 'connectors.json', 'jev-key'])
-      rmSync(join(root, name), { force: true });
-    write('An earlier mama init stopped while writing its files; that step starts over.');
-    state = null;
-  }
-  if (existsSync(configPath)) {
-    // An install set up before init kept its steps, or by hand: init will not take it over.
-    if (state === null)
-      throw new CliInputError('config.yaml already exists; init will not overwrite it.');
-    if (initComplete(state))
-      throw new CliInputError(
-        'MAMA is already set up here; mama doctor checks it and mama service restart restarts it.'
-      );
-    write(`continuing setup: done so far: ${state.done.join(', ')}`);
-  } else {
-    state = null;
-    // A partial manual setup must also be reviewed by the owner before replacing files.
-    for (const name of ['connectors.json', 'start.sh']) {
-      if (existsSync(join(root, name)))
-        throw new CliInputError(`${name} already exists; init will not overwrite it.`);
-    }
-  }
-  const progress: InitState = state ?? { version: 1, done: [] };
+  const lockPaths = daemonControlPaths(root);
+  // While init writes the install, no daemon, restore or second init may run beside it, and the
+  // step record is read and repaired under the same lock, so a second init cannot act on one the
+  // first is still writing. A setup with only the service step left takes no lock: that step
+  // writes no install files, and the daemon a failed wait left starting holds the lock.
+  const peek = readInitState(root);
+  const serviceOnly =
+    peek !== null &&
+    (['config', 'owner', 'toolkit'] as const).every((step) => peek.done.includes(step));
+  let lock = existsSync(root) && !serviceOnly ? acquireInstallLock(lockPaths, 'init') : undefined;
+  let progress: InitState = { version: 1, done: [] };
   const mark = (step: InitStep) => {
     progress.done.push(step);
     writeInitState(root, progress);
   };
   const done = (step: InitStep) => progress.done.includes(step);
-  const locate = options.findExecutable ?? findExecutable;
-  // Questions and checks come first, so a refused or cancelled setup leaves nothing behind.
-  let answers: InitAnswers | undefined;
-  if (!done('config')) {
-    const defaults = defaultRoots({
-      platform,
-      home,
-      ...(options.user === undefined ? {} : { user: options.user }),
-    });
-    const checks = {
-      backend: (name: 'claude' | 'codex') => checkBackend(name, root, locate, options.probeRun),
-      telegram: (token: string, chat: string) =>
-        checkTelegram(token, chat, options.telegramCall ?? defaultTelegramCall, write),
-    };
-    answers = nonInteractive
-      ? await environmentAnswers(options.env ?? process.env, defaults, checks)
-      : await askAnswers(prompt, root, defaults, checks);
-    answers.memberRoot = resolve(answers.memberRoot);
-    answers.toolsRoot = resolve(answers.toolsRoot);
-    try {
-      validateMemberRoot(answers.memberRoot, [home, root]);
-      assertRootAncestors(physicalReadPath(answers.memberRoot), 'member_root');
-      validateToolsRoot(answers.toolsRoot, [home, root, answers.memberRoot]);
-    } catch (error) {
-      throw new CliInputError((error as Error).message);
-    }
-  }
-  mkdirSync(root, { recursive: true, mode: 0o700 });
-  // While init writes the install, no daemon, restore or second init may run beside it; a daemon
-  // polling the same bot would also take the messages pairing reads. Once only the service step
-  // is left there is nothing to write, and the daemon a failed wait left starting holds the lock.
-  const writing = !done('config') || !done('owner') || !done('toolkit');
-  const lock = writing ? acquireInstallLock(daemonControlPaths(root), 'init') : undefined;
-  let config: W1Config;
   try {
+    let state = lock ? readInitState(root) : peek;
+    // The record is written before the setup's files, so one without the config step means an
+    // init stopped part-way through writing them. The files only init creates are removed and the
+    // step starts over; auth.env is merged, and a Codex login made before init stays.
+    if (state !== null && !state.done.includes('config')) {
+      for (const name of ['config.yaml', 'connectors.json', 'jev-key'])
+        rmSync(join(root, name), { force: true });
+      write('An earlier mama init stopped while writing its files; that step starts over.');
+      state = null;
+    }
+    if (existsSync(configPath)) {
+      // An install set up before init kept its steps, or by hand: init will not take it over.
+      if (state === null)
+        throw new CliInputError('config.yaml already exists; init will not overwrite it.');
+      if (initComplete(state))
+        throw new CliInputError(
+          'MAMA is already set up here; mama doctor checks it and mama service restart restarts it.'
+        );
+      write(`continuing setup: done so far: ${state.done.join(', ')}`);
+    } else {
+      state = null;
+      // A partial manual setup must also be reviewed by the owner before replacing files.
+      for (const name of ['connectors.json', 'start.sh']) {
+        if (existsSync(join(root, name)))
+          throw new CliInputError(`${name} already exists; init will not overwrite it.`);
+      }
+    }
+    progress = state ?? { version: 1, done: [] };
+    const locate = options.findExecutable ?? findExecutable;
+    // Questions and checks come first, so a refused or cancelled setup leaves nothing behind.
+    let answers: InitAnswers | undefined;
+    if (!done('config')) {
+      const defaults = defaultRoots({
+        platform,
+        home,
+        ...(options.user === undefined ? {} : { user: options.user }),
+      });
+      const checks = {
+        backend: (name: 'claude' | 'codex') => checkBackend(name, root, locate, options.probeRun),
+        telegram: (token: string, chat: string) =>
+          checkTelegram(token, chat, options.telegramCall ?? defaultTelegramCall, write),
+      };
+      answers = nonInteractive
+        ? await environmentAnswers(options.env ?? process.env, defaults, checks)
+        : await askAnswers(prompt, root, defaults, checks);
+      answers.memberRoot = resolve(answers.memberRoot);
+      answers.toolsRoot = resolve(answers.toolsRoot);
+      try {
+        validateMemberRoot(answers.memberRoot, [home, root]);
+        assertRootAncestors(physicalReadPath(answers.memberRoot), 'member_root');
+        validateToolsRoot(answers.toolsRoot, [home, root, answers.memberRoot]);
+      } catch (error) {
+        throw new CliInputError((error as Error).message);
+      }
+    }
+    if (lock === undefined && !serviceOnly) {
+      // A new install: the MAMA home is made only once the questions are answered, and another
+      // init may have started one meanwhile.
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+      lock = acquireInstallLock(lockPaths, 'init');
+      if (readInitState(root) !== null || existsSync(configPath))
+        throw new CliInputError('Another mama init set up here meanwhile; run mama init again.');
+    }
     // A restore sets the launch files aside too, so even the service step waits for it.
     refuseWhileRestoring(root);
+    let config: W1Config;
     if (answers !== undefined) {
       const { memberRoot, toolsRoot } = answers;
       for (const [folder, isDefault] of [
@@ -864,8 +877,8 @@ export async function runInit(
       const stored = resolveApiPort(progress.viewer?.MAMA_API_PORT);
       if (await answers(stored, '127.0.0.1')) {
         const port = await freeViewerPort(answers);
+        // Named even when it is the default, so it replaces the port start.sh carries.
         progress.viewer = { ...progress.viewer, MAMA_API_PORT: String(port) };
-        if (port === DEFAULT_VIEWER_PORT) delete progress.viewer.MAMA_API_PORT;
         writeInitState(root, progress);
       }
     }

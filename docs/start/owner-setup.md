@@ -94,7 +94,8 @@ If a step fails, run `mama init` again: it continues from that step without aski
 Once setup is complete it does not run again. It also refuses to start while a MAMA daemon holds
 the install.
 
-To set up without a terminal (scripts, containers), run `mama init --non-interactive` with
+To set up without a terminal (a script on the machine that will run MAMA), run
+`mama init --non-interactive` with
 these variables. Secrets come only from variables, never from flags:
 
 | Variable                      | Value                                                      |

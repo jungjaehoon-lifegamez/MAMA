@@ -490,6 +490,45 @@ describe('mama init', () => {
     ).rejects.toThrow(/does not answer \/health/);
   });
 
+  it('refuses when another init set up here while this one asked its questions', async () => {
+    const answers = minimal();
+    const p = prompt(answers, [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    const ask = p.adapter.text;
+    p.adapter.text = async (label) => {
+      // A second init writes its record while this one is still at its questions.
+      if (label.startsWith('Folder for member workspaces')) {
+        mkdirSync(join(root, 'runtime'), { recursive: true, mode: 0o700 });
+        writeFileSync(initStatePath(root), JSON.stringify({ version: 1, done: [] }));
+      }
+      return ask(label);
+    };
+    await expect(runInit([], options(p.adapter))).rejects.toThrow(
+      /Another mama init set up here meanwhile/
+    );
+    expect(existsSync(join(root, 'config.yaml'))).toBe(false);
+  });
+
+  it('names the default port again when it is the free one, replacing the one start.sh carries', async () => {
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    let statusCalls = 0;
+    let phase: 'config' | 'service' = 'config';
+    const o = options(p.adapter, {
+      // While the setup is written 3847 is taken (3848 chosen); by the service step 3848 is taken.
+      portAnswers: async (port) => (phase === 'config' ? port === 3847 : port === 3848),
+      installToolkit: async () => {
+        phase = 'service';
+      },
+      daemonStatus: async () => {
+        statusCalls += 1;
+        return statusCalls === 1
+          ? { state: 'stopped', holder: null }
+          : { state: 'running', reply: { ok: true, status: { stage: 'running' } } };
+      },
+    });
+    await runInit([], o);
+    expect(o.started).toEqual([{ MAMA_API_PORT: '3847' }]);
+  });
+
   it('refuses while something else holds the install', async () => {
     const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
     mkdirSync(root, { mode: 0o700 });
