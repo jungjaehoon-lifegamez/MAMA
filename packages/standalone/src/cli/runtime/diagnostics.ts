@@ -412,12 +412,20 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
 
   // Each log against its own cap: the daemon rotates daemon.log and security-events.jsonl before
   // they pass theirs, and start.sh empties crash.log at start past its own.
-  for (const [name, cap] of [
-    ['daemon.log', DAEMON_LOG_LIMITS.maxBytes],
-    ['security-events.jsonl', SECURITY_LOG_LIMITS.maxBytes],
-    [CRASH_LOG_NAME, CRASH_LOG_CAP_BYTES],
+  for (const [name, path, cap] of [
+    // The daemon's own log is wherever the config puts it.
+    [
+      'daemon.log',
+      config?.logging.file ?? join(root, 'logs', 'daemon.log'),
+      DAEMON_LOG_LIMITS.maxBytes,
+    ],
+    [
+      'security-events.jsonl',
+      join(root, 'logs', 'security-events.jsonl'),
+      SECURITY_LOG_LIMITS.maxBytes,
+    ],
+    [CRASH_LOG_NAME, join(root, 'logs', CRASH_LOG_NAME), CRASH_LOG_CAP_BYTES],
   ] as const) {
-    const path = join(root, 'logs', name);
     if (!existsSync(path)) continue;
     try {
       accessSync(path, constants.R_OK);

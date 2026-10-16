@@ -531,6 +531,24 @@ function sourceReadEvidence(data: unknown, source: string, observationRef: strin
   };
 }
 
+/**
+ * A rotated archive's lines, decompressed once per archive: the viewer polls while the new file is
+ * still short, and an archive never changes once it is renamed in.
+ */
+const archiveCache = new Map<string, { key: string; lines: string[] }>();
+function archivedLines(archive: string): string[] {
+  const stat = statSync(archive);
+  const key = `${stat.ino}:${stat.mtimeMs}`;
+  const cached = archiveCache.get(archive);
+  if (cached?.key === key) return cached.lines;
+  const lines = gunzipSync(readFileSync(archive))
+    .toString('utf8')
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0);
+  archiveCache.set(archive, { key, lines });
+  return lines;
+}
+
 function readLogTail(
   logPath: string | undefined,
   params: URLSearchParams
@@ -584,10 +602,7 @@ function readLogTail(
     // archive.
     const archive = archivePath(logPath, 1);
     if (position === 0 && allLines.length < tail && existsSync(archive)) {
-      const older = gunzipSync(readFileSync(archive))
-        .toString('utf8')
-        .split(/\r?\n/)
-        .filter((line) => line.length > 0);
+      const older = archivedLines(archive);
       const taken = older.slice(-(tail - allLines.length));
       return {
         ...base,

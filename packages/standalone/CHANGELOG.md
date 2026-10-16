@@ -62,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the secrets each enabled messenger and source needs and each source started as boot starts it and
   asked whether its credentials work, the Telegram token and whether the bot is in the common group
   and reads it, the toolkit, the daemon (answering, booted, each source's last poll) or the port it
-  would bind, the service manager and logs over 50 MB. Each problem names what to do, and it exits
+  would bind, the service manager and each log past its cap. Each problem names what to do, and it exits
   1 when a check fails. `--json` for scripts, `--offline` makes no network call (Telegram and the
   sources are not asked), and `--report` prints a summary for a bug report: versions, platform,
   setting and source names, the checks in doctor's own words, the last boot's stages and recent
