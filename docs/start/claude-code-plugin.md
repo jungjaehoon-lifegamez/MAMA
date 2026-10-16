@@ -22,9 +22,11 @@ These pages describe the current checkout. Use Node.js 22.13.0 or newer, run `pn
 ```
 
 Restart Claude Code and check that `/mama:search` and `/mama:checkpoint` are available. The local
-marketplace selects this checkout's plugin files. Its manifest still launches the published MCP
-package through `npx -y @jungjaehoon/mama-server`; it does not select the checkout's server code.
-Use the local stdio configuration below when verifying server changes from this branch.
+marketplace selects this checkout's plugin files, and its hooks run this checkout's core. Its
+`.mcp.json` still launches the published MCP package pinned in this checkout,
+`npx -y @jungjaehoon/mama-server@<version>`, which may not be published yet and may run another
+core; it does not select the checkout's server code. Use the local stdio configuration below when
+verifying server changes from this branch.
 
 For released plugin files, the release workflow advertises `/plugin marketplace add
 jungjaehoon-lifegamez/claude-plugins` followed by `/plugin install mama`. A published release may
@@ -84,5 +86,6 @@ runtime socket is needed.
 
 Sources: [local marketplace](../../.claude-plugin/marketplace.json),
 [plugin manifest](../../packages/claude-code-plugin/.claude-plugin/plugin.json),
+[plugin MCP server](../../packages/claude-code-plugin/.mcp.json),
 [MCP server](../../packages/mcp-server/src/server.js),
 [marketplace release instructions](../../.github/workflows/release.yml).

@@ -30,8 +30,9 @@ For Claude Code commands and hooks, register the checkout's marketplace:
 /plugin install mama@mama-dev
 ```
 
-The plugin manifest launches the **published** server with `npx -y @jungjaehoon/mama-server`;
-installing local plugin files does not select the checkout's server. Use the stdio configuration
+The plugin's `.mcp.json` launches the **published** server pinned to the plugin's release,
+`npx -y @jungjaehoon/mama-server@<version>`; installing local plugin files does not select the
+checkout's server. Use the stdio configuration
 above when verifying this branch. Published versions may lag this checkout. See
 [development-memory setup](../../docs/start/claude-code-plugin.md) for both install paths.
 

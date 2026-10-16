@@ -342,9 +342,20 @@ jobs:
             exit 1
           fi
           # The registry can show a publish from the job before this one a few minutes late.
+          PUBLISHED_CORE=""
+          for attempt in $(seq 1 10); do
+            PUBLISHED_CORE=$(npm view "@jungjaehoon/mama-core@$CORE_VERSION" version 2>/dev/null || true)
+            [[ -n "$PUBLISHED_CORE" ]] && break
+            sleep 30
+          done
+          if [[ "$PUBLISHED_CORE" != "$CORE_VERSION" ]]; then
+            echo "::error::@jungjaehoon/mama-core@$CORE_VERSION is not on npm; the hooks could not install it. Release mama-core first"
+            exit 1
+          fi
           SERVER_CORE=""
           for attempt in $(seq 1 10); do
-            SERVER_CORE=$(npm view "@jungjaehoon/mama-server@$SERVER_VERSION" dependencies --json 2>/dev/null | jq -r '."@jungjaehoon/mama-core" // empty')
+            # An unpublished version makes npm view exit non-zero: that is the case to retry.
+            SERVER_CORE=$(npm view "@jungjaehoon/mama-server@$SERVER_VERSION" dependencies --json 2>/dev/null | jq -r '."@jungjaehoon/mama-core" // empty' || true)
             [[ -n "$SERVER_CORE" ]] && break
             sleep 30
           done

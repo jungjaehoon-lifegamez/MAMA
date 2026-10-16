@@ -26,38 +26,6 @@ This directory contains automated workflows for MAMA project CI/CD.
 
 ---
 
-### `publish.yml` - Publish npm Packages
-
-**Purpose:** Publish packages to npm registry when tagged.
-
-**Trigger:** Push tags matching:
-
-| Tag Pattern                           | Package                    |
-| ------------------------------------- | -------------------------- |
-| `v*`, `mcp-server-*`                  | `@jungjaehoon/mama-server` |
-| `core-v*`, `mama-core-*`              | `@jungjaehoon/mama-core`   |
-| `os-v*`, `mama-os-*`, `standalone-v*` | `@jungjaehoon/mama-os`     |
-
-**Example Release:**
-
-```bash
-# Release MCP server v1.6.6
-git tag v1.6.6
-git push origin v1.6.6
-
-# Release mama-core v1.0.1
-git tag core-v1.0.1
-git push origin core-v1.0.1
-
-# Release mama-os v0.1.1
-git tag os-v0.1.1
-git push origin os-v0.1.1
-```
-
-**Required Secret:** `NPM_TOKEN`
-
----
-
 ### `pages.yml` - Deploy GitHub Pages
 
 **Purpose:** Build the Markdown documentation in `docs/` with Jekyll and deploy it to GitHub Pages.
@@ -81,7 +49,7 @@ git push origin os-v0.1.1
 
 ### `release.yml` - Publish Prepared Releases
 
-**Purpose:** Tag, publish selected packages, deploy GitHub Pages from the release tag, and create a GitHub Release.
+**Purpose:** Tag, publish selected packages (core first; the server with the exact core version), sync the Claude Code plugin to the `jungjaehoon-lifegamez/claude-plugins` marketplace, deploy GitHub Pages from the release tag, and create a GitHub Release. It is the only way packages reach npm and the plugin reaches the marketplace. The plugin sync fails unless the core version is on npm and the server the plugin pins depends on exactly that core.
 
 **Trigger:** Manual `workflow_dispatch`.
 
@@ -100,7 +68,7 @@ git push origin os-v0.1.1
 | Secret                | Used By       | Purpose                     |
 | --------------------- | ------------- | --------------------------- |
 | `GITHUB_TOKEN`        | All           | Auto-provided by GitHub     |
-| `NPM_TOKEN`           | `publish.yml` | npm registry auth           |
+| `NPM_TOKEN`           | `release.yml` | npm registry auth           |
 | `PLUGIN_DEPLOY_TOKEN` | `release.yml` | Push to claude-plugins repo |
 
 ## Adding New Workflows
