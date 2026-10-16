@@ -21,6 +21,8 @@ and delivery receipts support that evidence; they do not establish it alone. Use
    it is not a full documentation audit.
 4. Keep `packages/claude-code-plugin/package.json` and its `.claude-plugin/plugin.json` at the same
    version. The plugin manifest test enforces this, along with marketplace manifest consistency.
+   The plugin's `.mcp.json` runs `@jungjaehoon/mama-server@<the mcp-server version>`;
+   `pnpm sync-versions` writes it and the same test checks it.
 5. Run the checks below and review their actual output.
 
 ```bash
@@ -82,8 +84,10 @@ wait for core. They may also run when core publication is skipped, so selecting 
 set remains the releaser's responsibility. Their published dependencies use the chosen core version.
 
 The release tag is derived from the MAMA OS version. Check that it is intentional and unused even
-when releasing a different package. Plugin synchronization depends on server publication; review
-that job dependency when selecting a plugin release. The workflow also deploys the documentation
+when releasing a different package. The plugin reaches the marketplace only through this workflow.
+Its hooks install the exact core version, the server is published with the exact core version, and
+the sync fails unless the server the plugin pins depends on the plugin's core: release
+`mama-server` with the plugin whenever core's version changed since the server's last release. The workflow also deploys the documentation
 site and creates the release after the required jobs succeed.
 
 Finally, verify the installed package versions and the affected owner or development-memory path.

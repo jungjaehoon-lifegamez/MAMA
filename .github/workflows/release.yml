@@ -122,6 +122,11 @@ jobs:
             jq --arg v "$PLUGIN_NEW" '.version = $v' packages/claude-code-plugin/.claude-plugin/plugin.json > tmp.json && mv tmp.json packages/claude-code-plugin/.claude-plugin/plugin.json
           fi
 
+          # The plugin's .mcp.json pins the server version, and docs carry versions too.
+          if [[ "$BUMP_VERSIONS" == "true" ]]; then
+            node scripts/sync-versions.js
+          fi
+
           # Determine release tag (use mama-os version as primary)
           RELEASE_TAG="v${OS_NEW}"
 
@@ -162,7 +167,8 @@ jobs:
             echo "::error::Inline version bumps are disabled for protected main. Prepare version bumps in a PR, merge it, then rerun this workflow with bump_versions=false."
             exit 1
           fi
-          git add packages/*/package.json packages/claude-code-plugin/.claude-plugin/plugin.json
+          git add packages/*/package.json packages/claude-code-plugin/.claude-plugin/plugin.json \
+            packages/claude-code-plugin/.mcp.json README.md packages/*/README.md
           git commit -m "chore: bump versions for ${{ steps.versions.outputs.release_tag }}" || echo "No changes to commit"
 
       - name: Create release tag
@@ -233,11 +239,13 @@ jobs:
       - name: Install dependencies (workspace-level)
         run: pnpm install --ignore-scripts
 
+      # Exact, not a range: the plugin pins this server and installs this same core for its
+      # hooks, and both open one database, so they must not resolve to different cores.
       - name: Replace workspace protocol
         working-directory: packages/mcp-server
         run: |
           CORE_VERSION=$(node -p "require('../mama-core/package.json').version")
-          sed -i "s/\"workspace:\*\"/\"^$CORE_VERSION\"/" package.json
+          sed -i "s/\"workspace:\*\"/\"$CORE_VERSION\"/" package.json
 
       - name: Publish
         working-directory: packages/mcp-server
@@ -308,7 +316,7 @@ jobs:
           rm -rf claude-plugins/plugins/mama
           mkdir -p claude-plugins/plugins/mama
           cp -r mama/packages/claude-code-plugin/.claude-plugin claude-plugins/plugins/mama/
-          cp -r mama/packages/claude-code-plugin/.mcp.json claude-plugins/plugins/mama/ 2>/dev/null || true
+          cp mama/packages/claude-code-plugin/.mcp.json claude-plugins/plugins/mama/
           cp -r mama/packages/claude-code-plugin/commands claude-plugins/plugins/mama/
           cp -r mama/packages/claude-code-plugin/scripts claude-plugins/plugins/mama/
           cp -r mama/packages/claude-code-plugin/skills claude-plugins/plugins/mama/
@@ -318,12 +326,47 @@ jobs:
 
       # The marketplace copy is installed with npm, which cannot resolve workspace:*. Every sync
       # from v1.10.0 to v2.1.0 shipped it, so the install failed and no hook could load mama-core.
+      # The version is exact, as the server's is: the hooks and the server open one database.
       - name: Replace workspace protocol
         run: |
           CORE_VERSION=$(jq -r '.version' mama/packages/mama-core/package.json)
-          sed -i "s/\"workspace:\*\"/\"^$CORE_VERSION\"/" claude-plugins/plugins/mama/package.json
+          sed -i "s/\"workspace:\*\"/\"$CORE_VERSION\"/" claude-plugins/plugins/mama/package.json
           if grep -q '"workspace:' claude-plugins/plugins/mama/package.json; then
             echo "claude-plugins/plugins/mama/package.json still names a workspace: dependency" >&2
+            exit 1
+          fi
+
+      # The plugin's hooks and the server it pins must run one core. A plugin released without
+      # the server that matches its core would bring back two cores on one database.
+      - name: Check the pinned server runs the plugin's core
+        run: |
+          CORE_VERSION=$(jq -r '.version' mama/packages/mama-core/package.json)
+          SERVER_VERSION=$(jq -r '.version' mama/packages/mcp-server/package.json)
+          PINNED=$(jq -r '.mcpServers.mama.args[-1]' claude-plugins/plugins/mama/.mcp.json)
+          if [[ "$PINNED" != "@jungjaehoon/mama-server@$SERVER_VERSION" ]]; then
+            echo "::error::.mcp.json runs $PINNED, not @jungjaehoon/mama-server@$SERVER_VERSION"
+            exit 1
+          fi
+          # The registry can show a publish from the job before this one a few minutes late.
+          PUBLISHED_CORE=""
+          for attempt in $(seq 1 10); do
+            PUBLISHED_CORE=$(npm view "@jungjaehoon/mama-core@$CORE_VERSION" version 2>/dev/null || true)
+            [[ -n "$PUBLISHED_CORE" ]] && break
+            sleep 30
+          done
+          if [[ "$PUBLISHED_CORE" != "$CORE_VERSION" ]]; then
+            echo "::error::@jungjaehoon/mama-core@$CORE_VERSION is not on npm; the hooks could not install it. Release mama-core first"
+            exit 1
+          fi
+          SERVER_CORE=""
+          for attempt in $(seq 1 10); do
+            # An unpublished version makes npm view exit non-zero: that is the case to retry.
+            SERVER_CORE=$(npm view "@jungjaehoon/mama-server@$SERVER_VERSION" dependencies --json 2>/dev/null | jq -r '."@jungjaehoon/mama-core" // empty' || true)
+            [[ -n "$SERVER_CORE" ]] && break
+            sleep 30
+          done
+          if [[ "$SERVER_CORE" != "$CORE_VERSION" ]]; then
+            echo "::error::@jungjaehoon/mama-server@$SERVER_VERSION depends on mama-core '${SERVER_CORE:-not found}', the plugin's hooks on $CORE_VERSION; release mama-server with this core"
             exit 1
           fi
 
@@ -331,8 +374,11 @@ jobs:
         run: |
           cd claude-plugins
           VERSION="${{ needs.prepare-release.outputs.mama_plugin_version }}"
+          DESCRIPTION=$(jq -r '.description' plugins/mama/.claude-plugin/plugin.json)
           # Use name selector instead of hardcoded index [0]
-          jq --arg ver "$VERSION" '(.plugins[] | select(.name == "mama")).version = $ver' .claude-plugin/marketplace.json > tmp.json && mv tmp.json .claude-plugin/marketplace.json
+          jq --arg ver "$VERSION" --arg desc "$DESCRIPTION" \
+            '(.plugins[] | select(.name == "mama")) |= (.version = $ver | .description = $desc)' \
+            .claude-plugin/marketplace.json > tmp.json && mv tmp.json .claude-plugin/marketplace.json
 
       - name: Commit and push
         run: |

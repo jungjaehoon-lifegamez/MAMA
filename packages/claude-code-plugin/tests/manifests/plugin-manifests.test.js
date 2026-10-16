@@ -174,10 +174,6 @@ describe('M3.3: Plugin Manifests', () => {
     });
   });
 
-  // AC3: .mcp.json was intentionally removed (Feb 2025).
-  // MCP server configuration is now handled externally via Claude Desktop settings.
-  // Tests for .mcp.json have been removed as the file no longer exists.
-
   describe('AC4: README references manifest files', () => {
     it('should have README.md file', () => {
       expect(fs.existsSync(README_PATH)).toBe(true);
@@ -321,7 +317,27 @@ describe('M3.3: Plugin Manifests', () => {
       const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
 
       expect(pluginConfig.name).toBe('mama');
-      // .mcp.json was deleted (Feb 2025) - MCP config now external
+    });
+
+    it('runs the MCP server released with this plugin, on the core its hooks install', () => {
+      // One definition: an inline plugin.json entry with the same name would replace this one.
+      const pluginConfig = JSON.parse(fs.readFileSync(PLUGIN_JSON_PATH, 'utf8'));
+      expect(pluginConfig.mcpServers).toBeUndefined();
+      expect(fs.existsSync(path.join(PLUGIN_ROOT, '.claude-plugin', '.mcp.json'))).toBe(false);
+      const server = JSON.parse(
+        fs.readFileSync(path.join(PLUGIN_ROOT, '..', 'mcp-server', 'package.json'), 'utf8')
+      );
+      const mcp = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, '.mcp.json'), 'utf8'));
+      expect(mcp.mcpServers.mama.args).toEqual([
+        '-y',
+        `@jungjaehoon/mama-server@${server.version}`,
+      ]);
+      // The release writes the exact core version into both; a range would let them drift apart.
+      const packageJson = JSON.parse(
+        fs.readFileSync(path.join(PLUGIN_ROOT, 'package.json'), 'utf8')
+      );
+      expect(packageJson.dependencies['@jungjaehoon/mama-core']).toBe('workspace:*');
+      expect(server.dependencies['@jungjaehoon/mama-core']).toBe('workspace:*');
     });
 
     it('should have matching versions', () => {
@@ -336,7 +352,7 @@ describe('M3.3: Plugin Manifests', () => {
     it('advertises no setting the code does not read', () => {
       const configure = fs.readFileSync(path.join(PLUGIN_ROOT, 'commands', 'configure.md'), 'utf8');
       expect(configure).not.toMatch(/config\.json|--model|--tier-check|--db-path/);
-      for (const file of ['.mcp.json', '.claude-plugin/.mcp.json', '.claude-plugin/plugin.json']) {
+      for (const file of ['.mcp.json', '.claude-plugin/plugin.json']) {
         expect(fs.readFileSync(path.join(PLUGIN_ROOT, file), 'utf8')).not.toContain(
           'MAMA_EMBEDDING_MODEL'
         );

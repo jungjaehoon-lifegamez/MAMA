@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -158,6 +159,27 @@ describe('public MCP stdio', () => {
       expect(existsSync(join(home, '.claude', 'mama-memory.db'))).toBe(true);
     } finally {
       await client?.close();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a database a newer core migrated and says what to do', () => {
+    const home = mkdtempSync(join(tmpdir(), 'mama-stdio-'));
+    try {
+      const path = join(home, 'memory.db');
+      const db = new Database(path);
+      db.exec('CREATE TABLE schema_version (source TEXT NOT NULL, version INTEGER NOT NULL)');
+      db.prepare("INSERT INTO schema_version (source, version) VALUES ('core', 9999)").run();
+      db.close();
+      const result = spawnSync(process.execPath, [resolve('src/server.js')], {
+        env: { HOME: home, NODE_ENV: 'production', MAMA_DB_PATH: path },
+        input: '',
+        encoding: 'utf8',
+        timeout: 30_000,
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(/core schema is at 9999, newer than this version knows/);
+    } finally {
       rmSync(home, { recursive: true, force: true });
     }
   });

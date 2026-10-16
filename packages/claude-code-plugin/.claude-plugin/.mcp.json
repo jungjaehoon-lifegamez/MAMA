@@ -1,7 +1,0 @@
-{
-  "mama": {
-    "command": "npx",
-    "args": ["-y", "@jungjaehoon/mama-server"],
-    "description": "MAMA - Memory-Augmented MCP Assistant"
-  }
-}

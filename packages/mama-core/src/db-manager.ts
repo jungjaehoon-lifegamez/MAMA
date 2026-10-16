@@ -235,6 +235,8 @@ export async function initDB(
   options: {
     /** Migrations this consumer brings of its own, run after the core's. */
     migrations?: ReadonlyArray<{ name: string; dir: string }>;
+    /** Refuse a database a newer version migrated; see `OpenDatabaseOptions.refuseNewerSchema`. */
+    refuseNewerSchema?: boolean;
   } = {}
 ): Promise<unknown> {
   if (handle) {
@@ -248,7 +250,10 @@ export async function initDB(
   // Assigning it after the await left one microtask in which both guards read
   // null, and a concurrent caller landing there would open a second adapter and
   // run migrations again on the same file.
-  openingPromise = openDatabase(options.migrations ? { migrations: options.migrations } : {})
+  openingPromise = openDatabase({
+    ...(options.migrations ? { migrations: options.migrations } : {}),
+    ...(options.refuseNewerSchema ? { refuseNewerSchema: true } : {}),
+  })
     .then((opened) => {
       handle = opened;
       return opened;

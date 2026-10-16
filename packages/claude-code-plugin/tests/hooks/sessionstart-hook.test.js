@@ -100,4 +100,13 @@ describe('SessionStart hook', () => {
     expect(order.every((index) => index >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
+
+  // Last: it leaves the shared database newer than this core.
+  it('refuses a database a newer core migrated and says what to do', () => {
+    seed("INSERT INTO schema_version (source, version) VALUES ('core', 9999)");
+    const { status, context } = runHook();
+    expect(status).toBe(1);
+    expect(context).toContain('MAMA: memory unavailable');
+    expect(context).toMatch(/core schema is at 9999, newer than this version knows/);
+  });
 });

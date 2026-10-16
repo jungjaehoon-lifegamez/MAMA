@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `@jungjaehoon/mama-core/db-manager` exports `MIGRATIONS_DIR`, `CORE_MIGRATION_SOURCE`,
   `highestMigrationVersion(dir)`, `readSchemaState(path, sources)` (the same read-only read, per
   source) and `NewerSchemaError`.
+- `initDB({ refuseNewerSchema: true })` passes the refusal to `openDatabase`, for consumers that
+  open the module-level database.
 
 ## [8.7.0] - 2026-10-14
 

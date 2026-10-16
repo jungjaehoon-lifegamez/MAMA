@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `.mcp.json` runs `@jungjaehoon/mama-server@<version>`, the server released with this plugin,
+  instead of whatever `npx` resolves (a global install could win). The release writes the exact
+  core version into the plugin's dependencies, as it does for the server's, and fails unless the
+  pinned server depends on that core, so the hooks and the server run one core.
+- The MCP server is defined once, in `.mcp.json`. The inline `mcpServers` in `plugin.json`
+  replaced it under the same name, and `.claude-plugin/.mcp.json` is not a location Claude Code
+  reads.
+- SessionStart refuses a database a newer core migrated and shows the message.
+- The plugin reaches the marketplace only through `release.yml`. The push-triggered sync shipped
+  unreleased plugin code with a `workspace:*` dependency npm cannot install (marketplace 2.2.0).
+
 ## [2.2.0] - 2026-10-07
 
 ### Changed
