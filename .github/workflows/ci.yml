@@ -121,6 +121,46 @@ jobs:
         env:
           MAMA_FORCE_TIER_3: true
 
+  # The previous published MAMA OS sets up an install and writes to it; this build boots on it and
+  # reads it back (v1.md R5). Outside `pnpm test`: it installs from npm and loads the embedding model.
+  upgrade-check:
+    needs: [changes, setup]
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.standalone == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@v6
+      - uses: actions/cache/restore@v5
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            packages/*/dist
+            packages/standalone/ui/node_modules
+            packages/standalone/public/viewer
+          key: ${{ runner.os }}-build-${{ github.sha }}
+      # The same model the MCP tests use, restored or downloaded fully before the check embeds.
+      - uses: actions/cache@v5
+        with:
+          path: ~/.cache/huggingface/transformers
+          key: ${{ runner.os }}-hf-e5-large-q8-v1
+      - name: Prepare embedding model
+        working-directory: packages/standalone
+        run: |
+          node --input-type=module -e "
+          import { homedir } from 'node:os'; import { join } from 'node:path';
+          import { declareEmbeddingCacheDir, generateEmbedding } from '@jungjaehoon/mama-core/embeddings';
+          declareEmbeddingCacheDir(join(homedir(), '.cache', 'huggingface', 'transformers'));
+          const v = await generateEmbedding('warm');
+          if (!v || v.length !== 1024) throw new Error('embedding model did not load');
+          "
+      - name: Upgrade from the previous release
+        run: node packages/standalone/scripts/upgrade-check/run.mjs
+
   # Test plugin (independent)
   test-plugin:
     needs: [changes, setup]
