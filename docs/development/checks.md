@@ -2611,3 +2611,15 @@ The implementation writes raw/index data during import only. Replay is the owner
   - Pairing with a new test bot and group (B2); the live bot cannot be used, since the daemon polls it.
   - A full `mama init` on a clean macOS account (B1, B3, B4, B6), and I2's real backend call through the isolated launcher.
   - A member DM turn on the per-account temp parent: no member turn has run since #525.
+
+### W2.1c: `mama init --section` live on this Mac (#527, 2026-10-17)
+
+- Result: one part of the owner's hand-made setup was asked again and saved by command, and MAMA started on it. Closes v1 B5 (marked in #527).
+- Evidence (03:00–03:06 KST):
+  - While the daemon ran, `mama init --section timezone` refused with "MAMA is already running here … stop it first: mama stop", and nothing was written.
+  - After `mama stop`, the section kept the shown time zone. A key-path comparison with a copy taken first: 147 paths unchanged in value and order, and one added, `timezone`, which the file had left to the default. No staging file remained. The command said the file's comments and layout were not kept; the live file had three comment lines.
+  - `mama service start` at 03:05:05: eight boot stages, no errors, doctor 16 ok (config loads, Telegram administrator of the common group, launchd).
+  - Reviews: Opus ×2 and Codex ×4. Two findings were left open with reasons in the PR: per-connector collection cursors, and a 409 probe that could only catch a webhook.
+- Still open:
+  - The pre-change copy is at `~/.mama/runtime/config.yaml.before-section-20261017` (0600). The owner decides whether its comments go back.
+  - `mama stop` unloads the launchd service. While stopped, doctor says no service manager runs the daemon, and `mama service start` loads it again.
