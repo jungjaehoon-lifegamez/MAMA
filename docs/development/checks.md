@@ -2469,3 +2469,19 @@ The implementation writes raw/index data during import only. Replay is the owner
   - W1.4b: CI boots this release on a database the previous published release wrote (R5).
   - This Mac's plist still has `KeepAlive true`, so a clean exit restarts until W1.6.
   - Moving restore's path rewrite into core was not taken up here.
+
+### W1.4b-1: the plugin hooks and the MCP server run one core (#511, 2026-10-16)
+
+- Result: the plugin's `.mcp.json` runs `@jungjaehoon/mama-server@<version>`, written by `sync-versions` and checked by the manifest test. It is the one MCP definition: an inline `plugin.json` entry replaced it, and `.claude-plugin/.mcp.json` is not read.
+  - `release.yml` writes the exact core into the server and the plugin. The plugin sync fails unless that core is on npm and the pinned server depends on exactly it.
+  - The server's `start()` and SessionStart pass `initDB({ refuseNewerSchema: true })`.
+  - `sync-plugin.yml`, `publish.yml` and `publish-packages.yml` are retired; `release.yml` is the one publish path.
+- Evidence:
+  - npx with an exact version fetched that version beside a different global install. Unpinned, the running processes on this Mac were the global 2.4.0.
+  - Registry dry run of the check: 2.5.0 depends on `^7.0.0`, so the sync would refuse it; an unpublished version retries, then fails.
+  - Tests start the real server and the hook on a database with core at 9999: exit 1 with the refusal text; the server test fails without the opt-in.
+  - Reviews: Opus two rounds (core-on-npm check, docs for the local install, the old publish paths), Codex one P1 (an inline bump now moves the pin).
+  - Deployed 11:06:13 KST: eight boot stages, no errors, doctor 15 ok and 1 warn (hand-written `start.sh`, W1.6).
+- Still open:
+  - Nothing reaches users before a core, server and plugin release (owner approval). The plugin must move past 2.2.0, whose marketplace copy carries `workspace:*` from the retired sync. Copy `~/.claude/mama-memory.db` before updating the plugin: its first session migrates core 100 forward.
+  - W1.4b-2: CI boots this release on a database the previous release wrote (R5).
