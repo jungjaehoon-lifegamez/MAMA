@@ -329,6 +329,29 @@ export function guidanceInSearchOrder(
     .slice(0, limit);
 }
 
+/**
+ * Whether an input of this person is about to run or running: pending and due, or claimed with a
+ * delivery not parked as uncertain. One waiting out a retry backoff or parked for reconciliation
+ * can take hours, and runs in whatever conversation is there by then.
+ */
+export function hasWaitingInput(
+  adapter: CoreDatabase['adapter'],
+  principalId: string,
+  now: number
+): boolean {
+  return (
+    adapter
+      .prepare(
+        `SELECT 1 FROM mailbox_inputs m LEFT JOIN native_input_deliveries n ON n.input_id = m.id
+          WHERE m.principal_id = ?
+            AND ((m.status = 'pending' AND COALESCE(m.retry_after, 0) <= ?)
+              OR (m.status = 'claimed' AND (n.state IS NULL OR n.state != 'uncertain')))
+          LIMIT 1`
+      )
+      .get(principalId, now) !== undefined
+  );
+}
+
 /** The session key a conversation's turns run under. */
 function conversationKey(target: ConversationTarget): string {
   if (target.kind === 'common') return OWNER_RUNTIME_SESSION_KEY;
@@ -1329,12 +1352,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         }
         // An input this person sent before /new would otherwise run in the new conversation,
         // and the next message would carry it on.
-        const inputsWaiting = () =>
-          database.adapter
-            .prepare(
-              "SELECT 1 FROM mailbox_inputs WHERE principal_id = ? AND status IN ('pending', 'claimed') LIMIT 1"
-            )
-            .get(principalId) !== undefined;
+        const inputsWaiting = () => hasWaitingInput(database.adapter, principalId, Date.now());
         const chain = sessions.turnChain(principalId);
         if (chain.isBusy() || inputsWaiting()) return 'busy';
         // On the principal's chain no turn of theirs starts while the session is reset. A member's

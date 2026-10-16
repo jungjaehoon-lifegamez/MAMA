@@ -843,7 +843,7 @@ export class TelegramGateway extends BaseGateway {
         // Everyone in a group reads the reply, so the owner's view of every conversation stays
         // in the owner's DM.
         text = statusText(await this.hostCommands.status(target, owner && privateChat)).join('\n');
-      else text = startOverText(await this.hostCommands.startOver(target), target);
+      else text = startOverText(await this.hostCommands.startOver(target), target, owner);
     } catch (error) {
       this.log(
         `telegram host command failed command=${command} error=${telegramErrorMessage(error)}`

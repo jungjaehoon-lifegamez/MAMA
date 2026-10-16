@@ -897,7 +897,8 @@ it('starts a conversation over only while nothing of that person runs or waits (
     expect(runtime.turnRunning(room)).toBe(false);
     expect(await runtime.startOver(dm)).toBe('busy');
     expect(await runtime.startOver(room)).toBe('busy');
-    // A message sent before /new waits behind the running turn; it keeps /new busy too.
+    // A message sent meanwhile queues behind the running turn (waiting-input.test.ts covers the
+    // mailbox side of busy).
     intake.acceptOwnerMessage({
       id: 'fixture:member-waiting',
       channelKey: 'fixture',
@@ -949,6 +950,28 @@ it('starts a conversation over only while nothing of that person runs or waits (
     expect(runtime.runtime.servesPrincipal(enrolled)).toBe(false);
     expect(await runtime.startOver({ kind: 'member', principalId: enrolled })).toBe('started_over');
     expect(runtime.runtime.servesPrincipal(enrolled)).toBe(true);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+it('starts over with the DM a group conversation kept from before a restart (/new)', async () => {
+  const f = await fixture('codex');
+  f.options.roomChannels = ['-7001'];
+  const before = await createOwnerRuntime(f.options);
+  try {
+    // The room's session opens, and its state stays on disk after the daemon stops.
+    before.memberIntake(f.member, '-7001');
+  } finally {
+    await before.stop();
+  }
+  const runtime = await createOwnerRuntime(f.options);
+  try {
+    const roomKey = `member:${f.member}:room:telegram:-7001`;
+    f.pool.getSession(roomKey);
+    f.pool.releaseSession(roomKey);
+    expect(await runtime.startOver({ kind: 'member', principalId: f.member })).toBe('started_over');
+    expect(f.pool.peekSession(roomKey).sessionId).toBeUndefined();
   } finally {
     await runtime.stop();
   }

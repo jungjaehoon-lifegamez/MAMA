@@ -75,14 +75,21 @@ export function whoamiText(input: {
   return lines.join('\n');
 }
 
-export function startOverText(result: 'started_over' | 'busy', target: ConversationTarget): string {
-  // A member's own conversation is reset with their group conversations (member-session.ts).
+export function startOverText(
+  result: 'started_over' | 'busy',
+  target: ConversationTarget,
+  owner: boolean
+): string {
+  // A member's own conversation is reset with their group conversations (member-session.ts);
+  // an owner's group messages go to the common session instead, which this does not reset.
   const memberDm = target.kind === 'member' && target.room === undefined;
   if (result === 'busy')
-    return 'MAMA is still working on something of yours here. Wait for its answer, then send /new again.';
-  return memberDm
-    ? 'Started over: your next message, here or in a group, begins a new conversation. What MAMA has saved stays.'
-    : 'Started over: the next message here begins a new conversation. What MAMA has saved stays.';
+    return 'MAMA is still busy with work that would carry into a new conversation. Wait a moment, then send /new again.';
+  if (memberDm && !owner)
+    return 'Started over: your next message, here or in a group, begins a new conversation. What MAMA has saved stays.';
+  if (memberDm)
+    return 'Started over: your next message here begins a new conversation; the common group goes on until /new there. What MAMA has saved stays.';
+  return 'Started over: the next message here begins a new conversation. What MAMA has saved stays.';
 }
 
 /** What /status reports; counts beyond the asker's own appear only for owners. */

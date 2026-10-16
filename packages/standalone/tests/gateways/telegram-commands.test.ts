@@ -252,7 +252,7 @@ describe('Telegram host commands', () => {
     });
     const [, text] = await reply();
     expect(commands.startOver).toHaveBeenCalledWith({ kind: 'member', principalId: owner });
-    expect(text).toContain('MAMA is still working on something of yours here');
+    expect(text).toContain('MAMA is still busy with work that would carry into a new conversation');
   });
 
   it('answers a failed command with a notice and keeps the error in the log', async () => {
@@ -359,9 +359,12 @@ describe('command texts', () => {
   });
 
   it('says a DM reset reaches the group conversations too', () => {
-    expect(startOverText('started_over', { kind: 'member', principalId: 'p' })).toContain(
-      'here or in a group'
+    const dm = { kind: 'member' as const, principalId: 'p' };
+    expect(startOverText('started_over', dm, false)).toContain('here or in a group');
+    // An owner's group messages go to the common session, which a DM /new leaves alone.
+    expect(startOverText('started_over', dm, true)).toContain('the common group goes on');
+    expect(startOverText('started_over', { kind: 'common' }, true)).toContain(
+      'the next message here'
     );
-    expect(startOverText('started_over', { kind: 'common' })).toContain('the next message here');
   });
 });

@@ -85,14 +85,13 @@ export function createMemberSession(
     });
   const initialAccess = access(); // Unknown/inactive ids fail before creating their paths.
   const personalPaths = ensureMemberPaths(root, principalId);
+  // A room's backend state lives here from its first turn, across restarts (Codex threads).
+  const roomDirectory = (channel: string) => createHash('sha256').update(channel).digest('hex');
   const paths =
     room === undefined
       ? personalPaths
       : {
-          ...ensureMemberPaths(
-            join(personalPaths.runtimeRoot, 'rooms'),
-            createHash('sha256').update(room).digest('hex')
-          ),
+          ...ensureMemberPaths(join(personalPaths.runtimeRoot, 'rooms'), roomDirectory(room)),
           credentialPath: personalPaths.credentialPath,
         };
   const rooms = new Map<string, ReturnType<typeof createMemberSession>>();
@@ -246,9 +245,14 @@ export function createMemberSession(
     hostToolDefinitions: () => current.hostToolDefinitions(),
     callAction: (call, caller) => (activeRoom?.native ?? current).callAction(call, caller),
     resetSession: async (key) => {
+      // A member reset reaches every group conversation they have, opened in this process or
+      // kept on disk from before it, which would otherwise resume with the old context.
       if (room === undefined && key === sessionKey)
-        for (const session of rooms.values())
-          await session.native.resetSession(session.native.sessionKey);
+        for (const channel of options.roomChannels ?? [])
+          if (existsSync(join(personalPaths.runtimeRoot, 'rooms', roomDirectory(channel))))
+            await roomSession(channel).native.resetSession(
+              memberRoomSessionKey(principalId, channel)
+            );
       const channel = memberRoomChannel(principalId, key);
       await (
         room === undefined && channel !== undefined ? roomSession(channel).native : current

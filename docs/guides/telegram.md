@@ -62,10 +62,11 @@ menu in DMs and groups, and only registered people get an answer.
 The conversation is the one your messages in that chat go to. In the common group that is the
 common session for owners and your own group conversation for other members. `/new` waits for
 nothing: while MAMA still works on something of yours, or a message of yours is waiting, it says
-so and you send it again later. In a DM it also starts your group conversations over. In their
-own DM, owners see every conversation's count and the sources in `/status`; in a group everyone
-sees only their own. A command for another bot (`/status@other_bot`) is left alone, and any other
-command goes to MAMA as a message.
+so and you send it again later. A member's `/new` in a DM also starts their group conversations
+over; an owner's group messages go to the common session, which only `/new` in the group starts
+over. In their own DM, owners see every conversation's count and the sources in `/status`; in a
+group everyone sees only their own. A command for another bot (`/status@other_bot`) is left
+alone, and any other command goes to MAMA as a message.
 
 ## Send originals and receive results
 
