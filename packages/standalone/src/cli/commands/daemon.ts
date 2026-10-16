@@ -18,6 +18,7 @@ import {
   type StimulusIntake,
 } from '../../runtime/stimulus-delivery.js';
 import {
+  countPendingInputs,
   createOwnerRuntime,
   type OwnerRuntime,
   type OwnerRuntimeOptions,
@@ -949,27 +950,25 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
           status: async (target, ownerView) => {
             const report = await statusReport();
             const adapter = owner!.database.adapter;
-            const principalId = target.kind === 'member' ? target.principalId : OWNER_PRINCIPAL_ID;
-            const waiting = (
+            // A group reads the reply, so a member's count there is that group's inputs only.
+            const waiting = countPendingInputs(
+              adapter,
               ownerView
-                ? adapter
-                    .prepare(
-                      "SELECT COUNT(*) AS count FROM mailbox_inputs WHERE status = 'pending'"
-                    )
-                    .get()
-                : adapter
-                    .prepare(
-                      "SELECT COUNT(*) AS count FROM mailbox_inputs WHERE status = 'pending' AND principal_id = ?"
-                    )
-                    .get(principalId)
-            ) as { count: number };
+                ? {}
+                : target.kind === 'common'
+                  ? { principalId: OWNER_PRINCIPAL_ID }
+                  : {
+                      principalId: target.principalId,
+                      ...(target.room === undefined ? {} : { channel: target.room }),
+                    }
+            );
             const turns = (report.runningTurns ?? []) as Array<{ count: number }>;
             const sources = (report.connectors ?? []) as Array<{ name: string; healthy: boolean }>;
             return {
               version: String(report.version),
               since: localNow(startedAt, timeZone.get()),
               conversationRunning: owner!.turnRunning(target),
-              inputsWaiting: waiting.count,
+              inputsWaiting: waiting,
               ...(ownerView
                 ? {
                     owner: {

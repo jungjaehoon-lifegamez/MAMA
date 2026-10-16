@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Mailbox } from '@jungjaehoon/mama-core/runtime/mailbox';
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
-import { hasWaitingInput } from '../../src/runtime/owner-runtime.js';
+import { countPendingInputs, hasWaitingInput } from '../../src/runtime/owner-runtime.js';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -49,6 +49,38 @@ it('counts an input about to run or running, not one waiting out a retry or park
       )
       .run(first, now);
     expect(hasWaitingInput(adapter, person, now)).toBe(false);
+  } finally {
+    await database.close();
+  }
+});
+
+it("counts pending inputs for everyone, one person, or one person's group (/status)", async () => {
+  const root = mkdtempSync(join(tmpdir(), 'mama-pending-count-'));
+  roots.push(root);
+  const database = await openCoreDatabase({ path: join(root, 'core.db') });
+  try {
+    const adapter = database.adapter;
+    const mailbox = new Mailbox(adapter, () => 1_000_000);
+    const add = (id: string, principalId: string, channelKey: string) =>
+      mailbox.enqueue({
+        id,
+        kind: 'source_delta',
+        principalId,
+        channelKey,
+        refs: [{ refId: `${id}-ref`, observationRef: null }],
+        occurredAt: 1,
+      });
+    add('fixture-dm', 'fixture-member-a', 'fixture-dm-chat');
+    add('fixture-room', 'fixture-member-a', '-7001');
+    add('fixture-other-room', 'fixture-member-a', '-7002');
+    add('fixture-common', 'fixture-common-principal', '-7001');
+    expect(countPendingInputs(adapter, {})).toBe(4);
+    expect(countPendingInputs(adapter, { principalId: 'fixture-member-a' })).toBe(3);
+    // A group reads the reply: only that member's inputs in that group.
+    expect(countPendingInputs(adapter, { principalId: 'fixture-member-a', channel: '-7001' })).toBe(
+      1
+    );
+    expect(countPendingInputs(adapter, { principalId: 'fixture-common-principal' })).toBe(1);
   } finally {
     await database.close();
   }

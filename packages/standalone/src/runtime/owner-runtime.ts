@@ -352,6 +352,28 @@ export function hasWaitingInput(
   );
 }
 
+/**
+ * Inputs not yet taken by a turn: everyone's, one person's, or one person's in one chat (a room
+ * input's channel is its group's chat).
+ */
+export function countPendingInputs(
+  adapter: CoreDatabase['adapter'],
+  scope: { principalId?: string; channel?: string }
+): number {
+  const row = adapter
+    .prepare(
+      `SELECT COUNT(*) AS count FROM mailbox_inputs WHERE status = 'pending'
+         AND (? IS NULL OR principal_id = ?) AND (? IS NULL OR channel_key = ?)`
+    )
+    .get(
+      scope.principalId ?? null,
+      scope.principalId ?? null,
+      scope.channel ?? null,
+      scope.channel ?? null
+    ) as { count: number };
+  return row.count;
+}
+
 /** The session key a conversation's turns run under. */
 function conversationKey(target: ConversationTarget): string {
   if (target.kind === 'common') return OWNER_RUNTIME_SESSION_KEY;
