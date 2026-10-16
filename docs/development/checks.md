@@ -2495,3 +2495,18 @@ The implementation writes raw/index data during import only. Replay is the owner
   - Codex review: two P2s fixed (the backend was left running after its stdin closed), then no findings.
   - Deployed 12:45:37 KST: eight boot stages, no errors, doctor 15 ok and 1 warn (hand-written `start.sh`).
 - Still open: X4. One full-suite run timed out in `codex-app-server-process.test.ts` ("interrupts a late acknowledged turn…", 1000 ms under load); the file passed 3/3 alone.
+
+### W1.4b-2: CI boots this build on an install the previous release wrote (#512, 2026-10-16)
+
+- Result: closes v1.md R5 (with #510, #511, #513).
+  - The `upgrade-check` job installs the previous published `@jungjaehoon/mama-os` with the core it shipped with.
+  - That release sets up an install the way its owner would: its own `mama init` (scripted answers; an unknown question fails the run) and `register-owner`. In replay mode it then writes work, a revision, a lesson and an owner message left pending.
+  - This build boots on that install and reads back: both revisions (operation, values, event time), the lesson's contents, the message in the chat source, the owner role, and exactly one turn for the pending message. Doctor reports config ok and every schema source at this build's highest version.
+- Evidence:
+  - Passes on macOS (no codex or claude on PATH) and on ubuntu: on the PR, and on `main` after the merge (37cf88f89). Ran 0.77.0 on core 8.7.0.
+  - Its first Linux run found #513: a backend that went away mid-write ended the daemon.
+  - Reviews: Opus three rounds; Codex and CodeRabbit two rounds each, with every thread answered. Declined: picking a strictly older release, since the published version is what users upgrade from.
+- Still open:
+  - Not yet covered: runtime JSON ledgers (`owner-message-ledger.json`), connector raw stores and deltas. They need a live-mode boot with a gateway.
+  - No migration between 0.77.0 and `main` yet (both at core 106); the next core migration is the first one exercised.
+  - The downgrade half ("old code refuses a newer database") becomes testable once a release with the refusal is the previous one.

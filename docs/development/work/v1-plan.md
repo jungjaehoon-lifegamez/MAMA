@@ -141,9 +141,11 @@ live check passes.
   pinned server depends on it (an invariant check, in place of a `db/migrations` diff); the hooks
   and the server opt in. `sync-plugin.yml`, `publish.yml` and `publish-packages.yml` are retired:
   release.yml is the one publish path.
-- W1.4b-2: CI installs the previous published packages in a temporary folder, writes synthetic records,
-  revisions and observations through their public API plus an old `config.yaml`, mailbox payloads
-  and JSON ledgers, then boots the current code on them and reads them back.
+- W1.4b-2, done (#512): the `upgrade-check` CI job installs the previous published MAMA OS with
+  the core it shipped with; that release sets up an install through its own `mama init` and
+  `register-owner`, then writes work, a revision, a lesson and a pending owner message through its
+  own actions; this build boots on it and reads each back. Runtime JSON ledgers, connector raw
+  stores and deltas need a live-mode boot and stay open.
 
 ### W1.5 Logs and uninstall (R6, R9)
 
