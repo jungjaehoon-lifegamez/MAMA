@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `mama uninstall [--dry-run] [--data [--toolkit]]` stops MAMA and removes its service. With
+  `--data`, once the MAMA home's path is typed back on a terminal, it also removes the MAMA home,
+  every person's folder under `member_root` and the common skills under `tools_root` (`--toolkit`:
+  all of `tools_root`), holding the install so no daemon is writing; `--dry-run` lists each path and
+  size and changes nothing. It refuses a target that is the filesystem root, the home folder or one
+  holding it.
+
 - The daemon writes its own output to `daemon.log` (`logging.file`), rotated at 10 MB with five
   compressed archives; `security-events.jsonl` rotates at 5 MB the same way. The service manager
   keeps only what comes before the daemon reads its config, in `logs/crash.log`, which `start.sh`
