@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.8.0] - 2026-10-16
+
 ### Added
 
 - `openDatabase({ refuseNewerSchema: true })` refuses a database whose schema is newer than this

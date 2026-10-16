@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-10-16
+
 ### Changed
 
 - `.mcp.json` runs `@jungjaehoon/mama-server@<version>`, the server released with this plugin,

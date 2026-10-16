@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-10-16
+
 ### Changed
 
 - Published with the exact `@jungjaehoon/mama-core` version of its release instead of a range.

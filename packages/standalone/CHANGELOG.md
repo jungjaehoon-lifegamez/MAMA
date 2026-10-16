@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.78.0] - 2026-10-16
+
 ### Fixed
 
 - A generated `start.sh` keeps the package manager's tool folders on PATH (`/opt/homebrew/bin`,
