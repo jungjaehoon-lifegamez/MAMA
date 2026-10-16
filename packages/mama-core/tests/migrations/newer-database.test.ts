@@ -3,7 +3,7 @@
  * to it: older code cannot read a schema it does not know, and a repair or migration run on it
  * would make that worse. Every source is checked before any runs.
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -65,6 +65,42 @@ describe('a database newer than the code', () => {
     // A consumer that does not ask keeps today's behaviour.
     const opened = await openDatabase({ path, migrations: sources });
     opened.adapter.disconnect();
+    expect(hasTable(path, 'mailbox_host_checkpoints')).toBe(true);
+  });
+
+  it('reads a table from before per-source versions as the core alone', async () => {
+    // Installs older than migration 085 record versions without a source column. Their
+    // numbers are the core's, so a product source has none yet and is not ahead.
+    const root = mkdtempSync(join(tmpdir(), 'mama-newer-db-'));
+    roots.push(root);
+    const path = join(root, 'memory.db');
+    const before085 = join(root, 'core-before-085');
+    mkdirSync(before085);
+    for (const file of readdirSync(MIGRATIONS_DIR)) {
+      const number = /^(\d+)-/.exec(file);
+      if (number && Number(number[1]) < 85) {
+        copyFileSync(join(MIGRATIONS_DIR, file), join(before085, file));
+      }
+    }
+    const old = await openDatabase({ path, migrationsDir: before085 });
+    old.adapter.disconnect();
+    const check = new Database(path, { readonly: true });
+    const columns = check.prepare('PRAGMA table_info(schema_version)').all() as Array<{
+      name: string;
+    }>;
+    check.close();
+    expect(columns.map((column) => column.name)).not.toContain('source');
+
+    const fixture = join(root, 'fixture-migrations');
+    mkdirSync(fixture);
+    writeFileSync(join(fixture, '001-fixture.sql'), 'CREATE TABLE fixture_table (id TEXT);');
+    const opened = await openDatabase({
+      path,
+      migrations: [{ name: 'fixture', dir: fixture }],
+      refuseNewerSchema: true,
+    });
+    opened.adapter.disconnect();
+    expect(hasTable(path, 'fixture_table')).toBe(true);
     expect(hasTable(path, 'mailbox_host_checkpoints')).toBe(true);
   });
 });

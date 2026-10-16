@@ -35,11 +35,10 @@ async function main(): Promise<void> {
       // Another process already holds this install, or a restore is unfinished: a clean exit,
       // which the service files leave stopped (they restart only after a failure).
       // A newer schema stays newer too; restarting into the refusal would only repeat it.
-      const newerSchema = (error as { code?: unknown } | null)?.code === 'MAMA_SCHEMA_NEWER';
       if (
         !(error instanceof InstallBusyError) &&
         !(error instanceof RestorePendingError) &&
-        !newerSchema
+        !isNewerSchema(error)
       ) {
         // The log line above names the error; this names the stage and the next step.
         const stage = (error as { bootStage?: unknown }).bootStage;
@@ -101,8 +100,13 @@ async function main(): Promise<void> {
   );
 }
 
+/** Core's refusal of a database a newer version migrated; its message is core's own text. */
+function isNewerSchema(error: unknown): error is Error {
+  return error instanceof Error && (error as { code?: unknown }).code === 'MAMA_SCHEMA_NEWER';
+}
+
 void main().catch((error: unknown) => {
-  if (error instanceof CliInputError || error instanceof ConfigError) {
+  if (error instanceof CliInputError || error instanceof ConfigError || isNewerSchema(error)) {
     console.error(error.message);
   } else {
     // Unexpected error metadata can contain credentials; print only bounded diagnostic identifiers.

@@ -796,10 +796,10 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
     const list: readonly MigrationSource[] =
       typeof sources === 'string' ? [{ name: CORE_MIGRATION_SOURCE, dir: sources }] : sources;
     if (options.refuseNewer) {
+      if (!this.isConnected()) throw new Error('Database not connected');
       // Every source is checked before any runs: a newer schema anywhere means older code
       // cannot read this database, and no repair or migration may write to it first.
       for (const source of list) {
-        if (!this.isConnected()) throw new Error('Database not connected');
         const stored = this.storedSchemaVersion(source.name);
         const highest = highestMigrationVersion(source.dir);
         if (stored > highest) throw new NewerSchemaError(source.name, stored, highest);
@@ -810,7 +810,11 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
     }
   }
 
-  /** The highest version a source has recorded, or 0 before it has any. */
+  /**
+   * The highest version a source has recorded, or 0 before it has any. A table without the
+   * source column (before 085) is the core's alone, as stampMigration writes it; another
+   * source has recorded nothing there yet.
+   */
   private storedSchemaVersion(sourceName: string): number {
     const tables = this.prepare(
       `
@@ -822,6 +826,7 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
     // Progress is per source. A shared MAX() would let one author's numbering
     // declare another author's migrations already applied.
     const hasSource = this.tableColumns('schema_version').has('source');
+    if (!hasSource && sourceName !== CORE_MIGRATION_SOURCE) return 0;
     const version = (
       hasSource
         ? this.prepare('SELECT MAX(version) as version FROM schema_version WHERE source = ?').get(

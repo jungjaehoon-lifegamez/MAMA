@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - MAMA OS refuses to open a database a newer version migrated, before anything writes to it, and
-  the daemon stops with a clean exit so its service does not restart into the refusal.
-  `mama doctor` checks the schema read-only against what this version knows, per migration source:
+  the daemon stops with a clean exit so its service does not restart into the refusal; other
+  commands print the refusal's own text. `mama doctor` checks the schema read-only against what this version knows, per migration source:
   a newer one fails (install the version that wrote it, or restore a backup taken with this one),
   an older one reports that the next start migrates it, and an unreadable file is reported.
 

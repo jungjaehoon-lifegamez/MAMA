@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `openDatabase({ refuseNewerSchema: true })` refuses a database whose schema, for any migration
   source, is newer than the highest migration file this version ships, before any repair or
   migration writes to it. Every source is checked before any runs, and deferred migrations count,
-  since they are files. It throws `NewerSchemaError` (code `MAMA_SCHEMA_NEWER`), which names both
+  since they are files, and a version table from before 085, which has no source column, counts as the
+  core's alone. It throws `NewerSchemaError` (code `MAMA_SCHEMA_NEWER`), which names both
   numbers and the way out, unwrapped so a consumer can stop cleanly. Off by default: consumers
   that share one database at different core versions would refuse each other.
 - `@jungjaehoon/mama-core/db-manager` exports `MIGRATIONS_DIR`, `CORE_MIGRATION_SOURCE`,
