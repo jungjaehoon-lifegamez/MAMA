@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   truncateSync,
   writeFileSync,
 } from 'node:fs';
@@ -683,6 +684,15 @@ describe('mama doctor', () => {
     by = byName(await runDiagnostics(base(installed)));
     expect(by.schema).toMatchObject({ status: 'fail' });
     expect(by.schema.detail).toContain('standalone 99 of');
+
+    // A source this version does not know is a later version's schema, as boot reads it.
+    const later = new Database(join(installed.root, 'memory.db'));
+    later.exec("DELETE FROM schema_version WHERE source = 'standalone'");
+    later.prepare("INSERT INTO schema_version VALUES ('later', 2)").run();
+    later.close();
+    by = byName(await runDiagnostics(base(installed)));
+    expect(by.schema).toMatchObject({ status: 'fail' });
+    expect(by.schema.detail).toContain('later 2 of 0');
   });
 
   it('reports a database it cannot read, or one with no schema table yet, instead of failing', async () => {
@@ -701,6 +711,19 @@ describe('mama doctor', () => {
     by = byName(await runDiagnostics(base(installed)));
     expect(by.schema.status).toBe('ok');
     expect(by.schema.detail).toContain('core 0 of');
+
+    // A path the service cannot reach is not a fresh install.
+    rmSync(join(installed.root, 'memory.db'));
+    const locked = join(installed.root, 'locked');
+    mkdirSync(locked);
+    symlinkSync(join(locked, 'memory.db'), join(installed.root, 'memory.db'));
+    chmodSync(locked, 0o000);
+    try {
+      by = byName(await runDiagnostics(base(installed)));
+    } finally {
+      chmodSync(locked, 0o700);
+    }
+    expect(by.schema).toMatchObject({ status: 'fail', detail: 'the database cannot be read' });
   });
 
   it('warns about a log past 50 MB', async () => {

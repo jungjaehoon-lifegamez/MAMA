@@ -10,9 +10,10 @@
  * @module storage/database
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 import { createAdapter } from '../db-adapter/index.js';
-import { NewerSchemaError } from '../db-adapter/node-sqlite-adapter.js';
+import { NewerSchemaError, readSchemaState } from '../db-adapter/node-sqlite-adapter.js';
 import type { DatabaseInstance } from '../db-manager.js';
 import { assertEmbeddingSchemeCurrent } from '../db-manager.js';
 import { info } from '../debug-logger.js';
@@ -35,9 +36,11 @@ export interface OpenDatabaseOptions {
    */
   migrations?: ReadonlyArray<{ name: string; dir: string }>;
   /**
-   * Refuse a database whose schema, for any source, is newer than this version's migrations,
-   * before anything writes to it (NewerSchemaError). Off by default: consumers that share one
-   * database at different core versions would refuse each other until they run one core.
+   * Refuse a database whose schema, for any source, is newer than this version's migrations, or
+   * that records a source this version does not know (NewerSchemaError). It reads the database
+   * read-only before connecting, so nothing writes to it or reads its tables first. Off by
+   * default: consumers that share one database at different core versions would refuse each
+   * other until they run one core.
    */
   refuseNewerSchema?: boolean;
 }
@@ -168,17 +171,23 @@ export async function openDatabase(options: OpenDatabaseOptions = {}): Promise<D
     options.path ? { dbPath: options.path } : {}
   ) as unknown as DatabaseInstance;
   assertTestProcessIsNotUsingRealDb(resolveAdapterDbPath(adapter), 'adapter.getDbPath()');
+  const sources = [
+    { name: 'core', dir: options.migrationsDir ?? MIGRATIONS_DIR },
+    ...(options.migrations ?? []),
+  ];
+  if (options.refuseNewerSchema === true) {
+    const dbPath = resolveAdapterDbPath(adapter);
+    if (!dbPath) throw new Error('refuseNewerSchema needs a database path');
+    if (fs.existsSync(dbPath)) {
+      const newer = readSchemaState(dbPath, sources).find((state) => state.stored > state.highest);
+      if (newer) throw new NewerSchemaError(newer.name, newer.stored, newer.highest);
+    }
+  }
 
   let connection: unknown;
   try {
     connection = await adapter.connect();
-    await adapter.runMigrations(
-      [
-        { name: 'core', dir: options.migrationsDir ?? MIGRATIONS_DIR },
-        ...(options.migrations ?? []),
-      ],
-      { refuseNewer: options.refuseNewerSchema === true }
-    );
+    await adapter.runMigrations(sources);
 
     // New tables and rows exist only after migrations run.
     if (typeof adapter.reloadVectorCache === 'function') {
@@ -193,8 +202,6 @@ export async function openDatabase(options: OpenDatabaseOptions = {}): Promise<D
     } catch {
       // The open already failed; a disconnect error would only mask it.
     }
-    // A newer schema is a refusal with its own code, not an initialization failure.
-    if (error instanceof NewerSchemaError) throw error;
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to initialize database: ${message}`);
   }

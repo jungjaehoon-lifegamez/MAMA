@@ -1,7 +1,7 @@
 /**
- * A database a newer version migrated is refused, when the consumer asks, before anything writes
- * to it: older code cannot read a schema it does not know, and a repair or migration run on it
- * would make that worse. Every source is checked before any runs.
+ * A database a newer version migrated is refused, when the consumer asks, before anything touches
+ * it: older code cannot read a schema it does not know, and a repair or migration run on it would
+ * make that worse. The check reads the file read-only before the connection opens.
  */
 import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -33,6 +33,15 @@ function hasTable(path: string, name: string): boolean {
   }
 }
 
+function journalMode(path: string): string {
+  const db = new Database(path, { readonly: true });
+  try {
+    return db.pragma('journal_mode', { simple: true }) as string;
+  } finally {
+    db.close();
+  }
+}
+
 describe('a database newer than the code', () => {
   it('is refused before any source runs, and only when the consumer asks', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mama-newer-db-'));
@@ -52,6 +61,8 @@ describe('a database newer than the code', () => {
     db.prepare("DELETE FROM schema_version WHERE source = 'core' AND version = ?").run(highest);
     db.exec('DROP TABLE mailbox_host_checkpoints');
     db.prepare("INSERT INTO schema_version (source, version) VALUES ('fixture', 2)").run();
+    // Connecting switches a database to WAL; a rollback journal shows nothing connected first.
+    db.pragma('journal_mode = DELETE');
     db.close();
 
     const refused = openDatabase({ path, migrations: sources, refuseNewerSchema: true });
@@ -59,8 +70,9 @@ describe('a database newer than the code', () => {
     await expect(
       openDatabase({ path, migrations: sources, refuseNewerSchema: true })
     ).rejects.toThrow(/fixture schema is at 2, newer than this version knows \(1\)/);
-    // Core's pending migration did not run before the refusal.
+    // Core's pending migration did not run, and nothing connected, before the refusal.
     expect(hasTable(path, 'mailbox_host_checkpoints')).toBe(false);
+    expect(journalMode(path)).toBe('delete');
 
     // A consumer that does not ask keeps today's behaviour.
     const opened = await openDatabase({ path, migrations: sources });
@@ -102,5 +114,23 @@ describe('a database newer than the code', () => {
     opened.adapter.disconnect();
     expect(hasTable(path, 'fixture_table')).toBe(true);
     expect(hasTable(path, 'mailbox_host_checkpoints')).toBe(true);
+  });
+
+  it('is refused when it records a source this version does not know', async () => {
+    // A later version can bring a source of its own; its tables mean a schema this one cannot read.
+    const root = mkdtempSync(join(tmpdir(), 'mama-newer-db-'));
+    roots.push(root);
+    const path = join(root, 'memory.db');
+    const first = await openDatabase({ path });
+    first.adapter.disconnect();
+    const db = new Database(path);
+    db.prepare("INSERT INTO schema_version (source, version) VALUES ('later', 3)").run();
+    db.close();
+
+    await expect(openDatabase({ path, refuseNewerSchema: true })).rejects.toThrow(
+      /later schema is at 3, newer than this version knows \(0\)/
+    );
+    const opened = await openDatabase({ path });
+    opened.adapter.disconnect();
   });
 });

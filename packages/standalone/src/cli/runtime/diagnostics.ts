@@ -28,11 +28,10 @@ import {
 } from '../commands/daemon.js';
 import { probeBackend, type BackendName, type ProbeRun, defaultProbeRun } from './backend-probe.js';
 import { restoreJournalPath, type DaemonControlReply } from './daemon-control.js';
-import Database from 'better-sqlite3';
 import {
   CORE_MIGRATION_SOURCE,
-  highestMigrationVersion,
   MIGRATIONS_DIR,
+  readSchemaState,
 } from '@jungjaehoon/mama-core/db-manager';
 import { STANDALONE_MIGRATION_SOURCE } from '../../storage/migrations-source.js';
 import { systemdUnitState, type ServiceRun, defaultServiceRun } from './systemd-service.js';
@@ -439,50 +438,38 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
 
 /**
  * The database's schema against what this version knows, per migration source, read-only. A
- * newer one is what an older install refuses at boot; an older one migrates at the next start.
+ * newer one, or a source this version does not know, is what boot refuses; an older one migrates
+ * at the next start.
  */
 function schemaCheck(databasePath: string): Check {
-  if (!existsSync(databasePath)) {
-    return { name: 'schema', status: 'ok', detail: 'no database yet; the first start creates it' };
-  }
-  const sources = [
-    { name: CORE_MIGRATION_SOURCE, dir: MIGRATIONS_DIR },
-    STANDALONE_MIGRATION_SOURCE,
-  ];
-  // better-sqlite3 opens lazily: a file that is not a database fails at the first query.
-  let db: Database.Database | null = null;
   try {
-    db = new Database(databasePath, { readonly: true, fileMustExist: true });
-    const table = db
-      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'")
-      .get();
-    const reader = db;
-    const bySource =
-      table !== undefined &&
-      (reader.prepare('PRAGMA table_info(schema_version)').all() as { name: string }[]).some(
-        (column) => column.name === 'source'
-      );
-    const states = sources.map((source) => {
-      const row = !table
-        ? undefined
-        : ((bySource
-            ? reader
-                .prepare('SELECT MAX(version) AS version FROM schema_version WHERE source = ?')
-                .get(source.name)
-            : source.name === CORE_MIGRATION_SOURCE
-              ? reader.prepare('SELECT MAX(version) AS version FROM schema_version').get()
-              : undefined) as { version: number | null } | undefined);
+    statSync(databasePath);
+  } catch (error) {
+    // Only a confirmed absence is a fresh install; a path the service cannot reach is not.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return {
-        name: source.name,
-        current: row?.version ?? 0,
-        highest: highestMigrationVersion(source.dir),
+        name: 'schema',
+        status: 'ok',
+        detail: 'no database yet; the first start creates it',
       };
-    });
-    const newer = states.filter((state) => state.current > state.highest);
+    }
+    return {
+      name: 'schema',
+      status: 'fail',
+      detail: 'the database cannot be read',
+      context: message(error),
+    };
+  }
+  try {
+    // The same read boot makes before it connects, so the two cannot disagree.
+    const states = readSchemaState(databasePath, [
+      { name: CORE_MIGRATION_SOURCE, dir: MIGRATIONS_DIR },
+      STANDALONE_MIGRATION_SOURCE,
+    ]);
     const summary = states
-      .map((state) => `${state.name} ${state.current} of ${state.highest}`)
+      .map((state) => `${state.name} ${state.stored} of ${state.highest}`)
       .join(', ');
-    if (newer.length > 0) {
+    if (states.some((state) => state.stored > state.highest)) {
       return {
         name: 'schema',
         status: 'fail',
@@ -490,21 +477,20 @@ function schemaCheck(databasePath: string): Check {
         fix: 'install the version that wrote it, or mama restore a backup taken with this one',
       };
     }
-    const pending = states.reduce((sum, state) => sum + (state.highest - state.current), 0);
+    const pending = states.reduce((sum, state) => sum + (state.highest - state.stored), 0);
     return {
       name: 'schema',
       status: 'ok',
       detail: pending > 0 ? `${summary}; the next start migrates it` : summary,
     };
   } catch (error) {
+    // A file that is not a database fails at its first query, not at open.
     return {
       name: 'schema',
       status: 'fail',
       detail: 'the database cannot be read',
       context: message(error),
     };
-  } finally {
-    db?.close();
   }
 }
 
