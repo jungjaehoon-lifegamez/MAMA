@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 
 const seams = vi.hoisted(() => ({
   api: {
+    setMyCommands: vi.fn(async () => true),
     sendMessage: vi.fn().mockResolvedValue({ message_id: 101 }),
     sendPhoto: vi.fn().mockResolvedValue({ message_id: 102 }),
     sendDocument: vi.fn().mockResolvedValue({ message_id: 103 }),

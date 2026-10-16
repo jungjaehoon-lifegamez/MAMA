@@ -27,6 +27,7 @@ import {
 import { MEMBER_VOICE } from './turn-orders.js';
 import {
   resolvePrincipalAccess,
+  memberSessionKey,
   memberRoomSessionKey,
   memberRoomChannel,
 } from './principal-access.js';
@@ -53,6 +54,15 @@ interface MemberSession {
   activeDeniedReadPaths: () => readonly string[];
 }
 
+/** Where a member's room sessions keep their backend state, across restarts (Codex threads). */
+export function memberRoomsRoot(memberRuntimeRoot: string): string {
+  return join(memberRuntimeRoot, 'rooms');
+}
+
+/** A room session's directory name under `memberRoomsRoot`; it exists from the room's first turn. */
+export function roomDirectory(channel: string): string {
+  return createHash('sha256').update(channel).digest('hex');
+}
 export function createMemberSession(
   principalId: string,
   root: string,
@@ -73,7 +83,7 @@ export function createMemberSession(
   const { options, database, rawStore, surface } = ports;
   const agentId = `member-agent:${principalId}`;
   const sessionKey =
-    room === undefined ? `member:${principalId}:runtime` : memberRoomSessionKey(principalId, room);
+    room === undefined ? memberSessionKey(principalId) : memberRoomSessionKey(principalId, room);
   const access = (): JudgmentAccess =>
     resolvePrincipalAccess(principalId, {
       adapter: database.adapter,
@@ -88,10 +98,7 @@ export function createMemberSession(
     room === undefined
       ? personalPaths
       : {
-          ...ensureMemberPaths(
-            join(personalPaths.runtimeRoot, 'rooms'),
-            createHash('sha256').update(room).digest('hex')
-          ),
+          ...ensureMemberPaths(memberRoomsRoot(personalPaths.runtimeRoot), roomDirectory(room)),
           credentialPath: personalPaths.credentialPath,
         };
   const rooms = new Map<string, ReturnType<typeof createMemberSession>>();
@@ -190,6 +197,7 @@ export function createMemberSession(
     (options.createSession ?? createNativeSession)({
       backend: options.backend,
       model: options.model,
+      ...(options.sessionPool === undefined ? {} : { sessionPool: options.sessionPool }),
       toolsRoot: options.toolsRoot,
       ...paths,
       socketPath: options.socketPath,

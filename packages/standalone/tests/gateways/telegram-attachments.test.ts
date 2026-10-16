@@ -29,7 +29,11 @@ vi.mock('grammy', () => ({
     catch: vi.fn(),
     init: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
-    api: { getFile: bot.getFile, sendMessage: vi.fn(async () => ({ message_id: 101 })) },
+    api: {
+      getFile: bot.getFile,
+      sendMessage: vi.fn(async () => ({ message_id: 101 })),
+      setMyCommands: vi.fn(async () => true),
+    },
   })),
 }));
 

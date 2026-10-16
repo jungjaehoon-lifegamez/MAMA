@@ -12,10 +12,14 @@ import {
   retirePersonalTurnReceipt,
   type OwnerMessageLedger,
 } from '../gateways/telegram-message-ledger.js';
-import { createMemberSession } from './member-session.js';
+import { createMemberSession, memberRoomsRoot, roomDirectory } from './member-session.js';
 import { ownerDataReadPaths, ownerNativeDataReadPaths } from './backend-security.js';
 import { memberPaths, validateMemberRoot, setAsideMemberPaths } from './member-paths.js';
-import { resolvePrincipalAccess } from './principal-access.js';
+import {
+  memberRoomSessionKey,
+  memberSessionKey,
+  resolvePrincipalAccess,
+} from './principal-access.js';
 import {
   beginModelRun,
   commitModelRun,
@@ -34,7 +38,7 @@ import {
 } from '@jungjaehoon/mama-core';
 import { randomUUID } from 'node:crypto';
 import { basename, join, isAbsolute } from 'node:path';
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import type { OwnerAttachment } from '../gateways/telegram-attachments.js';
 import type { JsonValue } from '@jungjaehoon/mama-core/knowledge';
 import type { ServerResponse } from 'node:http';
@@ -57,7 +61,11 @@ import { createActionSurface, type ActionSurface } from './action-surface.js';
 import type { OutboundAttemptEvent, MemberConnectionEvent } from '../api/security-events.js';
 import type { SandboxNetworkProxy } from '../cli/runtime/claude-caller-config.js';
 import { holdsOwnerRole, ownerRuleIds, RULE_KINDS } from './owner-authority.js';
-import { createNativeSession, type NativeSession } from './native-session.js';
+import {
+  createNativeSession,
+  OWNER_RUNTIME_SESSION_KEY,
+  type NativeSession,
+} from './native-session.js';
 import type { ActionDispatcher } from '@jungjaehoon/mama-core/api/dispatch';
 import type { Mailbox } from '@jungjaehoon/mama-core/runtime/mailbox';
 import type { TimeZoneSetting } from './timezone.js';
@@ -67,10 +75,12 @@ import { createOwnerPolicyProvider, type OwnerPolicyProvider } from './owner-pol
 import { readSessionStartInput } from './session-start-context.js';
 import { ChatSources } from '../storage/chat-sources.js';
 import type {
+  ConversationTarget,
   OwnerMessageInput,
   OwnerHostExchangeInput,
   TurnIntake,
 } from '../gateways/turn-contract.js';
+import { getSessionPool, type SessionPool } from '@jungjaehoon/mama-core/runtime/session-pool';
 import { createJevClient } from '../replay/jev-client.js';
 import { createRecordOrders, type RecordOrderEvent } from './record-orders.js';
 import { initTokenEstimator } from '@jungjaehoon/mama-core/runtime/token-estimator';
@@ -112,6 +122,8 @@ export interface OwnerRuntimeOptions {
   /** Additional configured owner locations (config, logging, custom MCP), denied only to members. */
   ownerDeniedReadPaths?: readonly string[];
   createSession?: typeof createNativeSession;
+  /** The pool this runtime's sessions take their turns from; the process-wide one by default. */
+  sessionPool?: SessionPool;
   onMemberResult?: StimulusDeliveryOptions['onOwnerResult'];
   nativeSession?: NativeSessionHandle & Partial<Pick<NativeSession, 'callAction'>>;
   modelRun?: NativeModelRunPort;
@@ -190,6 +202,15 @@ export interface OwnerRuntime {
   ): { workspaceDir: string; downloadsDir: string };
   completeMemberEnrollment(selection: MemberSelection): Promise<ActionResult>;
   recordHostExchange(input: OwnerHostExchangeInput): void;
+  /** Whether a turn is running in this conversation now. */
+  turnRunning(target: ConversationTarget): boolean;
+  /**
+   * Start a conversation over: its native context goes, its records stay. It is busy while a
+   * turn of that person (the common session's, for the common conversation) runs or an input of
+   * theirs waits. A member's own conversation is reset with their group conversations, as every
+   * member reset is.
+   */
+  startOver(target: ConversationTarget): Promise<'started_over' | 'busy'>;
   beginStop(): void;
   drain(): Promise<void>;
   stop(): Promise<void>;
@@ -308,8 +329,65 @@ export function guidanceInSearchOrder(
     .slice(0, limit);
 }
 
+/**
+ * Whether an input of this person is about to run or running: pending and due, or claimed with a
+ * delivery not parked as uncertain. One waiting out a retry backoff or parked for reconciliation
+ * can take hours, and runs in whatever conversation is there by then.
+ */
+export function hasWaitingInput(
+  adapter: CoreDatabase['adapter'],
+  principalId: string,
+  now: number
+): boolean {
+  return (
+    adapter
+      .prepare(
+        `SELECT 1 FROM mailbox_inputs m LEFT JOIN native_input_deliveries n ON n.input_id = m.id
+          WHERE m.principal_id = ?
+            AND ((m.status = 'pending' AND COALESCE(m.retry_after, 0) <= ?)
+              OR (m.status = 'claimed' AND (n.state IS NULL OR n.state != 'uncertain')))
+          LIMIT 1`
+      )
+      .get(principalId, now) !== undefined
+  );
+}
+
+/**
+ * Inputs not yet done: pending, or claimed and queued or running (not parked as uncertain).
+ * Everyone's, one person's, or one person's in one chat (a room input's channel is its group's
+ * chat). A claimed input may wait on the person's chain while another conversation of theirs runs.
+ */
+export function countInputsNotDone(
+  adapter: CoreDatabase['adapter'],
+  scope: { principalId?: string; channel?: string }
+): number {
+  const row = adapter
+    .prepare(
+      `SELECT COUNT(*) AS count FROM mailbox_inputs m
+         LEFT JOIN native_input_deliveries n ON n.input_id = m.id
+        WHERE (m.status = 'pending' OR (m.status = 'claimed' AND (n.state IS NULL OR n.state != 'uncertain')))
+          AND (? IS NULL OR m.principal_id = ?) AND (? IS NULL OR m.channel_key = ?)`
+    )
+    .get(
+      scope.principalId ?? null,
+      scope.principalId ?? null,
+      scope.channel ?? null,
+      scope.channel ?? null
+    ) as { count: number };
+  return row.count;
+}
+
+/** The session key a conversation's turns run under. */
+function conversationKey(target: ConversationTarget): string {
+  if (target.kind === 'common') return OWNER_RUNTIME_SESSION_KEY;
+  return target.room === undefined
+    ? memberSessionKey(target.principalId)
+    : memberRoomSessionKey(target.principalId, target.room);
+}
+
 /** Assemble the one owner database, catalog, native session and mailbox runtime. */
 export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<OwnerRuntime> {
+  const sessionPool = options.sessionPool ?? getSessionPool();
   // The session's system prompt is composed at its first turn; counting it before the tokenizer
   // loads used the byte estimate, which nearly doubles Korean text.
   await initTokenEstimator();
@@ -654,6 +732,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       nativeSession = (options.createSession ?? createNativeSession)({
         backend: options.backend,
         model: options.model,
+        ...(options.sessionPool === undefined ? {} : { sessionPool: options.sessionPool }),
         workspaceDir: options.workspaceDir,
         runtimeRoot: options.runtimeRoot,
         toolsRoot: options.toolsRoot,
@@ -1284,6 +1363,39 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           });
           chat.saveReply({ ...reply, messageRef: ref, author: 'host' });
         }
+      },
+      turnRunning: (target) => sessionPool.peekSession(conversationKey(target)).busy,
+      startOver: async (target) => {
+        if (stopping) throw new Error('Cannot start a conversation over after runtime stop');
+        const principalId =
+          target.kind === 'member' ? target.principalId : options.ownerPrincipalId;
+        if (target.kind === 'member') {
+          await serveMemberOnLane(principalId);
+          // An erasure retired this member's sessions, resetting them; it serves them anew when
+          // it ends, so their next message already starts over.
+          if (!intakeRuntime.servesPrincipal(principalId)) return 'started_over';
+        }
+        // An input this person sent before /new would otherwise run in the new conversation,
+        // and the next message would carry it on.
+        const inputsWaiting = () => hasWaitingInput(database.adapter, principalId, Date.now());
+        const chain = sessions.turnChain(principalId);
+        if (chain.isBusy() || inputsWaiting()) return 'busy';
+        // On the principal's chain no turn of theirs starts while the session is reset. A member's
+        // conversations share that chain, so their DM reset reaches the rooms it resets as well.
+        return chain.afterCurrent(async () => {
+          if (inputsWaiting()) return 'busy';
+          // The principal sessions always route a reset to the session that owns the key.
+          await sessions.native.resetSession!(conversationKey(target));
+          // A member's DM reset reaches the rooms open in this process. A room kept on disk from
+          // before a restart (a Codex thread) would resume its old context, so it starts over too.
+          if (target.kind === 'member' && target.room === undefined && memberRoot !== undefined) {
+            const rooms = memberRoomsRoot(memberPaths(memberRoot, principalId).runtimeRoot);
+            for (const channel of options.roomChannels ?? [])
+              if (existsSync(join(rooms, roomDirectory(channel))))
+                await sessions.native.resetSession!(memberRoomSessionKey(principalId, channel));
+          }
+          return 'started_over';
+        });
       },
       stop: () => {
         if (stopPromise) return stopPromise;

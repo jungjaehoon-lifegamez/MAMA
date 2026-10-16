@@ -8,7 +8,10 @@ import { createOwnerRuntime, type OwnerRuntimeOptions } from '../../src/runtime/
 import { parseConfig } from '../../src/runtime/config.js';
 import { createReportScheduler, type ReportScheduler } from '../../src/runtime/report-scheduler.js';
 
-const telegram = vi.hoisted(() => ({ sendMessage: vi.fn() }));
+const telegram = vi.hoisted(() => ({
+  sendMessage: vi.fn(),
+  setMyCommands: vi.fn(async () => true),
+}));
 vi.mock('grammy', () => ({
   Bot: vi.fn(() => ({
     on: vi.fn(),

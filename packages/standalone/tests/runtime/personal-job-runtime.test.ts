@@ -21,6 +21,7 @@ vi.mock('grammy', () => ({
     init: vi.fn(async () => {}),
     stop: vi.fn(async () => {}),
     api: {
+      setMyCommands: vi.fn(async () => true),
       sendMessage: async (chatId: number, text: string) => {
         transport.attempts++;
         if (transport.error) throw transport.error;

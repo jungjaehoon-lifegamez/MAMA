@@ -47,6 +47,27 @@ notices, skills, documents and record export.
 Send a private message to the bot and confirm the reply. `polling: false` stops
 inbound polling but does not prove another process is receiving messages.
 
+## Commands
+
+MAMA answers these itself, at once and without a model turn. They appear in the bot's command
+menu in DMs and groups, and only registered people get an answer.
+
+| Command   | What it does                                                               |
+| --------- | -------------------------------------------------------------------------- |
+| `/whoami` | Your Telegram ID, and whether MAMA knows you as an owner or a member       |
+| `/status` | MAMA's version, whether a turn is running in this conversation, what waits |
+| `/new`    | Starts this conversation over; what MAMA saved stays                       |
+| `/help`   | Lists these commands                                                       |
+
+The conversation is the one your messages in that chat go to. In the common group that is the
+common session for owners and your own group conversation for other members. `/new` waits for
+nothing: while MAMA still works on something of yours, or a message of yours is waiting, it says
+so and you send it again later. A member's `/new` in a DM also starts their group conversations
+over; an owner's group messages go to the common session, which only `/new` in the group starts
+over. In their own DM, owners see every conversation's count and the sources in `/status`; in a
+group everyone sees only their own. A command for another bot (`/status@other_bot`) is left
+alone, and any other command goes to MAMA as a message.
+
 ## Send originals and receive results
 
 Send a document or image with a caption explaining the request. Accepted files are

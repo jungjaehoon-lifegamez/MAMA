@@ -12,7 +12,22 @@ import { Bot, InputFile } from 'grammy';
 import type { Context } from 'grammy';
 import type { JsonValue } from '@jungjaehoon/mama-core/knowledge';
 import { BaseGateway } from './base-gateway.js';
-import type { OwnerHostExchangeInput, OwnerMessageInput, TurnIntake } from './turn-contract.js';
+import type {
+  ConversationTarget,
+  OwnerHostExchangeInput,
+  OwnerMessageInput,
+  TurnIntake,
+} from './turn-contract.js';
+import {
+  TELEGRAM_HOST_COMMANDS,
+  helpText,
+  hostCommand,
+  startOverText,
+  statusText,
+  whoamiText,
+  type TelegramHostCommand,
+  type TelegramHostCommandPort,
+} from './telegram-commands.js';
 import {
   captureTelegramTextFormatting,
   selectTelegramTextEntities,
@@ -75,6 +90,8 @@ export interface TelegramGatewayOptions {
   onMemberSelection?: (selection: MemberSelection) => Promise<ActionResult>;
   /** Store the final transport receipt as history, outside the owner-message intake. */
   recordMemberSelection?: (exchange: OwnerHostExchangeInput) => void;
+  /** The commands the host answers before any turn (/status, /new). */
+  hostCommands: TelegramHostCommandPort;
 }
 
 function entityOptions<T>(entities: TelegramFormattedText['entities']): T {
@@ -167,6 +184,7 @@ export class TelegramGateway extends BaseGateway {
     this.stopIntake = () => resolve(undefined);
   });
   private readonly enrollmentCompletions = new Set<Promise<void>>();
+  private readonly commandAnswers = new Set<Promise<void>>();
   private readonly activePresenters = new Map<string, TelegramResponsePresenter>();
   private readonly recentMessageIds = new Map<string, number>();
   private readonly activeChat = new AsyncLocalStorage<{ chatId: string; active: boolean }>();
@@ -177,6 +195,7 @@ export class TelegramGateway extends BaseGateway {
   >();
   private readonly onMemberSelection?: TelegramGatewayOptions['onMemberSelection'];
   private readonly recordMemberSelection?: TelegramGatewayOptions['recordMemberSelection'];
+  private readonly hostCommands: TelegramHostCommandPort;
   private bot: Bot | null = null;
   private lastError: string | null = null;
   private lastMessageAt: number | undefined;
@@ -193,6 +212,7 @@ export class TelegramGateway extends BaseGateway {
     this.principalPaths = options.principalPaths;
     this.onMemberSelection = options.onMemberSelection;
     this.recordMemberSelection = options.recordMemberSelection;
+    this.hostCommands = options.hostCommands;
     this.config = {
       enabled: options.config?.enabled ?? true,
       allowedChats: options.config?.allowedChats ?? [],
@@ -241,6 +261,19 @@ export class TelegramGateway extends BaseGateway {
         console.error(`telegram handler failed error=${this.lastError}`);
       });
       await this.bot.init();
+      // The menu only lists the commands; they are answered whether or not it is registered,
+      // so a failed registration is logged and the gateway runs on.
+      const commands = TELEGRAM_HOST_COMMANDS.map(({ command, description }) => ({
+        command,
+        description,
+      }));
+      for (const type of ['all_private_chats', 'all_group_chats'] as const) {
+        await this.bot.api.setMyCommands(commands, { scope: { type } }).catch((error: unknown) => {
+          console.error(
+            `telegram command menu failed scope=${type} error=${telegramErrorMessage(error)}`
+          );
+        });
+      }
       this.connected = true;
       this.lastError = null;
       this.emitEvent({ type: 'connected', source: 'telegram', timestamp: new Date() });
@@ -276,6 +309,7 @@ export class TelegramGateway extends BaseGateway {
   async drain(): Promise<void> {
     await super.drain();
     await Promise.allSettled([...this.enrollmentCompletions]);
+    await Promise.allSettled([...this.commandAnswers]);
     await Promise.allSettled([...this.chatTails.values()]);
   }
 
@@ -716,6 +750,20 @@ export class TelegramGateway extends BaseGateway {
     }
 
     const principalId = principal!.principalId;
+    // A host command is answered now, ahead of any intake waiting in this chat.
+    const command = hostCommand(message, () => this.bot!.botInfo.username);
+    if (command === 'other_bot') return;
+    if (command !== null) {
+      // /new may wait for a member to be served; polling admits other updates meanwhile.
+      const answer = this.answerHostCommand(message, command, principalId).catch((error) =>
+        this.log(
+          `telegram host command reply failed command=${command} error=${telegramErrorMessage(error)}`
+        )
+      );
+      this.commandAnswers.add(answer);
+      void answer.finally(() => this.commandAnswers.delete(answer));
+      return;
+    }
     const recorded = this.messageLedger.get(sourceMessageRef(chatId, message.message_id));
     const memberRoom =
       !privateChat && (recorded ? recorded.principalId !== undefined : !this.ownerAllowed(userId));
@@ -762,6 +810,50 @@ export class TelegramGateway extends BaseGateway {
       return;
     }
     await this.acceptMessage(message, principalId, intake);
+  }
+
+  /** Answer a host command in the chat it came from; no turn and no stored message. */
+  private async answerHostCommand(
+    message: TelegramMessage,
+    command: TelegramHostCommand,
+    principalId: string
+  ): Promise<void> {
+    const chatId = String(message.chat.id);
+    const userId = String(message.from!.id);
+    const privateChat = message.chat.type === 'private';
+    const owner = this.ownerAllowed(userId);
+    // Owners in the common group speak in the common session; everyone else in their own.
+    const target: ConversationTarget =
+      !privateChat && owner
+        ? { kind: 'common' }
+        : { kind: 'member', principalId, ...(privateChat ? {} : { room: chatId }) };
+    let text: string;
+    try {
+      if (command === 'help') text = helpText();
+      else if (command === 'whoami')
+        text = whoamiText({
+          userId,
+          chatId,
+          privateChat,
+          commonChannel: chatId === this.config.ownerChatId,
+          principalId,
+          owner,
+        });
+      else if (command === 'status')
+        // Everyone in a group reads the reply, so the owner's view of every conversation stays
+        // in the owner's DM.
+        text = statusText(await this.hostCommands.status(target, owner && privateChat)).join('\n');
+      else text = startOverText(await this.hostCommands.startOver(target), target, owner);
+    } catch (error) {
+      this.log(
+        `telegram host command failed command=${command} error=${telegramErrorMessage(error)}`
+      );
+      text = `MAMA could not answer /${command}; its log has the error.`;
+    }
+    await this.bot!.api.sendMessage(Number(chatId), text, {
+      reply_parameters: { message_id: message.message_id, allow_sending_without_reply: true },
+    });
+    this.log(`telegram host command=${command} chat=${privateChat ? 'private' : 'group'}`);
   }
 
   private async acceptMessage(

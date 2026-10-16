@@ -32,6 +32,7 @@ import type { AttachmentActionPorts } from '../../src/api/attachment-actions.js'
 // Keep the gateway and InputFile real; replace only the external grammy Bot/API.
 const seams = vi.hoisted(() => ({
   api: {
+    setMyCommands: vi.fn(async () => true),
     sendMessage: vi.fn().mockResolvedValue({ message_id: 101 }),
     sendPhoto: vi.fn(),
     sendDocument: vi.fn(),
@@ -184,6 +185,7 @@ describe('P5 principal file delivery through the product dispatcher and Telegram
     seams.api.sendPhoto.mockImplementation(upload(102));
     seams.api.sendDocument.mockImplementation(upload(103));
     seams.api.sendMessage.mockResolvedValue({ message_id: 101 });
+    seams.api.setMyCommands.mockResolvedValue(true);
     gateway = new TelegramGateway({
       token: 'fixture-token',
       intake,
@@ -196,6 +198,8 @@ describe('P5 principal file delivery through the product dispatcher and Telegram
       log: () => {},
     });
     await gateway.start();
+    // Registering the command menu at start is not a file delivery.
+    seams.api.setMyCommands.mockClear();
     ports = {
       workspaceDir: ownerWorkspace,
       principalPaths: paths,
