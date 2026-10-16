@@ -9,6 +9,7 @@
  */
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+// MAMA OS's own database driver, hoisted into the install's node_modules by npm.
 import Database from 'better-sqlite3';
 import { runInit } from '@jungjaehoon/mama-os/dist/cli/commands/init.js';
 import { runRegisterOwner } from '@jungjaehoon/mama-os/dist/cli/commands/register-owner.js';
@@ -134,19 +135,35 @@ const daemon = await bootDaemon({
     // for the next boot, as one taken just before a stop would. The check after stop() fails if a
     // later release drains it first.
     const messageRef = `telegram:${commonChat}:9001`;
+    const messageText = 'An owner message the previous release accepted';
     context.owner.intake.acceptOwnerMessage({
       id: messageRef,
       channelKey: `telegram:${commonChat}`,
       occurredAt: Date.parse('2026-10-03T10:00:00+09:00'),
-      text: 'An owner message the previous release accepted',
+      text: messageText,
     });
     written = {
       commitmentId: created.commitmentId,
       revision: revised.revision,
       title: 'Prepare the upgrade fixture',
       status: 'in_progress',
+      history: [
+        {
+          revision: 1,
+          operation: 'create',
+          set: { title: 'Prepare the upgrade fixture' },
+          eventDatetime: Date.parse('2026-10-01T10:00:00+09:00'),
+        },
+        {
+          revision: 2,
+          operation: 'revise',
+          set: { status: 'in_progress' },
+          eventDatetime: Date.parse('2026-10-02T10:00:00+09:00'),
+        },
+      ],
       lessonId: lesson.id,
       messageRef,
+      messageText,
     };
   },
 });

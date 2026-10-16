@@ -55,6 +55,24 @@ const daemon = await bootDaemon({
     expect(work?.title === written.title, `title ${JSON.stringify(work?.title)}`);
     expect(work?.status === written.status, `status ${JSON.stringify(work?.status)}`);
 
+    // Task history is what sets MAMA apart: both revisions, not only the latest state.
+    const detail = await call(
+      'work.list',
+      { view: 'detail', ids: [written.commitmentId] },
+      'upgrade-check:read:history'
+    );
+    const history = detail.tasks[0];
+    expect(history?.historyTotal === 2, `history has ${history?.historyTotal} revisions, not 2`);
+    for (const expected of written.history) {
+      const entry = history?.history?.find((revision) => revision.revision === expected.revision);
+      expect(
+        entry?.operation === expected.operation &&
+          JSON.stringify(entry?.set) === JSON.stringify(expected.set) &&
+          entry?.eventDatetime === expected.eventDatetime,
+        `revision ${expected.revision} reads ${JSON.stringify(entry)}`
+      );
+    }
+
     const found = await call(
       'memory.search',
       { query: 'lesson the previous release saved', limit: 5 },
@@ -65,21 +83,35 @@ const daemon = await bootDaemon({
       `lesson ${written.lessonId} is not found`
     );
 
+    // The owner message as the previous release stored it in the chat source.
+    const chat = await call(
+      'source.search',
+      { source: 'chat', query: written.messageText },
+      'upgrade-check:read:message'
+    );
+    expect(
+      JSON.stringify(chat).includes(written.messageText),
+      'the owner message the previous release stored is not in the chat source'
+    );
+
     // The owner message the previous release left pending: this release's owner loop recovers its
     // stored row and runs a turn for it. That is the class of the boot-recovery crash on an old
     // row; the turn's text is not compared, since the backend is a stand-in that exits at once.
-    const turnFor = context.owner.database.adapter.prepare(
+    const turnsFor = context.owner.database.adapter.prepare(
       "SELECT status FROM model_runs WHERE json_extract(input_refs_json, '$.sourceMessageRef') = ? AND created_at >= ?"
     );
     const deadline = Date.now() + 60_000;
-    let turn = turnFor.get(written.messageRef, startedAt);
-    while ((turn === undefined || turn.status === 'running') && Date.now() < deadline) {
+    let turns = turnsFor.all(written.messageRef, startedAt);
+    while (
+      (turns.length === 0 || turns.some((turn) => turn.status === 'running')) &&
+      Date.now() < deadline
+    ) {
       await new Promise((resolve) => setTimeout(resolve, 500));
-      turn = turnFor.get(written.messageRef, startedAt);
+      turns = turnsFor.all(written.messageRef, startedAt);
     }
-    expect(turn, `no turn ran for the pending message ${written.messageRef} within 60 s`);
+    expect(turns.length === 1, `${turns.length} turns ran for ${written.messageRef}, not 1`);
     expect(
-      turn?.status !== 'running',
+      turns.every((turn) => turn.status !== 'running'),
       `the turn for ${written.messageRef} did not end within 60 s`
     );
   },
@@ -91,8 +123,11 @@ for (const stage of ['config', 'isolation', 'owner_runtime', 'replay']) {
 }
 // The one error expected: that turn failing at the stand-in backend (as an exit or as a closed
 // pipe, whichever comes first).
-const unexpected = errors.filter(
-  (line) => !line.startsWith(`stimulus failed kind=owner_message id=${written.messageRef} `)
+const failure = `stimulus failed kind=owner_message id=${written.messageRef} `;
+const unexpected = errors.filter((line) => !line.startsWith(failure));
+expect(
+  errors.filter((line) => line.startsWith(failure)).length === 1,
+  `the pending message did not fail exactly once at the stand-in`
 );
 expect(unexpected.length === 0, `boot logged errors:\n${unexpected.join('\n')}`);
 if (mismatches.length > 0) {
@@ -104,6 +139,6 @@ if (mismatches.length > 0) {
   process.exitCode = 1;
 } else {
   console.log(
-    `upgrade check: read back work ${written.commitmentId} at revision ${written.revision}, lesson ${written.lessonId}, and took up ${written.messageRef}`
+    `upgrade check: read back work ${written.commitmentId} with its ${written.history.length} revisions, lesson ${written.lessonId} and the stored owner message, and ran its pending turn once`
   );
 }

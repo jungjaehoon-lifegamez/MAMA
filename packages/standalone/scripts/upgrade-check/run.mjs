@@ -77,11 +77,15 @@ console.log(
 // where the old release refuses tools_root and member_root, and the install's control socket path
 // must stay under the 104-byte limit of a Unix socket.
 const root = mkdtempSync(join(process.env.RUNNER_TEMP ?? '/tmp', 'mama-upgrade-'));
-// An interrupt skips `finally`; the install and its home would be left behind.
-for (const signal of ['SIGINT', 'SIGTERM']) {
+// An interrupt during a step reaches the child as well, the step fails and `finally` cleans up;
+// these cover one that lands between steps, which would otherwise skip it.
+for (const [signal, code] of [
+  ['SIGINT', 130],
+  ['SIGTERM', 143],
+]) {
   process.once(signal, () => {
     rmSync(root, { recursive: true, force: true });
-    process.exit(130);
+    process.exit(code);
   });
 }
 try {
