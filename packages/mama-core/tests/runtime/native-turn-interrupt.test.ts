@@ -15,7 +15,7 @@ afterEach(() => {
   for (const pool of pools.splice(0)) pool.dispose();
 });
 
-function fixture(withInterrupt: boolean) {
+function fixture(withInterrupt: boolean, newDurableSession = false) {
   const channelKey = 'fixture:interrupt';
   const pool = new SessionPool();
   pools.push(pool);
@@ -34,6 +34,8 @@ function fixture(withInterrupt: boolean) {
         stop = reject;
       }),
     ...(withInterrupt ? { interrupt } : {}),
+    // A standing policy the backend does not hold yet: the turn opens a new durable session.
+    ...(newDurableSession ? { getSessionPolicyStatus: () => 'missing' as const } : {}),
     setSessionId: () => {},
     setSystemPrompt: () => {},
     isHealthy: () => true,
@@ -48,12 +50,22 @@ function fixture(withInterrupt: boolean) {
     isGatewayMode: true,
     runTokenBudget: 0,
     sessionPool: pool,
-    turnPolicy: () => ({ channelKey, systemLayers: [] }),
+    turnPolicy: () => ({
+      channelKey,
+      systemLayers: [],
+      ...(newDurableSession ? { standingPolicy: true } : {}),
+    }),
     executionContext: () => null,
     hostToolDefinitions: () => [],
     callTool: async () => null,
   };
-  return { channelKey, pool, interrupt, runner: createNativeSessionRunner(host) };
+  // Fail the running turn the way a broken transport would, not on request.
+  const fail = (error: Error) => {
+    if (!stop) return false;
+    stop(error);
+    return true;
+  };
+  return { channelKey, pool, interrupt, fail, runner: createNativeSessionRunner(host) };
 }
 
 it('stops the running turn on request and keeps its session (/stop)', async () => {
@@ -83,4 +95,30 @@ it('refuses to stop a turn on a runner without an interrupt', async () => {
     'Native runner does not support interrupting a turn'
   );
   await h.runner.stop();
+});
+
+it('keeps a new session whose first turn was stopped, but drops one whose first turn failed', async () => {
+  const stoppedCase = fixture(true, true);
+  const turn = stoppedCase.runner.runTurn([{ type: 'text', text: 'first request' }], {
+    sessionKey: stoppedCase.channelKey,
+  });
+  const stopped = expect(turn).rejects.toThrow('Native turn stopped on request');
+  await vi.waitFor(async () =>
+    expect(await stoppedCase.runner.interrupt(stoppedCase.channelKey)).toBe(true)
+  );
+  await stopped;
+  // The backend holds the policy and the stopped request: the next turn continues this session.
+  expect(stoppedCase.pool.peekSession(stoppedCase.channelKey).sessionId).toBeDefined();
+
+  const failedCase = fixture(true, true);
+  const failed = failedCase.runner.runTurn([{ type: 'text', text: 'first request' }], {
+    sessionKey: failedCase.channelKey,
+  });
+  const rejected = expect(failed).rejects.toThrow('fixture transport broke');
+  await vi.waitFor(() =>
+    expect(failedCase.pool.peekSession(failedCase.channelKey).busy).toBe(true)
+  );
+  await vi.waitFor(() => expect(failedCase.fail(new Error('fixture transport broke'))).toBe(true));
+  await rejected;
+  expect(failedCase.pool.peekSession(failedCase.channelKey).sessionId).toBeUndefined();
 });

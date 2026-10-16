@@ -30,6 +30,7 @@ import {
   ModelRunnerError,
   NativeInputUncertainError,
   NativeSessionUnavailableError,
+  NativeTurnStoppedError,
   type NativeInputReceipt,
   type NativeInputDispatch,
 } from './drivers/types.js';
@@ -449,7 +450,9 @@ export async function runNativePrompt<TToolContext extends HostExecutionContext>
         });
         provisionalDurableSessionId = undefined;
       } catch (error) {
-        if (provisionalDurableSessionId) {
+        // A turn stopped on request reached the backend's new session, which now holds the policy
+        // and the stopped request: the next turn continues it rather than opening another.
+        if (provisionalDurableSessionId && !(error instanceof NativeTurnStoppedError)) {
           host.sessionPool.invalidateSession(channelKey, provisionalDurableSessionId);
           provisionalDurableSessionId = undefined;
         }
