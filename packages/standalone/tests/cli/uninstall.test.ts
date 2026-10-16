@@ -4,9 +4,19 @@
  * running one.
  */
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runUninstall } from '../../src/cli/commands/uninstall.js';
 import { acquireInstallLock, daemonControlPaths } from '../../src/cli/runtime/daemon-control.js';
@@ -18,8 +28,10 @@ vi.mock('node:child_process', async (original) => ({
 }));
 
 const roots: string[] = [];
+const platform = process.platform;
 afterEach(() => {
   vi.mocked(spawnSync).mockReset();
+  Object.defineProperty(process, 'platform', { value: platform });
   for (const path of roots.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
@@ -27,10 +39,24 @@ function result(status: number): SpawnSyncReturns<string> {
   return { status, stdout: '', stderr: '', signal: null, pid: 1, output: [] } as never;
 }
 
-/** An install with a LaunchAgent that launchd has not loaded. */
-function install() {
-  vi.mocked(spawnSync).mockImplementation(((command: string, args: string[]) =>
-    command === 'launchctl' && args[0] === 'print' ? result(113) : result(0)) as never);
+/** launchctl print: 113 when the agent is not loaded; every launchctl call is recorded. */
+function launchd(loaded: boolean): string[] {
+  const calls: string[] = [];
+  vi.mocked(spawnSync).mockImplementation(((command: string, args: string[]) => {
+    if (command === 'launchctl') calls.push(args[0]!);
+    if (command === 'launchctl' && args[0] === 'print') {
+      return loaded ? result(0) : result(113);
+    }
+    return result(0);
+  }) as never);
+  return calls;
+}
+
+/** An install with a LaunchAgent, two registered people and a folder MAMA did not create. */
+function install(options: { loaded?: boolean } = {}) {
+  // launchctl is read only on macOS; the replaced one answers wherever the tests run.
+  Object.defineProperty(process, 'platform', { value: 'darwin' });
+  const calls = launchd(options.loaded ?? false);
   const home = mkdtempSync(join(tmpdir(), 'mama-uninstall-'));
   const outside = mkdtempSync(join(tmpdir(), 'mama-uninstall-outside-'));
   roots.push(home, outside);
@@ -39,6 +65,8 @@ function install() {
   const tools = join(outside, 'tools');
   mkdirSync(join(root, 'logs'), { recursive: true });
   mkdirSync(join(members, 'person'), { recursive: true });
+  mkdirSync(join(members, '.retired-gone-1'), { recursive: true });
+  mkdirSync(join(members, 'not-mama'), { recursive: true });
   mkdirSync(join(tools, 'skills', 'common'), { recursive: true });
   mkdirSync(join(tools, 'apps'), { recursive: true });
   writeFileSync(join(root, 'logs', 'daemon.log'), 'x'.repeat(1024));
@@ -56,6 +84,10 @@ function install() {
       logging: { level: 'info', file: join(root, 'logs', 'daemon.log') },
     })
   );
+  const db = new Database(join(root, 'memory.db'));
+  db.exec('CREATE TABLE principals (principal_id TEXT PRIMARY KEY)');
+  db.prepare("INSERT INTO principals VALUES ('person'), ('owner')").run();
+  db.close();
   const plist = join(home, 'Library', 'LaunchAgents', 'com.mama.server.plist');
   mkdirSync(join(plist, '..'), { recursive: true });
   writeFileSync(plist, '<plist/>');
@@ -66,6 +98,7 @@ function install() {
     members: realpathSync(members),
     tools: realpathSync(tools),
     plist,
+    calls,
   };
 }
 
@@ -93,7 +126,10 @@ describe('mama uninstall', () => {
     });
     expect(code).toBe(0);
     expect(out[0]).toBe(`would stop MAMA and remove its service: ${plist}`);
-    expect(out.join('\n')).toContain(`would remove ${members} (`);
+    expect(out.join('\n')).toContain(`would remove ${join(members, 'person')} (`);
+    expect(out.join('\n')).toContain(`would remove ${join(members, '.retired-gone-1')} (`);
+    expect(out.join('\n')).not.toContain(join(members, 'not-mama'));
+    expect(out.join('\n')).toContain(`would remove ${members} too, if nothing else is left in it`);
     expect(out.join('\n')).toContain(`would remove ${join(tools, 'skills')} (`);
     expect(out.join('\n')).toContain(`would remove ${root} (`);
     for (const path of [plist, root, members, tools]) expect(existsSync(path)).toBe(true);
@@ -121,19 +157,74 @@ describe('mama uninstall', () => {
     const { home, root, members, tools, plist } = install();
     const asked = prompt(root);
     expect(await runUninstall(['--data'], { ...base(home), prompt: asked })).toBe(0);
-    expect(asked.lines.join('\n')).toContain(`removes ${members}`);
-    for (const path of [plist, root, members, join(tools, 'skills')]) {
+    expect(asked.lines.join('\n')).toContain(`removes ${join(members, 'person')}`);
+    for (const path of [
+      plist,
+      root,
+      join(members, 'person'),
+      join(members, '.retired-gone-1'),
+      join(tools, 'skills'),
+    ]) {
       expect(existsSync(path)).toBe(false);
     }
+    // What MAMA did not create stays, and so does the folder that holds it.
+    expect(existsSync(join(members, 'not-mama'))).toBe(true);
     expect(existsSync(join(tools, 'apps', 'toolkit'))).toBe(true);
   });
 
-  it('also removes the toolkit with --toolkit', async () => {
+  it("also removes the toolkit's versions with --toolkit, and tools_root once empty", async () => {
     const { home, root, tools } = install();
+    rmSync(join(tools, 'apps'), { recursive: true });
+    mkdirSync(join(tools, 'v-1', 'apps'), { recursive: true });
+    symlinkSync(join(tools, 'v-1'), join(tools, 'current'));
     expect(
       await runUninstall(['--data', '--toolkit'], { ...base(home), prompt: prompt(root) })
     ).toBe(0);
     expect(existsSync(tools)).toBe(false);
+  });
+
+  it('refuses the home folder written in another letter case', async () => {
+    const { home } = install();
+    const upper = home.toUpperCase();
+    // Only a case-insensitive disk (the macOS default) names the same folder this way.
+    if (!existsSync(upper) || upper === home) return;
+    writeFileSync(
+      join(home, 'config.yaml'),
+      JSON.stringify({
+        version: 1,
+        agent: { backend: 'claude', model: 'fixture', max_turns: 10, timeout: 1000 },
+        database: { path: join(home, 'memory.db') },
+        logging: { level: 'info', file: join(home, 'daemon.log') },
+      })
+    );
+    await expect(
+      runUninstall(['--data'], {
+        ...base(home),
+        configPath: join(upper, 'config.yaml'),
+        prompt: prompt(upper),
+      })
+    ).rejects.toThrow('refusing to remove');
+    expect(existsSync(home)).toBe(true);
+  });
+
+  it('stops a running service before it removes anything', async () => {
+    const { home, root, plist, calls } = install({ loaded: true });
+    expect(await runUninstall(['--data'], { ...base(home), prompt: prompt(root) })).toBe(0);
+    expect(calls).toContain('bootout');
+    for (const path of [plist, root]) expect(existsSync(path)).toBe(false);
+  });
+
+  it('names data set outside the MAMA home, and leaves it', async () => {
+    const { home, root } = install();
+    const elsewhere = mkdtempSync(join(tmpdir(), 'mama-uninstall-log-'));
+    roots.push(elsewhere);
+    const config = JSON.parse(readFileSync(join(root, 'config.yaml'), 'utf8'));
+    config.logging.file = join(elsewhere, 'daemon.log');
+    writeFileSync(join(root, 'config.yaml'), JSON.stringify(config));
+    writeFileSync(join(elsewhere, 'daemon.log'), 'kept');
+    const out: string[] = [];
+    await runUninstall(['--dry-run', '--data'], { ...base(home), write: (line) => out.push(line) });
+    expect(out.join('\n')).toContain(`stays: ${join(elsewhere, 'daemon.log')} (the daemon log`);
   });
 
   it('refuses a target that is the home folder itself', async () => {
@@ -158,17 +249,15 @@ describe('mama uninstall', () => {
     expect(existsSync(home)).toBe(true);
   });
 
-  it('leaves the data while another process holds the install', async () => {
-    const { home, root, members } = install();
-    const held = acquireInstallLock(daemonControlPaths(root), 'daemon');
+  it('changes nothing while another process holds the install and cannot be stopped', async () => {
+    const { home, root, members, plist } = install();
+    const held = acquireInstallLock(daemonControlPaths(root), 'backup');
     try {
-      await expect(
-        runUninstall(['--data'], { ...base(home), prompt: prompt(root) })
-      ).rejects.toThrow();
+      expect(await runUninstall(['--data'], { ...base(home), prompt: prompt(root) })).not.toBe(0);
     } finally {
       held.release();
     }
-    for (const path of [root, members]) expect(existsSync(path)).toBe(true);
+    for (const path of [plist, root, members]) expect(existsSync(path)).toBe(true);
   });
 
   it('shows its usage for flags it does not take', async () => {

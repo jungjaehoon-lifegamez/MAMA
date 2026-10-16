@@ -94,3 +94,17 @@ it('refuses symlinked temp directories', () => {
   symlinkSync(MEMBER_ROOM_TMP_PARENT, path);
   expect(() => ensureMemberClaudeTmpDir(path)).toThrow(/symlink/);
 });
+
+it('refuses a member root that is HOME written in another letter case', () => {
+  const home = mkdtempSync(join(tmpdir(), 'mama-member-case-'));
+  try {
+    const upper = home.toUpperCase();
+    // Only a case-insensitive disk (the macOS default) names the same folder this way.
+    if (upper === home || !fs.existsSync(upper)) return;
+    expect(() => validateMemberRoot(join(upper, 'members'), [home])).toThrow(
+      'member_root must not overlap HOME'
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
