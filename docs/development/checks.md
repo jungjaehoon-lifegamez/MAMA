@@ -2581,3 +2581,21 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Still open:
   - An owner chat turn on the new launch files.
   - This Mac's plugin update. The owner runs it, and it moves the development memory from schema 100 to 106.
+
+### W2.2: Telegram commands and /stop, live (#520, #521, #522, #523, 2026-10-16)
+
+- Result: `/whoami`, `/status`, `/help`, `/new` and `/stop` are answered by the host without a turn and listed in the bot's menu (`getMyCommands` shows all five). `/stop` stops the running turn, its message is told it was interrupted and never rerun, and the conversation continues. Closes v1 E1.
+- Evidence (owner turns, 21:05–22:23 KST):
+  - **Commands:**
+    - DM: `/whoami`, `/status` and `/help` logged as `telegram host command=… chat=private`.
+    - Common group: `/help`, `/whoami`, `/status` and `/new`, with `/new` resetting `owner:runtime`.
+    - No model run was opened for any of them.
+  - **The first two `/stop`s failed.** They came in the group during an 8 s and a 42 s turn, and both turns ran to the end. The cause was a guard added in review (a65cc2dec) that refused to interrupt before the CLI acknowledged the input. A probe showed that the CLI acknowledges only with the model's first output, and that an interrupt before it still acknowledges, stops the turn and keeps the conversation. #522 removed the guard.
+  - **The DM `/stop`s then stopped the turn.** The log shows `Interrupting the running request`, then `Native turn stopped on request`, then `parked uncertain`, then `closed after uncertain … the owner was told it was interrupted`. Inputs 5512, 5513 and 5517 are `acked` and `settled`, and their model runs are `failed`.
+  - **The first two of those dropped their session.** Each stopped turn was the first of a new session. #523 keeps such a session, and after the third stop the next message ran `CONTINUE native session`.
+  - **Other work was untouched.** A common-session source delta and its record order, running at the same moment, were delivered. This is the per-message recovery from #521 at work: before it, an uncertain input interrupted every message in flight.
+  - This also closes the W1.6 open item: owner turns ran on the generated launch files.
+- Still open:
+  - A `/stop` in the common group after #522.
+  - The owner's reading of the answer after a stop (whether it named the stopped request).
+  - Core 8.9.0 carries `interrupt` and goes out with the W2 release.
