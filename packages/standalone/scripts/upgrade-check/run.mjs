@@ -13,6 +13,8 @@
  *
  * Needs network (npm) and the embedding model; CI runs it as its own job, outside `pnpm test`.
  * Run after `pnpm build`: node packages/standalone/scripts/upgrade-check/run.mjs
+ * On a developer machine it uses the real npm cache and links the real model cache
+ * (~/.cache/huggingface/transformers; a cold cache downloads the model there, about 400 MB).
  */
 import { spawnSync } from 'node:child_process';
 import {
@@ -25,6 +27,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -34,8 +37,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const standalone = join(here, '..', '..');
 const current = JSON.parse(readFileSync(join(standalone, 'package.json'), 'utf8')).version;
 
+// Each step is bounded, so a hung boot fails the check instead of the CI job's own limit.
 function run(command, args, options = {}) {
-  const result = spawnSync(command, args, { encoding: 'utf8', ...options });
+  const result = spawnSync(command, args, { encoding: 'utf8', timeout: 600_000, ...options });
   if (result.error) {
     throw result.error;
   }
@@ -72,6 +76,13 @@ console.log(
 // where the old release refuses tools_root and member_root, and the install's control socket path
 // must stay under the 104-byte limit of a Unix socket.
 const root = mkdtempSync(join(process.env.RUNNER_TEMP ?? '/tmp', 'mama-upgrade-'));
+// An interrupt skips `finally`; the install and its home would be left behind.
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.once(signal, () => {
+    rmSync(root, { recursive: true, force: true });
+    process.exit(130);
+  });
+}
 try {
   const install = join(root, 'previous');
   mkdirSync(install);
@@ -87,13 +98,13 @@ try {
     cwd: install,
     stdio: 'inherit',
   });
-  for (const [name, version] of [
-    ['mama-os', previous],
-    ['mama-core', core],
+  // The core mama-os loads is the one resolved from its own folder, not necessarily the top one.
+  const os = join(install, 'node_modules', '@jungjaehoon', 'mama-os', 'package.json');
+  for (const [name, path, version] of [
+    ['mama-os', os, previous],
+    ['mama-core', createRequire(os).resolve('@jungjaehoon/mama-core/package.json'), core],
   ]) {
-    const installed = JSON.parse(
-      readFileSync(join(install, 'node_modules', '@jungjaehoon', name, 'package.json'), 'utf8')
-    ).version;
+    const installed = JSON.parse(readFileSync(path, 'utf8')).version;
     if (installed !== version) {
       throw new Error(`npm installed ${name} ${installed}, not ${version}`);
     }
@@ -129,6 +140,7 @@ try {
   // Each release writes its own database path into the config, and work cannot be written with
   // embeddings switched off.
   delete env.MAMA_DB_PATH;
+  delete env.MAMA_DATABASE_PATH;
   delete env.MAMA_FORCE_TIER_3;
   const written = join(root, 'written.json');
 
@@ -147,21 +159,30 @@ try {
     env: { ...env, MAMA_API_PORT: String(await freePort()) },
   });
 
+  // Doctor exits non-zero for checks a CI host fails (no signed-in backend, no sandbox); only the
+  // config and schema rows are this check's.
   const doctor = spawnSync(
     process.execPath,
     [join(standalone, 'dist', 'cli', 'index.js'), 'doctor', '--json', '--offline'],
-    { encoding: 'utf8', env }
+    { encoding: 'utf8', env, timeout: 120_000 }
   );
-  const checks = JSON.parse(doctor.stdout).checks;
+  let checks;
+  try {
+    checks = JSON.parse(doctor.stdout).checks;
+  } catch {
+    throw new Error(`doctor printed no report (exit ${doctor.status}):\n${doctor.stderr}`);
+  }
   for (const name of ['config', 'schema']) {
     const check = checks.find((entry) => entry.name === name);
     if (check?.status !== 'ok') {
       throw new Error(`doctor ${name}: ${JSON.stringify(check)}`);
     }
   }
+  // Every source at the highest version this build ships: "core 106 of 106, standalone 1 of 1".
   const schema = checks.find((entry) => entry.name === 'schema').detail;
-  if (/migrates/.test(schema)) {
-    throw new Error(`doctor schema is not migrated: ${schema}`);
+  const sources = [...schema.matchAll(/(\S+) (\d+) of (\d+)/g)];
+  if (sources.length === 0 || sources.some(([, , stored, highest]) => stored !== highest)) {
+    throw new Error(`doctor schema is not this build's: ${schema}`);
   }
   console.log(`upgrade check: doctor config ok, schema ${schema}`);
 } finally {

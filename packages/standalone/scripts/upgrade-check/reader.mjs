@@ -19,6 +19,7 @@ const expect = (ok, message) => {
   }
 };
 
+const startedAt = Date.now();
 const daemon = await bootDaemon({
   mode: 'replay',
   home: process.env.HOME,
@@ -64,17 +65,17 @@ const daemon = await bootDaemon({
       `lesson ${written.lessonId} is not found`
     );
 
-    // The pending owner message: this release's owner loop reads its stored payload and runs a
-    // turn for it. The turn needs a signed-in backend, which the check replaces with a stand-in
-    // that exits; a turn run for this message is what shows the old payload was read.
+    // The owner message the previous release left pending: this release's owner loop recovers its
+    // stored row and runs a turn for it. That is the class of the boot-recovery crash on an old
+    // row; the turn's text is not compared, since the backend is a stand-in that exits at once.
     const turnFor = context.owner.database.adapter.prepare(
-      "SELECT status FROM model_runs WHERE json_extract(input_refs_json, '$.sourceMessageRef') = ?"
+      "SELECT status FROM model_runs WHERE json_extract(input_refs_json, '$.sourceMessageRef') = ? AND created_at >= ?"
     );
     const deadline = Date.now() + 60_000;
-    let turn = turnFor.get(written.messageRef);
+    let turn = turnFor.get(written.messageRef, startedAt);
     while ((turn === undefined || turn.status === 'running') && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 500));
-      turn = turnFor.get(written.messageRef);
+      turn = turnFor.get(written.messageRef, startedAt);
     }
     expect(turn, `no turn ran for the pending message ${written.messageRef} within 60 s`);
     expect(
@@ -88,13 +89,10 @@ await daemon.stop();
 for (const stage of ['config', 'isolation', 'owner_runtime', 'replay']) {
   expect(stages.includes(stage), `boot did not reach ${stage} (reached ${stages.join(', ')})`);
 }
-// The one error expected: that turn failing at the stand-in backend.
+// The one error expected: that turn failing at the stand-in backend (as an exit or as a closed
+// pipe, whichever comes first).
 const unexpected = errors.filter(
-  (line) =>
-    !(
-      line.startsWith(`stimulus failed kind=owner_message id=${written.messageRef} `) &&
-      line.includes('upgrade check: no backend')
-    )
+  (line) => !line.startsWith(`stimulus failed kind=owner_message id=${written.messageRef} `)
 );
 expect(unexpected.length === 0, `boot logged errors:\n${unexpected.join('\n')}`);
 if (mismatches.length > 0) {

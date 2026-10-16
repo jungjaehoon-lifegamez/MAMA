@@ -127,6 +127,7 @@ jobs:
     needs: [changes, setup]
     if: ${{ github.event_name == 'push' || needs.changes.outputs.standalone == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -142,11 +143,21 @@ jobs:
             packages/standalone/ui/node_modules
             packages/standalone/public/viewer
           key: ${{ runner.os }}-build-${{ github.sha }}
+      # The same model the MCP tests use, restored or downloaded fully before the check embeds.
       - uses: actions/cache@v5
         with:
           path: ~/.cache/huggingface/transformers
-          key: ${{ runner.os }}-hf-models-v1
-          restore-keys: ${{ runner.os }}-hf-models-
+          key: ${{ runner.os }}-hf-e5-large-q8-v1
+      - name: Prepare embedding model
+        working-directory: packages/standalone
+        run: |
+          node --input-type=module -e "
+          import { homedir } from 'node:os'; import { join } from 'node:path';
+          import { declareEmbeddingCacheDir, generateEmbedding } from '@jungjaehoon/mama-core/embeddings';
+          declareEmbeddingCacheDir(join(homedir(), '.cache', 'huggingface', 'transformers'));
+          const v = await generateEmbedding('warm');
+          if (!v || v.length !== 1024) throw new Error('embedding model did not load');
+          "
       - name: Upgrade from the previous release
         run: node packages/standalone/scripts/upgrade-check/run.mjs
 

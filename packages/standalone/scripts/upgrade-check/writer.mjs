@@ -9,6 +9,7 @@
  */
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { runInit } from '@jungjaehoon/mama-os/dist/cli/commands/init.js';
 import { runRegisterOwner } from '@jungjaehoon/mama-os/dist/cli/commands/register-owner.js';
 import { bootDaemon } from '@jungjaehoon/mama-os/dist/cli/commands/daemon.js';
@@ -19,10 +20,19 @@ const root = join(home, '.mama');
 const ownerTelegramId = '424242';
 const commonChat = '-1001234567890';
 
-// `mama init` with an owner's answers. A question this table does not know fails the run, so a
-// later release that asks something new is noticed rather than answered by accident.
+// `mama init` with an owner's answers: no optional messenger, no Jev, no tunnel, no service file
+// (the service label is global, and the check must not install one). A question this table does
+// not know fails the run, so a later release that asks something new is noticed rather than
+// answered by accident.
+const declined = [
+  /^Enable Discord owner messages/,
+  /^Enable Slack owner messages/,
+  /^Use Jev \(TypeSafe\)/,
+  /^Expose the viewer through a tunnel/,
+  /^Write ~\/Library\/LaunchAgents\/com\.mama\.server\.plist/,
+];
 function answer(label) {
-  if (/\[y\/N\]$/.test(label)) {
+  if (/\[y\/N\]$/.test(label) && declined.some((question) => question.test(label))) {
     return 'n';
   }
   if (/^Backend/.test(label)) {
@@ -32,7 +42,7 @@ function answer(label) {
     return 'fixture-model';
   }
   if (/^Owner timezone/.test(label)) {
-    return 'Asia/Seoul';
+    return 'UTC';
   }
   if (/chat id/.test(label)) {
     return commonChat;
@@ -51,7 +61,12 @@ await runInit({
     stdinIsTTY: true,
     stdoutIsTTY: true,
     text: async (label) => answer(label),
-    secret: async () => 'upgrade-check-secret',
+    secret: async (label) => {
+      if (label !== 'Telegram bot token') {
+        throw new Error(`mama init asked for a secret the upgrade check does not answer: ${label}`);
+      }
+      return 'upgrade-check-secret';
+    },
     write: () => {},
   },
   toolsRoot: process.env.MAMA_UPGRADE_TOOLS,
@@ -69,11 +84,13 @@ await runRegisterOwner([ownerTelegramId]);
 
 const errors = [];
 let written;
+let databasePath;
 const daemon = await bootDaemon({
   mode: 'replay',
   home,
   logger: { info: () => {}, error: (line) => errors.push(line) },
   replay: async (context) => {
+    databasePath = context.config.database.path;
     const call = async (name, input, operationId) => {
       const outcome = await context.owner.surface.hostToolCall(name, input, operationId, {});
       if (outcome?.status !== 'completed') {
@@ -113,8 +130,9 @@ const daemon = await bootDaemon({
       },
       'upgrade-check:memory:lesson'
     );
-    // Replay mode does not drain owner messages: this one stays pending for the next boot, as a
-    // message the daemon took just before it stopped would.
+    // Accepting schedules a drain, which runs after stop() has begun, so the message stays pending
+    // for the next boot, as one taken just before a stop would. The check after stop() fails if a
+    // later release drains it first.
     const messageRef = `telegram:${commonChat}:9001`;
     context.owner.intake.acceptOwnerMessage({
       id: messageRef,
@@ -138,5 +156,11 @@ if (errors.length > 0) {
 }
 if (!written) {
   throw new Error('the previous release did not run the replay');
+}
+const db = new Database(databasePath, { readonly: true, fileMustExist: true });
+const left = db.prepare("SELECT status FROM mailbox_inputs WHERE kind = 'owner_message'").all();
+db.close();
+if (left.length !== 1 || left[0].status !== 'pending') {
+  throw new Error(`the owner message is not left pending: ${JSON.stringify(left)}`);
 }
 writeFileSync(writtenPath, `${JSON.stringify(written, null, 2)}\n`);
