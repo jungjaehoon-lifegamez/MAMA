@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import * as yaml from 'js-yaml';
@@ -643,11 +643,13 @@ export async function runInit(
   const configPath = join(root, 'config.yaml');
   let state = readInitState(root);
   // The record is written before the setup's files, so one without the config step means an
-  // init stopped part-way through writing them; only that init wrote anything here.
+  // init stopped part-way through writing them. The files only init creates are removed and the
+  // step starts over; auth.env is merged, and a Codex login made before init stays.
   if (state !== null && !state.done.includes('config')) {
-    throw new CliInputError(
-      `An earlier mama init stopped while writing its files. Remove ${root}, which holds nothing else yet, and run mama init again.`
-    );
+    for (const name of ['config.yaml', 'connectors.json', 'jev-key'])
+      rmSync(join(root, name), { force: true });
+    write('An earlier mama init stopped while writing its files; that step starts over.');
+    state = null;
   }
   if (existsSync(configPath)) {
     // An install set up before init kept its steps, or by hand: init will not take it over.
@@ -707,7 +709,8 @@ export async function runInit(
   const lock = writing ? acquireInstallLock(daemonControlPaths(root), 'init') : undefined;
   let config: W1Config;
   try {
-    if (writing) refuseWhileRestoring(root);
+    // A restore sets the launch files aside too, so even the service step waits for it.
+    refuseWhileRestoring(root);
     if (answers !== undefined) {
       const { memberRoot, toolsRoot } = answers;
       for (const [folder, isDefault] of [
@@ -851,6 +854,21 @@ export async function runInit(
         await installService([], serviceOptions);
         await startService(serviceOptions);
       });
+    // The port was free when the setup was written; a reboot or another account's MAMA started
+    // since may have taken it. This install's own daemon, if it runs, holds it legitimately.
+    const ownDaemon = await (options.daemonStatus ?? (() => askDaemon('status', { home })))().catch(
+      () => null
+    );
+    const answers = options.portAnswers ?? portAnswers;
+    if (ownDaemon?.state !== 'running') {
+      const stored = resolveApiPort(progress.viewer?.MAMA_API_PORT);
+      if (await answers(stored, '127.0.0.1')) {
+        const port = await freeViewerPort(answers);
+        progress.viewer = { ...progress.viewer, MAMA_API_PORT: String(port) };
+        if (port === DEFAULT_VIEWER_PORT) delete progress.viewer.MAMA_API_PORT;
+        writeInitState(root, progress);
+      }
+    }
     await startServiceFor(progress.viewer ?? {});
     const viewerPort = resolveApiPort(progress.viewer?.MAMA_API_PORT);
     await waitForBoot({

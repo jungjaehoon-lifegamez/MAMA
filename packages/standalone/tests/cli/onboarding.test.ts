@@ -323,14 +323,42 @@ describe('mama init', () => {
     }
   });
 
-  it('names the recovery when an earlier init stopped while writing its files', async () => {
-    mkdirSync(join(root, 'runtime'), { recursive: true, mode: 0o700 });
-    writeFileSync(initStatePath(root), JSON.stringify({ version: 1, done: [] }));
-    writeFileSync(join(root, 'auth.env'), '# written before the stop\n');
-    const p = prompt([], []);
-    await expect(runInit([], options(p.adapter))).rejects.toThrow(
-      `An earlier mama init stopped while writing its files. Remove ${root}`
-    );
+  it('starts the setup step over when an earlier init stopped while writing its files', async () => {
+    // auth.env as a folder makes the write fail after the step record is written.
+    mkdirSync(join(root, 'auth.env'), { recursive: true });
+    const first = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    await expect(runInit([], options(first.adapter))).rejects.toThrow();
+    expect(readInitState(root)?.done).toEqual([]);
+    rmSync(join(root, 'auth.env'), { recursive: true });
+    // A Codex login made before init stays; only init's own files are removed.
+    mkdirSync(join(root, '.codex'), { recursive: true });
+    writeFileSync(join(root, '.codex', 'auth.json'), '{}');
+    const again = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    await runInit([], options(again.adapter));
+    expect(again.output.join('\n')).toContain('that step starts over');
+    expect(existsSync(join(root, '.codex', 'auth.json'))).toBe(true);
+    expect(readInitState(root)?.done).toEqual(['config', 'owner', 'toolkit', 'service']);
+  });
+
+  it('checks the viewer port again before starting the service', async () => {
+    let taken = false;
+    let statusCalls = 0;
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    const o = options(p.adapter, {
+      // Free while the setup is written; taken by the time the service starts.
+      portAnswers: async (port) => taken && port === 3847,
+      installToolkit: async () => {
+        taken = true;
+      },
+      daemonStatus: async () => {
+        statusCalls += 1;
+        return statusCalls === 1
+          ? { state: 'stopped', holder: null }
+          : { state: 'running', reply: { ok: true, status: { stage: 'running' } } };
+      },
+    });
+    await runInit([], o);
+    expect(o.started).toEqual([{ MAMA_API_PORT: '3848' }]);
   });
 
   it.each(['100', '0', '-0', 'group', '-100abc', '-01'])(

@@ -1,6 +1,14 @@
 import * as yaml from 'js-yaml';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadConfig } from '../../src/runtime/config.js';
@@ -123,14 +131,26 @@ it.each([{ args: [] }, { args: ['update'] }, { args: ['install', 'extra'] }])(
   }
 );
 
-it('on Linux uses the per-user default only once the installer made it, and installs nothing before', async () => {
+it('refuses a default tools folder this account cannot create, and installs nothing', async () => {
   const raw = JSON.parse(readFileSync(configPath, 'utf8'));
   delete raw.tools_root;
   writeFileSync(configPath, JSON.stringify(raw));
+  // As /var/lib/mama on Linux: a folder above that only sudo can write.
+  const locked = join(root, 'locked');
+  mkdirSync(locked, { mode: 0o500 });
   const install = vi.fn();
-  await expect(
-    runTools(['install'], { home, configPath, platform: 'linux', install })
-  ).rejects.toThrow(/cannot be created\. Create .+ for this account once: sudo install -d/);
+  try {
+    await expect(
+      runTools(['install'], {
+        home,
+        configPath,
+        toolsRoot: join(locked, 'person', 'tools'),
+        install,
+      })
+    ).rejects.toThrow(/cannot be created\. Create .+ for this account once: sudo install -d/);
+  } finally {
+    chmodSync(locked, 0o700);
+  }
   expect(install).not.toHaveBeenCalled();
 });
 

@@ -163,7 +163,14 @@ export async function installService(
     ...(options.toolDirectoryExists ? { exists: options.toolDirectoryExists } : {}),
     viewer: options.viewer ?? {},
     logLevel: config.logging.level,
-    carried: reading?.carried ?? [],
+    // A value init passes again replaces the line it wrote last time instead of repeating it.
+    carried: (reading?.carried ?? []).filter(
+      (line) =>
+        !Object.hasOwn(
+          options.viewer ?? {},
+          /^export\s+([A-Za-z_][A-Za-z0-9_]*)=/.exec(line)?.[1] ?? ''
+        )
+    ),
   });
 
   // Only a start.sh that is about to change is reported; a matching one needs no account.

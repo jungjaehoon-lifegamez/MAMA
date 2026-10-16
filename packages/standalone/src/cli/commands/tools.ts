@@ -40,8 +40,7 @@ export async function runTools(
       'Set tools_root to a writable directory outside HOME in config.yaml, then run mama tools install on the host'
     );
   // The default is a folder of this user's; on Linux the installer creates it, as for mama init.
-  if (config.tools_root === undefined && options.toolsRoot === undefined)
-    prepareRoot(root, { ownParent: true });
+  if (config.tools_root === undefined) prepareRoot(root, { ownParent: true });
   const next = parseConfig({ ...config, tools_root: root }, { home });
   const needsRestart = config.tools_root === undefined || !existsSync(root);
   const unregister = onToolkitSignal(() => {}, { exit: true });
