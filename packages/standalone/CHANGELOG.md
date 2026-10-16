@@ -11,11 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Telegram commands MAMA answers itself, without a model turn, listed in the bot's command menu:
   `/whoami` (your Telegram ID and whether MAMA knows you as an owner or a member), `/status`
-  (MAMA's version, whether a turn is running in this conversation, what waits; owners also see
-  every conversation and the sources), `/new` (starts the conversation over, refused while a turn
-  runs in it) and `/help`. In the common group an owner's commands act on the common session and
-  a member's on their own group conversation. Unregistered senders still get no answer, and any
-  other command goes to MAMA as a message.
+  (MAMA's version, whether a turn is running in this conversation, what waits; owners, in their
+  own DM, also see every conversation and the sources), `/new` (starts the conversation over;
+  refused while MAMA still works on something of that person's or a message of theirs waits) and
+  `/help`. In the common group an owner's commands act on the common session and a member's on
+  their own group conversation. Unregistered senders still get no answer, a command addressed to
+  another bot is left alone, and any other command goes to MAMA as a message.
 
 ## [0.78.0] - 2026-10-16
 

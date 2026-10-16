@@ -18,24 +18,26 @@ export type TelegramHostCommand = (typeof TELEGRAM_HOST_COMMANDS)[number]['comma
 
 /** What the daemon does for a host command; the gateway only parses, routes and replies. */
 export interface TelegramHostCommandPort {
-  status(target: ConversationTarget, owner: boolean): Promise<ChatStatus>;
+  /** `ownerView`: an owner asking in their own DM, who also sees every conversation. */
+  status(target: ConversationTarget, ownerView: boolean): Promise<ChatStatus>;
   /** Start the conversation over, or say it is busy: a running turn keeps its session. */
   startOver(target: ConversationTarget): Promise<'started_over' | 'busy'>;
 }
 
 /**
- * The host command a message opens with, or null. A command addressed to another bot
- * (`/status@other_bot`) is not this bot's; an unknown one stays an ordinary message.
+ * The host command a message opens with; `other_bot` for a command addressed to another bot
+ * (`/status@other_bot`), which is not for MAMA at all; null for anything else, an unknown
+ * command included, which stays an ordinary message.
  */
 export function hostCommand(
   message: Pick<TelegramMessage, 'text' | 'entities'>,
   botUsername: () => string
-): TelegramHostCommand | null {
+): TelegramHostCommand | 'other_bot' | null {
   const first = message.entities?.[0];
   if (!message.text || first?.type !== 'bot_command' || first.offset !== 0) return null;
   const [name, addressee] = message.text.slice(1, first.length).split('@', 2);
   if (addressee !== undefined && addressee.toLowerCase() !== botUsername().toLowerCase())
-    return null;
+    return 'other_bot';
   const command = name.toLowerCase();
   return TELEGRAM_HOST_COMMANDS.some((entry) => entry.command === command)
     ? (command as TelegramHostCommand)
@@ -54,6 +56,7 @@ export function whoamiText(input: {
   userId: string;
   chatId: string;
   privateChat: boolean;
+  commonChannel: boolean;
   principalId: string;
   owner: boolean;
 }): string {
@@ -62,10 +65,11 @@ export function whoamiText(input: {
     `MAMA knows you as ${input.owner ? 'an owner' : 'a member'} (${input.principalId}).`,
   ];
   if (!input.privateChat) {
+    const group = `This group (${input.chatId}) is ${input.commonChannel ? "MAMA's common channel" : 'a group MAMA admits'}`;
     lines.push(
       input.owner
-        ? `This group (${input.chatId}) is MAMA's common channel; your messages here run in the common session.`
-        : `This group (${input.chatId}) is MAMA's common channel; your messages here run in your own conversation for this group.`
+        ? `${group}; your messages here run in the common session.`
+        : `${group}; your messages here run in your own conversation for this group.`
     );
   }
   return lines.join('\n');
@@ -75,9 +79,7 @@ export function startOverText(result: 'started_over' | 'busy', target: Conversat
   // A member's own conversation is reset with their group conversations (member-session.ts).
   const memberDm = target.kind === 'member' && target.room === undefined;
   if (result === 'busy')
-    return memberDm
-      ? 'A turn is running in one of your conversations with MAMA. Wait for its answer, then send /new again.'
-      : 'A turn is running in this conversation. Wait for its answer, then send /new again.';
+    return 'MAMA is still working on something of yours here. Wait for its answer, then send /new again.';
   return memberDm
     ? 'Started over: your next message, here or in a group, begins a new conversation. What MAMA has saved stays.'
     : 'Started over: the next message here begins a new conversation. What MAMA has saved stays.';
@@ -89,7 +91,10 @@ export interface ChatStatus {
   /** When this daemon started, in the owner's time zone. */
   since: string;
   conversationRunning: boolean;
-  /** Owners: inputs waiting in every conversation; members: their own. */
+  /**
+   * Inputs not yet taken by a turn: in every conversation for the owner's view, otherwise this
+   * person's (the common session's, for the common conversation).
+   */
   inputsWaiting: number;
   owner?: {
     turnsRunning: number;
@@ -103,11 +108,11 @@ export function statusText(status: ChatStatus): string[] {
     `This conversation: ${status.conversationRunning ? 'a turn is running' : 'idle'}`,
   ];
   if (status.owner === undefined) {
-    lines.push(`Your messages waiting: ${status.inputsWaiting}`);
+    lines.push(`Waiting to run: ${status.inputsWaiting}`);
     return lines;
   }
   lines.push(
-    `All conversations: ${status.owner.turnsRunning} turns running, ${status.inputsWaiting} inputs waiting`
+    `All conversations: ${status.owner.turnsRunning} turns running, ${status.inputsWaiting} waiting to run`
   );
   const failing = status.owner.sources.filter((source) => !source.healthy);
   if (status.owner.sources.length > 0)

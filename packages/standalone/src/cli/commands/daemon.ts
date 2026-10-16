@@ -946,20 +946,20 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         onMemberSelection: (selection) => owner!.completeMemberEnrollment(selection),
         recordMemberSelection: (exchange) => owner!.recordHostExchange(exchange),
         hostCommands: {
-          status: async (target, isOwner) => {
+          status: async (target, ownerView) => {
             const report = await statusReport();
             const adapter = owner!.database.adapter;
             const principalId = target.kind === 'member' ? target.principalId : OWNER_PRINCIPAL_ID;
             const waiting = (
-              isOwner
+              ownerView
                 ? adapter
                     .prepare(
-                      "SELECT COUNT(*) AS count FROM mailbox_inputs WHERE status IN ('pending', 'claimed')"
+                      "SELECT COUNT(*) AS count FROM mailbox_inputs WHERE status = 'pending'"
                     )
                     .get()
                 : adapter
                     .prepare(
-                      "SELECT COUNT(*) AS count FROM mailbox_inputs WHERE status IN ('pending', 'claimed') AND principal_id = ?"
+                      "SELECT COUNT(*) AS count FROM mailbox_inputs WHERE status = 'pending' AND principal_id = ?"
                     )
                     .get(principalId)
             ) as { count: number };
@@ -970,7 +970,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
               since: localNow(startedAt, timeZone.get()),
               conversationRunning: owner!.turnRunning(target),
               inputsWaiting: waiting.count,
-              ...(isOwner
+              ...(ownerView
                 ? {
                     owner: {
                       turnsRunning: turns.reduce((sum, turn) => sum + turn.count, 0),

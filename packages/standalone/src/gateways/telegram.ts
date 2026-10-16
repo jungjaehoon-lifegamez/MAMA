@@ -184,6 +184,7 @@ export class TelegramGateway extends BaseGateway {
     this.stopIntake = () => resolve(undefined);
   });
   private readonly enrollmentCompletions = new Set<Promise<void>>();
+  private readonly commandAnswers = new Set<Promise<void>>();
   private readonly activePresenters = new Map<string, TelegramResponsePresenter>();
   private readonly recentMessageIds = new Map<string, number>();
   private readonly activeChat = new AsyncLocalStorage<{ chatId: string; active: boolean }>();
@@ -308,6 +309,7 @@ export class TelegramGateway extends BaseGateway {
   async drain(): Promise<void> {
     await super.drain();
     await Promise.allSettled([...this.enrollmentCompletions]);
+    await Promise.allSettled([...this.commandAnswers]);
     await Promise.allSettled([...this.chatTails.values()]);
   }
 
@@ -750,8 +752,16 @@ export class TelegramGateway extends BaseGateway {
     const principalId = principal!.principalId;
     // A host command is answered now, ahead of any intake waiting in this chat.
     const command = hostCommand(message, () => this.bot!.botInfo.username);
+    if (command === 'other_bot') return;
     if (command !== null) {
-      await this.answerHostCommand(message, command, principalId);
+      // /new may wait for a member to be served; polling admits other updates meanwhile.
+      const answer = this.answerHostCommand(message, command, principalId).catch((error) =>
+        this.log(
+          `telegram host command reply failed command=${command} error=${telegramErrorMessage(error)}`
+        )
+      );
+      this.commandAnswers.add(answer);
+      void answer.finally(() => this.commandAnswers.delete(answer));
       return;
     }
     const recorded = this.messageLedger.get(sourceMessageRef(chatId, message.message_id));
@@ -821,9 +831,18 @@ export class TelegramGateway extends BaseGateway {
     try {
       if (command === 'help') text = helpText();
       else if (command === 'whoami')
-        text = whoamiText({ userId, chatId, privateChat, principalId, owner });
+        text = whoamiText({
+          userId,
+          chatId,
+          privateChat,
+          commonChannel: chatId === this.config.ownerChatId,
+          principalId,
+          owner,
+        });
       else if (command === 'status')
-        text = statusText(await this.hostCommands.status(target, owner)).join('\n');
+        // Everyone in a group reads the reply, so the owner's view of every conversation stays
+        // in the owner's DM.
+        text = statusText(await this.hostCommands.status(target, owner && privateChat)).join('\n');
       else text = startOverText(await this.hostCommands.startOver(target), target);
     } catch (error) {
       this.log(

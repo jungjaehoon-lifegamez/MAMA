@@ -205,9 +205,10 @@ export interface OwnerRuntime {
   /** Whether a turn is running in this conversation now. */
   turnRunning(target: ConversationTarget): boolean;
   /**
-   * Start a conversation over: its native context goes, its records stay. A member's own
-   * conversation is reset with their group conversations, as every member reset is, so a turn
-   * running in any of them makes it busy.
+   * Start a conversation over: its native context goes, its records stay. It is busy while a
+   * turn of that person (the common session's, for the common conversation) runs or an input of
+   * theirs waits. A member's own conversation is reset with their group conversations, as every
+   * member reset is.
    */
   startOver(target: ConversationTarget): Promise<'started_over' | 'busy'>;
   beginStop(): void;
@@ -1318,19 +1319,32 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       turnRunning: (target) => sessionPool.peekSession(conversationKey(target)).busy,
       startOver: async (target) => {
         if (stopping) throw new Error('Cannot start a conversation over after runtime stop');
-        if (target.kind === 'member') await serveMemberOnLane(target.principalId);
-        const key = conversationKey(target);
-        const rooms =
-          target.kind === 'member' && target.room === undefined
-            ? memberRoomSessionKey(target.principalId, '')
-            : undefined;
-        for (const [sessionKey, entry] of sessionPool.listSessions()) {
-          if (entry.inUse && (sessionKey === key || (rooms && sessionKey.startsWith(rooms))))
-            return 'busy';
+        const principalId =
+          target.kind === 'member' ? target.principalId : options.ownerPrincipalId;
+        if (target.kind === 'member') {
+          await serveMemberOnLane(principalId);
+          // An erasure retired this member's sessions, resetting them; it serves them anew when
+          // it ends, so their next message already starts over.
+          if (!intakeRuntime.servesPrincipal(principalId)) return 'started_over';
         }
-        // The principal sessions always route a reset to the session that owns the key.
-        await sessions.native.resetSession!(key);
-        return 'started_over';
+        // An input this person sent before /new would otherwise run in the new conversation,
+        // and the next message would carry it on.
+        const inputsWaiting = () =>
+          database.adapter
+            .prepare(
+              "SELECT 1 FROM mailbox_inputs WHERE principal_id = ? AND status IN ('pending', 'claimed') LIMIT 1"
+            )
+            .get(principalId) !== undefined;
+        const chain = sessions.turnChain(principalId);
+        if (chain.isBusy() || inputsWaiting()) return 'busy';
+        // On the principal's chain no turn of theirs starts while the session is reset. A member's
+        // conversations share that chain, so their DM reset reaches the rooms it resets as well.
+        return chain.afterCurrent(async () => {
+          if (inputsWaiting()) return 'busy';
+          // The principal sessions always route a reset to the session that owns the key.
+          await sessions.native.resetSession!(conversationKey(target));
+          return 'started_over';
+        });
       },
       stop: () => {
         if (stopPromise) return stopPromise;

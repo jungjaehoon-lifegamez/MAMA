@@ -39,6 +39,7 @@ import { openCoreDatabase } from '../../src/runtime/core-db.js';
 const roots: string[] = [];
 const databases: Array<Awaited<ReturnType<typeof openCoreDatabase>>> = [];
 const COMMON = '-7001';
+const OTHER_GROUP = '-7002';
 
 afterEach(async () => {
   for (const database of databases.splice(0)) await database.close();
@@ -95,16 +96,22 @@ async function gateway(port: TelegramHostCommandPort, log: (line: string) => voi
     memberIntake: () => intake,
     principalPaths: () => ({ downloadsDir: join(root, 'downloads') }),
     messageLedgerPath: join(root, 'ledger.json'),
-    config: { allowedChats: [COMMON], ownerChatId: COMMON, polling: false },
+    config: { allowedChats: [COMMON, OTHER_GROUP], ownerChatId: COMMON, polling: false },
     hostCommands: port,
     log,
   });
   await active.start();
-  return { owner, member, received };
+  return { owner, member, received, registry };
 }
 
 async function send(message: Record<string, unknown>) {
   await seams.handlers.get('message')!({ message });
+}
+
+/** Commands are answered off the polling handler; wait for the reply. */
+async function reply(): Promise<[number, string, { reply_parameters: { message_id: number } }]> {
+  await vi.waitFor(() => expect(seams.api.sendMessage).toHaveBeenCalled());
+  return seams.api.sendMessage.mock.calls[0];
 }
 
 function port(overrides: Partial<TelegramHostCommandPort> = {}): TelegramHostCommandPort {
@@ -129,7 +136,7 @@ describe('hostCommand', () => {
   });
 
   it('leaves other bots, unknown commands and mid-text commands as messages', () => {
-    expect(hostCommand(command('/status@other_bot'), name)).toBeNull();
+    expect(hostCommand(command('/status@other_bot'), name)).toBe('other_bot');
     expect(hostCommand(command('/report'), name)).toBeNull();
     expect(
       hostCommand(
@@ -162,6 +169,7 @@ describe('Telegram host commands', () => {
       from: { id: 7102, is_bot: false },
     });
     expect(error).toHaveBeenCalledWith(expect.stringContaining('telegram command menu failed'));
+    await reply();
     expect(seams.api.sendMessage).toHaveBeenCalledTimes(1);
     expect(received).toHaveLength(0);
     error.mockRestore();
@@ -174,8 +182,8 @@ describe('Telegram host commands', () => {
       chat: { id: 7102, type: 'private' },
       from: { id: 7102, is_bot: false },
     });
+    const [chatId, text, options] = await reply();
     expect(received).toHaveLength(0);
-    const [chatId, text, options] = seams.api.sendMessage.mock.calls[0];
     expect(chatId).toBe(7102);
     expect(text).toContain('Telegram ID: 7102');
     expect(text).toContain(`a member (${member})`);
@@ -183,12 +191,14 @@ describe('Telegram host commands', () => {
   });
 
   it('routes an owner in the common group to the common session', async () => {
-    const status = vi.fn(async () => ({
+    const status = vi.fn(async (_target: unknown, ownerView: boolean) => ({
       version: '0.0.0-fixture',
       since: '2026-10-16 Fri 09:00',
       conversationRunning: true,
       inputsWaiting: 2,
-      owner: { turnsRunning: 1, sources: [{ name: 'fixture-source', healthy: false }] },
+      ...(ownerView
+        ? { owner: { turnsRunning: 1, sources: [{ name: 'fixture-source', healthy: false }] } }
+        : {}),
     }));
     const commands = port({ status });
     await gateway(commands);
@@ -197,11 +207,22 @@ describe('Telegram host commands', () => {
       chat: { id: Number(COMMON), type: 'supergroup' },
       from: { id: 7101, is_bot: false },
     });
-    expect(status).toHaveBeenCalledWith({ kind: 'common' }, true);
-    const text = seams.api.sendMessage.mock.calls[0][1] as string;
+    const [, text] = await reply();
+    // The group reads the reply, so the owner's view of every conversation stays in their DM.
+    expect(status).toHaveBeenCalledWith({ kind: 'common' }, false);
     expect(text).toContain('This conversation: a turn is running');
-    expect(text).toContain('1 turns running, 2 inputs waiting');
-    expect(text).toContain('failing: fixture-source');
+    expect(text).toContain('Waiting to run: 2');
+    expect(text).not.toContain('fixture-source');
+    seams.api.sendMessage.mockClear();
+    await send({
+      ...command('/status'),
+      chat: { id: 7101, type: 'private' },
+      from: { id: 7101, is_bot: false },
+    });
+    const [, dm] = await reply();
+    expect(status).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'member' }), true);
+    expect(dm).toContain('1 turns running, 2 waiting to run');
+    expect(dm).toContain('failing: fixture-source');
   });
 
   it('routes a member in the common group to their own room, not the common session', async () => {
@@ -212,12 +233,13 @@ describe('Telegram host commands', () => {
       chat: { id: Number(COMMON), type: 'supergroup' },
       from: { id: 7102, is_bot: false },
     });
+    const [, text] = await reply();
     expect(commands.startOver).toHaveBeenCalledWith({
       kind: 'member',
       principalId: member,
       room: COMMON,
     });
-    expect(seams.api.sendMessage.mock.calls[0][1]).toContain('the next message here');
+    expect(text).toContain('the next message here');
   });
 
   it('says a busy conversation keeps its turn', async () => {
@@ -228,10 +250,9 @@ describe('Telegram host commands', () => {
       chat: { id: 7101, type: 'private' },
       from: { id: 7101, is_bot: false },
     });
+    const [, text] = await reply();
     expect(commands.startOver).toHaveBeenCalledWith({ kind: 'member', principalId: owner });
-    expect(seams.api.sendMessage.mock.calls[0][1]).toContain(
-      'A turn is running in one of your conversations'
-    );
+    expect(text).toContain('MAMA is still working on something of yours here');
   });
 
   it('answers a failed command with a notice and keeps the error in the log', async () => {
@@ -245,10 +266,62 @@ describe('Telegram host commands', () => {
       chat: { id: 7102, type: 'private' },
       from: { id: 7102, is_bot: false },
     });
-    expect(seams.api.sendMessage.mock.calls[0][1]).toBe(
-      'MAMA could not answer /new; its log has the error.'
-    );
+    const [, text] = await reply();
+    expect(text).toBe('MAMA could not answer /new; its log has the error.');
     expect(lines).toContainEqual(expect.stringContaining('fixture reset failed'));
+  });
+
+  it('names only the common channel as such, and answers there for an owner', async () => {
+    await gateway(port());
+    await send({
+      ...command('/whoami'),
+      chat: { id: Number(OTHER_GROUP), type: 'supergroup' },
+      from: { id: 7102, is_bot: false },
+    });
+    const [, text] = await reply();
+    expect(text).toContain(`This group (${OTHER_GROUP}) is a group MAMA admits`);
+    expect(text).toContain('your own conversation for this group');
+    seams.api.sendMessage.mockClear();
+    await send({
+      ...command('/whoami'),
+      chat: { id: Number(COMMON), type: 'supergroup' },
+      from: { id: 7101, is_bot: false },
+    });
+    const [, common] = await reply();
+    expect(common).toContain(`This group (${COMMON}) is MAMA's common channel`);
+    expect(common).toContain('the common session');
+  });
+
+  it('ignores a command addressed to another bot', async () => {
+    const { received } = await gateway(port());
+    await send({
+      ...command('/status@other_bot'),
+      chat: { id: Number(COMMON), type: 'supergroup' },
+      from: { id: 7101, is_bot: false },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(seams.api.sendMessage).not.toHaveBeenCalled();
+    expect(received).toHaveLength(0);
+  });
+
+  it('answers no suspended member and no group MAMA does not admit', async () => {
+    const commands = port();
+    const { member, registry } = await gateway(commands);
+    await send({
+      ...command('/status'),
+      chat: { id: -7999, type: 'supergroup' },
+      from: { id: 7101, is_bot: false },
+    });
+    registry.suspend(member, 4);
+    await send({
+      ...command('/new'),
+      chat: { id: 7102, type: 'private' },
+      from: { id: 7102, is_bot: false },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(seams.api.sendMessage).not.toHaveBeenCalled();
+    expect(commands.status).not.toHaveBeenCalled();
+    expect(commands.startOver).not.toHaveBeenCalled();
   });
 
   it('leaves strangers unanswered and unknown commands as messages', async () => {
@@ -270,7 +343,7 @@ describe('Telegram host commands', () => {
 });
 
 describe('command texts', () => {
-  it('shows members only their own waiting messages', () => {
+  it('shows members only their own waiting inputs', () => {
     expect(
       statusText({
         version: '1.2.3',
@@ -281,7 +354,7 @@ describe('command texts', () => {
     ).toEqual([
       'MAMA 1.2.3, running since 2026-10-16 Fri 09:00',
       'This conversation: idle',
-      'Your messages waiting: 3',
+      'Waiting to run: 3',
     ]);
   });
 
