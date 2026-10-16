@@ -99,8 +99,8 @@ export interface ChatStatus {
   since: string;
   conversationRunning: boolean;
   /**
-   * Inputs not yet taken by a turn: in every conversation for the owner's view, otherwise this
-   * person's (the common session's, for the common conversation).
+   * Inputs not yet done, a running one included: in every conversation for the owner's view,
+   * otherwise in this conversation.
    */
   inputsWaiting: number;
   owner?: {
@@ -115,11 +115,11 @@ export function statusText(status: ChatStatus): string[] {
     `This conversation: ${status.conversationRunning ? 'a turn is running' : 'idle'}`,
   ];
   if (status.owner === undefined) {
-    lines.push(`Waiting to run: ${status.inputsWaiting}`);
+    lines.push(`Inputs not yet done: ${status.inputsWaiting}`);
     return lines;
   }
   lines.push(
-    `All conversations: ${status.owner.turnsRunning} turns running, ${status.inputsWaiting} waiting to run`
+    `All conversations: ${status.owner.turnsRunning} turns running, ${status.inputsWaiting} inputs not yet done`
   );
   const failing = status.owner.sources.filter((source) => !source.healthy);
   if (status.owner.sources.length > 0)

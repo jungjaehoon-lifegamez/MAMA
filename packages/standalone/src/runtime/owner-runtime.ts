@@ -353,17 +353,20 @@ export function hasWaitingInput(
 }
 
 /**
- * Inputs not yet taken by a turn: everyone's, one person's, or one person's in one chat (a room
- * input's channel is its group's chat).
+ * Inputs not yet done: pending, or claimed and queued or running (not parked as uncertain).
+ * Everyone's, one person's, or one person's in one chat (a room input's channel is its group's
+ * chat). A claimed input may wait on the person's chain while another conversation of theirs runs.
  */
-export function countPendingInputs(
+export function countInputsNotDone(
   adapter: CoreDatabase['adapter'],
   scope: { principalId?: string; channel?: string }
 ): number {
   const row = adapter
     .prepare(
-      `SELECT COUNT(*) AS count FROM mailbox_inputs WHERE status = 'pending'
-         AND (? IS NULL OR principal_id = ?) AND (? IS NULL OR channel_key = ?)`
+      `SELECT COUNT(*) AS count FROM mailbox_inputs m
+         LEFT JOIN native_input_deliveries n ON n.input_id = m.id
+        WHERE (m.status = 'pending' OR (m.status = 'claimed' AND (n.state IS NULL OR n.state != 'uncertain')))
+          AND (? IS NULL OR m.principal_id = ?) AND (? IS NULL OR m.channel_key = ?)`
     )
     .get(
       scope.principalId ?? null,

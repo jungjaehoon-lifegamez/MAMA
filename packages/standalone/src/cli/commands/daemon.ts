@@ -18,7 +18,7 @@ import {
   type StimulusIntake,
 } from '../../runtime/stimulus-delivery.js';
 import {
-  countPendingInputs,
+  countInputsNotDone,
   createOwnerRuntime,
   type OwnerRuntime,
   type OwnerRuntimeOptions,
@@ -951,7 +951,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
             const report = await statusReport();
             const adapter = owner!.database.adapter;
             // A group reads the reply, so a member's count there is that group's inputs only.
-            const waiting = countPendingInputs(
+            const waiting = countInputsNotDone(
               adapter,
               ownerView
                 ? {}

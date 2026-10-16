@@ -211,7 +211,7 @@ describe('Telegram host commands', () => {
     // The group reads the reply, so the owner's view of every conversation stays in their DM.
     expect(status).toHaveBeenCalledWith({ kind: 'common' }, false);
     expect(text).toContain('This conversation: a turn is running');
-    expect(text).toContain('Waiting to run: 2');
+    expect(text).toContain('Inputs not yet done: 2');
     expect(text).not.toContain('fixture-source');
     seams.api.sendMessage.mockClear();
     await send({
@@ -221,7 +221,7 @@ describe('Telegram host commands', () => {
     });
     const [, dm] = await reply();
     expect(status).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'member' }), true);
-    expect(dm).toContain('1 turns running, 2 waiting to run');
+    expect(dm).toContain('1 turns running, 2 inputs not yet done');
     expect(dm).toContain('failing: fixture-source');
   });
 
@@ -354,7 +354,7 @@ describe('command texts', () => {
     ).toEqual([
       'MAMA 1.2.3, running since 2026-10-16 Fri 09:00',
       'This conversation: idle',
-      'Waiting to run: 3',
+      'Inputs not yet done: 3',
     ]);
   });
 
