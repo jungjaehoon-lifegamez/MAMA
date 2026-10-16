@@ -7,7 +7,8 @@ export class CliInputError extends Error {}
 export interface PromptAdapter {
   readonly stdinIsTTY: boolean;
   readonly stdoutIsTTY: boolean;
-  text(label: string): Promise<string>;
+  /** An aborted signal ends the question as cancelled. */
+  text(label: string, signal?: AbortSignal): Promise<string>;
   secret(label: string): Promise<string>;
   write(line: string): void;
 }
@@ -25,7 +26,11 @@ export function createTerminalPrompt(
   input: ReadStream = process.stdin,
   output: WriteStream = process.stdout
 ): PromptAdapter {
-  const question = async (label: string, hidden: boolean): Promise<string> => {
+  const question = async (
+    label: string,
+    hidden: boolean,
+    signal?: AbortSignal
+  ): Promise<string> => {
     requireTTY(adapter);
     const wasRaw = input.isRaw;
     const muted = new Writable({ write: (_chunk, _encoding, done) => done() });
@@ -40,6 +45,8 @@ export function createTerminalPrompt(
       return await new Promise<string>((resolve, reject) => {
         rl.once('close', () => reject(new CliInputError('Input cancelled; no value saved.')));
         rl.once('SIGINT', () => rl.close());
+        if (signal?.aborted) rl.close();
+        signal?.addEventListener('abort', () => rl.close(), { once: true });
         rl.question(hidden ? '' : `${label}: `, resolve);
       });
     } finally {
@@ -52,7 +59,7 @@ export function createTerminalPrompt(
   const adapter: PromptAdapter = {
     stdinIsTTY: input.isTTY === true,
     stdoutIsTTY: output.isTTY === true,
-    text: (label) => question(label, false),
+    text: (label, signal) => question(label, false, signal),
     secret: (label) => question(label, true),
     write: (line) => {
       output.write(`${line}\n`);

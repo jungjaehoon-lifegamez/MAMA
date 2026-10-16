@@ -21,9 +21,9 @@ with echo off, or from `MAMA_INIT_*` variables with `--non-interactive`. Sign in
 first; `mama init` checks it, writes the setup, registers the first owner, installs the document
 toolkit and starts the service.
 
-For Telegram's common session, create a group with the bot, even for a solo owner, and enter
-its negative group or supergroup ID in `mama init`. Private chats always enter personal sessions.
-`mama init` registers you as the first owner; `mama register-owner <telegram id>` registers
+For Telegram's common session, create a group with the bot, even for a solo owner, and send
+`/bind` there when `mama init` asks. Private chats always enter personal sessions.
+`mama init` pairs you through a code the bot sends you and registers you as the first owner; `mama register-owner <telegram id>` registers
 another owner while the daemon is stopped.
 
 | Command                                       | Purpose                                          |

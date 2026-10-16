@@ -43,6 +43,69 @@ const fixtureSecrets = {
   MAMA_TELEGRAM_SOURCE_TOKEN: 'fixture-telegram-source',
 };
 
+/**
+ * The new bot: nothing waits when setup starts; then the owner messages it privately and sends
+ * /bind in the common group. Codes the pairing step sends are kept, so the terminal can type the
+ * owner's.
+ */
+function fakeBot() {
+  const sent: Array<{ chat_id: string; text: string }> = [];
+  const polls: Array<{ offset: string; timeout: string }> = [];
+  const updates = [
+    {
+      update_id: 1,
+      message: {
+        chat: { id: Number(OWNER_ID), type: 'private' },
+        from: { id: Number(OWNER_ID) },
+        text: 'hello',
+      },
+    },
+    {
+      update_id: 2,
+      message: {
+        chat: { id: -100, type: 'supergroup' },
+        from: { id: Number(OWNER_ID) },
+        text: '/bind',
+        entities: [{ type: 'bot_command', offset: 0, length: 5 }],
+      },
+    },
+  ];
+  const call: NonNullable<InitOptions['telegramCall']> = async (_token, method, params = {}) => {
+    if (method === 'getMe')
+      return {
+        ok: true,
+        result: { id: 9001, username: 'fixture_bot', can_read_all_group_messages: true },
+      };
+    if (method === 'getChatMember') return { ok: true, result: { status: 'administrator' } };
+    if (method === 'sendMessage') {
+      sent.push({ chat_id: params.chat_id, text: params.text });
+      return { ok: true, result: {} };
+    }
+    if (method === 'getUpdates') {
+      polls.push({ offset: params.offset, timeout: params.timeout });
+      if (params.offset === '-1') return { ok: true, result: [] };
+      const pending = updates.filter((update) => update.update_id >= Number(params.offset ?? 0));
+      if (pending.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+      return { ok: true, result: pending };
+    }
+    throw new Error(`unexpected Telegram call ${method}`);
+  };
+  // Each init run sends its own code; the terminal types the newest one not typed yet.
+  let typed = 0;
+  const code = async () => {
+    for (;;) {
+      const index = sent.findIndex((entry, at) => at >= typed && entry.chat_id === OWNER_ID);
+      if (index >= 0) {
+        typed = index + 1;
+        return /(\d{6})/.exec(sent[index].text)![1];
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+  };
+  return { call, sent, polls, code };
+}
+let telegram: ReturnType<typeof fakeBot>;
+
 function prompt(
   answers: string[],
   hidden: string[],
@@ -57,6 +120,7 @@ function prompt(
     text: async (label) => {
       if (label.startsWith('Owner timezone')) return timezoneAnswer ?? '';
       if (label.startsWith('Use Jev (TypeSafe)')) return jevAnswer;
+      if (label.startsWith('Pairing code')) return telegram.code();
       if (!answers.length) throw new Error(`Unexpected visible prompt: ${label}`);
       return answers.shift()!;
     },
@@ -71,9 +135,9 @@ function prompt(
   return { adapter, output, answers, hidden };
 }
 
-/** backend, model, common group, owner id, both folders, then no source, messenger or tunnel. */
+/** backend, model, both folders, then no source, messenger or tunnel; pairing names the rest. */
 function minimal(backend = 'codex') {
-  return [backend, 'fixture-model', '-100', OWNER_ID, memberRoot, toolsRoot, '', 'n', 'n', 'n'];
+  return [backend, 'fixture-model', memberRoot, toolsRoot, '', 'n', 'n', 'n'];
 }
 
 const probeOk = (command: string, args: string[]) =>
@@ -97,10 +161,7 @@ function options(adapter: PromptAdapter, overrides: Partial<InitOptions> = {}) {
     findExecutable: (name: string) => join(home, 'bin', name),
     installToolkit: async () => {},
     probeRun: probeOk,
-    telegramCall: async (_token, method) =>
-      method === 'getMe'
-        ? { ok: true, result: { id: 9001, can_read_all_group_messages: true } }
-        : { ok: true, result: { status: 'administrator' } },
+    telegramCall: telegram.call,
     startService: async (viewer) => {
       started.push(viewer);
     },
@@ -118,6 +179,7 @@ function options(adapter: PromptAdapter, overrides: Partial<InitOptions> = {}) {
 }
 
 beforeEach(() => {
+  telegram = fakeBot();
   home = realpathSync(mkdtempSync(join(tmpdir(), 'mama-init-')));
   root = join(home, '.mama');
   memberRoot = `${home}-members`;
@@ -317,7 +379,7 @@ describe('mama init', () => {
     chmodSync(open, 0o777);
     try {
       const answers = minimal();
-      answers[4] = join(open, 'members');
+      answers[2] = join(open, 'members');
       const p = prompt(answers, [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
       await expect(runInit([], options(p.adapter))).rejects.toThrow(/Unsafe member_root ancestor/);
       expect(existsSync(root)).toBe(false);
@@ -367,22 +429,55 @@ describe('mama init', () => {
   it.each(['100', '0', '-0', 'group', '-100abc', '-01'])(
     'refuses a non-group Telegram common destination before writing setup: %s',
     async (chatId) => {
-      const answers = minimal();
-      answers[2] = chatId;
-      const p = prompt(answers, [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
-      await expect(runInit([], options(p.adapter))).rejects.toThrow(
+      const p = prompt([], [], [false, false]);
+      const env = {
+        MAMA_INIT_BACKEND: 'codex',
+        MAMA_INIT_MODEL: 'fixture-model',
+        MAMA_TELEGRAM_TOKEN: fixtureSecrets.MAMA_TELEGRAM_TOKEN,
+        MAMA_INIT_COMMON_CHAT_ID: chatId,
+        MAMA_INIT_OWNER_TELEGRAM_ID: OWNER_ID,
+        MAMA_INIT_MEMBER_ROOT: memberRoot,
+        MAMA_INIT_TOOLS_ROOT: toolsRoot,
+      };
+      await expect(runInit(['--non-interactive'], options(p.adapter, { env }))).rejects.toThrow(
         /group or supergroup.*negative.*private chats.*personal intake/
       );
       expect(existsSync(root)).toBe(false);
     }
   );
 
-  it('refuses a member folder inside HOME before writing anything', async () => {
+  it('pairs the owner by the code the bot sent and the common group by /bind, typing no ID', async () => {
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    await runInit([], options(p.adapter));
+    const config = loadConfig({ home });
+    expect(config.telegram).toMatchObject({ owner_chat_id: '-100', allowed_chats: ['-100'] });
+    // The owner got the code; the group was told it is the common channel.
+    expect(telegram.sent.map((entry) => entry.chat_id)).toEqual([OWNER_ID, '-100']);
+    expect(p.output.join('\n')).toContain('send @fixture_bot a new private message');
+    expect(p.output.join('\n')).toContain('send /bind in that group');
+    // Held messages are dropped first, and every update init read is confirmed at the end, so
+    // the daemon never takes the pairing messages.
+    expect(telegram.polls[0]).toEqual({ offset: '-1', timeout: '0' });
+    expect(telegram.polls.at(-1)).toEqual({ offset: '3', timeout: '0' });
+  });
+
+  it('refuses a member folder inside HOME before writing anything or pairing', async () => {
     const answers = minimal();
-    answers[4] = join(home, 'members');
+    answers[2] = join(home, 'members');
     const p = prompt(answers, [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
     await expect(runInit([], options(p.adapter))).rejects.toThrow(/must not overlap HOME/);
     expect(existsSync(root)).toBe(false);
+    // Pairing is the last question, so the owner is not asked to pair for a setup that stops.
+    expect(telegram.sent).toEqual([]);
+  });
+
+  it('refuses a folder other accounts can write when it is named, before pairing', async () => {
+    mkdirSync(memberRoot, { recursive: true });
+    chmodSync(memberRoot, 0o777);
+    const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    await expect(runInit([], options(p.adapter))).rejects.toThrow(/written by other accounts/);
+    expect(existsSync(root)).toBe(false);
+    expect(telegram.sent).toEqual([]);
   });
 
   it('reports a toolkit that cannot be installed and still starts MAMA', async () => {
@@ -626,7 +721,7 @@ describe('mama init', () => {
 
   it('sets up a Discord owner gateway in init without enabling a source connector', async () => {
     const answers = minimal();
-    answers.splice(7, 1, 'y', 'channel_test', 'user_test');
+    answers.splice(5, 1, 'y', 'channel_test', 'user_test');
     const p = prompt(answers, [fixtureSecrets.MAMA_TELEGRAM_TOKEN, 'fixture-discord-owner']);
     await runInit([], options(p.adapter));
     expect(loadConfig({ home }).discord).toMatchObject({
@@ -643,7 +738,7 @@ describe('mama init', () => {
 
   it('sets up Slack bot and Socket Mode credentials for an owner gateway', async () => {
     const answers = minimal();
-    answers.splice(8, 1, 'y', 'channel_test', 'user_test');
+    answers.splice(6, 1, 'y', 'channel_test', 'user_test');
     const p = prompt(answers, [
       fixtureSecrets.MAMA_TELEGRAM_TOKEN,
       'fixture-slack-owner',
@@ -666,8 +761,6 @@ describe('mama init', () => {
       [
         'claude',
         'fixture-model',
-        '-100',
-        OWNER_ID,
         memberRoot,
         toolsRoot,
         'slack,chatwork,trello,calendar,notion,discord,telegram',
@@ -741,8 +834,6 @@ describe('mama init', () => {
       [
         'codex',
         'fixture-model',
-        '-100',
-        OWNER_ID,
         memberRoot,
         toolsRoot,
         'gmail,drive,sheets,notion,obsidian,claude-code,imessage',
@@ -778,7 +869,7 @@ describe('mama init', () => {
 
   it('no longer offers the Kagemusha bridge, which a fresh install cannot use', async () => {
     const answers = minimal();
-    answers[6] = 'kagemusha';
+    answers[4] = 'kagemusha';
     const p = prompt(answers, [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
     await expect(runInit([], options(p.adapter))).rejects.toThrow(/Choose connectors from/);
     expect(existsSync(root)).toBe(false);

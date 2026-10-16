@@ -26,8 +26,9 @@ The `telegram` section of `~/.mama/config.yaml` contains:
 | `polling`       | Receive messages; defaults to `true`                                                       |
 | `file_delivery` | Let MAMA send files; defaults to `true`                                                    |
 
-Create a group with the bot for common changes, even for a solo owner. Set `owner_chat_id` to
-that group's negative ID and include it in `allowed_chats`. A supergroup also works. Positive
+Create a group with the bot for common changes, even for a solo owner. `mama init` sets
+`owner_chat_id` and `allowed_chats` when you send `/bind` in that group. By hand, set
+`owner_chat_id` to that group's negative ID and include it in `allowed_chats`. A supergroup also works. Positive
 private chat IDs are rejected: every private chat enters its person's intake, so it cannot
 reach the common session.
 

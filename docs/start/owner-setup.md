@@ -36,8 +36,8 @@ See [Backends](../guides/backends.md).
 ## Run onboarding in your terminal
 
 Create a Telegram bot through BotFather and a group with the bot for common changes, even if you
-are the only owner. Have the group's negative chat ID and your own numeric Telegram user ID ready
-(@userinfobot shows it). Then run:
+are the only owner. Use a bot only this install uses: Telegram hands a bot's messages to one
+program at a time, so a bot another MAMA already reads cannot be paired. Then run:
 
 ```bash
 mama init
@@ -47,12 +47,19 @@ It asks for:
 
 - the backend and model;
 - the Telegram bot token;
-- the common group's chat ID;
-- your Telegram user ID;
 - two folders outside your home, one for member workspaces and one for the document tools;
-- any sources and other messengers you want.
+- any sources and other messengers you want;
+- last, the pairing code the bot sends when you message it privately, which makes you the first
+  owner, and `/bind`, sent by you in the common group after you add the bot there as an
+  administrator.
 
 Tokens are entered with terminal echo off; do not send them to the agent.
+
+Pairing comes last, after your answers and folders are checked, so a refused answer does not make
+you pair again. Messages the bot held from before are dropped, so send it a new one. Everyone who messages the bot privately while setup waits gets a code, but
+only the code typed at your terminal counts, and only that person's `/bind` names the group. A
+`/bind` sent as an anonymous administrator cannot count; setup says so. If no `/bind` arrives
+within 15 minutes, setup stops without writing anything; run `mama init` again.
 
 Before writing anything, `mama init` checks three things:
 
@@ -69,7 +76,8 @@ The folders have defaults, so press Enter to keep them:
 | macOS    | `Shared/mama-<you>/members` (the Shared folder beside home folders) | `Shared/mama-<you>/tools`   |
 | Linux    | `/var/lib/mama/<you>/members`                                       | `/var/lib/mama/<you>/tools` |
 
-On Linux they must exist first. The installer creates them once with `sudo`.
+Setup makes them as soon as you name them, and refuses one that another account owns or can
+write. On Linux they must exist first. The installer creates them once with `sudo`.
 
 Setup then asks whether to use Jev (TypeSafe). With it, the agent can ask Jev typed questions
 inside its scripts (the `judge` action) to narrow many messages or items without reading them all.

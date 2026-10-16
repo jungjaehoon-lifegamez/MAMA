@@ -23,6 +23,12 @@ import { probeBackend, type ProbeRun } from '../runtime/backend-probe.js';
 import { defaultTelegramCall, portAnswers, telegramCheck } from '../runtime/diagnostics.js';
 import { defaultRoots, prepareRoot, type DefaultRoots } from '../runtime/default-roots.js';
 import {
+  bindCommonGroup,
+  botName,
+  confirmUpdates,
+  pairOwner,
+} from '../runtime/telegram-pairing.js';
+import {
   initComplete,
   readInitState,
   writeInitState,
@@ -278,8 +284,6 @@ interface InitAnswers {
   memberRoot: string;
   toolsRoot: string;
   /** Which roots are the per-user defaults, whose parent folder is this user's too. */
-  memberRootIsDefault: boolean;
-  toolsRootIsDefault: boolean;
   connectors: ConnectorsConfig;
   discordConfig: Record<string, unknown>;
   slackConfig: Record<string, unknown>;
@@ -364,7 +368,7 @@ function checkBackend(
 /** Telegram must accept the token; anything about the group is reported and doctor checks again. */
 async function checkTelegram(
   token: string,
-  chatId: string,
+  chatId: string | undefined,
   call: TelegramCall,
   write: (line: string) => void
 ): Promise<void> {
@@ -377,6 +381,10 @@ async function checkTelegram(
       `${check.detail}, so the token is unchecked; check the network, then run mama init again.`
     );
   }
+  report(check, write);
+}
+
+function report(check: Awaited<ReturnType<typeof telegramCheck>>, write: (line: string) => void) {
   if (check.status !== 'ok')
     write(`telegram: ${check.detail}${check.fix ? ` (${check.fix})` : ''}`);
 }
@@ -387,7 +395,13 @@ async function askAnswers(
   defaults: DefaultRoots | undefined,
   checks: {
     backend(name: 'claude' | 'codex'): void;
-    telegram(token: string, chat: string): Promise<void>;
+    telegram(token: string, chat?: string): Promise<void>;
+    roots(
+      memberRoot: string,
+      toolsRoot: string,
+      isDefault: { member: boolean; tools: boolean }
+    ): { memberRoot: string; toolsRoot: string };
+    pair(token: string): Promise<{ ownerId: string; chatId: string }>;
   }
 ): Promise<InitAnswers> {
   const backend = await text(prompt, 'Backend (claude|codex)');
@@ -401,13 +415,7 @@ async function askAnswers(
   const secrets: Partial<Record<SecretName, string>> = {
     MAMA_TELEGRAM_TOKEN: nonblankLine(await prompt.secret('Telegram bot token')),
   };
-  const chatId = validChatId(
-    await text(prompt, 'Telegram common group/supergroup chat id (negative)')
-  );
-  await checks.telegram(secrets.MAMA_TELEGRAM_TOKEN!, chatId);
-  const ownerTelegramId = validTelegramId(
-    await text(prompt, 'Your Telegram user ID (numeric; @userinfobot shows it)')
-  );
+  await checks.telegram(secrets.MAMA_TELEGRAM_TOKEN!);
   const memberAnswer = (
     await prompt.text(
       `Folder for member workspaces, outside your home${defaults ? ` [${defaults.memberRoot}]` : ''}`
@@ -418,10 +426,14 @@ async function askAnswers(
       `Folder for the document tools, outside your home${defaults ? ` [${defaults.toolsRoot}]` : ''}`
     )
   ).trim();
-  const memberRoot = memberAnswer || defaults?.memberRoot;
-  const toolsRoot = toolsAnswer || defaults?.toolsRoot;
-  if (!memberRoot || !toolsRoot)
+  const memberChoice = memberAnswer || defaults?.memberRoot;
+  const toolsChoice = toolsAnswer || defaults?.toolsRoot;
+  if (!memberChoice || !toolsChoice)
     throw new CliInputError('This platform has no default folders; enter both folders.');
+  const { memberRoot, toolsRoot } = checks.roots(memberChoice, toolsChoice, {
+    member: !memberAnswer,
+    tools: !toolsAnswer,
+  });
   const connectors = await collectConnectors(prompt, secrets);
   const discordEnabled = await yes(prompt, 'Enable Discord owner messages');
   let discordConfig: Record<string, unknown> = {
@@ -500,6 +512,12 @@ async function askAnswers(
     ).trim();
     if (emails) viewer.MAMA_VIEWER_OWNER_EMAILS = nonblankLine(emails);
   }
+  // Pairing comes last, once every typed answer passed: a refusal after it would make the owner
+  // pair and /bind again. No numeric ID is typed: the bot's code names the owner and /bind the
+  // common group.
+  const paired = await checks.pair(secrets.MAMA_TELEGRAM_TOKEN!);
+  const chatId = validChatId(paired.chatId);
+  const ownerTelegramId = validTelegramId(paired.ownerId);
   return {
     backend,
     model,
@@ -509,8 +527,6 @@ async function askAnswers(
     ownerTelegramId,
     memberRoot,
     toolsRoot,
-    memberRootIsDefault: !memberAnswer,
-    toolsRootIsDefault: !toolsAnswer,
     connectors,
     discordConfig,
     slackConfig,
@@ -530,7 +546,12 @@ async function environmentAnswers(
   defaults: DefaultRoots | undefined,
   checks: {
     backend(name: 'claude' | 'codex'): void;
-    telegram(token: string, chat: string): Promise<void>;
+    telegram(token: string, chat?: string): Promise<void>;
+    roots(
+      memberRoot: string,
+      toolsRoot: string,
+      isDefault: { member: boolean; tools: boolean }
+    ): { memberRoot: string; toolsRoot: string };
   }
 ): Promise<InitAnswers> {
   const backend = requiredVariable(env, 'MAMA_INIT_BACKEND');
@@ -540,12 +561,16 @@ async function environmentAnswers(
   const token = requiredVariable(env, 'MAMA_TELEGRAM_TOKEN');
   const chatId = validChatId(requiredVariable(env, 'MAMA_INIT_COMMON_CHAT_ID'));
   await checks.telegram(token, chatId);
-  const memberRoot = env.MAMA_INIT_MEMBER_ROOT?.trim() || defaults?.memberRoot;
-  const toolsRoot = env.MAMA_INIT_TOOLS_ROOT?.trim() || defaults?.toolsRoot;
-  if (!memberRoot || !toolsRoot)
+  const memberAnswer = env.MAMA_INIT_MEMBER_ROOT?.trim() || defaults?.memberRoot;
+  const toolsAnswer = env.MAMA_INIT_TOOLS_ROOT?.trim() || defaults?.toolsRoot;
+  if (!memberAnswer || !toolsAnswer)
     throw new CliInputError(
       'This platform has no default folders; set MAMA_INIT_MEMBER_ROOT and MAMA_INIT_TOOLS_ROOT.'
     );
+  const { memberRoot, toolsRoot } = checks.roots(memberAnswer, toolsAnswer, {
+    member: !env.MAMA_INIT_MEMBER_ROOT?.trim(),
+    tools: !env.MAMA_INIT_TOOLS_ROOT?.trim(),
+  });
   return {
     backend,
     model: requiredVariable(env, 'MAMA_INIT_MODEL'),
@@ -557,8 +582,6 @@ async function environmentAnswers(
     ownerTelegramId: validTelegramId(requiredVariable(env, 'MAMA_INIT_OWNER_TELEGRAM_ID')),
     memberRoot,
     toolsRoot,
-    memberRootIsDefault: !env.MAMA_INIT_MEMBER_ROOT?.trim(),
-    toolsRootIsDefault: !env.MAMA_INIT_TOOLS_ROOT?.trim(),
     connectors: {},
     discordConfig: { enabled: false, allowed_channels: [], owner_user_ids: [] },
     slackConfig: { enabled: false, allowed_channels: [], owner_user_ids: [] },
@@ -647,6 +670,12 @@ export async function runInit(
   // first is still writing. A setup with only the service step left takes no lock: that step
   // writes no install files, and the daemon a failed wait left starting holds the lock.
   const peek = readInitState(root);
+  // An install set up before init kept its steps, or by hand: init will not take it over. Said
+  // before the lock, since that install's running daemon holds it.
+  if (peek === null && existsSync(configPath))
+    throw new CliInputError(
+      'config.yaml already exists; init will not overwrite it. mama doctor checks this install.'
+    );
   const serviceOnly =
     peek !== null &&
     (['config', 'owner', 'toolkit'] as const).every((step) => peek.done.includes(step));
@@ -687,7 +716,9 @@ export async function runInit(
     }
     progress = state ?? { version: 1, done: [] };
     const locate = options.findExecutable ?? findExecutable;
-    // Questions and checks come first, so a refused or cancelled setup leaves nothing behind.
+    // Questions and checks come first, so a refused or cancelled setup leaves nothing in the MAMA
+    // home. The two folders are made as soon as they are named: a folder that cannot be this
+    // user's alone is refused before pairing, which would otherwise have to be done again.
     let answers: InitAnswers | undefined;
     if (!done('config')) {
       const defaults = defaultRoots({
@@ -695,23 +726,63 @@ export async function runInit(
         home,
         ...(options.user === undefined ? {} : { user: options.user }),
       });
+      const call = options.telegramCall ?? defaultTelegramCall;
       const checks = {
         backend: (name: 'claude' | 'codex') => checkBackend(name, root, locate, options.probeRun),
-        telegram: (token: string, chat: string) =>
-          checkTelegram(token, chat, options.telegramCall ?? defaultTelegramCall, write),
+        telegram: (token: string, chat?: string) => checkTelegram(token, chat, call, write),
+        roots: (
+          memberAnswer: string,
+          toolsAnswer: string,
+          isDefault: { member: boolean; tools: boolean }
+        ) => {
+          const memberRoot = resolve(memberAnswer);
+          const toolsRoot = resolve(toolsAnswer);
+          try {
+            validateMemberRoot(memberRoot, [home, root]);
+            assertRootAncestors(physicalReadPath(memberRoot), 'member_root');
+            validateToolsRoot(toolsRoot, [home, root, memberRoot]);
+          } catch (error) {
+            throw new CliInputError((error as Error).message);
+          }
+          for (const [folder, ownParent] of [
+            [memberRoot, isDefault.member],
+            [toolsRoot, isDefault.tools],
+          ] as const) {
+            prepareRoot(folder, {
+              ownParent,
+              ...(options.uid === undefined ? {} : { uid: options.uid }),
+            });
+          }
+          return { memberRoot, toolsRoot };
+        },
+        pair: async (token: string) => {
+          const botUsername = await botName({ token, call, write });
+          const owner = await pairOwner({
+            token,
+            call,
+            write,
+            botUsername,
+            ask: (label, signal) => prompt.text(label, signal),
+          });
+          const group = await bindCommonGroup({
+            token,
+            call,
+            write,
+            botUsername,
+            ownerId: owner.ownerId,
+            offset: owner.offset,
+            earlier: owner.groupMessages,
+          });
+          await confirmUpdates({ token, call, write, offset: group.offset });
+          // The bot's post in the group proved the token; the group's privacy and membership are
+          // only reported, and doctor checks them again later.
+          report(await telegramCheck(token, group.chatId, call), write);
+          return { ownerId: owner.ownerId, chatId: group.chatId };
+        },
       };
       answers = nonInteractive
         ? await environmentAnswers(options.env ?? process.env, defaults, checks)
         : await askAnswers(prompt, root, defaults, checks);
-      answers.memberRoot = resolve(answers.memberRoot);
-      answers.toolsRoot = resolve(answers.toolsRoot);
-      try {
-        validateMemberRoot(answers.memberRoot, [home, root]);
-        assertRootAncestors(physicalReadPath(answers.memberRoot), 'member_root');
-        validateToolsRoot(answers.toolsRoot, [home, root, answers.memberRoot]);
-      } catch (error) {
-        throw new CliInputError((error as Error).message);
-      }
     }
     if (lock === undefined && !serviceOnly) {
       // A new install: the MAMA home is made only once the questions are answered, and another
@@ -726,15 +797,6 @@ export async function runInit(
     let config: W1Config;
     if (answers !== undefined) {
       const { memberRoot, toolsRoot } = answers;
-      for (const [folder, isDefault] of [
-        [memberRoot, answers.memberRootIsDefault],
-        [toolsRoot, answers.toolsRootIsDefault],
-      ] as const) {
-        prepareRoot(folder, {
-          ownParent: isDefault,
-          ...(options.uid === undefined ? {} : { uid: options.uid }),
-        });
-      }
       // Each account on a machine runs its own MAMA; another's viewer may already hold the port.
       const port = await freeViewerPort(options.portAnswers ?? portAnswers);
       if (port !== DEFAULT_VIEWER_PORT) answers.viewer.MAMA_API_PORT = String(port);

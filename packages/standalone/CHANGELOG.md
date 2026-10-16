@@ -28,8 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     waits until the daemon reports it is running and the viewer answers `/health`.
   - **Repeat-safe:** a failed run continues from its last finished step without asking again,
     and a finished setup is refused.
+  - **No typed Telegram IDs:** as the last question, the bot sends a six-digit code to whoever
+    messages it privately, and the code typed at the terminal names the first owner; that owner's
+    `/bind` in a group names the common channel. Messages the bot held from before are dropped, a
+    bot another program already reads is refused, and no `/bind` within 15 minutes stops setup
+    with the way to continue.
   - **Without a terminal:** `mama init --non-interactive` reads `MAMA_INIT_*` variables, with the
-    token from `MAMA_TELEGRAM_TOKEN`.
+    token from `MAMA_TELEGRAM_TOKEN` and the two Telegram IDs given directly.
   - **No longer offered:** the Kagemusha bridge, which a fresh install cannot use, and the
     launch-agent question, since the service is installed for you.
 - `/stop` in Telegram stops the turn running in that conversation and keeps the conversation: the
