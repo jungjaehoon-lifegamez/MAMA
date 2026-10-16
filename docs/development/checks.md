@@ -2623,3 +2623,18 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Still open:
   - The pre-change copy is at `~/.mama/runtime/config.yaml.before-section-20261017` (0600). The owner decides whether its comments go back.
   - `mama stop` unloads the launchd service. While stopped, doctor says no service manager runs the daemon, and `mama service start` loads it again.
+
+### W2.1d: the backend proven by one real turn through the daemon (#528, 2026-10-17)
+
+- Result: `mama init` now ends with a `probe` on the control socket. The daemon runs one turn of the configured model on the owner chain, in a session of its own that is reset afterwards. On this Mac's install, that turn answered. Closes v1 I2 (marked in #528).
+- Evidence:
+  - Deployed 04:16:10 KST: eight boot stages, no errors, doctor 16 ok.
+  - A `probe` request to the live daemon answered in 2.75 s (Claude, the configured model). `daemon.log` shows one `backend probe: claude answered in 2753 ms (model run …)` line. The model run is `committed`, with `sessionKey` `owner:probe` and the owner principal. No other model run started and no input waited. No process for the probe session remained.
+  - Measured before building (Claude CLI 2.1.299):
+    - With `--setting-sources project` and an empty plugin folder, only Claude Code's built-in plugins run `SessionStart` hooks, with 3 characters of output or less.
+    - With `--strict-mcp-config`, which the daemon passes, no MCP server connects, claude.ai account connectors included.
+    - This closes the plan's "no global instructions or plugins load" clause.
+  - Found by review and fixed in mama-core: a signed-out CLI's `success` + `is_error` result was taken as an answer. Owner turns that met an API error replied with the error text and committed the run. They now fail, and the message is told it was interrupted. Core publishes first in the W2 release.
+- Still open:
+  - The probe on a clean account through `mama init` itself, run in G1.
+  - The owner's personal (member) session is proven by the first DM, not by the probe.
