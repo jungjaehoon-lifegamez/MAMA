@@ -12,14 +12,19 @@ export function workNoUpdateActionRegistrations(): ActionRegistration[] {
       contract: {
         name: 'work.no_update',
         summary:
-          'Declare that a record order needs no work change, with the reason (chatter, already recorded, not work). Cite the observations the decision covers.',
+          'Declare that an order needs no work change, with the reason (chatter, already recorded, not work). Cite the observations the decision covers, the work items it covers (commitmentIds), or both.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
-          required: ['reason', 'observationRefs'],
+          required: ['reason'],
           properties: {
             reason: { type: 'string', minLength: 1 },
             observationRefs: {
+              type: 'array',
+              minItems: 1,
+              items: { type: 'string', minLength: 1 },
+            },
+            commitmentIds: {
               type: 'array',
               minItems: 1,
               items: { type: 'string', minLength: 1 },
@@ -31,18 +36,36 @@ export function workNoUpdateActionRegistrations(): ActionRegistration[] {
             title: 'Nothing to record',
             input: { reason: 'greetings only', observationRefs: ['obs_reference'] },
           },
+          {
+            title: 'Summary already current',
+            input: {
+              reason: 'its description already summarizes it',
+              commitmentIds: ['commitment_id'],
+            },
+          },
         ],
       },
       exec: (input) => {
-        const body = input as { reason?: unknown; observationRefs?: unknown };
+        const body = input as {
+          reason?: unknown;
+          observationRefs?: unknown;
+          commitmentIds?: unknown;
+        };
         if (typeof body.reason !== 'string' || body.reason.trim() === '')
           throw invalidInput('reason must be nonblank');
-        if (
-          !Array.isArray(body.observationRefs) ||
-          body.observationRefs.length === 0 ||
-          body.observationRefs.some((ref) => typeof ref !== 'string' || ref.trim() === '')
-        )
+        const listed = (value: unknown) =>
+          Array.isArray(value) &&
+          value.length > 0 &&
+          value.every((ref) => typeof ref === 'string' && ref.trim() !== '');
+        if (body.observationRefs !== undefined && !listed(body.observationRefs))
           throw invalidInput('observationRefs must list the observations the decision covers');
+        if (body.commitmentIds !== undefined && !listed(body.commitmentIds))
+          throw invalidInput('commitmentIds must list the work items the decision covers');
+        // The host checks an order by what the no-update names, so it must name something.
+        if (body.observationRefs === undefined && body.commitmentIds === undefined)
+          throw invalidInput(
+            'name the observations (observationRefs) or the work items (commitmentIds) the decision covers'
+          );
         return { recorded: false, reason: body.reason.trim() };
       },
     },

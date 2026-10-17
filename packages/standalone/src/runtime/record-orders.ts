@@ -2,6 +2,7 @@ import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
 import type { MailboxRow, Stimulus } from '@jungjaehoon/mama-core/runtime/mailbox';
 import type { StimulusReceipt } from '@jungjaehoon/mama-core/runtime/runtime';
 import type { RecordOrderPort } from './stimulus-delivery.js';
+import { orderRunIds, runningChildren } from './upkeep-orders.js';
 import {
   RECORD_ORDER_CHANNEL,
   parseRecordOrder,
@@ -84,7 +85,8 @@ function noUpdateIn(
   orderIds: readonly string[],
   cites: readonly string[] | null
 ): boolean {
-  const marks = orderIds.map(() => '?').join(',');
+  const runIds = orderRunIds(adapter, orderIds);
+  if (runIds.length === 0) return false;
   const citing =
     cites === null
       ? ''
@@ -97,29 +99,12 @@ function noUpdateIn(
       .prepare(
         `SELECT 1 FROM tool_traces t
           WHERE t.tool_name = 'work.no_update' AND t.execution_status = 'completed'
-            AND t.model_run_id IN (
-              SELECT r.model_run_id FROM model_runs r
-               WHERE json_extract(r.input_refs_json, '$.sourceMessageRef') IN (${marks})
-              UNION
-              SELECT c.model_run_id FROM model_runs c JOIN model_runs p ON c.parent_model_run_id = p.model_run_id
-               WHERE json_extract(p.input_refs_json, '$.sourceMessageRef') IN (${marks})
-            )
+            AND t.model_run_id IN (${runIds.map(() => '?').join(',')})
             ${citing}
           LIMIT 1`
       )
-      .get(...orderIds, ...orderIds, ...(cites ?? [])) !== undefined
+      .get(...runIds, ...(cites ?? [])) !== undefined
   );
-}
-
-/** Child runs of a record run that this process started and that have not ended yet. */
-function runningChildren(adapter: DatabaseAdapter, modelRunId: string, startedAt: number): number {
-  const row = adapter
-    .prepare(
-      `SELECT count(*) AS n FROM model_runs
-        WHERE parent_model_run_id = ? AND status NOT IN ('committed', 'failed') AND created_at >= ?`
-    )
-    .get(modelRunId, startedAt) as { n: number } | undefined;
-  return row?.n ?? 0;
 }
 
 export interface RecordOrders extends RecordOrderPort {

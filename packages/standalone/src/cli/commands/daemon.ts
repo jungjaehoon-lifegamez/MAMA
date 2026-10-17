@@ -1,6 +1,6 @@
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import { readDocumentToolkit } from '../../tools/document-toolkit.js';
-import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -56,6 +56,7 @@ import { ownerRuleIds } from '../../runtime/owner-authority.js';
 import { resolvePrincipalAccess } from '../../runtime/principal-access.js';
 import type { OwnerFileDeliveryResult } from '../../api/file-delivery.js';
 import { createReportScheduler, type ReportScheduler } from '../../runtime/report-scheduler.js';
+import type { UpkeepEvent } from '../../runtime/upkeep-orders.js';
 import { findDailyPages } from '../../wiki/wiki-read.js';
 import { createTimeZoneSetting, localNow } from '../../runtime/timezone.js';
 import { createOutboundEventRecorder } from '../../api/security-events.js';
@@ -315,6 +316,22 @@ export function validateDeliveryRoutes(config: W1Config): void {
         `delivery.${purpose} targets ${messenger}, which is disabled or has no allowlisted owner channel`
       );
   }
+}
+
+/**
+ * The instant closing summaries start being ordered: written once, at the first start that runs
+ * upkeep, so items closed before it are left to the one-time summary script.
+ */
+export function upkeepCloseSince(path: string, now = Date.now()): number {
+  if (existsSync(path)) {
+    const stored = (JSON.parse(readFileSync(path, 'utf8')) as { closeSince?: unknown }).closeSince;
+    if (typeof stored !== 'number' || !Number.isSafeInteger(stored))
+      throw new Error(`${path} has no closeSince epoch`);
+    return stored;
+  }
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify({ closeSince: now }, null, 2)}\n`, { mode: 0o600 });
+  return now;
 }
 
 export function pathsFor(configPath: string, config: W1Config): DaemonPaths {
@@ -844,6 +861,23 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         }${'reason' in event ? ` reason=${stimulusFailureReason(event.reason)}` : ''}`;
         if (event.type === 'lost') logger.error(line);
         else logger.info(line);
+      },
+      // Upkeep orders write the ledger from live state: a replay places none, but still serves an
+      // order a live run left in the mailbox.
+      upkeep: {
+        closeSince: upkeepCloseSince(join(paths.runtimeRoot, 'upkeep-state.json')),
+        scan: options.mode !== 'replay',
+        onEvent: (event: UpkeepEvent) => {
+          const line = `upkeep ${event.kind} ${event.type}${
+            event.type === 'ordered'
+              ? ` order=${event.order} subjects=${event.subjects}`
+              : ` subject=${event.subject}`
+          }${'attempt' in event ? ` attempt=${event.attempt}` : ''}${
+            'reason' in event ? ` reason=${stimulusFailureReason(event.reason)}` : ''
+          }`;
+          if (event.type === 'lost') logger.error(line);
+          else logger.info(line);
+        },
       },
       onStimulusDelivered: (row, modelRunId) => stimulusDelivered(logger, row, modelRunId),
       onStimulusFailed: (row, reason, modelRunId) =>

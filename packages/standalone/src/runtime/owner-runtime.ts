@@ -86,6 +86,8 @@ import type {
 import { getSessionPool, type SessionPool } from '@jungjaehoon/mama-core/runtime/session-pool';
 import { createJevClient } from '../replay/jev-client.js';
 import { createRecordOrders, type RecordOrderEvent } from './record-orders.js';
+import { createUpkeepOrders, type UpkeepEvent } from './upkeep-orders.js';
+import { closeUpkeepKind } from './upkeep-close.js';
 import { initTokenEstimator } from '@jungjaehoon/mama-core/runtime/token-estimator';
 import {
   createStimulusDelivery,
@@ -170,6 +172,16 @@ export interface OwnerRuntimeOptions {
   closeUncertain?: StimulusDeliveryOptions['closeUncertain'];
   /** Record-order outcomes (recorded, retry, lost); the daemon logs them. */
   onRecordOrderEvent?: (event: RecordOrderEvent) => void;
+  /**
+   * Ledger upkeep orders (docs/development/work/ledger-upkeep.md); live only. closeSince bounds
+   * the closing summaries ordered: items closed earlier are summarized by a one-time script.
+   */
+  upkeep?: {
+    closeSince: number;
+    /** False in a replay: its rows are still served, but no new order is placed. */
+    scan: boolean;
+    onEvent?: (event: UpkeepEvent) => void;
+  };
   /** Lesson recall for a turn; defaults to memory.search over the owner's guidance. */
   lessons?: StimulusDeliveryOptions['lessons'];
   /** A lesson search that did not complete; the turn goes on with what the others found. */
@@ -791,6 +803,23 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       processStartedAt,
       ...(options.onRecordOrderEvent === undefined ? {} : { onEvent: options.onRecordOrderEvent }),
     });
+    const upkeep =
+      options.upkeep === undefined
+        ? undefined
+        : createUpkeepOrders({
+            adapter: database.adapter,
+            accept: (stimulus) =>
+              intakeRuntime.accept({ ...stimulus, principalId: options.ownerPrincipalId }),
+            processStartedAt,
+            kinds: [
+              closeUpkeepKind({
+                since: options.upkeep.closeSince,
+                access: () => access,
+                timeZone: () => options.timeZone.get(),
+              }),
+            ],
+            ...(options.upkeep.onEvent === undefined ? {} : { onEvent: options.upkeep.onEvent }),
+          });
     delivery = createStimulusDelivery({
       skills: createSkillTurnContext(() => surface.skills.list(options.ownerPrincipalId)),
       turnChain: sessions.turnChain(options.ownerPrincipalId),
@@ -947,6 +976,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           );
         }),
       recordOrders,
+      ...(upkeep === undefined ? {} : { upkeep }),
       ...(options.onOwnerResult === undefined ? {} : { onOwnerResult: options.onOwnerResult }),
       ...(options.onSourceResult === undefined ? {} : { onSourceResult: options.onSourceResult }),
       ...(options.onScheduledResult === undefined
@@ -1147,6 +1177,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
     });
     ownerMailbox = intakeRuntime.mailbox;
     recordOrders.recover();
+    if (options.upkeep?.scan) upkeep?.start();
     // Recovered host inputs need no new Telegram update to run.
     void intakeRuntime
       .drainOnce()
@@ -1291,6 +1322,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       stopping = true;
       schedulerStop = personalJobs.stop();
       recordOrders.stop();
+      upkeep?.stop();
       surface.memberRecords.stopRecovery();
       intakeRuntime.beginStop();
     };
