@@ -202,8 +202,10 @@ export function createUpkeepOrders(options: UpkeepOrdersOptions): UpkeepOrders {
   const byName = new Map(options.kinds.map((kind) => [kind.name, kind]));
   const byChannel = new Map(options.kinds.map((kind) => [kind.channel, kind]));
   const timers: Array<{ cancel(): void }> = [];
-  // A subject past its attempts is reported once per process, not at every tick.
-  const reportedLost = new Set<string>();
+  // Orders whose check is still waiting for child runs: their subjects are not ordered again yet.
+  const checking = new Set<string>();
+  // An order is settled once: a row parked uncertain and then closed reports here twice.
+  const settledOrders = new Set<string>();
   let stopped = false;
 
   const kindOf = (row: Pick<MailboxRow, 'channelKey'>): UpkeepKind => {
@@ -212,7 +214,14 @@ export function createUpkeepOrders(options: UpkeepOrdersOptions): UpkeepOrders {
     return kind;
   };
 
-  const settle = (kind: UpkeepKind, order: UpkeepOrderPayload, reason: string): void => {
+  const settle = (
+    kind: UpkeepKind,
+    orderId: string,
+    order: UpkeepOrderPayload,
+    reason: string
+  ): void => {
+    if (settledOrders.has(orderId)) return;
+    settledOrders.add(orderId);
     const { states } = storedSubjects(options.adapter, kind, now());
     for (const subject of order.subjects) {
       const orders = states.get(subject.key)?.orders ?? [];
@@ -221,10 +230,9 @@ export function createUpkeepOrders(options: UpkeepOrdersOptions): UpkeepOrders {
         continue;
       }
       const attempt = orders.length;
-      if (attempt >= UPKEEP_MAX_ATTEMPTS) {
-        reportedLost.add(`${kind.name}\u0000${subject.key}`);
+      if (attempt >= UPKEEP_MAX_ATTEMPTS)
         options.onEvent?.({ type: 'lost', kind: kind.name, subject: subject.key, attempt, reason });
-      } else
+      else
         options.onEvent?.({
           type: 'waiting',
           kind: kind.name,
@@ -241,32 +249,21 @@ export function createUpkeepOrders(options: UpkeepOrdersOptions): UpkeepOrders {
     if (stopped) return;
     const at = now();
     const { states, anyOpen } = storedSubjects(options.adapter, kind, at);
-    // One order of a kind at a time keeps the common session's queue for the owner.
-    if (anyOpen) return;
+    // One order of a kind at a time keeps the common session's queue for the owner; an order whose
+    // child runs may still write is not over yet.
+    if (anyOpen || [...checking].some((id) => id.startsWith(`upkeep:${kind.name}:`))) return;
     const due: UpkeepSubject[] = [];
     for (const subject of kind.scan(options.adapter, at)) {
       if (due.length >= kind.maxPerOrder) break;
       const state = states.get(subject.key);
       const orders = state?.orders ?? [];
+      // Reported lost when its last order was settled; it is never ordered again.
+      if (orders.length >= UPKEEP_MAX_ATTEMPTS) continue;
       if (
         orders.length > 0 &&
         kind.checked(options.adapter, subject, orderRunIds(options.adapter, orders))
       )
         continue;
-      if (orders.length >= UPKEEP_MAX_ATTEMPTS) {
-        const lostKey = `${kind.name}\u0000${subject.key}`;
-        if (!reportedLost.has(lostKey)) {
-          reportedLost.add(lostKey);
-          options.onEvent?.({
-            type: 'lost',
-            kind: kind.name,
-            subject: subject.key,
-            attempt: orders.length,
-            reason: `still unchecked after ${orders.length} orders`,
-          });
-        }
-        continue;
-      }
       due.push(subject);
     }
     if (due.length === 0) return;
@@ -290,6 +287,7 @@ export function createUpkeepOrders(options: UpkeepOrdersOptions): UpkeepOrders {
     onResult: (row, modelRunId) => {
       const kind = kindOf(row);
       const order = parseUpkeepOrder(row.payload);
+      checking.add(row.stimulusId);
       void (async () => {
         if (modelRunId !== null) {
           const deadline = Date.now() + childWaitMs;
@@ -301,23 +299,30 @@ export function createUpkeepOrders(options: UpkeepOrdersOptions): UpkeepOrders {
             await sleep(5_000);
         }
         if (stopped) return;
-        settle(kind, order, 'the order ended without the expected write or a no-update naming it');
-      })().catch((error: unknown) => {
-        // A check cut off by shutdown is not a loss: the next tick finds the subject again.
-        if (stopped) return;
-        for (const subject of order.subjects)
-          options.onEvent?.({
-            type: 'lost',
-            kind: kind.name,
-            subject: subject.key,
-            attempt: 0,
-            reason: `upkeep check failed: ${error instanceof Error ? error.message : String(error)}`,
-          });
-      });
+        settle(
+          kind,
+          row.stimulusId,
+          order,
+          'the order ended without the expected write or a no-update naming it'
+        );
+      })()
+        .catch((error: unknown) => {
+          // A check cut off by shutdown is not a loss: the next tick finds the subject again.
+          if (stopped) return;
+          for (const subject of order.subjects)
+            options.onEvent?.({
+              type: 'lost',
+              kind: kind.name,
+              subject: subject.key,
+              attempt: 0,
+              reason: `upkeep check failed: ${error instanceof Error ? error.message : String(error)}`,
+            });
+        })
+        .finally(() => checking.delete(row.stimulusId));
     },
     onLost: (row, reason) => {
       const kind = kindOf(row);
-      settle(kind, parseUpkeepOrder(row.payload), reason);
+      settle(kind, row.stimulusId, parseUpkeepOrder(row.payload), reason);
     },
     tick,
     start: () => {

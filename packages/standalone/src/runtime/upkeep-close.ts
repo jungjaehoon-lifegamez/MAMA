@@ -47,33 +47,52 @@ export function closeUpkeepKind(options: CloseKindOptions): UpkeepKind {
           : ` OR EXISTS (SELECT 1 FROM memory_scope_bindings b WHERE b.memory_id = c.head_record_id
                 AND b.scope_id IN (${scopes.map(() => '?').join(',')}))`
       })`;
+      const closed = CLOSED_STATUSES.map(() => '?').join(',');
       const rows = adapter
         .prepare(
           // Core folds revisions in the order they were written and drops one whose applies_until
-          // has passed; the closing revision is the latest live one that sets the status.
+          // has passed; a revision that clears the status leaves the item without one. The subject
+          // is the transition: the first closed revision after the last one that was not closed,
+          // so a later revision that sets the status to done again is not a new subject.
           `WITH live AS (
              SELECT * FROM commitment_assignments WHERE applies_until IS NULL OR applies_until > ?),
+           statuses AS (
+             SELECT commitment_id, revision, created_at,
+                    CASE WHEN EXISTS (SELECT 1 FROM json_each(live.clear_json) WHERE value = 'status')
+                         THEN NULL ELSE json_extract(set_json, '$.status') END AS status
+               FROM live
+              WHERE json_extract(set_json, '$.status') IS NOT NULL
+                 OR EXISTS (SELECT 1 FROM json_each(live.clear_json) WHERE value = 'status')),
            latest AS (
-             SELECT commitment_id, MAX(revision) AS revision FROM live
-              WHERE json_extract(set_json, '$.status') IS NOT NULL GROUP BY commitment_id),
+             SELECT commitment_id, MAX(revision) AS revision FROM statuses GROUP BY commitment_id),
+           reopened AS (
+             SELECT commitment_id, MAX(revision) AS revision FROM statuses
+              WHERE status IS NULL OR status NOT IN (${closed}) GROUP BY commitment_id),
+           closing AS (
+             SELECT s.commitment_id, MIN(s.revision) AS revision FROM statuses s
+               LEFT JOIN reopened o ON o.commitment_id = s.commitment_id
+              WHERE s.status IN (${closed}) AND s.revision > coalesce(o.revision, 0)
+              GROUP BY s.commitment_id),
            titles AS (
              SELECT x.commitment_id, json_extract(x.set_json, '$.title') AS title FROM live x
               WHERE x.revision = (SELECT MAX(y.revision) FROM live y
                                    WHERE y.commitment_id = x.commitment_id
                                      AND json_extract(y.set_json, '$.title') IS NOT NULL))
-           SELECT a.commitment_id, a.revision, a.created_at, json_extract(a.set_json, '$.status') AS status,
-                  coalesce(t.title, '') AS title
-             FROM live a
-             JOIN latest l ON l.commitment_id = a.commitment_id AND l.revision = a.revision
-             JOIN commitments c ON c.commitment_id = a.commitment_id AND c.withdrawn = 0
-             LEFT JOIN titles t ON t.commitment_id = a.commitment_id
-            WHERE json_extract(a.set_json, '$.status') IN (${CLOSED_STATUSES.map(() => '?').join(',')})
-              AND a.created_at >= ? AND ${visible}
-            ORDER BY a.created_at, a.commitment_id
-            LIMIT 200`
+           SELECT k.commitment_id, k.revision, s.created_at, now.status, coalesce(t.title, '') AS title
+             FROM closing k
+             JOIN latest l ON l.commitment_id = k.commitment_id
+             JOIN statuses now ON now.commitment_id = l.commitment_id AND now.revision = l.revision
+             JOIN statuses s ON s.commitment_id = k.commitment_id AND s.revision = k.revision
+             JOIN commitments c ON c.commitment_id = k.commitment_id AND c.withdrawn = 0
+             LEFT JOIN titles t ON t.commitment_id = k.commitment_id
+            WHERE now.status IN (${closed}) AND s.created_at >= ? AND ${visible}
+            ORDER BY s.created_at, k.commitment_id
+            LIMIT 1000`
         )
         .all(
           now,
+          ...CLOSED_STATUSES,
+          ...CLOSED_STATUSES,
           ...CLOSED_STATUSES,
           // A subject older than the attempt window would count its attempts from zero again.
           Math.max(options.since, now - UPKEEP_WINDOW_MS),

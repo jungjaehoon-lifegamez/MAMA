@@ -176,7 +176,12 @@ export interface OwnerRuntimeOptions {
    * Ledger upkeep orders (docs/development/work/ledger-upkeep.md); live only. closeSince bounds
    * the closing summaries ordered: items closed earlier are summarized by a one-time script.
    */
-  upkeep?: { closeSince: number; onEvent?: (event: UpkeepEvent) => void };
+  upkeep?: {
+    closeSince: number;
+    /** False in a replay: its rows are still served, but no new order is placed. */
+    scan: boolean;
+    onEvent?: (event: UpkeepEvent) => void;
+  };
   /** Lesson recall for a turn; defaults to memory.search over the owner's guidance. */
   lessons?: StimulusDeliveryOptions['lessons'];
   /** A lesson search that did not complete; the turn goes on with what the others found. */
@@ -1172,7 +1177,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
     });
     ownerMailbox = intakeRuntime.mailbox;
     recordOrders.recover();
-    upkeep?.start();
+    if (options.upkeep?.scan) upkeep?.start();
     // Recovered host inputs need no new Telegram update to run.
     void intakeRuntime
       .drainOnce()

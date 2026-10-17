@@ -939,9 +939,11 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
       if (row.nativeDelivery?.state === 'dispatching' || row.nativeDelivery?.state === 'accepted') {
         const reason = isRecordOrderRow(row)
           ? 'Record order interrupted before completion; the ledger check decides the next attempt'
-          : row.kind === 'scheduled'
-            ? 'Scheduled report interrupted before completion; retry on the next report tick'
-            : `${row.kind} interrupted before completion; no stored result`;
+          : options.upkeep?.isUpkeepRow(row)
+            ? 'Upkeep order interrupted before completion; its check decides the next order'
+            : row.kind === 'scheduled'
+              ? 'Scheduled report interrupted before completion; retry on the next report tick'
+              : `${row.kind} interrupted before completion; no stored result`;
         await options.onFailed?.(row, reason, null);
         // Core parks the orphan uncertain, preserving its receipt and any result.
         throw new Error(reason);

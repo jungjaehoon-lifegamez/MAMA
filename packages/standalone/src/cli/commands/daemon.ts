@@ -862,25 +862,23 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         if (event.type === 'lost') logger.error(line);
         else logger.info(line);
       },
-      // Upkeep orders write the ledger from live state; a replay window leaves them off.
-      ...(options.mode === 'replay'
-        ? {}
-        : {
-            upkeep: {
-              closeSince: upkeepCloseSince(join(paths.runtimeRoot, 'upkeep-state.json')),
-              onEvent: (event: UpkeepEvent) => {
-                const line = `upkeep ${event.kind} ${event.type}${
-                  event.type === 'ordered'
-                    ? ` order=${event.order} subjects=${event.subjects}`
-                    : ` subject=${event.subject}`
-                }${'attempt' in event ? ` attempt=${event.attempt}` : ''}${
-                  'reason' in event ? ` reason=${stimulusFailureReason(event.reason)}` : ''
-                }`;
-                if (event.type === 'lost') logger.error(line);
-                else logger.info(line);
-              },
-            },
-          }),
+      // Upkeep orders write the ledger from live state: a replay places none, but still serves an
+      // order a live run left in the mailbox.
+      upkeep: {
+        closeSince: upkeepCloseSince(join(paths.runtimeRoot, 'upkeep-state.json')),
+        scan: options.mode !== 'replay',
+        onEvent: (event: UpkeepEvent) => {
+          const line = `upkeep ${event.kind} ${event.type}${
+            event.type === 'ordered'
+              ? ` order=${event.order} subjects=${event.subjects}`
+              : ` subject=${event.subject}`
+          }${'attempt' in event ? ` attempt=${event.attempt}` : ''}${
+            'reason' in event ? ` reason=${stimulusFailureReason(event.reason)}` : ''
+          }`;
+          if (event.type === 'lost') logger.error(line);
+          else logger.info(line);
+        },
+      },
       onStimulusDelivered: (row, modelRunId) => stimulusDelivered(logger, row, modelRunId),
       onStimulusFailed: (row, reason, modelRunId) =>
         stimulusFailed(logger, row.kind ?? 'unknown', row.stimulusId, reason, modelRunId),
