@@ -2656,3 +2656,18 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Still open:
   - How many items, month by month, lack a shape (feedback rounds and progress) in the ledger. The 49 of 182 above are one project's share.
   - Whether a turn that answers from sources records what it found, so that the same gap does not stay open.
+
+### Ledger upkeep: measured (2026-10-17)
+
+- Result: the agent records live deltas, but does little of the other upkeep, because nothing starts that work or checks it. This led to the [ledger upkeep](work/ledger-upkeep.md) design (owner decision: before W2.3).
+- Evidence (live DB, read-only, counted the way core folds revisions):
+  - Record orders: 2,131 recorded, 42 lost. Duplicate items fell from 6 in September to 0 in October.
+  - Closing summaries: 6 of 34 items closed in October have one. September's 54 of 84 are the development session's manual pass.
+  - Write-back: 29 of 85 question turns that read sources recorded what they read.
+  - Board drift: the owner asked three times in two weeks; the 2026-10-16 request fixed 4 items. Open items now: 50, of which 3 have had no event for over 30 days.
+  - Question types that went to source search: feedback content and asset detail (1–25 searches), estimates and prices (20–39, with 3 judgment records on the subject), aggregates by month or worker (109–117), board comparison (4–133).
+- Measurement mistakes found on the way:
+  - Raw-citation percent is not ledger density: backfill revisions cite 9–12 lines each, live revisions 3–4.
+  - A line count of an export with embedded newlines miscounted items.
+  - Ignoring `applies_until` counted folded-away states as open.
+- Still open: U1–U3 as designed.

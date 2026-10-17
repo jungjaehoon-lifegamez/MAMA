@@ -15,6 +15,8 @@ Rules: [AGENTS.md](../../AGENTS.md). Keep this plan under 200 lines and each che
 - C6 passes with search through the packed core's public exports (W3, W4's search half; [check](checks.md#c6-with-search-a-consumer-searches-its-own-records-without-a-model-w4-2026-10-05)).
 - Standing owner rules are written into the owner policy in owner chat turns (W37.1, #430; [check](checks.md#how-corrections-reach-each-turn-kind-w37-decided-2026-10-06)).
 
+- Ledger upkeep (closing summaries, write-back after a source answer, daily board reconcile) comes before 1.0 W2.3 (owner, 2026-10-17): [design](work/ledger-upkeep.md), [measured](checks.md#ledger-upkeep-measured-2026-10-17).
+
 ## Owner checks
 
 The owner asks these questions on Telegram about real September data and gets evidence-backed answers that
