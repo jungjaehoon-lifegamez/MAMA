@@ -156,13 +156,17 @@ Some closed items do carry full summaries, so the agent can do this. The gap is 
 
 ## Failure modes
 
-| Failure                                               | Handling                                                                                     |
-| ----------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| An order run fails or is stopped                      | The subject retries. A third failure is reported lost and the subject is not selected again. |
-| A close order changes the status again                | It adds no new closing revision, so there is no new subject.                                 |
-| A personal observation would reach the common session | Only common-scope refs are carried.                                                          |
-| Stored card moves lag the board                       | The order reads the card live. Stored moves only choose the subjects.                        |
-| One card is cited by two items                        | Both items become subjects, and the agent judges.                                            |
+| Failure                                                         | Handling                                                                                     |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| An order run fails or is stopped                                | The subject retries. A third failure is reported lost and the subject is not selected again. |
+| A close order changes the status again                          | It adds no new closing revision, so there is no new subject.                                 |
+| A personal observation would reach the common session           | Only common-scope refs are carried.                                                          |
+| Stored card moves lag the board                                 | The order reads the card live. Stored moves only choose the subjects.                        |
+| One card is cited by two items                                  | Both items become subjects, and the agent judges.                                            |
+| A revision sets the status to done again                        | The subject is the transition into a closed status, so it stays the same subject.            |
+| A finished order's child runs still write                       | The kind places no new order until that check ends.                                          |
+| A replay daemon finds an upkeep order a live run left           | It serves the order but scans for none.                                                      |
+| A subject waits past the seven-day window (the daemon was down) | It leaves the scan without a lost report, and its stored orders show the attempts.           |
 
 ## Order of work
 
