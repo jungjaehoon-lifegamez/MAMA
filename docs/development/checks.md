@@ -2638,3 +2638,9 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Still open:
   - The probe on a clean account through `mama init` itself, run in G1.
   - The owner's personal (member) session is proven by the first DM, not by the probe.
+
+### C3: the owner's note on the corrected answer (2026-10-17)
+
+- Result: the owner says that after the precedent correction of 2026-10-03, MAMA answered the similar-case question correctly, and they did not measure further.
+- Evidence: the owner's statement in the development session; the passing answers are the C3 entries of 2026-10-04 above.
+- Still open: F2 asks for answers on new anchors, meaning questions about cases no correction touched. Whether the correction carries to them, and how long such an answer takes from memory, is unmeasured.
