@@ -5,99 +5,193 @@ Owner decision 2026-10-17: build this before 1.0 W2.3. Evidence is in
 
 ## Why
 
-The agent records a live delta well because the host starts the work and checks the result: a
-record order is checked by citation or `work.no_update`, and 98% of batches are recorded. The other
-upkeep has neither a trigger nor a check, and is mostly not done:
+A record order handles 98% of live delta batches. Read that figure with care: a batch passes when
+one of its observations is cited by any revision, or when its own order calls `work.no_update`
+(`record-orders.ts:57-79`). So it measures batches handled, not every observation recorded. Even
+so, it is the only upkeep with a host trigger and a host check. The rest has neither, and is
+mostly not done:
 
-- **Closing summaries.** 6 of 34 items closed in October have one. A summary covers the item's
-  rounds, the points raised and how it ended. The September figure (64%) is the development
-  session's manual pass, not the agent's.
-- **Write-back.** 29 of 85 owner-question turns that answered from source search (34%) recorded
-  what they found.
-- **Board drift.** The owner asked three times in two weeks to compare the ledger with the task
-  board. Each time the agent fixed a few items.
+- **Closing summaries:** 6 of 34 items closed in October have one.
+- **Write-back:** 29 of 85 owner-question turns that read sources recorded what they read.
+- **Board drift:** the owner asked three times in two weeks to compare with the board.
 
-The agent can do all three, since some closed items carry a full summary. So this is a host gap,
-not a model gap (AGENTS.md: fix what the program delivers, not what a better model would).
+Some closed items do carry full summaries, so the agent can do this. The gap is in the host
+(AGENTS.md: fix what the program delivers).
 
-## Shape (shared)
+## Shared order kind
 
-Each upkeep kind is a scheduled order on the record-order lane (`operator:record`, `scheduled` kind,
-the common session's chain):
-
-1. The host chooses the subjects from stored facts.
-2. The agent judges and writes.
-3. When the order's run ends, the host checks that every subject has a work revision written in
-   that run, or a `work.no_update` from that run citing it.
-4. Subjects left unchecked go into the next order of the same kind, up to three attempts.
-5. After that they are reported lost, as record orders already are.
-
-Domain words stay out of host code. The host knows "status became done", "a turn read these
-observations" and "a board connector's card moved". Stage names, list names and what counts as
-drift come from the owner's data and corrections.
+- **Channels:** each kind has its own `scheduled` channel (`operator:close`, `operator:writeback`,
+  `operator:reconcile`) with its own payload parser and renderer.
+- **Delivery:** the common session's chain, never in replay. The result, lost and uncertain
+  branches of `stimulus-delivery.ts`, which today name only `operator:record` (`:762`, `:857`,
+  `:871`), take every upkeep channel through one port.
+- **Subject:** a stable key per kind:
+  - U1: item plus closing revision;
+  - U2: the question turn's model run;
+  - U3: item, or card plus its triggering event.
+- **Attempts:** counted per subject from the stored orders of the last seven days, as
+  `storedBatches` counts batches. A scan never selects a subject that is checked, still open in an
+  order, or lost after three attempts. A new closing revision, turn or card move is a new subject.
+- **Check:** per subject, in the order's run and its child runs. The kind decides what counts:
+  - U1 and U3: a work revision on the item (`commitment_assignments.model_run_id`).
+  - U2: a work revision or a `memory.save` whose `derived_from` cites one of the order's
+    observations.
+  - All three: a `work.no_update` naming the subject.
+- **Contract change:** `work.no_update` takes `commitmentIds` beside `observationRefs`, so an item
+  can be named (`record-actions.ts`).
+- **Domain words** stay out of host code. Stage and list names, and what counts as drift, come
+  from the owner's data and corrections.
 
 ## U1 Closing summary order
 
-- **Subjects:** items whose current status became `done` or `cancelled` since the last close order
-  and that no close-order run has revised. The host scans hourly. One order carries at most ten
-  items, oldest first.
-- **Order asks for:** the item's closing summary in `description`, written as one revision with
-  `derived_from` links to the revisions' evidence:
-  - rounds (submissions, external feedback and the points raised, internal reviews);
-  - who did what;
-  - how it ended;
-  - what is worth reusing.
-
-  An item that already has one is answered with `work.no_update`.
-
-- **Check:** the run revised each item, or no-updated it citing the item.
-- **Done when:** a week after deploy, at least 90% of items closed in that week have a closing
-  summary written by a close order. Count with SQL over `commitment_assignments` joined to the
-  order runs.
+- **Subjects:** each closing revision written after the deploy, meaning a revision that moves the
+  item's current status (core's fold, `applies_until` honoured) to `done` or `cancelled`. A
+  reopened item that closes again is a new subject. The host scans hourly. One order carries at
+  most ten subjects, oldest first.
+- **Before the deploy:** items closed earlier get their summaries from a one-time
+  development-session script. It computes rounds from the existing revisions and is pushed on a
+  copy first (owner, 2026-10-17).
+- **Order asks for:** a closing summary in `description`, written as one revision with
+  `derived_from` links to the evidence. It covers the rounds (submissions, external feedback and
+  its points, internal reviews), who did what, how the item ended, and what is reusable. An item
+  whose summary is already current gets `work.no_update` naming it.
+- **Check:** the revision sets a non-empty `description`. A status-only revision does not pass.
+- **Done when:** a week after deploy, at least 90% of that week's closing revisions have a
+  description-setting revision from a close-order run, or a no-update naming the item. Count with
+  SQL over `commitment_assignments` and `tool_traces`.
 
 ## U2 Write-back order
 
-- **Subjects:** owner and member question turns that read observations through `source.search` or
-  `source.read` (`observationRef` in the tool output) and whose run cites none of them in a work
-  revision, `memory.save` or `work.no_update`. The host checks five minutes after the turn ends.
-  One order per question turn, carrying at most 30 observations.
+- **Subjects:** question turns of principals with the owner role and of the common session.
+  Members' DMs stay personal (owner, 2026-10-17; P6). A turn qualifies when it read observations
+  and its run cites none of them.
+- **Common sources only:** only observations in common scope are carried. The owner's own DM chat
+  and anything personal-scoped are dropped, so no personal observation reaches the common session.
+  The question text is never carried.
+- **Read receipt (prerequisite):**
+  - `source.search` and `source.read` record the observation refs they returned in
+    `tool_traces.evidence_json`, in full.
+  - `output_summary` is cut at 4,000 characters and 40 array items (`trace-summary.ts:40-72`), so
+    it cannot be the source.
+  - Search hits are candidates. The order lists the refs that `source.read` opened first, then
+    search hits, up to 30, and says which were opened.
 - **Order asks for:** "a question was answered from these sources". Record what belongs in the
-  ledger:
+  ledger, citing with `derived_from`:
   - a work revision;
-  - a fact or lesson, including prices, specs and client rules, which have no other home;
+  - a fact or lesson (prices, specs and client rules go here);
   - or `work.no_update` with the reason.
-
-  Cite with `derived_from`.
-
-- **Check:** the record-order check over the order's observations.
-- **Done when:** a week after deploy, at least 90% of question turns that read sources are followed
-  by a recorded or no-updated write-back order. A repeated question about the same matter reads
-  the ledger first and searches sources fewer times than the first one did; compare the two
-  turns' `source.search` counts.
+- **Check:** turn-level. At least one qualifying write cites the order's observations, or a
+  no-update names them.
+- **Done when:** a week after deploy, at least 90% of qualifying turns have a checked write-back
+  order. A repeated question about a written-back matter makes fewer `source.search` calls than the
+  first one did.
 
 ## U3 Board reconcile order
 
-- **Subjects:** once a day, before the morning report:
-  1. open ledger items whose linked card (the card ids among their cited board observations) moved
-     after the item's latest revision;
-  2. open items with no source event for seven days;
-  3. cards that moved in the last day and that no revision cites.
-
-  Each subject carries the facts: the card's current list and time, and the item's status, stage
-  and latest event. At most 30 subjects, oldest first.
-
-- **Order asks for:** bring each subject's ledger state in line with what the board and the latest
-  originals show (`work.revise` with the reason), or `work.no_update` saying why it stays.
-- **Check:** each subject was revised, or no-updated citing its card or item.
-- **Relocation:** the daily page's "Stale work" step (help topic `daily`) moves here and is deleted
-  from the daily procedure in the same PR.
+- **Subjects:** once a day, before the morning report.
+  1. The daily page's "Stale work" step, moved as it is: items in progress or in review whose
+     latest source event is over 30 days old, at most ten a day, oldest first. It is deleted from
+     help topic `daily` in the same PR.
+  2. Open items whose linked card moved after the item's latest revision. A linked card is a card
+     id among the item's cited board observations, read from stored events.
+- **Order asks for:** read each subject's card live with the board tool, plus its latest originals.
+  Then either write `work.revise` with the reason, or `work.no_update` naming the item and saying
+  why it stays. A stored move is a hint, and the live card decides. A collection gap shows up as a
+  live card that differs from the stored events, and the agent says so.
+- **Check:** a revision on the item, or a no-update naming it.
 - **Done when:** for seven days after deploy, every daily order's subjects are checked, and the
   owner gives no manual "compare with the board" instruction.
 
+## What already exists and is reused
+
+- **`record-orders.ts`:** the three-attempt retry, the lost report, and the recovery read of
+  stored orders. Their mechanism moves into the shared kind; record orders keep their own check.
+- **`stimulus-delivery.ts`:** the `scheduled` branch.
+- **`turn-orders.ts`:** the wording of `deltaRecordOrder`'s steps.
+- **The daily page's "Stale work" step:** becomes U3's first subject list.
+- **Kagemusha:** has per-delta taskboard and feedback-forwarding reconciles, ported as record
+  orders. It has no closing summary, no write-back and no daily board sweep.
+
+## Not in scope
+
+- **Agent-written summaries for items closed before the deploy:** the development-session script
+  writes them.
+- **Members' DM questions:** they stay personal (P6).
+- **A price or estimate record type:** prices are saved as facts until the facts prove not enough.
+- **Board connectors other than Trello:** card ids are read generically, but only Trello carries
+  them today.
+- **Changing the stale threshold:** U3 keeps 30 days and ten a day.
+
+## Tests (each PR)
+
+**Scan:**
+
+- done after the deploy vs before it;
+- a revision bounded by `applies_until`;
+- reopened and closed again;
+- a subject checked, still open, or lost after three attempts;
+- an owner-role turn vs a member turn;
+- personal-scope observations dropped;
+- a turn whose run already cites what it read.
+
+**Check:**
+
+- a revision on the item, in the run or a child run;
+- a status-only revision fails U1;
+- `memory.save` citing the observations passes U2;
+- a `work.no_update` naming an item passes;
+- anything else retries, and the subject is lost after three attempts and never selected again.
+
+**Delivery:**
+
+- each channel renders its order;
+- the result, lost and uncertain paths are taken for each channel;
+- replay enqueues nothing;
+- a restart recovers open orders.
+
+**Read receipt:** a search returning more than 40 hits keeps every ref in `evidence_json`.
+
+**Live:** the "Done when" SQL on the owner install a week after deploy, recorded in checks.md.
+
+## Failure modes
+
+| Failure                                               | Handling                                                                                     |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| An order run fails or is stopped                      | The subject retries. A third failure is reported lost and the subject is not selected again. |
+| A close order changes the status again                | It adds no new closing revision, so there is no new subject.                                 |
+| A personal observation would reach the common session | Only common-scope refs are carried.                                                          |
+| Stored card moves lag the board                       | The order reads the card live. Stored moves only choose the subjects.                        |
+| One card is cited by two items                        | Both items become subjects, and the agent judges.                                            |
+
 ## Order of work
 
-- **PR 1 (U2):** the smallest. It reuses the record-order batch and check as they are.
-- **PR 2 (U1):** an hourly scan plus the close-order prompt.
-- **PR 3 (U3):** the daily scan, the subject facts, and the relocation of the daily's stale step.
-- **After each PR:** a live check measured with the SQL in its "Done when", recorded in
-  checks.md.
+- **PR 1:** the shared order kind, plus `work.no_update` taking `commitmentIds`. Record orders'
+  check and behaviour stay as they are, and their tests pass unchanged.
+- **PR 2 (U2):** the read receipt and the write-back order.
+- **PR 3 (U1):** the hourly scan and the close order. Beside it, in the development session, the
+  one-time summary script for items closed before the deploy.
+- **PR 4 (U3):** the daily scan, and the move of the stale step out of help topic `daily`.
+- **After each PR:** a live check with its "Done when" SQL, recorded in checks.md.
+
+## Review
+
+- **plan-eng-review (2026-10-17):** owner decisions on U2's scope (owner role and common session
+  only) and U1's history (a script).
+- **Codex outside voice:** nine findings, all taken. U2 crossed the personal boundary, and its read
+  evidence was truncated. Checks were not per subject and did not count `memory.save`. The
+  three-attempt limit did not reach the scanners. The lost and uncertain branches were bound to the
+  record channel. U3 changed the stale policy. U1's measure passed status-only revisions. The 98%
+  figure was read too broadly.
+
+## GSTACK REVIEW REPORT
+
+| Review       | Trigger            | Why                             | Runs | Status                | Findings                                                                 |
+| ------------ | ------------------ | ------------------------------- | ---- | --------------------- | ------------------------------------------------------------------------ |
+| Eng Review   | `/plan-eng-review` | Architecture & tests (required) | 1    | CLEAR (PLAN)          | 3 own findings + 9 outside-voice findings, all folded; 2 owner decisions |
+| Codex Review | outside voice      | Independent 2nd opinion         | 1    | issues_found → folded | 9 findings, 9 taken                                                      |
+
+- **CROSS-MODEL:** no disagreement. The outside voice found what the first pass missed (privacy
+  boundary, truncated receipts, per-subject checks), and all of it was taken.
+- **VERDICT:** ENG CLEARED (PLAN): ready to implement PR 1.
+
+NO UNRESOLVED DECISIONS
