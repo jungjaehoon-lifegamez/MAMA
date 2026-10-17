@@ -30,6 +30,7 @@ import type { NativeTurnResultRecord } from '@jungjaehoon/mama-core/runtime/nati
 import type { SourceDelta } from '../connectors/framework/polling-scheduler.js';
 import type { QueueCandidateScore, QueueLine, WindowQueue } from '../replay/window-queue.js';
 import { SUBAGENT_RUNTIME_RULES, type OwnerRuntimeBackend } from './owner-system-prompt.js';
+import type { UpkeepOrders } from './upkeep-orders.js';
 import {
   RECORD_ORDER_CHANNEL,
   REPORT_CHANNEL,
@@ -132,6 +133,8 @@ export interface StimulusDeliveryOptions {
   /** A session-start skill inventory; subsequent turns get only set changes. */
   skills?: (isNewSession: boolean, stateless: boolean, sessionKey: string) => Promise<string>;
   recordOrders?: RecordOrderPort;
+  /** Ledger upkeep orders (upkeep-orders.ts): rendered, checked and settled like record orders. */
+  upkeep?: Pick<UpkeepOrders, 'isUpkeepRow' | 'render' | 'onResult' | 'onLost'>;
   readResult?: (row: MailboxRow) => NativeTurnResultRecord | null;
   onUncertain?: StimulusDelivery['onUncertain'];
   onDead?: StimulusDelivery['onDead'];
@@ -668,6 +671,12 @@ async function planTurn(row: MailboxRow, options: StimulusDeliveryOptions): Prom
     };
   }
   if (row.kind === 'scheduled') {
+    if (options.upkeep?.isUpkeepRow(row))
+      return {
+        kind: 'turn',
+        lessonQuery: null,
+        render: (_lessons, now) => options.upkeep!.render(row, now),
+      };
     if (row.channelKey === RECORD_ORDER_CHANNEL) {
       const record = parseRecordOrder(row.payload);
       return {
@@ -760,6 +769,7 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
     }
     if (row.kind === 'scheduled') {
       if (isRecordOrderRow(row)) await options.recordOrders?.onResult(row, modelRunId ?? null);
+      else if (options.upkeep?.isUpkeepRow(row)) options.upkeep.onResult(row, modelRunId ?? null);
       else {
         if (
           (personalJobPayload(row) && options.personalJobs?.isClosed(row)) ||
@@ -855,6 +865,7 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
 
   const lost = async (row: MailboxRow, reason: string): Promise<void> => {
     if (isRecordOrderRow(row)) await options.recordOrders?.onLost(row, reason);
+    if (options.upkeep?.isUpkeepRow(row)) options.upkeep.onLost(row, reason);
   };
 
   /** Where an uncertain row's remaining duty went, or null while it has nowhere to go yet. */
@@ -872,6 +883,10 @@ export function createStimulusDelivery(options: StimulusDeliveryOptions): Replay
       if (!options.recordOrders) return null;
       await options.recordOrders.onLost(row, 'record order parked uncertain');
       return 'record check';
+    }
+    if (options.upkeep?.isUpkeepRow(row)) {
+      options.upkeep.onLost(row, 'upkeep order parked uncertain');
+      return 'upkeep check';
     }
     if (personalNoticePayload(row)) return 'nothing further for this personal notice';
     if (personalJobPayload(row)) return 'the next personal job occurrence';

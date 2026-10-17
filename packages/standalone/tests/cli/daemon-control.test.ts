@@ -17,6 +17,7 @@ import {
   StopDuringBootError,
   askDaemon,
   runDaemon,
+  upkeepCloseSince,
 } from '../../src/cli/commands/daemon.js';
 import type { W1Config } from '../../src/runtime/config.js';
 
@@ -414,5 +415,14 @@ describe('daemon boot holds the install', () => {
     expect(lockHolder(daemonControlPaths(home))).toBeNull();
     const daemon = await boot(home, []).run;
     await daemon.stop();
+  });
+});
+
+describe('upkeep start', () => {
+  it('writes the instant closing summaries start once, and keeps it after a restart', () => {
+    const path = join(root(), 'runtime', 'upkeep-state.json');
+    expect(upkeepCloseSince(path, 1_000)).toBe(1_000);
+    expect(upkeepCloseSince(path, 2_000)).toBe(1_000);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 });

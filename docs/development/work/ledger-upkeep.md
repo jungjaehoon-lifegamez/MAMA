@@ -104,8 +104,9 @@ Some closed items do carry full summaries, so the agent can do this. The gap is 
 
 ## What already exists and is reused
 
-- **`record-orders.ts`:** the three-attempt retry, the lost report, and the recovery read of
-  stored orders. Their mechanism moves into the shared kind; record orders keep their own check.
+- **`record-orders.ts`:** stays as it is. Its batches follow live deltas and ride with the next
+  delta, so a separate runner (`upkeep-orders.ts`) serves the upkeep kinds. The two share the
+  child-run wait (`runningChildren`).
 - **`stimulus-delivery.ts`:** the `scheduled` branch.
 - **`turn-orders.ts`:** the wording of `deltaRecordOrder`'s steps.
 - **The daily page's "Stale work" step:** becomes U3's first subject list.
@@ -165,12 +166,13 @@ Some closed items do carry full summaries, so the agent can do this. The gap is 
 
 ## Order of work
 
-- **PR 1:** the shared order kind, plus `work.no_update` taking `commitmentIds`. Record orders'
-  check and behaviour stay as they are, and their tests pass unchanged.
-- **PR 2 (U2):** the read receipt and the write-back order.
-- **PR 3 (U1):** the hourly scan and the close order. Beside it, in the development session, the
-  one-time summary script for items closed before the deploy.
-- **PR 4 (U3):** the daily scan, and the move of the stale step out of help topic `daily`.
+- **PR 1 (U1):** the upkeep runner (`upkeep-orders.ts`: scan, order, per-subject check, attempts
+  counted from stored orders, lost after three), its delivery branches, `work.no_update` taking
+  `commitmentIds`, and the closing summary kind (`upkeep-close.ts`). `closeSince` is written once
+  to `runtime/upkeep-state.json` at the first live start. Beside it, in the development session,
+  the one-time summary script for items closed before that instant.
+- **PR 2 (U2):** the read receipt and the write-back kind.
+- **PR 3 (U3):** the daily kind, and the move of the stale step out of help topic `daily`.
 - **After each PR:** a live check with its "Done when" SQL, recorded in checks.md.
 
 ## Review

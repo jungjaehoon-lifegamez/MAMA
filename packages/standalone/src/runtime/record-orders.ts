@@ -2,6 +2,7 @@ import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
 import type { MailboxRow, Stimulus } from '@jungjaehoon/mama-core/runtime/mailbox';
 import type { StimulusReceipt } from '@jungjaehoon/mama-core/runtime/runtime';
 import type { RecordOrderPort } from './stimulus-delivery.js';
+import { runningChildren } from './upkeep-orders.js';
 import {
   RECORD_ORDER_CHANNEL,
   parseRecordOrder,
@@ -109,17 +110,6 @@ function noUpdateIn(
       )
       .get(...orderIds, ...orderIds, ...(cites ?? [])) !== undefined
   );
-}
-
-/** Child runs of a record run that this process started and that have not ended yet. */
-function runningChildren(adapter: DatabaseAdapter, modelRunId: string, startedAt: number): number {
-  const row = adapter
-    .prepare(
-      `SELECT count(*) AS n FROM model_runs
-        WHERE parent_model_run_id = ? AND status NOT IN ('committed', 'failed') AND created_at >= ?`
-    )
-    .get(modelRunId, startedAt) as { n: number } | undefined;
-  return row?.n ?? 0;
 }
 
 export interface RecordOrders extends RecordOrderPort {
