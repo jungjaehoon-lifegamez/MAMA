@@ -2644,3 +2644,15 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Result: the owner says that after the precedent correction of 2026-10-03, MAMA answered the similar-case question correctly, and they did not measure further.
 - Evidence: the owner's statement in the development session; the passing answers are the C3 entries of 2026-10-04 above.
 - Still open: F2 asks for answers on new anchors, meaning questions about cases no correction touched. Whether the correction carries to them, and how long such an answer takes from memory, is unmeasured.
+
+### Answer: three questions about five months back, from records, accepted (2026-10-17)
+
+- Result: the owner asked in their DM about a month five months back: which projects ran that month, how many items one project had and who did them, and which of its items had the most feedback. The owner judged all three answers correct.
+- Evidence (19:18–19:20 KST, owner's member session):
+  - All three answers came from records alone, with no source search: 32 s with `work.list` ×6, 12 s with ×1, and 32 s with ×95. The last one went through 182 items of the project.
+  - The answers gave counts that add up, the assignees, dates and feedback rounds.
+  - They stated their own limits: work finished before that month or never recorded may be missing, and 49 of the 182 items have no feedback count or description, so those were not judged.
+  - For contrast, over the 30 days before: of 171 question turns that looked something up, 85 searched sources (14 `source.search` calls per turn on average). They took about twice as long as record-only turns, and two thirds of them wrote nothing back. The owner says the errors were in answers about what was never recorded.
+- Still open:
+  - How many items, month by month, lack a shape (feedback rounds and progress) in the ledger. The 49 of 182 above are one project's share.
+  - Whether a turn that answers from sources records what it found, so that the same gap does not stay open.
