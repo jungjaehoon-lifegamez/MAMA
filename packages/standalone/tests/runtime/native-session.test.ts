@@ -800,6 +800,9 @@ describe('one owner native session', () => {
           'source.attachment.download',
           'manage.wiki.read',
           'report.read',
+          'trello.read',
+          'drive.read',
+          'drive.download',
         ]) {
           const result = await options.hostToolBridge.execute({ callId: name, name, input: {} });
           const envelope = JSON.parse(result.content);

@@ -15,7 +15,12 @@ export function isUntrustedExternalEvidenceTool(toolName: string): boolean {
     toolName === 'source.attachment.list' ||
     toolName === 'source.attachment.download' ||
     toolName === 'manage.wiki.read' ||
-    toolName === 'report.read'
+    toolName === 'report.read' ||
+    // Live connector reads (readsConnector): card and file text is written by other people, and
+    // the board reconcile order reads cards in a turn with no person in it.
+    toolName === 'trello.read' ||
+    toolName === 'drive.read' ||
+    toolName === 'drive.download'
   );
 }
 
