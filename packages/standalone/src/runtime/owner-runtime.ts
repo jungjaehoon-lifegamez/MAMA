@@ -89,6 +89,7 @@ import { createRecordOrders, type RecordOrderEvent } from './record-orders.js';
 import { createUpkeepOrders, type UpkeepEvent } from './upkeep-orders.js';
 import { closeUpkeepKind } from './upkeep-close.js';
 import { writebackUpkeepKind } from './upkeep-writeback.js';
+import { reconcileUpkeepKind } from './upkeep-reconcile.js';
 import { initTokenEstimator } from '@jungjaehoon/mama-core/runtime/token-estimator';
 import {
   createStimulusDelivery,
@@ -179,6 +180,8 @@ export interface OwnerRuntimeOptions {
    */
   upkeep?: {
     closeSince: number;
+    /** reports.full_report_hours: the board reconcile runs before the first one. */
+    fullReportHours: () => readonly number[];
     /** False in a replay: its rows are still served, but no new order is placed. */
     scan: boolean;
     onEvent?: (event: UpkeepEvent) => void;
@@ -828,6 +831,12 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
                 },
                 ownerPrincipalId: options.ownerPrincipalId,
                 timeZone: () => options.timeZone.get(),
+              }),
+              reconcileUpkeepKind({
+                knowledge,
+                access: () => access,
+                timeZone: () => options.timeZone.get(),
+                fullReportHours: options.upkeep.fullReportHours,
               }),
             ],
             ...(options.upkeep.onEvent === undefined ? {} : { onEvent: options.upkeep.onEvent }),

@@ -113,6 +113,26 @@ Some closed items do carry full summaries, so the agent can do this. The gap is 
 - **Check:** a revision on the item, or a no-update naming it.
 - **Done when:** for seven days after deploy, every daily order's subjects are checked, and the
   owner gives no manual "compare with the board" instruction.
+- **As built (PR 3, `upkeep-reconcile.ts`):**
+  - Cadence: the hourly tick finds the order due from local midnight until the first hour in
+    `reports.full_report_hours` (in `timezone`), once a local day, read from the stored orders.
+    A restart that morning places no second order, and an unchecked subject waits for the next
+    day, so its attempts count one a day. No full-report hour after midnight fails the scan
+    loudly in `daemon.log`.
+  - Stale items come from `work.list`'s own read (`workListLedger`): the same fold, visibility,
+    status and `lastEventBefore` definition. The text moved from help topic `daily` into the
+    order.
+  - A move is a stored board event whose action data names the list the card went to
+    (`data.listAfter`), within the seven-day attempt window. "After the item's latest revision"
+    compares with the latest revision time on the source timeline (event time, else write time),
+    because a backfill writes earlier periods last.
+  - Keys: `stale:<item>`; `move:<item>:<connector>:<card>:<event>`. The item is in the move key
+    because the check is per item and two items citing one card are two subjects.
+  - One order carries at most ten subjects: moves first, because they leave the window, then
+    stale items oldest first.
+  - A stale item kept with `work.no_update` or a revision without a new source event stays
+    stale. It is ordered again once its checked order leaves the seven-day window: a weekly
+    re-check.
 
 ## What already exists and is reused
 
