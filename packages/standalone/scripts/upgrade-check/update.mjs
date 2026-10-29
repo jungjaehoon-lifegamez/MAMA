@@ -243,8 +243,9 @@ export async function updateLeg({ root, home, env }) {
       ...env,
       ...npmSettings,
       PATH: `${fakes}:${env.PATH}`,
-      // A candidate that never boots fails in two minutes, not the owner's ten.
-      MAMA_UPDATE_WAIT_MS: '120000',
+      // Both waits (N+1's boot, and N+2's, which never comes): five minutes, not the owner's ten,
+      // and still room for a cold runner to load the embedding model.
+      MAMA_UPDATE_WAIT_MS: '300000',
     };
     // The unit file goes under this HOME, where the stand-in looks.
     delete mamaEnv.XDG_CONFIG_HOME;

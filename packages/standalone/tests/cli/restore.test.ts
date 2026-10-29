@@ -189,6 +189,29 @@ function attachmentPaths(database: string): string[] {
 }
 
 describe('mama restore', () => {
+  it("keeps an update's journal, hold and saved launch files when its rollback restores the snapshot", async () => {
+    const a = source();
+    // The update's snapshot, taken after its journal was written.
+    const runtime = join(a.root, 'runtime');
+    file(join(runtime, 'update.json'), '{"phase":"prepare"}\n', 0o600);
+    const archive = await runBackup(['--include-secrets'], {
+      home: a.home,
+      configPath: a.configPath,
+      write: () => {},
+      archivePrefix: 'mama-update-0.0.1',
+    });
+    // By the rollback: the journal moved on, the hold is in place, start.sh was copied back.
+    file(join(runtime, 'update.json'), '{"phase":"rollback"}\n', 0o600);
+    file(join(runtime, 'update.hold'), '1\n', 0o600);
+    file(join(runtime, 'update', 'start.sh'), '#!/bin/sh\n# saved\n', 0o600);
+    file(join(a.root, 'start.sh'), '#!/bin/sh\n# saved\n', 0o700);
+    await runRestore([archive], options(a));
+    expect(readFileSync(join(runtime, 'update.json'), 'utf8')).toBe('{"phase":"rollback"}\n');
+    expect(existsSync(join(runtime, 'update.hold'))).toBe(true);
+    expect(existsSync(join(runtime, 'update', 'start.sh'))).toBe(true);
+    expect(readFileSync(join(a.root, 'start.sh'), 'utf8')).toBe('#!/bin/sh\n# saved\n');
+  });
+
   it("restores the backup's settings with this install's places, and the files where they say", async () => {
     const a = source();
     const archive = await backupOf(a);
