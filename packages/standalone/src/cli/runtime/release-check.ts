@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { backendEnvironment } from '../../runtime/backend-security.js';
 import type { TimeZoneSetting } from '../../runtime/timezone.js';
+import { stableNodePath } from '../launch-files.js';
 import { compareVersions } from './backend-probe.js';
 import { installKind, PACKAGE_NAME, updateSteps, type PackageKind } from './install-kind.js';
 
@@ -150,12 +151,26 @@ export function createReleaseCheck(options: ReleaseCheckOptions) {
     let error: string | null = null;
     try {
       const registry = (
-        await run(options.npmPath, ['config', 'get', 'registry', ...prefix], env, stopping.signal)
+        await run(
+          options.npmPath,
+          ['config', 'get', 'registry', '--no-update-notifier', ...prefix],
+          env,
+          stopping.signal
+        )
       ).trim();
       const answer = (
         await run(
           options.npmPath,
-          ['view', PACKAGE_NAME, 'dist-tags.latest', '--registry', registry, ...prefix],
+          [
+            'view',
+            PACKAGE_NAME,
+            'dist-tags.latest',
+            '--registry',
+            registry,
+            // npm's own update notice asks the registry again and writes ~/.npm, TTY or not.
+            '--no-update-notifier',
+            ...prefix,
+          ],
           env,
           stopping.signal
         )
@@ -192,7 +207,6 @@ export function createReleaseCheck(options: ReleaseCheckOptions) {
   return {
     tick,
     start: () => {
-      if (timers.length > 0) return;
       const first = setTimeout(tickReported, options.firstTickDelayMs ?? 60_000);
       // Hourly: the first tick of a new day checks again.
       const every = setInterval(tickReported, 60 * 60_000);
@@ -212,9 +226,15 @@ export function createReleaseCheck(options: ReleaseCheckOptions) {
 
 export type ReleaseCheck = ReturnType<typeof createReleaseCheck>;
 
-/** The npm beside the Node that runs this process. */
-export function npmBesideNode(nodePath: string = process.execPath): string {
-  return join(dirname(nodePath), 'npm');
+/**
+ * The npm beside the Node start.sh pins (stableNodePath): Homebrew's running Node is its Cellar
+ * folder, which `brew upgrade node` removes while the daemon runs; the opt link stays.
+ */
+export function npmBesideNode(
+  execPath: string = process.execPath,
+  exists: (path: string) => boolean = existsSync
+): string {
+  return join(dirname(stableNodePath(execPath, exists)), 'npm');
 }
 
 function localTime(iso: string): string {
@@ -226,6 +246,7 @@ export interface ReleaseReport {
   readonly detail: string;
   /** What could not be read (a path, an error message); never in a shared report. */
   readonly context?: string;
+  readonly fix?: string;
   /** The service package's update path when a newer release is out. */
   readonly steps?: string[];
   readonly state: ReleaseCheckState | null;
@@ -244,6 +265,7 @@ export function releaseReport(mamaRoot: string, home: string): ReleaseReport | n
       status: 'warn',
       detail: 'the last release check cannot be read',
       context: error instanceof Error ? error.message : String(error),
+      fix: 'remove runtime/release-check.json; the daemon checks again within the hour',
       state: null,
     };
   }

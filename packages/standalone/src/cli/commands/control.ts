@@ -121,6 +121,7 @@ export async function runStatus(
       : [
           `release: ${release.detail}${release.context ? ` (${release.context})` : ''}`,
           ...(release.steps ?? []).map((step) => `  update: ${step}`),
+          ...(release.fix === undefined ? [] : [`  fix: ${release.fix}`]),
         ];
   if (reply.state === 'stopped') {
     if (json) {

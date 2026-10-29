@@ -915,6 +915,7 @@ describe('doctor release check', () => {
       expect(by.release).toMatchObject({
         status: 'warn',
         detail: 'the last release check cannot be read',
+        fix: 'remove runtime/release-check.json; the daemon checks again within the hour',
       });
       expect(fetch).not.toHaveBeenCalled();
     } finally {

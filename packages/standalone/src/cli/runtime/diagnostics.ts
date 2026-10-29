@@ -1050,6 +1050,7 @@ function releaseCheck(root: string, home: string): Check {
     detail: report.detail,
     ...(report.context === undefined ? {} : { context: report.context }),
     ...(report.steps === undefined ? {} : { fix: report.steps.join('; then ') }),
+    ...(report.fix === undefined ? {} : { fix: report.fix }),
   };
 }
 

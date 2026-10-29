@@ -20,6 +20,7 @@ import {
 } from '../../src/cli/runtime/install-kind.js';
 import {
   createReleaseCheck,
+  npmBesideNode,
   npmErrorCode,
   readReleaseCheck,
   releaseCheckPath,
@@ -229,7 +230,7 @@ describe('daily release check', () => {
     const { check, log } = checker(statePath, run);
     await check.tick();
     expect(run.mock.calls.map(([command, args]) => [command, args])).toEqual([
-      ['/p/bin/npm', ['config', 'get', 'registry', '--prefix', '/p']],
+      ['/p/bin/npm', ['config', 'get', 'registry', '--no-update-notifier', '--prefix', '/p']],
       [
         '/p/bin/npm',
         [
@@ -238,6 +239,7 @@ describe('daily release check', () => {
           'dist-tags.latest',
           '--registry',
           'https://registry.fixture.test/',
+          '--no-update-notifier',
           '--prefix',
           '/p',
         ],
@@ -322,6 +324,55 @@ describe('daily release check', () => {
     holder.check = check;
     await check.tick();
     expect(readReleaseCheck(statePath)).toBeNull();
+  });
+
+  it('checks a minute after start, then hourly, and stops with the daemon', async () => {
+    vi.useFakeTimers();
+    try {
+      const statePath = releaseCheckPath(temp('mama-release-'));
+      mkdirSync(join(statePath, '..'), { recursive: true });
+      const run = npm();
+      let now = TODAY;
+      const check = createReleaseCheck({
+        statePath,
+        current: '0.78.0',
+        packageKind: { kind: 'other', packageRoot: null, reason: 'fixture' },
+        npmPath: '/p/bin/npm',
+        timeZone: zone,
+        log: () => {},
+        onError: (error) => {
+          throw error;
+        },
+        run,
+        now: () => now,
+      });
+      check.start();
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(run).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(run).toHaveBeenCalledTimes(2);
+      // An hour later the same day: the file says it is done.
+      await vi.advanceTimersByTimeAsync(60 * 60_000);
+      expect(run).toHaveBeenCalledTimes(2);
+      now = new Date('2026-10-31T00:30:00.000Z');
+      await vi.advanceTimersByTimeAsync(60 * 60_000);
+      expect(run).toHaveBeenCalledTimes(4);
+      check.stop();
+      now = new Date('2026-11-01T00:30:00.000Z');
+      await vi.advanceTimersByTimeAsync(2 * 60 * 60_000);
+      expect(run).toHaveBeenCalledTimes(4);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("runs the npm beside start.sh's pinned Node, which a Homebrew upgrade keeps", () => {
+    const exists = (path: string) => path === '/opt/homebrew/opt/node/bin/node';
+    expect(npmBesideNode('/opt/homebrew/Cellar/node/25.8.0/bin/node', exists)).toBe(
+      '/opt/homebrew/opt/node/bin/npm'
+    );
+    expect(npmBesideNode('/usr/bin/node', exists)).toBe('/usr/bin/npm');
   });
 
   it('reduces a failed npm call to a code and nothing else', () => {
