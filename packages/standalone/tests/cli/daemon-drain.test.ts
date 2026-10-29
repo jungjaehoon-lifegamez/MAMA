@@ -211,11 +211,11 @@ describe('drain', { timeout: 30_000 }, () => {
 
     const drain = (await f.hold())!;
     await vi.waitFor(() => expect(f.progress[0]).toBeDefined());
-    // One model run running and its claimed input; each may take a whole turn, plus a minute.
+    // One model run running its claimed input: one turn that may take max_turn_ms, plus a minute.
     expect(f.progress[0]).toEqual({
       running: 1,
       claimed: 1,
-      bound: 2 * 3_600_000 + 60_000,
+      bound: 3_600_000 + 60_000,
       idle: false,
     });
     expect(f.logs).toContainEqual('drain: claims held running=1 claimed=1');
@@ -381,7 +381,7 @@ describe('drain', { timeout: 30_000 }, () => {
       });
       await vi.waitFor(() =>
         expect(lines).toContain(
-          'draining: new inputs wait; waiting for 1 turn running, 1 input claimed (at most 121 min)'
+          'draining: new inputs wait; waiting for 1 turn running, 1 input claimed (at most 61 min)'
         )
       );
       // A message during the drain waits for the next start.
@@ -397,5 +397,73 @@ describe('drain', { timeout: 30_000 }, () => {
     } finally {
       Object.defineProperty(process, 'platform', { value: platform });
     }
+  });
+
+  it('holds host jobs too: none is claimed until the drain lets go', async () => {
+    const f = await boot();
+    const drain = (await f.hold())!;
+    expect(await drain.outcome).toEqual({ kind: 'idle' });
+    const job = {
+      id: 'member-management:fixture',
+      kind: 'host_job' as const,
+      principalId: 'owner',
+      channelKey: 'member-management',
+      payload: { action: 'fixture', input: null, callerPrincipalId: 'owner' },
+      occurredAt: Date.now(),
+    };
+    f.runtime.runtime.accept(job);
+    await f.runtime.runtime.drainOnce();
+    const read = () => f.runtime.runtime.mailbox!.readInput(job.id, 'owner');
+    expect(read()).toEqual(expect.objectContaining({ status: 'pending', attempts: 0 }));
+    drain.release();
+    await vi.waitFor(() => expect(f.logs).toContainEqual('drain: claims released'));
+    await f.runtime.runtime.drainOnce();
+    // Its host delivery took it (and refused this fixture's unknown action).
+    expect(read()?.status).not.toBe('pending');
+  });
+
+  it('refuses a probe while a drain holds, since the stop after it would cut the turn off', async () => {
+    const f = await boot();
+    const drain = (await f.hold())!;
+    await drain.outcome;
+    const { askDaemon } = await import('../../src/cli/commands/daemon.js');
+    const reply = await askDaemon('probe', { configPath: join(f.home, 'config.yaml') });
+    expect(reply.state === 'running' && reply.reply).toEqual({
+      ok: false,
+      error: 'A drain holds new work; probe after the restart',
+    });
+    expect(f.turns).toHaveLength(0);
+    drain.release();
+  });
+
+  it('does not wait for a claim an earlier boot left: its dispatch resolves only in reconciliation', async () => {
+    const f = await boot();
+    // The earlier boot: an input the model accepted, then the process ended before its answer.
+    const earlier = (await f.hold())!;
+    await earlier.outcome;
+    await f.send(61);
+    const mailbox = f.runtime.runtime.mailbox!;
+    const row = mailbox.claimNext()!;
+    const native = mailbox.nativeInputs.prepare(row.id);
+    mailbox.nativeInputs.dispatch(row.id, {
+      backend: 'codex',
+      sessionId: 'fixture-session',
+      inputId: native.invocationId!,
+    });
+    mailbox.nativeInputs.accept(row.id, {
+      backend: 'codex',
+      sessionId: 'fixture-session',
+      turnId: 'fixture-turn-cut-off',
+    });
+    // The service manager restarts it; the next boot's drain comes before any reconciliation.
+    await f.restart();
+    earlier.release();
+    f.progress.length = 0;
+    const drain = (await f.hold())!;
+    expect(await drain.outcome).toEqual({ kind: 'idle' });
+    expect(f.status(61)).toBe('claimed');
+    expect(f.runtime.runtime.mailbox!.nativeInputs.get(row.id)?.state).toBe('accepted');
+    expect(f.progress).toEqual([{ running: 0, claimed: 0, bound: 60_000, idle: true }]);
+    drain.release();
   });
 });

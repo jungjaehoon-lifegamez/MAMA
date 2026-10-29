@@ -34,7 +34,7 @@ import {
 } from '../runtime/daemon-control.js';
 import { runStop } from './control.js';
 import { pathsFor } from './daemon.js';
-import { serviceFile, startService, type ServiceOptions } from './service.js';
+import { serviceFile, serviceRuns, startService, type ServiceOptions } from './service.js';
 
 export type BackupOptions = ServiceOptions;
 
@@ -78,13 +78,31 @@ export async function runBackup(
       'mama backup --restart starts MAMA again through its service, and none is installed: run mama service install, or mama stop and mama backup'
     );
   }
-  if ((await runStop([], options)) !== 0)
-    throw new CliInputError('Not backed up: MAMA did not stop');
-  try {
-    return await backupStopped(flags, options);
-  } finally {
-    await startService(options);
+  if ((await runStop([], options)) !== 0) {
+    // A stop can fail after the service manager was already told to stop (a release that took
+    // too long), so the install may be down now; this names which.
+    throw new CliInputError(
+      serviceRuns(options)
+        ? 'Not backed up: MAMA did not stop and still runs'
+        : 'Not backed up: MAMA did not stop cleanly and its service is not running; mama service start starts it again'
+    );
   }
+  let archive: string;
+  try {
+    archive = await backupStopped(flags, options);
+  } catch (error) {
+    try {
+      await startService(options);
+    } catch (startError) {
+      // Both failures count; the backup's comes first.
+      throw new CliInputError(
+        `${error instanceof Error ? error.message : String(error)}; MAMA did not start again either: ${startError instanceof Error ? startError.message : String(startError)} (mama service start)`
+      );
+    }
+    throw error;
+  }
+  await startService(options);
+  return archive;
 }
 
 async function backupStopped(flags: BackupFlags, options: BackupOptions): Promise<string> {

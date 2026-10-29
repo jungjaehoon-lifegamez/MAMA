@@ -4,6 +4,7 @@ import {
   drainDaemon,
   lockHolder,
   type DrainCounts,
+  type DrainDeadlines,
   type LockOwner,
 } from '../runtime/daemon-control.js';
 import {
@@ -29,6 +30,8 @@ interface ControlOptions {
   settleMs?: number;
   /** Runs systemctl; tests replace it. */
   run?: ServiceRun;
+  /** How long a drain waits on a daemon that stops answering; tests shorten them. */
+  drainDeadlines?: DrainDeadlines;
 }
 
 function localTime(ms: unknown): string {
@@ -207,15 +210,19 @@ export async function runStop(
   // A replay, backfill or register-owner is left to finish; a stopped install has nothing to drain.
   if (now || holder?.command !== 'daemon') return await stopNow(options, write);
   let reported = false;
-  const drain = await drainDaemon(installControlPaths(options), (progress) => {
-    if (progress.idle) return;
-    write(
-      reported
-        ? `still draining: ${waitingFor(progress)}`
-        : `draining: new inputs wait; waiting for ${waitingFor(progress)} (at most ${minutes(progress.bound)})`
-    );
-    reported = true;
-  });
+  const drain = await drainDaemon(
+    installControlPaths(options),
+    (progress) => {
+      if (progress.idle) return;
+      write(
+        reported
+          ? `still draining: ${waitingFor(progress)}`
+          : `draining: new inputs wait; waiting for ${waitingFor(progress)} (at most ${minutes(progress.bound)})`
+      );
+      reported = true;
+    },
+    options.drainDeadlines
+  );
   if (drain === null) {
     write(
       `not stopped: ${holderLine(holder)} does not answer on its control socket; mama stop --now stops it without draining`
@@ -231,7 +238,14 @@ export async function runStop(
       return 1;
     }
     if (outcome.kind === 'refused') {
-      write(`not stopped: the daemon refused the drain: ${outcome.error}`);
+      // A daemon older than the drain answers `unknown op`.
+      write(
+        `not stopped: the daemon refused the drain: ${outcome.error}; mama stop --now stops it without draining`
+      );
+      return 1;
+    }
+    if (outcome.kind === 'silent') {
+      write(`not stopped: ${outcome.error}; mama stop --now stops it without draining`);
       return 1;
     }
     if (outcome.kind === 'closed') {

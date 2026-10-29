@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as egressProxy from '../../src/runtime/egress-proxy.js';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 import {
   acquireInstallLock,
   daemonControlPaths,
@@ -237,6 +238,51 @@ describe('control socket', () => {
       lock.release();
     }
     expect(await drainDaemon(paths, () => {})).toBeNull();
+  });
+
+  it('gives up on a daemon that does not answer a drain, goes quiet, or outlives its bound', async () => {
+    const paths = daemonControlPaths(root());
+    mkdirSync(join(paths.tokenPath, '..'), { recursive: true });
+    writeFileSync(paths.tokenPath, 'fixture-token\n');
+    // A wedged daemon: it takes the connection and sends what the test says, then nothing.
+    let lines: string[] = [];
+    const sockets = new Set<import('node:net').Socket>();
+    const wedged = createServer((socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+      socket.once('data', () => {
+        for (const line of lines) socket.write(`${line}\n`);
+      });
+    });
+    await new Promise<void>((resolve) => wedged.listen(paths.socketPath, resolve));
+    const progress = (running: number, bound: number) =>
+      JSON.stringify({ ok: true, drain: { running, claimed: 0, bound, idle: false } });
+    try {
+      lines = [];
+      const silentFirst = (await drainDaemon(paths, () => {}, { firstMs: 20 }))!;
+      expect(await silentFirst.outcome).toEqual({
+        kind: 'silent',
+        error: 'the daemon did not answer the drain within 20 ms',
+      });
+
+      lines = [progress(1, 60_000)];
+      const quiet = (await drainDaemon(paths, () => {}, { firstMs: 1_000, silenceMs: 30 }))!;
+      expect(await quiet.outcome).toEqual({
+        kind: 'silent',
+        error: 'the daemon sent nothing on the drain for 30 ms',
+      });
+
+      lines = [progress(1, 10)];
+      const overdue = (await drainDaemon(paths, () => {}, { silenceMs: 60_000, graceMs: 20 }))!;
+      expect(await overdue.outcome).toEqual({
+        kind: 'silent',
+        error: 'the daemon did not end the drain at its bound of 10 ms',
+      });
+      // Each one let go of its connection, which is what ends a hold.
+      await vi.waitFor(() => expect(sockets.size).toBe(0));
+    } finally {
+      await new Promise<void>((resolve) => wedged.close(() => resolve()));
+    }
   });
 
   it('reports stopped when a dead holder left its token behind', async () => {

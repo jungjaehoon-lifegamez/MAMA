@@ -202,7 +202,7 @@ export interface DaemonControlServer {
 const MAX_REQUEST_BYTES = 4096;
 
 /** A drain repeats its counts this often while they stay the same, so a waiting terminal sees why. */
-const DRAIN_REPEAT_MS = 30_000;
+export const DRAIN_REPEAT_MS = 30_000;
 
 /**
  * Serve status, stop, a backend probe and a drain to the CLI. Only the lock holder calls this, so
@@ -414,6 +414,8 @@ export type DrainOutcome =
   /** The bound passed first; the daemon let go and changed nothing. */
   | { kind: 'bound'; bound: number; running: number; claimed: number }
   | { kind: 'refused'; error: string }
+  /** The daemon stopped answering the drain; this side let go. */
+  | { kind: 'silent'; error: string }
   /** The connection ended before idle: the daemon stopped or died. */
   | { kind: 'closed' };
 
@@ -423,15 +425,30 @@ export interface DaemonDrain {
   release(): void;
 }
 
+/** How long a drain's client waits on the daemon; tests shorten them. */
+export interface DrainDeadlines {
+  /** For the first line, which the daemon sends as soon as it holds. */
+  firstMs?: number;
+  /** Between lines: the daemon repeats its counts every 30 s, so two missed repeats. */
+  silenceMs?: number;
+  /** Past the daemon's own bound, which the daemon should have ended the drain at. */
+  graceMs?: number;
+}
+
 /**
  * Hold the install's claims for as long as the returned drain is not released, and report each
- * count the daemon sends. Null when nothing serves the install. The connection has no deadline
- * after it opens: a drain waits as long as its bound allows.
+ * count the daemon sends. Null when nothing serves the install. The bound is the daemon's, but a
+ * wedged daemon would enforce nothing, so this side gives up too when the daemon goes quiet or
+ * outlives its own bound.
  */
 export async function drainDaemon(
   paths: DaemonControlPaths,
-  onProgress: (progress: DrainProgress) => void
+  onProgress: (progress: DrainProgress) => void,
+  deadlines: DrainDeadlines = {}
 ): Promise<DaemonDrain | null> {
+  const firstMs = deadlines.firstMs ?? 5_000;
+  const silenceMs = deadlines.silenceMs ?? 2 * DRAIN_REPEAT_MS + 5_000;
+  const graceMs = deadlines.graceMs ?? 30_000;
   let token: string;
   try {
     token = readFileSync(paths.tokenPath, 'utf8').trim();
@@ -442,15 +459,33 @@ export async function drainDaemon(
   return await new Promise<DaemonDrain | null>((resolve, reject) => {
     const socket = connect(paths.socketPath);
     let connected = false;
-    let settle!: (outcome: DrainOutcome) => void;
+    let settled = false;
+    let silence: NodeJS.Timeout | undefined;
+    let watchdog: NodeJS.Timeout | undefined;
+    let resolveOutcome!: (outcome: DrainOutcome) => void;
     const outcome = new Promise<DrainOutcome>((done) => {
-      settle = done;
+      resolveOutcome = done;
     });
+    const settle = (result: DrainOutcome): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(silence);
+      clearTimeout(watchdog);
+      resolveOutcome(result);
+    };
+    const quiet = (ms: number, error: string): void => {
+      clearTimeout(silence);
+      silence = setTimeout(() => {
+        settle({ kind: 'silent', error });
+        socket.destroy();
+      }, ms);
+    };
     let buffer = '';
     socket.setEncoding('utf8');
     socket.on('connect', () => {
       connected = true;
       socket.write(`${JSON.stringify({ token, op: 'drain' })}\n`);
+      quiet(firstMs, `the daemon did not answer the drain within ${firstMs} ms`);
       resolve({ outcome, release: () => socket.destroy() });
     });
     socket.on('data', (chunk: string) => {
@@ -480,6 +515,16 @@ export async function drainDaemon(
           continue;
         }
         const progress = reply.drain as DrainProgress;
+        if (watchdog === undefined) {
+          watchdog = setTimeout(() => {
+            settle({
+              kind: 'silent',
+              error: `the daemon did not end the drain at its bound of ${progress.bound} ms`,
+            });
+            socket.destroy();
+          }, progress.bound + graceMs);
+        }
+        quiet(silenceMs, `the daemon sent nothing on the drain for ${silenceMs} ms`);
         onProgress(progress);
         if (progress.idle) settle({ kind: 'idle' });
       }

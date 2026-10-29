@@ -619,7 +619,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
             memberRecords: {
               root: memberRoot,
               isStopping: () => stopping,
-              isReady: () => options.deliveryReady?.() ?? true,
+              // An erasure resumed during a drain would run past the stop that follows it.
+              isReady: () => options.claimsHeld?.() !== true && (options.deliveryReady?.() ?? true),
               resumeQueued: () => {
                 void intakeRuntime
                   .drainOnce()

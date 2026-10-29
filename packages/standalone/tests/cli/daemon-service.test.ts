@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bootoutLaunchdService, launchdService } from '../../src/cli/commands/daemon.js';
@@ -421,5 +422,43 @@ describe('mama stop', () => {
       ),
     ]);
     lock.release();
+  });
+
+  it('names --now when a daemon older than the drain refuses it, or one stops answering', async () => {
+    onPlatform('linux');
+    const { home: root, configPath } = home('mama-stop-old-');
+    const paths = daemonControlPaths(root);
+    const lock = acquireInstallLock(paths, 'daemon');
+    mkdirSync(join(paths.tokenPath, '..'), { recursive: true });
+    writeFileSync(paths.tokenPath, 'fixture-token\n');
+    let reply: string | null = JSON.stringify({ ok: false, error: 'unknown op' });
+    const old = createServer((socket) => {
+      socket.once('data', () => {
+        if (reply !== null) socket.end(`${reply}\n`);
+      });
+    });
+    await new Promise<void>((resolve) => old.listen(paths.socketPath, resolve));
+    try {
+      const lines: string[] = [];
+      expect(await runStop([], { configPath, write: (line) => lines.push(line) })).toBe(1);
+      expect(lines).toEqual([
+        'not stopped: the daemon refused the drain: unknown op; mama stop --now stops it without draining',
+      ]);
+      reply = null;
+      lines.length = 0;
+      expect(
+        await runStop([], {
+          configPath,
+          write: (line) => lines.push(line),
+          drainDeadlines: { firstMs: 20 },
+        })
+      ).toBe(1);
+      expect(lines).toEqual([
+        'not stopped: the daemon did not answer the drain within 20 ms; mama stop --now stops it without draining',
+      ]);
+    } finally {
+      await new Promise<void>((resolve) => old.close(() => resolve()));
+      lock.release();
+    }
   });
 });

@@ -561,4 +561,51 @@ describe('mama backup --restart', () => {
     await expect(runBackup(['--restart'], options)).rejects.toThrow(/Backup failed/);
     expect(calls.at(-1)).toMatch(/^systemctl --user start mama\.service /);
   });
+
+  it('names whether the service still runs when the stop fails, and keeps both errors', async () => {
+    const installed = install();
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    vi.stubEnv('XDG_CONFIG_HOME', '');
+    let active = true;
+    let startFails = false;
+    const run = vi.fn((_command: string, args: string[]) => {
+      if (args.includes('stop')) active = false;
+      if (args.includes('start') && startFails)
+        return { status: 1, stdout: '', stderr: 'fixture start failed', signal: null } as never;
+      return {
+        status: 0,
+        stdout: args.includes('is-active') ? `${active ? 'active' : 'inactive'}\n` : '',
+        stderr: '',
+        signal: null,
+        pid: 1,
+        output: [],
+      } as never;
+    });
+    const options = {
+      home: installed.home,
+      configPath: installed.configPath,
+      platform: 'linux' as const,
+      run,
+      write: () => {},
+      settleMs: 1,
+    };
+    file(serviceFile(options), '[Unit]\n');
+    // The unit was stopped, but a backfill holds the install, so the stop reports a failure.
+    const lock = acquireInstallLock(daemonControlPaths(installed.root), 'backfill');
+    try {
+      await expect(runBackup(['--restart'], options)).rejects.toThrow(
+        'Not backed up: MAMA did not stop cleanly and its service is not running; mama service start starts it again'
+      );
+    } finally {
+      lock.release();
+    }
+    expect(run.mock.calls.some(([, args]) => args.includes('start'))).toBe(false);
+
+    active = true;
+    startFails = true;
+    rmSync(join(installed.root, 'memory.db'));
+    await expect(runBackup(['--restart'], options)).rejects.toThrow(
+      /^Backup failed and nothing was kept: .*; MAMA did not start again either: .*fixture start failed.* \(mama service start\)$/
+    );
+  });
 });
