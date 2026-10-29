@@ -9,195 +9,216 @@ Updating is npm, build and restart by hand. On 2026-10-05 a restart chained into
 killed the 23:00 daily mid-run (R3). A later deploy showed the idle check and the stop are never
 one step: a turn started between them
 ([checks](../checks.md#p2b-member-share-452-and-release-810--0700-2026-10-08)). The drain below
-holds claims until the stop, so nothing starts in that gap. R3 asks for one command that waits until nothing runs, keeps a way back and reports. R7 asks for
-the same from chat without a model turn, so an owner can repair an install whose backend is broken.
+holds claims until the stop, so nothing starts in that gap. R7 asks for the same from chat without
+a model turn, so an owner can repair an install whose backend is broken.
 
 ## Install kinds
 
 The kind comes from the package the service runs, `start.sh`'s exec line (`readStartScript`,
-`s/cli/launch-files.ts:273`). The `mama` running the command must be that package, or it refuses
-naming both paths: on this Mac `mama` on PATH is a stale global 0.53.2-local.11 while the service
-runs the checkout, and updating that copy would change nothing the daemon runs.
+`s/cli/launch-files.ts:273`). The CLI running the command must be that package, or it refuses and
+names both paths: on this Mac `mama` on PATH is a stale global 0.53.2-local.11 while the service
+runs the checkout. Windows is out: `mama service` throws there (`s/cli/commands/service.ts:59`).
 
-| Kind     | Recognised by                                                                       | `mama update` and `/update`                    |
-| -------- | ----------------------------------------------------------------------------------- | ---------------------------------------------- |
-| npm      | the package is `<npm root -g>/@jungjaehoon/mama-os`, asking the npm beside its Node | the full flow below                            |
-| checkout | its `package.json` names core `workspace:*` (published packages carry a version)    | refuses and prints the git steps               |
-| Docker   | an environment marker; PR 2 names it, the W4 image sets it                          | refuses and prints the pull-and-recreate steps |
-| other    | anything else, such as a prefix that is not the service Node's                      | refuses and names the path                     |
+| Kind     | Recognised by                                                                    | `mama update` and `/update`        |
+| -------- | -------------------------------------------------------------------------------- | ---------------------------------- |
+| npm      | the package is `<prefix>/lib/node_modules/@jungjaehoon/mama-os`                  | the full flow below                |
+| checkout | its `package.json` names core `workspace:*` (published packages carry a version) | refuses and prints the steps below |
+| other    | anything else                                                                    | refuses and names the path         |
 
-Checkout: decision 6's first sentence decides it, "**`mama update` serves npm installs.**" The
-checkout clause says how a checkout updates (by git, as the deploy procedure does), not that
-`mama update` runs git. The steps printed: `git pull --ff-only`, `pnpm install`, `pnpm build`,
-`mama service install`, `mama service restart`. After PR 1 that restart drains first, which closes
-the 2026-10-05 incident class on this Mac too.
+- Docker's detection and refusal (decision 6) come with the W4 image, which sets the marker.
+- `<prefix>` is derived from the exec path. Every npm call passes `--prefix <prefix>` and the
+  registry npm reports once (`npm config get registry`), and runs the npm beside `start.sh`'s
+  pinned Node (`stableNodePath`, `s/cli/launch-files.ts:24`).
+- Checkout: decision 6's first sentence decides it, "**`mama update` serves npm installs.**" The
+  checkout clause says how a checkout updates (by git, as the deploy procedure does). The printed
+  steps name the checkout's CLI by absolute path, because `service install` writes the running CLI
+  as exec (`s/cli/commands/service.ts:153`): `<node> <cli> stop` (drains), `git pull --ff-only`,
+  `pnpm install`, `pnpm build`, `<node> <cli> service install`, `<node> <cli> service start`. The
+  stop comes first: sessions start the action MCP server from `dist`
+  (`s/cli/runtime/action-mcp-config.ts:82-83`), which the build rewrites.
 
 ## Step 0: verify a one-shot launchd job (no code; result in checks.md)
 
 - Scratch LaunchAgent A (outside `~/Library/LaunchAgents`, with the generated plist's
   `ExitTimeOut` and `HOME`) bootstraps plist B into `gui/$UID`. B has no KeepAlive; it writes its
-  pid, PPID and the time, boots A out, sleeps 20 s, writes again. Proof: B's second line exists,
-  its PPID is 1, `launchctl print` of A exits 113. Also record any background-item notice, and
-  that B's label bootstraps again after `launchctl bootout` of the finished B.
+  pid, PPID and the time, boots A out, sleeps 20 s, writes again, then bootstraps A again from
+  inside B. Proof: B's second line, its PPID 1, A gone in between and running again at the end.
+  Also record any background-item notice, and that B's label bootstraps again after
+  `launchctl bootout` of the finished B.
 - The development session runs it. `systemd-run --user` gets the same check in wave 3.
 
 ## PR 1: drain
 
-- New control op `drain` (today only `status`, `stop`, `probe`, `s/cli/runtime/daemon-control.ts:173`).
-  It holds claims while its connection stays open, so a dead updater lets go. This changes
-  `startDaemonControl`, which ends the socket after one reply (`:221-222`). While held, `ready`
+- New control op `drain`. `startDaemonControl` ends the socket after one reply
+  (`s/cli/runtime/daemon-control.ts:221-222`); `drain` keeps it open and holds claims for as long as
+  it stays open, through the service-manager stop, so a dead updater lets go. While held, `ready`
   and `hostReady` are false (`s/runtime/owner-runtime.ts:1183,1195`), so core's `drainOnce` claims
-  nothing (`c/runtime/runtime.ts:779-783`). Accepting goes on (`c/runtime/runtime.ts:937`): messages,
-  deltas and reports wait `pending` and run after the restart. The W1.1 text said "stop intake";
-  accepted rows are durable, so stopping intake would only move the wait into Telegram and the
-  sources. Host commands still answer, so `/stop` ends a long turn the existing way.
-- It replies at each change of count, then `idle`: no `running` model run and no `claimed` input,
-  the queries `status` runs (`s/cli/commands/daemon.ts:491-503`). Bound: `agent.max_turn_ms` plus
-  60 s (`PROBE_MARGIN_MS`, `s/cli/commands/init.ts:350`), since the daemon ends every turn by then.
-  Past it the hold ends, nothing changes, the running sessions are named, exit 1.
-- `mama stop` interrupts today (`s/cli/commands/control.ts:169-174`, core `beginStop`,
-  `c/runtime/runtime.ts:911-917`). Now `mama stop`, `service restart` and `uninstall` drain first;
-  `mama stop --now` keeps today's stop. `mama backup --restart` (W1.3a's open item) drains, stops,
-  backs up, starts. `mama status` shows the hold.
+  nothing (`c/runtime/runtime.ts:779-783`). Accepting goes on (`c/runtime/runtime.ts:937`):
+  messages, deltas and reports wait `pending`. Host commands still answer, so `/stop` ends a long
+  turn the existing way.
+- Idle: no `running` model run and no `claimed` input, the queries `status` runs
+  (`s/cli/commands/daemon.ts:491-503`). Inputs already claimed still start: up to 8 per person wait
+  for the serial slot (`c/runtime/runtime.ts:378-379,636`). Bound: (running + claimed at the hold)
+  × `agent.max_turn_ms`, plus 60 s. Past it the hold ends, nothing changes, the running and claimed
+  counts are named, exit 1. A held `drainOnce` also skips claim renewal and stale-claim replay
+  (`:783-802`).
+- `release` op: ends a hold the daemon was booted with (PR 3, step 13).
+- `mama stop`, `service restart` and `uninstall` drain first; `mama stop --now` keeps today's stop
+  (`s/cli/commands/control.ts:169-174`). `mama backup --restart` (W1.3a) drains, stops, backs up,
+  starts. `mama status` shows the hold.
 - Tests: a turn running at the hold finishes, its reply delivered and acked; an input accepted
-  during the hold runs after the restart; a closed connection or the bound ends the hold; `--now`.
-- Live (this Mac): `mama service restart` during an owner turn; the turn commits and its reply
-  arrives; `daemon.log` has no `interrupted`.
+  during the hold runs after the restart; a closed connection or the bound ends the hold; a hold
+  longer than the 10-minute lease (`runtime.ts:475`) does not requeue a live claim; `--now`.
+- Live (this Mac): the checkout CLI's `service restart` during an owner turn; the turn commits, its
+  reply arrives, `daemon.log` has no `interrupted`.
 
-## PR 2: install kind and release discovery
+## PR 2: install kind, release discovery, doctor codes
 
-- `installKind()` per the table, in `s/cli/runtime/install-kind.ts`. Nothing detects it today.
-- Once a day the daemon runs `npm view @jungjaehoon/mama-os dist-tags.latest` with the npm beside
-  its Node (nothing queries the registry today). It writes `runtime/release-check.json` (0600):
-  `checkedAt`, `current`, `latest`, `error`. `checkedAt` outlives restarts. Replay never checks.
+- `installKind()` in `s/cli/runtime/install-kind.ts`. Nothing detects it today.
+- Once a day the daemon runs `npm view @jungjaehoon/mama-os dist-tags.latest`, as above, with an
+  environment scrubbed by `backendEnvironment` (`s/runtime/backend-security.ts:129`), since
+  `start.sh` exports `auth.env`. It writes `runtime/release-check.json` (0600): `checkedAt`,
+  `current`, `latest`, `error`. `checkedAt` outlives restarts. Replay never checks.
 - `mama status` and a doctor check `release` read only that file: "newer release X (checked T)"
-  with the kind's update path, or "last check failed at T: <code>". No network call from either.
-- Tests: status and doctor with a network that throws; a second boot the same day makes no call;
-  a failed check shown with its time; each kind from a fixture tree.
+  with the kind's path, or "last check failed at T: <code>". No network call from either.
+- `Check` gains a stable `code` (such as `backend.too_old`, `backend.signed_out`), because details
+  carry versions (`s/cli/runtime/diagnostics.ts:335,342`) that a backend self-update changes.
+- Tests: status and doctor with a network that throws; a second boot the same day makes no call; a
+  failed check shown; each kind from a fixture tree; npm's environment holds no credential name.
 
 ## PR 3: `mama update [<version>] [--dry-run]`, `mama update --rollback`
 
-Steps 1–7 run in the old code; 8–13 in a child process of the new CLI. Commands load lazily
-(`s/cli/index.ts`) and the launch-file templates ship in the package, so nothing may run from the
-old process after the install.
+The parent is the old code; it statically imports everything it uses, because the CLI's commands
+load lazily (`s/cli/index.ts:9-109`) and after step 8 its own files are renamed. From step 8 on it
+runs loaded code and Node built-ins only. npm and toolkit children get the scrubbed environment.
 
-| #   | Step                                                                                                                                                                                                                                                         | Reuses                                                                           |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
-| 1   | Kind and same-package checks; refuse when no service file is installed (decision 7: the restart goes through the service manager, and nothing else would start the daemon again); take `runtime/update.lock` (a second updater is refused, naming the first) | `serviceFile` (`service.ts:123`); `acquireInstallLock` (`daemon-control.ts:115`) |
-| 2   | Target: `npm view …@<version or latest> version`. Same: "already on X", exit 0. Lower: refused (R5: older code refuses the database)                                                                                                                         | new                                                                              |
-| 3   | Record `doctor --offline`'s failing checks by name and detail (backend version and login are both named `backend`, `diagnostics.ts:321-347`)                                                                                                                 | `runDiagnostics` (`diagnostics.ts:165`)                                          |
-| 4   | Print from → to, kind, the steps and what runs now; `--dry-run` ends here                                                                                                                                                                                    | `status` op                                                                      |
-| 5   | Drain, write the journal `runtime/update.json` (0600), stop through the service manager                                                                                                                                                                      | PR 1; `runStop` (`control.ts:175`)                                               |
-| 6   | Snapshot with credentials as `backups/mama-update-<from>-<time>.tar.gz`, so cleanup never touches the owner's backups                                                                                                                                        | `runBackup(['--include-secrets'])` (`backup.ts:62`), name option                 |
-| 7   | Rename the package folder to `.mama-os-<from>` in its scope folder; `npm install -g @jungjaehoon/mama-os@<to>`                                                                                                                                               | new                                                                              |
-| 8   | `mama service install` with the new templates                                                                                                                                                                                                                | `installService` (`service.ts:127`)                                              |
-| 9   | `doctor --offline`: a failure (name and detail) not seen at step 3 rolls back: the new minimum backend, Node, schema                                                                                                                                         | `runDiagnostics`; `MINIMUM_BACKEND_VERSIONS` (`backend-probe.ts:8`)              |
-| 10  | `mama tools install` when the toolkit's `requirementsSha256` differs from the new `toolkit/requirements.lock`                                                                                                                                                | `document-toolkit.ts:514`, `readDocumentToolkit` (`toolkit-state.ts:50`)         |
-| 11  | The journal names `<to>` as the version to start; `mama service start`                                                                                                                                                                                       | `startService` (`service.ts:268`)                                                |
-| 12  | Wait for stage `running` with `version` = `<to>`, then `/health`, up to 600 s                                                                                                                                                                                | `waitForBoot` (`init.ts:291`, exported), 600 s as `init.ts:658`                  |
-| 13  | Delete the snapshot, the old folder and the journal; report from → to and the time taken                                                                                                                                                                     | new                                                                              |
+| #   | Step (parent, old code)                                                                                                                                                            | Reuses                                                                                                               |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| 1   | Kind and same-package checks; refuse without a service file (decision 7: nothing else would start the daemon again); take `runtime/update.lock`                                    | `serviceFile` (`service.ts:123`); `acquireInstallLock` with a paths argument (`daemon-control.ts:34-42,115`)         |
+| 2   | Target: `npm view …@<version or latest> version`. Same: "already on X", exit 0. Lower: refused (R5)                                                                                | new                                                                                                                  |
+| 3   | Record `doctor --offline`'s failures as name and code                                                                                                                              | `runDiagnostics` (`diagnostics.ts:165`), PR 2                                                                        |
+| 4   | Print from → to, kind, the steps and what runs now; `--dry-run` ends here                                                                                                          | `status` op                                                                                                          |
+| 5   | Stage: `npm install -g --prefix <scope>/.mama-update-<to> …@<to>` (same filesystem); the new `bin` names must equal the old. A failure changes nothing                             | new                                                                                                                  |
+| 6   | Write the journal `runtime/update.json` (0600); drain; stop through the service manager                                                                                            | PR 1; `runStop` (`control.ts:175`)                                                                                   |
+| 7   | Snapshot `backups/mama-update-<from>-<time>.tar.gz` with credentials; record each schema source and the last input id; copy `start.sh` and the service file into `runtime/update/` | `runBackup(['--include-secrets'])` (`backup.ts:62`, it takes `daemon.lock` itself), a name option; `readSchemaState` |
+| 8   | Write `runtime/update.hold`; rename the package to `.mama-os-<from>`, then the staged one into its place                                                                           | new                                                                                                                  |
+| 9   | Run the child `<node> <cli> update --continue` (stdio inherited); exit 0 is done; non-zero, a signal or no `running` at `<to>` rolls back                                          | new                                                                                                                  |
 
-- The old folder, not a reinstall: mama-os 0.78.0 depends on core `^8.8.0`, so reinstalling
-  `<from>` can bring a newer core than the one that ran. A global package holds its own
-  `node_modules` (this Mac's stale global has its core inside). A test with real npm proves
-  `npm install -g` leaves the dot-folder alone.
-- The journal refuses boot (clean exit) unless it names this version to start, as
-  `refuseWhileRestoring` does (`daemon-control.ts:59`); doctor fails and names
-  `mama update --rollback`, as its `restore` check does (`diagnostics.ts:175`). Reason: after step
-  5 a login's `RunAtLoad` or a person's `mama service start` would boot a half-replaced package.
-- Rollback from any step: (1) stop through the service manager first, since a failing boot restarts
-  on failure and would hold the install lock; (2) remove what is at the package path and rename
-  `.mama-os-<from>` back; (3) the previous CLI runs the rest, so restore format and templates match;
-  (4) `mama restore <snapshot>` only when step 11 was reached, since before it the database is
-  untouched; (5) `service install`, `service start`, boot wait with `version` = `<from>`; (6) report
-  the failed step and its message, delete the snapshot after the good boot.
-- A failing rollback stops: journal, snapshot and folder kept, `mama update --rollback` printed,
-  exit 1, the install left stopped.
-- Tests: each step fails in turn and ends on `<from>` with equal `work.list` counts; a killed
-  updater's journal refuses boot and `--rollback` resolves it; checkout, Docker, a lower target and
-  a second updater are refused; the snapshot is 0600.
-- CI leg in `upgrade-check`: a local registry (verdaccio) serves this build at two versions plus a
-  third whose daemon throws at boot; update, then rollback, with read-back as #512 does. This PR
-  checks whether the runner's service manager can run the daemon; if not, the leg says the
-  service half is left to the clean account.
+| #   | Step (child, new code)                                                                                                                                                                          | Reuses                                                                        |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 10  | `mama service install`; `start.sh` gains `[ -f runtime/update.hold ] && exit 0`                                                                                                                 | `installService` (`service.ts:127`), `startScript` (`launch-files.ts:49`)     |
+| 11  | `doctor --offline`: a failure (name and code) not seen at step 3 exits non-zero                                                                                                                 | PR 2                                                                          |
+| 12  | `mama tools install` when the toolkit's `requirementsSha256` differs from the new lock                                                                                                          | `document-toolkit.ts:514`, `readDocumentToolkit` (`toolkit-state.ts:50`)      |
+| 13  | Journal phase `candidate`; remove the hold file; `service start`. The daemon reads the journal and boots with claims held, so boot's recovery drain (`owner-runtime.ts:1202-1205`) runs nothing | `startService` (`service.ts:268`)                                             |
+| 14  | Wait for `running` at `<to>` and `/health`, up to 600 s; then `release`, close the journal, delete the snapshot, the copies and the old folder; report                                          | `waitForBoot` (`init.ts:291`), which must be exported; 600 s as `init.ts:658` |
+
+- The old folder, not a reinstall: mama-os depends on core `^8.8.0`, so reinstalling `<from>` can
+  bring a newer core. A global package holds its own `node_modules`. A test proves a package
+  installed under the staging prefix runs after the rename.
+- Journal fields: phase, step, from, to, prefix, registry, Node path, the previous CLI's absolute
+  path, snapshot, schema before, last input id, toolkit hash before, the copied files. While it is
+  open, doctor fails and prints `<node> <previous CLI> update --rollback` with absolute paths.
+- Rollback (the parent, or `--rollback` after a killed updater):
+  1. Stop through the service manager; a failing candidate restarts on failure.
+  2. Write the hold file; put `.mama-os-<from>` back in place.
+  3. Run the previous CLI's `update --rollback --continue`, which does the rest.
+  4. Copy back the saved `start.sh` and service file. No regeneration, so a missing backend does
+     not block it.
+  5. If a schema source moved, `mama restore <snapshot>`, and report how many inputs accepted
+     after the snapshot it drops. Otherwise keep the database: the held candidate ran no turn.
+  6. If step 12 ran, the previous CLI's `mama tools install` (`tools_root` is outside the backup).
+  7. Remove the hold file, start, wait for `running` at `<from>`, check `npm ls -g --prefix`
+     shows `<from>`, delete the snapshot, report the failed step and its message.
+- A failing rollback stops with the hold file in place. The journal, the snapshot and both folders
+  are kept, the absolute rollback command is printed, and it exits 1.
+- Tests: each step fails in turn and ends on `<from>` with equal `work.list` counts; a killed parent
+  at each step leaves a journal that `--rollback` resolves; inputs accepted by a held candidate
+  survive a rollback without a schema move; refusals (checkout, a lower target, a second updater,
+  no service file, changed `bin`); the snapshot is 0600; npm children see no credential name.
+- CI leg in `upgrade-check`: a local registry (verdaccio) serves this build at two versions and a
+  third that crashes at boot; it proves the npm flow, the journal and rollback without the service
+  manager. The macOS hosted runner is tried for the service half; it is not counted as that proof.
 
 ## PR 4: `/update`
 
 - `update` joins `TELEGRAM_HOST_COMMANDS` and the port gets `update(origin)`
   (`s/gateways/telegram-commands.ts:10,21`). Allowed: an owner (`ownerAllowed`,
-  `s/gateways/telegram.ts:679`) in the common channel (`chatId === ownerChatId`, `:839`) or in
-  their own DM. Refused: everyone else, an owner in another group included. Checkout and Docker
-  reply with their steps.
-- The daemon writes the origin chat and message to `runtime/update-request.json` (0600), not argv,
-  which `ps` shows to any shell. It starts the updater as its own job: macOS `runtime/update.plist`
-  (label `com.mama.update`, no KeepAlive, output to `logs/update.log`), booted out first if an
-  earlier run left it loaded, then bootstrapped as Step 0 proved; Linux
-  `systemd-run --user --unit=mama-update --collect`. It replies "Updating X → Y; progress follows".
-- The job runs `runtime/update.sh`, generated from `start.sh`'s PATH, `cd` and `auth.env` lines
-  (`startScript`, `startPathEntries`, `s/cli/launch-files.ts:49,94`), because `installService`
-  needs the backend on PATH (`s/cli/commands/service.ts:145-150`).
-- Progress goes to the origin through Bot API `sendMessage` only, never `getUpdates`, so it cannot
-  collide with polling (`defaultTelegramCall`, `s/cli/runtime/diagnostics.ts:121`). Text is the
-  updater's own words, versions, step names and error codes, because a group reads it. A failed
-  send is logged to `update.log` and the update goes on.
-- Tests: the four origins above; no model run opens; after the restart the `/update` message is not
-  handled again (`bot.stop` confirms the offset, `s/gateways/telegram.ts:304-307`); progress holds
-  no path or message text.
+  `s/gateways/telegram.ts:679`) in the common channel (`chatId === ownerChatId`, `:839`) or their
+  own DM. Everyone else, an owner in another group included, is refused. A checkout replies with
+  its steps.
+- Before anything, the daemon reads the `update.lock` holder; a running update gets "already
+  updating since T". It writes the origin chat and message id to `runtime/update-request.json`
+  (0600; not argv, which `ps` shows), kept after the run; a message id already there is refused,
+  since a killed daemon may not have confirmed its offset.
+- It starts the updater as its own job: macOS `runtime/update.plist` (label `com.mama.update`, no
+  KeepAlive, output to `logs/update.log`), booting out an earlier one only when it has no pid,
+  then bootstrapping it as Step 0 proved; Linux `systemd-run --user --unit=mama-update --collect`.
+  It replies "Updating X → Y; progress follows".
+- The job runs `runtime/update.sh`: `start.sh`'s PATH and `cd` lines and its pinned Node, without
+  `auth.env` (`startPathEntries`, `s/cli/launch-files.ts:94`). It reads only the bot token from
+  `auth.env`, as doctor does (`readAuthEnv`, `s/cli/runtime/diagnostics.ts:101`).
+- Progress goes to the origin through Bot API `sendMessage` only, never `getUpdates`
+  (`defaultTelegramCall`, `diagnostics.ts:121`): versions, step names and error codes, because a
+  group reads it. A failed send is logged to `update.log`, and the update goes on.
+- Not covered: a removed backend binary. `service install` refuses at step 10
+  (`s/cli/commands/service.ts:146-150`), so the update rolls back and the owner reinstalls it.
+- Tests: the four origins; a second `/update` during a run leaves the job alive; a repeated
+  message id; no model run opens; `bot.stop` confirms the offset (`telegram.ts:304-307`); progress
+  holds no path or message text; `update.sh` holds no secret.
 
 ## Live proof
 
-- **This Mac (checkout, live bot):** PR 1's drained restart during a turn; `mama update` and
-  `/update` (owner DM, common group) refuse with the git steps.
-- **CI:** PR 3's leg proves the npm flow, the rollback from a broken candidate and the journal.
-- **A clean macOS account on this Mac** with its own test bot and group (B2 needs one too): install
-  release N, the first with `mama update`, through W2.4's `install.sh`, then update to N+1. A
-  second root under this account cannot work: the LaunchAgent label is fixed
-  (`s/cli/launch-files.ts:154`). Proves R3, R7, the one-shot job and the drain under a real turn.
-  Live rollback: boot out `com.mama.server` by hand during step 12.
+- **This Mac (checkout, live bot):** PR 1's drained restart; the checkout CLI's `update` and
+  `/update` (owner DM, common group) refuse with the steps.
+- **A clean macOS account on this Mac,** with its own test bot and group (B2 needs one too), before
+  the release, as release-process.md asks: verdaccio serves candidates N, N+1 and N+2 that crashes
+  at boot. It proves the update under real launchd, `/update`, and rollback from a crashing
+  candidate against KeepAlive. A second root under this Mac's own account cannot work, because the
+  LaunchAgent label is fixed (`s/cli/launch-files.ts:154`).
+- **After the release:** the same account updates from the npm registry once N+1 is published.
 - **Wave 3 Linux box:** `systemd-run --user` and the systemd half of every step.
 - Installs on 0.78.0 or earlier update by hand once; the release notes say so.
 
 ## Done when
 
-- **R3:** on the clean account, `mama status` and `mama doctor` show N+1 from the cached check;
-  `mama update --dry-run` shows N → N+1 and the steps; `mama update`, started during a test-bot
-  turn, waits for it (run `committed`, reply delivered), then snapshots, installs, restarts, waits
-  for the boot and reports. `mama status` shows N+1, `daemon.log` is clean, the snapshot and the old
-  folder are gone. The CI rollback leg passes.
-- **R7:** with that account's backend signed out, `/update` from the test owner's DM runs the same
-  steps; progress and the result arrive there and no model run opens. In the test common group
-  `/update` answers there ("already on N+1"). A member is refused.
+- **R3:** on the clean account, status and doctor show the newer version from the cached check;
+  `--dry-run` shows N → N+1 and the steps; `mama update` started during a test-bot turn waits for
+  it (run `committed`, reply delivered), then snapshots, swaps, restarts, waits and reports; status
+  shows N+1; `daemon.log` is clean; the snapshot and the old folder are gone. Updating to N+2 rolls
+  back: N runs, `npm ls -g` shows N, and no input is lost. The registry run repeats N → N+1.
+- **R7:** with that account's backend signed out, `/update` from the owner's DM runs the same steps;
+  progress and the result arrive there and no model run opens. In the common group it answers there
+  ("already on N+1"). A member is refused.
 
 ## Failure modes
 
-| Failure                                              | Handling                                                                                               |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| A turn outlasts the drain bound                      | Hold ends, nothing changed, session named, exit 1; `/stop` or `mama stop --now` is the owner's         |
-| It dies after the stop (sleep, reboot, killed job)   | The journal refuses boot; doctor names `mama update --rollback`                                        |
-| The snapshot fails (disk full)                       | Backup's own error; nothing installed; the old version started                                         |
-| `npm install` fails, or the prefix is not writable   | Old folder back, old version started, npm's code reported; never `sudo`                                |
-| The new doctor fails a check the old one passed      | Rollback before the start, no restore                                                                  |
-| No `running` with `<to>` in 600 s                    | Stop, old folder, restore, old launch files, start, boot wait                                          |
-| A rollback restores the snapshot                     | Codex sessions start over (`s/cli/runtime/restore.ts:753`); the report says so                         |
-| The rollback fails                                   | Stopped; journal, snapshot and folder kept; `mama update --rollback`                                   |
-| Two updates at once (CLI and chat, or two `/update`) | `runtime/update.lock` refuses the second, naming the first                                             |
-| A full-report hour passes while stopped              | Skipped (`s/runtime/report-scheduler.ts:79-80`); a stop lasts minutes; the daily catches up (`:87-88`) |
-| The registry cannot be reached                       | Discovery keeps the error and its time; `mama update` exits 1 before draining                          |
-| A daemon run in a terminal, no service file          | Refused at step 1                                                                                      |
+| Failure                                                    | Handling                                                                                       |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Claimed work outlasts the drain bound                      | Hold ends, nothing changed, counts named, exit 1                                               |
+| Staging (npm, network, prefix not writable)                | Staging removed, nothing else changed, npm's code reported; never `sudo`                       |
+| The service stop fails (`runStop` 1, `control.ts:156-167`) | Journal removed, hold released, staging removed, exit 1                                        |
+| The parent dies after the stop                             | `start.sh` exits 0 on the hold file; doctor prints the absolute rollback command               |
+| The snapshot fails (disk full)                             | Backup's error; staging removed; the old version started                                       |
+| New doctor failure, or no `running` at `<to>`              | Rollback; the database is restored only if a schema source moved                               |
+| The updater dies while the candidate is held               | Journal stays `candidate`; doctor names `--rollback`; `release` is never sent by hand          |
+| A restore in a rollback                                    | Inputs after the snapshot dropped and counted; Codex sessions start over (`restore.ts:753`)    |
+| The rollback fails                                         | Stopped on the hold file; journal, snapshot and folders kept                                   |
+| A second update (CLI, chat)                                | `update.lock` refuses it; `/update` reads the holder first and leaves the job alone            |
+| A full-report hour passes while stopped                    | Skipped (`report-scheduler.ts:79-80`); the stop lasts minutes; the daily catches up (`:87-88`) |
 
 ## Order of work
 
-Step 0 → PR 1 (deployed on this Mac at once) → PR 2 → PR 3 → PR 4 → the wave 2 release with W2.4
-(this design changes no core code; core 8.9.0 from W2.2 still goes first) → the clean-account
-proof once N+1 exists → R3 and R7 marked in v1.md, evidence in checks.md.
+Step 0 → PR 1 (deployed on this Mac at once) → PR 2 → PR 3 → PR 4 → candidate proof on the clean
+account → the wave 2 release with W2.4 (no core code changes here; core 8.9.0 from W2.2 goes
+first) → the registry run → R3 and R7 marked in v1.md, evidence in checks.md.
 
 ## Plan corrections
 
-- W1.1 lists `drain` and a draining `mama stop`; neither was built. PR 1 builds them.
-- W1.1 calls the launch-file rewrite by `mama update` W2.5; it is W2.3.
+- v1-plan W1.1 claimed a `drain` op and a draining `mama stop`; neither was built. This change
+  corrects W1.1 and its "W2.5" (W2.3).
 - W2.3's "reinstall the previous version" gives a different install under the caret core range;
   the previous folder is kept instead.
-- W2.3's sequence runs as two programs: the old code up to the install, the new code after it.
+- W2.3's sequence runs as two programs: the old code up to the swap, the new code after it.
 - R3 lists the backup before the wait; `mama backup` needs a stopped install (`backup.ts:81-82`),
   so the order is drain, stop, snapshot.
 

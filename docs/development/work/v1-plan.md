@@ -31,7 +31,7 @@ live check passes.
    an exclusive SQLite lock on `<root>/runtime/daemon.lock`, held for the process's life and
    released by the operating system when it ends, so no stale claim or reused pid needs handling
    (#505). The control socket sits at the root beside `runtime.sock` (the same AF_UNIX path limit)
-   and carries status, stop and drain; each request needs the per-boot token the daemon writes
+   and carries status, stop and drain (drain from W2.3); each request needs the per-boot token the daemon writes
    under `runtime/`, which the agents' native reads deny (`s/runtime/backend-security.ts:120`).
 3. **Default `member_root` and `tools_root` outside HOME, per platform and per user.** macOS:
    folders in the Shared folder beside the home folders. Linux: `/var/lib/mama/<user>/members` and
@@ -79,7 +79,8 @@ live check passes.
   decision 7), and the operating system releases it when the process ends. The holder serves the
   socket. Signal handlers are installed before boot (today after it, `daemon.ts:963-977`).
 - Ops: `status` (pid, version, started, boot stage, running turns per session, connectors' last poll
-  and error, last error), `drain` (stop intake, report when no turn runs, stay up), `stop`.
+  and error, last error), `stop`. W1.1 built `status`, `stop` and (W2.1d) `probe`; `drain` and
+  the draining `stop` below were not built and are W2.3's first PR ([update.md](update.md)).
 - CLI: `status` (exit 0 running, 3 stopped) plus the service manager's state; `stop` drains and
   reports running turns, then stops through the service manager when installed, `--now` skips the
   wait; `register-owner` holds the lock while it runs (it opens the database itself,
@@ -88,7 +89,7 @@ live check passes.
 - `mama service install|uninstall|start|stop|status`, idempotent, writes the launch files from the
   current template (LaunchAgent on macOS; a systemd user unit on Linux, verified in wave 3), with
   decision 7's restart policy. On Linux it enables linger (`loginctl enable-linger`) with the
-  person's consent, so the service runs after logout, and says so when it cannot. `mama update` (W2.5) rewrites them when the
+  person's consent, so the service runs after logout, and says so when it cannot. `mama update` (W2.3) rewrites them when the
   template changes.
 - Files: new `s/cli/runtime/daemon-control.ts`, `s/cli/commands/service.ts`; `daemon.ts`;
   `index.ts`; `launch-files.ts`; `register-owner.ts`; `docs/reference/cli.md` (stale PID text and
