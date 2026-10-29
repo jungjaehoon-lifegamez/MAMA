@@ -169,6 +169,56 @@ describe('daemon bootstrap', () => {
       await daemon.stop();
     }
   );
+  it('starts the daily release check in a live boot only, under runtime/, and stops it with the daemon', async () => {
+    vi.spyOn(egressProxy, 'startEgressProxy').mockResolvedValue({
+      httpProxyPort: 1,
+      socksProxyPort: 2,
+      close: async () => {},
+    } as never);
+    const boot = async (mode: 'live' | 'replay') => {
+      const root = mkdtempSync(join(tmpdir(), `release-boot-${mode}-`));
+      roots.push(root);
+      const stop = vi.fn();
+      const start = vi.fn();
+      const createReleaseCheck = vi.fn(() => ({ tick: async () => {}, start, stop }));
+      const daemon = await bootDaemon({
+        mode,
+        replay: async () => {},
+        home: root,
+        configPath: join(root, 'config.yaml'),
+        config: config(root),
+        logger: { info: () => {}, error: () => {} },
+        dependencies: {
+          ensureIsolation: () => {},
+          createOwnerRuntime: async () => ownerDouble([]) as never,
+          createViewerServer: () => viewerDouble([]) as never,
+          startConnectorRuntime: async () => ({ stop: async () => {} }) as never,
+          createTelegramGateway: () =>
+            ({
+              start: async () => {},
+              stop: async () => {},
+              deliverResponse: async () => {},
+              sendToOwner: async () => {},
+            }) as never,
+          createReleaseCheck,
+        },
+      });
+      await daemon.stop();
+      return { root, createReleaseCheck, start, stop };
+    };
+    const live = await boot('live');
+    expect(live.createReleaseCheck).toHaveBeenCalledTimes(1);
+    expect(live.createReleaseCheck.mock.calls[0]?.[0]).toMatchObject({
+      statePath: join(live.root, 'runtime', 'release-check.json'),
+      current: JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf8')).version,
+      packageKind: { kind: 'checkout' },
+    });
+    expect(live.start).toHaveBeenCalledTimes(1);
+    expect(live.stop).toHaveBeenCalledTimes(1);
+    const replay = await boot('replay');
+    expect(replay.createReleaseCheck).not.toHaveBeenCalled();
+  });
+
   it('quiesces all intake before draining receipts and closes transports before the database', async () => {
     vi.spyOn(egressProxy, 'startEgressProxy').mockResolvedValue({
       httpProxyPort: 1,

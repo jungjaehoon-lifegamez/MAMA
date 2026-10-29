@@ -268,12 +268,18 @@ describe('mama doctor', () => {
     let by = byName(
       await runDiagnostics({ ...base(install()), run: host({ version: '2.1.200' }) })
     );
+    // The detail carries versions a backend self-update changes; the code does not.
     expect(by.backend).toMatchObject({
       status: 'fail',
       detail: 'claude 2.1.200 is older than 2.1.299',
+      code: 'backend.too_old',
     });
     by = byName(await runDiagnostics({ ...base(install()), run: host({ loggedIn: false }) }));
-    expect(by.backend).toMatchObject({ status: 'fail', fix: 'claude auth login' });
+    expect(by.backend).toMatchObject({
+      status: 'fail',
+      fix: 'claude auth login',
+      code: 'backend.signed_out',
+    });
     by = byName(await runDiagnostics(base(install({ gone: true }))));
     expect(by.node).toMatchObject({ status: 'fail', detail: 'the Node start.sh runs is gone' });
     by = byName(await runDiagnostics({ ...base(install()), run: host({ sqlite: false }) }));
@@ -673,7 +679,7 @@ describe('mama doctor', () => {
     newer.prepare("INSERT INTO schema_version VALUES ('core', ?)").run(highest + 1);
     newer.close();
     by = byName(await runDiagnostics(base(installed)));
-    expect(by.schema).toMatchObject({ status: 'fail' });
+    expect(by.schema).toMatchObject({ status: 'fail', code: 'schema.newer' });
     expect(by.schema.detail).toContain(`core ${highest + 1} of ${highest}`);
 
     // A newer product schema counts the same as a newer core one.
@@ -826,5 +832,94 @@ describe('mama doctor', () => {
     expect(report).toContain('EACCES');
     expect(report).toContain('fail source ical: 1 secret(s) it needs are not set');
     for (const secret of secrets) expect(report).not.toContain(secret);
+  });
+});
+
+describe('doctor release check', () => {
+  const at = '2026-10-30T01:00:00.000Z';
+  const local = new Date(at).toLocaleString('sv-SE');
+  const writeCheck = (root: string, state: Record<string, unknown>) =>
+    writeFileSync(join(root, 'runtime', 'release-check.json'), JSON.stringify(state), {
+      mode: 0o600,
+    });
+
+  it("reads only the daemon's file, with a network that throws", async () => {
+    const installed = install();
+    mkdirSync(join(installed.root, 'runtime'), { recursive: true });
+    const fetch = vi.fn(async () => {
+      throw new TypeError('fetch failed');
+    });
+    vi.stubGlobal('fetch', fetch);
+    const offline = vi.fn(async () => {
+      throw new TypeError('fetch failed');
+    });
+    try {
+      let by = byName(await runDiagnostics({ ...base(installed), telegramCall: offline }));
+      expect(by.release).toEqual({
+        name: 'release',
+        status: 'ok',
+        detail: 'not checked yet; the running daemon checks once a day',
+      });
+
+      // This fixture's start.sh runs this checkout, so the update path is the git steps.
+      writeCheck(installed.root, {
+        checkedAt: at,
+        current: '0.78.0',
+        latest: '0.79.0',
+        error: null,
+      });
+      by = byName(await runDiagnostics({ ...base(installed), telegramCall: offline }));
+      expect(by.release).toMatchObject({
+        status: 'warn',
+        detail: `newer release 0.79.0 (checked ${local}); the daemon runs 0.78.0`,
+      });
+      expect(by.release.fix).toContain('git pull --ff-only');
+      expect(by.release.fix).toContain(`'${CLI}' service install`);
+
+      // The shareable report carries the detail, never the steps' paths.
+      const lines: string[] = [];
+      await runDoctor(['--report'], {
+        ...base(installed),
+        telegramCall: offline,
+        write: (line) => lines.push(line),
+      });
+      expect(lines.join('\n')).toContain(`warn release: newer release 0.79.0 (checked ${local})`);
+      expect(lines.join('\n')).not.toContain(CLI);
+
+      writeCheck(installed.root, {
+        checkedAt: at,
+        current: '0.78.0',
+        latest: null,
+        error: 'ENOTFOUND',
+      });
+      by = byName(await runDiagnostics({ ...base(installed), telegramCall: offline }));
+      expect(by.release).toMatchObject({
+        status: 'warn',
+        detail: `last check failed at ${local}: ENOTFOUND`,
+      });
+
+      writeCheck(installed.root, {
+        checkedAt: at,
+        current: '0.79.0',
+        latest: '0.79.0',
+        error: null,
+      });
+      by = byName(await runDiagnostics({ ...base(installed), telegramCall: offline }));
+      expect(by.release).toMatchObject({
+        status: 'ok',
+        detail: `0.79.0 is current (checked ${local})`,
+      });
+
+      writeFileSync(join(installed.root, 'runtime', 'release-check.json'), '{"checkedAt":');
+      by = byName(await runDiagnostics({ ...base(installed), telegramCall: offline }));
+      expect(by.release).toMatchObject({
+        status: 'warn',
+        detail: 'the last release check cannot be read',
+        fix: 'remove runtime/release-check.json; the daemon checks again within the hour',
+      });
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
