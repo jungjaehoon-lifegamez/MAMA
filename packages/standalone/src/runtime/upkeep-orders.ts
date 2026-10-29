@@ -207,6 +207,13 @@ function storedSubjects(adapter: DatabaseAdapter, kind: UpkeepKind, now: number)
   return { states, anyOpen };
 }
 
+/** A subject settled for good (upkeep_settled); a later write keeps the latest state. */
+function recordSettled(adapter: DatabaseAdapter) {
+  return adapter.prepare(
+    `INSERT OR REPLACE INTO upkeep_settled (kind, subject_key, state, settled_at) VALUES (?, ?, ?, ?)`
+  );
+}
+
 /** Child runs of an order run that this process started and that have not ended yet. */
 export function runningChildren(
   adapter: DatabaseAdapter,
@@ -252,9 +259,7 @@ export function createUpkeepOrders(options: UpkeepOrdersOptions): UpkeepOrders {
     settledOrders.add(orderId);
     const at = now();
     const { states } = storedSubjects(options.adapter, kind, at);
-    const record = options.adapter.prepare(
-      `INSERT OR REPLACE INTO upkeep_settled (kind, subject_key, state, settled_at) VALUES (?, ?, ?, ?)`
-    );
+    const record = recordSettled(options.adapter);
     for (const subject of order.subjects) {
       const orders = states.get(subject.key)?.orders ?? [];
       if (kind.checked(options.adapter, subject, orderRunIds(options.adapter, orders))) {
@@ -294,6 +299,7 @@ export function createUpkeepOrders(options: UpkeepOrdersOptions): UpkeepOrders {
           .all(kind.name) as Array<{ subject_key: string }>
       ).map((row) => row.subject_key)
     );
+    const record = recordSettled(options.adapter);
     const due: UpkeepSubject[] = [];
     const perGroup = new Map<string, number>();
     const candidates = function* (): Generator<UpkeepSubject> {
@@ -310,13 +316,21 @@ export function createUpkeepOrders(options: UpkeepOrdersOptions): UpkeepOrders {
       if (settled.has(subject.key)) continue;
       const state = states.get(subject.key);
       const orders = state?.orders ?? [];
-      // Reported lost when its last order was settled; it is never ordered again.
-      if (orders.length >= UPKEEP_MAX_ATTEMPTS) continue;
+      // No order of the kind is open here, so these orders are over. Their settlement is recorded
+      // again: a stop during the child-run wait, a failed check or a crash in settle() leaves it
+      // unwritten, and the stored orders that show it are deleted after seven days.
       if (
         orders.length > 0 &&
         kind.checked(options.adapter, subject, orderRunIds(options.adapter, orders))
-      )
+      ) {
+        record.run(kind.name, subject.key, 'checked', at);
         continue;
+      }
+      // Reported lost when its last order was settled; it is never ordered again.
+      if (orders.length >= UPKEEP_MAX_ATTEMPTS) {
+        record.run(kind.name, subject.key, 'lost', at);
+        continue;
+      }
       due.push(subject);
       if (group !== undefined) perGroup.set(group, (perGroup.get(group) ?? 0) + 1);
     }

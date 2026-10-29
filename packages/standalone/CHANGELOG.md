@@ -65,6 +65,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after it still run. In the common group an owner stops the common session's turn and a member
   their own.
 
+### Changed
+
+- A closing summary, once checked, is not ordered again even if a later write clears or replaces
+  it. Before, an order was placed again when that happened within a week.
+
 ### Fixed
 
 - A backend failure such as a signed-out Claude CLI or an API error no longer arrives as MAMA's

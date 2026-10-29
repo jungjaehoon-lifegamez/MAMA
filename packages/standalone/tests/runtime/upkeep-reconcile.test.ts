@@ -141,7 +141,7 @@ async function revise(
 function harness(
   adapter: Adapter,
   knowledge: Knowledge,
-  options: { at?: number; hours?: number[] } = {}
+  options: { at?: number; hours?: number[]; sleep?: () => Promise<void> } = {}
 ) {
   const events: UpkeepEvent[] = [];
   const accepted: Array<Omit<Stimulus, 'principalId'>> = [];
@@ -167,7 +167,7 @@ function harness(
     kinds: [kind],
     processStartedAt: 0,
     onEvent: (event) => events.push(event),
-    sleep: async () => {},
+    sleep: options.sleep ?? (async () => {}),
     now: () => clock,
   });
   const finish = (index: number): MailboxRow => {
@@ -610,6 +610,49 @@ describe('board reconcile check', () => {
     const after = harness(adapter, knowledge, { at: NOW + 10 * DAY });
     after.orders.tick('reconcile');
     expect(after.keys(0)).toEqual([`stale:${kept}:2`]);
+  });
+});
+
+describe('board reconcile settlement across a restart', () => {
+  it('records a subject checked by an order whose check a stop cut off, so it stays settled past the window', async () => {
+    const { adapter, knowledge } = await setup();
+    const item = await work(knowledge, 'w-cut-off', {
+      status: 'in_progress',
+      eventAt: NOW - 40 * DAY,
+    });
+    const h = harness(adapter, knowledge, { sleep: () => new Promise<void>(() => {}) });
+    h.orders.tick('reconcile');
+    const row = h.finish(0);
+    h.orderRun(0, 'run-1');
+    adapter
+      .prepare(
+        `INSERT INTO model_runs (model_run_id, status, created_at, parent_model_run_id) VALUES ('child-1', 'running', ?, 'run-1')`
+      )
+      .run(NOW);
+    adapter
+      .prepare(
+        `INSERT INTO tool_traces (trace_id, model_run_id, tool_name, input_summary, execution_status, created_at)
+         VALUES ('trace-cut', 'run-1', 'work.no_update', ?, 'completed', ?)`
+      )
+      .run(JSON.stringify({ reason: 'still waiting on the client', commitmentIds: [item] }), NOW);
+    // The check waits for the child run; the daemon stops before it ends.
+    h.orders.onResult(row, 'run-1');
+    await h.settled();
+    h.orders.stop();
+    const settledRows = () =>
+      adapter
+        .prepare(`SELECT subject_key, state FROM upkeep_settled WHERE kind = 'reconcile'`)
+        .all();
+    expect(settledRows()).toEqual([]);
+    // After the restart the next morning's tick finds the order over and records it.
+    const restarted = harness(adapter, knowledge, { at: NOW + DAY });
+    restarted.orders.tick('reconcile');
+    expect(restarted.accepted).toHaveLength(0);
+    expect(settledRows()).toEqual([{ subject_key: `stale:${item}:1`, state: 'checked' }]);
+    // Past the seven days the stored order is counted over, it is still not ordered again.
+    const later = harness(adapter, knowledge, { at: NOW + 9 * DAY });
+    later.orders.tick('reconcile');
+    expect(later.accepted).toHaveLength(0);
   });
 });
 

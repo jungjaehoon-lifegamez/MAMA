@@ -135,7 +135,12 @@ Some closed items do carry full summaries, so the agent can do this. The gap is 
   - Settled for good: the mailbox deletes acked order rows after seven days, so attempts counted
     from stored orders forget a subject after a week. The runner writes checked and lost subjects
     to `upkeep_settled` (standalone migration 003) and never orders them again. Stale subjects have
-    no time bound, so without it a kept or lost item came back every eight days.
+    no time bound, so without it a kept or lost item came back every eight days. A tick also
+    writes the settlement its stored orders show, so a check cut off by a stop, a failed check or
+    a crash is recorded at the next tick.
+  - This narrows U1: a closing summary checked once stays checked, even when another write later
+    clears or replaces it within the week. Before, the next tick re-checked it and ordered it
+    again.
   - Caps: at most ten moved items and ten stale items an order (the runner's optional `group`), so
     neither starves the other.
 
