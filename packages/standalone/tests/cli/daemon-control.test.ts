@@ -13,9 +13,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as egressProxy from '../../src/runtime/egress-proxy.js';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:net';
 import {
   acquireInstallLock,
   daemonControlPaths,
+  drainDaemon,
   InstallBusyError,
   lockHolder,
   requestDaemonControl,
@@ -174,6 +176,112 @@ describe('control socket', () => {
     } finally {
       await server.close();
       lock.release();
+    }
+  });
+
+  it('holds claims while a drain stays open, and lets go on its bound, its close or the server close', async () => {
+    const paths = daemonControlPaths(root());
+    const lock = acquireInstallLock(paths, 'daemon');
+    const counts = { running: 1, claimed: 1 };
+    const events: string[] = [];
+    let boundMs = 60_000;
+    let refuse = false;
+    const server = await startDaemonControl(
+      paths,
+      {
+        status: () => ({}),
+        stop: () => {},
+        probe: async () => ({}),
+        hold: () => {
+          if (refuse) throw new Error('MAMA is stopping');
+          events.push('hold');
+          return { boundMs, counts: () => ({ ...counts }), release: () => events.push('release') };
+        },
+      },
+      5_000,
+      5
+    );
+    try {
+      // Counts go out as they change; idle keeps the hold until the client lets go.
+      const progress: unknown[] = [];
+      const drain = (await drainDaemon(paths, (line) => progress.push(line)))!;
+      await vi.waitFor(() => expect(progress).toHaveLength(1));
+      counts.running = 0;
+      counts.claimed = 0;
+      expect(await drain.outcome).toEqual({ kind: 'idle' });
+      expect(progress).toEqual([
+        { running: 1, claimed: 1, bound: 60_000, idle: false },
+        { running: 0, claimed: 0, bound: 60_000, idle: true },
+      ]);
+      expect(events).toEqual(['hold']);
+      drain.release();
+      await vi.waitFor(() => expect(events).toEqual(['hold', 'release']));
+
+      // Past its bound the daemon ends the drain with the counts and lets go.
+      counts.running = 1;
+      boundMs = 20;
+      const bounded = (await drainDaemon(paths, () => {}))!;
+      expect(await bounded.outcome).toEqual({ kind: 'bound', bound: 20, running: 1, claimed: 0 });
+      await vi.waitFor(() => expect(events).toEqual(['hold', 'release', 'hold', 'release']));
+
+      // A daemon that stops ends an open drain, so its server closes.
+      boundMs = 60_000;
+      const open = (await drainDaemon(paths, () => {}))!;
+      await vi.waitFor(() => expect(events).toHaveLength(5));
+      refuse = true;
+      const refused = (await drainDaemon(paths, () => {}))!;
+      expect(await refused.outcome).toEqual({ kind: 'refused', error: 'MAMA is stopping' });
+      await server.close();
+      expect(await open.outcome).toEqual({ kind: 'closed' });
+      expect(events.at(-1)).toBe('release');
+    } finally {
+      lock.release();
+    }
+    expect(await drainDaemon(paths, () => {})).toBeNull();
+  });
+
+  it('gives up on a daemon that does not answer a drain, goes quiet, or outlives its bound', async () => {
+    const paths = daemonControlPaths(root());
+    mkdirSync(join(paths.tokenPath, '..'), { recursive: true });
+    writeFileSync(paths.tokenPath, 'fixture-token\n');
+    // A wedged daemon: it takes the connection and sends what the test says, then nothing.
+    let lines: string[] = [];
+    const sockets = new Set<import('node:net').Socket>();
+    const wedged = createServer((socket) => {
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+      socket.once('data', () => {
+        for (const line of lines) socket.write(`${line}\n`);
+      });
+    });
+    await new Promise<void>((resolve) => wedged.listen(paths.socketPath, resolve));
+    const progress = (running: number, bound: number) =>
+      JSON.stringify({ ok: true, drain: { running, claimed: 0, bound, idle: false } });
+    try {
+      lines = [];
+      const silentFirst = (await drainDaemon(paths, () => {}, { firstMs: 20 }))!;
+      expect(await silentFirst.outcome).toEqual({
+        kind: 'silent',
+        error: 'the daemon did not answer the drain within 20 ms',
+      });
+
+      lines = [progress(1, 60_000)];
+      const quiet = (await drainDaemon(paths, () => {}, { firstMs: 1_000, silenceMs: 30 }))!;
+      expect(await quiet.outcome).toEqual({
+        kind: 'silent',
+        error: 'the daemon sent nothing on the drain for 30 ms',
+      });
+
+      lines = [progress(1, 10)];
+      const overdue = (await drainDaemon(paths, () => {}, { silenceMs: 60_000, graceMs: 20 }))!;
+      expect(await overdue.outcome).toEqual({
+        kind: 'silent',
+        error: 'the daemon did not end the drain at its bound of 10 ms',
+      });
+      // Each one let go of its connection, which is what ends a hold.
+      await vi.waitFor(() => expect(sockets.size).toBe(0));
+    } finally {
+      await new Promise<void>((resolve) => wedged.close(() => resolve()));
     }
   });
 

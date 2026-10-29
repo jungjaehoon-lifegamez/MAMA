@@ -194,6 +194,11 @@ export interface OwnerRuntimeOptions {
   onStimulusSkipped?: StimulusDeliveryOptions['onSkipped'];
   /** Keep accepted inputs queued while product delivery ports are starting. */
   deliveryReady?: () => boolean;
+  /**
+   * True while a drain holds claims: no input of any kind is claimed, and claim renewal and stale
+   * replay wait with them. Accepting goes on; claimed inputs still run.
+   */
+  claimsHeld?: () => boolean;
   maxTurns: number;
   attachmentPorts?: Pick<
     AttachmentActionPorts,
@@ -614,7 +619,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
             memberRecords: {
               root: memberRoot,
               isStopping: () => stopping,
-              isReady: () => options.deliveryReady?.() ?? true,
+              // An erasure resumed during a drain would run past the stop that follows it.
+              isReady: () => options.claimsHeld?.() !== true && (options.deliveryReady?.() ?? true),
               resumeQueued: () => {
                 void intakeRuntime
                   .drainOnce()
@@ -1180,7 +1186,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
             }
           }
         },
-        hostReady: () => !stopping,
+        hostReady: () => !stopping && options.claimsHeld?.() !== true,
         excludePrincipals: surface.memberRecords.excludePrincipals,
         onSettled: surface.memberRecords.onSettled,
         onDead: (row, reason) => {
@@ -1192,7 +1198,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           surface.memberRecords.onUncertain(row, reason);
           return sessions.delivery.onUncertain?.(row, reason);
         },
-        ready: () => !stopping && (options.deliveryReady?.() ?? true),
+        ready: () =>
+          !stopping && options.claimsHeld?.() !== true && (options.deliveryReady?.() ?? true),
       },
       reclaimStaleSocket: true,
     });

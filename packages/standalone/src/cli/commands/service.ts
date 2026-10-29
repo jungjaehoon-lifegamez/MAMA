@@ -110,6 +110,15 @@ function serviceRunning(manager: Manager, home: string, run: ServiceRun): boolea
   return systemdUnitState(home, run, 'linux') === 'active';
 }
 
+/** Whether the installed service runs the daemon now. */
+export function serviceRuns(options: ServiceOptions = {}): boolean {
+  return serviceRunning(
+    managerFor(options.platform ?? process.platform),
+    options.home ?? homedir(),
+    options.run ?? defaultServiceRun
+  );
+}
+
 function unquote(value: string): string {
   return value.replace(/^['"]|['"]$/g, '');
 }

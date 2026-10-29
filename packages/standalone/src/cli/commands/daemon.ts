@@ -70,6 +70,7 @@ import {
   type DaemonControlOp,
   type DaemonControlReply,
   type DaemonControlServer,
+  type DrainCounts,
   type InstallLock,
 } from '../runtime/daemon-control.js';
 
@@ -474,6 +475,39 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   const control = daemonControlPaths(dirname(configPath));
   const lock: InstallLock = acquireInstallLock(control, command);
   let controlServer: DaemonControlServer | null = null;
+  // One per open drain connection; while any is open, nothing new is claimed.
+  const holds = new Set<{ since: number }>();
+
+  // What a drain waits for: this process's own work. Runs and claims of an earlier boot are left
+  // out: their process is gone, and such a claim (a dispatch the crash cut off) resolves only in
+  // reconciliation, which the hold suspends. A claim is stamped when it is taken and renewed only
+  // by this process's deliveries, so its time tells which boot owns it. A claimed input whose
+  // native dispatch is uncertain is parked until reconciliation too; nothing starts from it.
+  const drainCounts = (): DrainCounts & { turns: number } => {
+    if (stopped) throw new Error('MAMA is stopping');
+    if (!owner) return { running: 0, claimed: 0, turns: 0 };
+    const adapter = owner.database.adapter;
+    const { running, unclaimed } = adapter
+      .prepare(
+        `SELECT COUNT(*) AS running,
+                COUNT(CASE WHEN parent_model_run_id IS NULL
+                            AND json_extract(input_refs_json, '$.nativeInputId') IS NULL
+                           THEN 1 END) AS unclaimed
+           FROM model_runs WHERE status = 'running' AND created_at >= ?`
+      )
+      .get(startedAt) as { running: number; unclaimed: number };
+    const { claimed } = adapter
+      .prepare(
+        `SELECT COUNT(*) AS claimed FROM mailbox_inputs m
+          WHERE m.status = 'claimed' AND m.claimed_at >= ?
+            AND NOT EXISTS (SELECT 1 FROM native_input_deliveries n
+                             WHERE n.input_id = m.id AND n.state = 'uncertain')`
+      )
+      .get(startedAt) as { claimed: number };
+    // A turn either runs a claimed input or is a top-level run without one (a probe); subagent
+    // runs belong to their parent's turn.
+    return { running, claimed, turns: claimed + unclaimed };
+  };
 
   const statusReport = async (): Promise<Record<string, unknown>> => {
     const report: Record<string, unknown> = {
@@ -483,6 +517,10 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       startedAt,
       stage: stopped ? 'stopping' : booted ? 'running' : currentStage,
       lastError,
+      drain:
+        holds.size === 0
+          ? null
+          : { holds: holds.size, since: Math.min(...[...holds].map((hold) => hold.since)) },
     };
     // Stores close during a stop; what it reports then is that it is stopping.
     if (stopped) return report;
@@ -577,6 +615,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       },
       probe: async () => {
         if (!booted || stopped || !owner) throw new Error('MAMA has not finished starting');
+        // After the drain is idle the stop comes next, and it would cut the probe's turn off.
+        if (holds.size > 0) throw new Error('A drain holds new work; probe after the restart');
         try {
           const probed = await owner.probeBackend();
           logger.info(
@@ -589,6 +629,25 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
           logger.error(`backend probe: ${config.agent.backend} failed: ${reason}`);
           throw new Error(reason);
         }
+      },
+      hold: () => {
+        const at = drainCounts();
+        // Each turn that may still run takes at most max_turn_ms; nothing new starts.
+        const perTurn = owner ? config.agent.max_turn_ms : 0;
+        const hold = { since: Date.now() };
+        holds.add(hold);
+        logger.info(`drain: claims held running=${at.running} claimed=${at.claimed}`);
+        return {
+          boundMs: at.turns * perTurn + 60_000,
+          counts: () => {
+            const { running, claimed } = drainCounts();
+            return { running, claimed };
+          },
+          release: () => {
+            holds.delete(hold);
+            logger.info('drain: claims released');
+          },
+        };
       },
     });
     if (options.signal?.aborted) throw new StopDuringBootError();
@@ -804,6 +863,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       },
       ownerPolicyProvider,
       deliveryReady: () => deliveryReady,
+      claimsHeld: () => holds.size > 0,
       onPersonalJobError: (error) =>
         logger.error(`personal job scheduler failed reason=${stimulusFailureReason(error)}`),
       ...(options.mode === 'replay'
