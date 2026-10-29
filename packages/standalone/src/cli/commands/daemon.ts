@@ -56,6 +56,13 @@ import { ownerRuleIds } from '../../runtime/owner-authority.js';
 import { resolvePrincipalAccess } from '../../runtime/principal-access.js';
 import type { OwnerFileDeliveryResult } from '../../api/file-delivery.js';
 import { createReportScheduler, type ReportScheduler } from '../../runtime/report-scheduler.js';
+import {
+  createReleaseCheck,
+  npmBesideNode,
+  releaseCheckPath,
+  type ReleaseCheck,
+} from '../runtime/release-check.js';
+import { packageKind, runningPackageRoot } from '../runtime/install-kind.js';
 import type { UpkeepEvent } from '../../runtime/upkeep-orders.js';
 import { findDailyPages } from '../../wiki/wiki-read.js';
 import { createTimeZoneSetting, localNow } from '../../runtime/timezone.js';
@@ -138,6 +145,8 @@ export interface DaemonBootDependencies {
   createDiscordGateway?: (options: DiscordGatewayOptions) => DaemonGateway;
   createSlackGateway?: (options: SlackGatewayOptions) => DaemonGateway;
   createReportScheduler?: typeof createReportScheduler;
+  /** The daily release check; tests replace it so no boot asks the registry. */
+  createReleaseCheck?: typeof createReleaseCheck;
   ensureIsolation?: (options: DaemonIsolationOptions) => void;
 }
 
@@ -464,6 +473,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   let gateway: DaemonGateway | null = null;
   const gateways = new Map<MessengerName, DaemonGateway>();
   let reportScheduler: ReportScheduler | undefined;
+  let releaseCheck: ReleaseCheck | undefined;
   let egressProxy: EgressProxy | undefined;
   let stopped = false;
   let deliveryReady = options.mode === 'replay';
@@ -565,6 +575,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       producerStops.push(
         stopOne(logger, 'report_scheduler', () => reportScheduler!.stop(), errors)
       );
+    if (releaseCheck)
+      producerStops.push(stopOne(logger, 'release_check', () => releaseCheck!.stop(), errors));
     if (connectors)
       producerStops.push(stopOne(logger, 'connectors', () => connectors!.stop(), errors));
     if (viewer) producerStops.push(stopOne(logger, 'viewer', () => viewer!.stop(), errors));
@@ -1227,6 +1239,17 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         );
       stage(logger, 'personal_job_scheduler', options.signal);
     }
+    // Live only: a replay or backfill returned above, and never asks the registry.
+    releaseCheck = (dependencies.createReleaseCheck ?? createReleaseCheck)({
+      statePath: releaseCheckPath(paths.mamaRoot),
+      current: resolvePackageVersion(),
+      packageKind: packageKind(runningPackageRoot()),
+      npmPath: npmBesideNode(),
+      timeZone,
+      log: (line) => logger.info(line),
+      onError: (error) => logger.error(`release check failed error=${errorName(error)}`),
+    });
+    releaseCheck.start();
     deliveryReady = true;
 
     booted = true;

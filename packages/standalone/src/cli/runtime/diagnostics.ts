@@ -31,6 +31,7 @@ import {
 } from '../commands/daemon.js';
 import { probeBackend, type BackendName, type ProbeRun, defaultProbeRun } from './backend-probe.js';
 import { restoreJournalPath, type DaemonControlReply } from './daemon-control.js';
+import { releaseReport } from './release-check.js';
 import {
   CORE_MIGRATION_SOURCE,
   MIGRATIONS_DIR,
@@ -50,6 +51,12 @@ export interface Check {
   readonly context?: string;
   /** What to do about a warn or fail. */
   readonly fix?: string;
+  /**
+   * A stable name for this finding where its detail carries values that an update or a backend
+   * self-update changes (versions, schema numbers). A check without one is the same finding
+   * while its name and detail are; `mama update` compares failures before and after by these.
+   */
+  readonly code?: string;
 }
 
 export interface DiagnosticsOptions {
@@ -333,6 +340,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
           name: 'backend',
           status: 'fail',
           detail: probe.problem ?? `${backend} ${probe.version} is older than ${probe.minimum}`,
+          ...(probe.problem === null ? { code: 'backend.too_old' } : {}),
           fix: `update ${backend} to ${probe.minimum} or newer`,
         });
       } else if (!probe.loggedIn) {
@@ -340,6 +348,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
           name: 'backend',
           status: 'fail',
           detail: `${backend} ${probe.version} is not signed in for the service`,
+          code: 'backend.signed_out',
           fix: backend === 'claude' ? 'claude auth login' : `CODEX_HOME='${codexHome}' codex login`,
         });
       } else {
@@ -409,6 +418,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
     ))
   );
   checks.push(serviceCheck(platform, home, options.serviceRun ?? defaultServiceRun));
+  checks.push(releaseCheck(root, home));
 
   // Each log against its own cap: the daemon rotates daemon.log and security-events.jsonl before
   // they pass theirs, and start.sh empties crash.log at start past its own.
@@ -493,6 +503,7 @@ function schemaCheck(databasePath: string): Check {
         name: 'schema',
         status: 'fail',
         detail: `the database is newer than this MAMA (${summary}); boot refuses it`,
+        code: 'schema.newer',
         fix: 'install the version that wrote it, or mama restore a backup taken with this one',
       };
     }
@@ -1021,6 +1032,25 @@ async function daemonChecks(
     );
   }
   return checks;
+}
+
+/** The daemon's last daily release check, from its file; doctor itself asks no registry. */
+function releaseCheck(root: string, home: string): Check {
+  const report = releaseReport(root, home);
+  if (report === null) {
+    return {
+      name: 'release',
+      status: 'ok',
+      detail: 'not checked yet; the running daemon checks once a day',
+    };
+  }
+  return {
+    name: 'release',
+    status: report.status,
+    detail: report.detail,
+    ...(report.context === undefined ? {} : { context: report.context }),
+    ...(report.steps === undefined ? {} : { fix: report.steps.join('; then ') }),
+  };
 }
 
 function serviceCheck(platform: NodeJS.Platform, home: string, serviceRun: ServiceRun): Check {

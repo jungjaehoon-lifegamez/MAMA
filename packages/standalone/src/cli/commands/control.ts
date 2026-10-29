@@ -1,5 +1,8 @@
 import { homedir } from 'node:os';
+import { dirname } from 'node:path';
+import { defaultConfigPath } from '../../runtime/config.js';
 import { CliInputError } from '../prompt.js';
+import { releaseReport } from '../runtime/release-check.js';
 import {
   drainDaemon,
   lockHolder,
@@ -108,12 +111,31 @@ export async function runStatus(
     service = `unknown (${error instanceof Error ? error.message : String(error)})`;
   }
   const reply = await askDaemon('status', options);
+  // The daemon's last release check, from its file: it outlives the daemon, and nothing here asks
+  // the registry.
+  const home = options.home ?? homedir();
+  const release = releaseReport(dirname(options.configPath ?? defaultConfigPath(home)), home);
+  const releaseLines = (): string[] =>
+    release === null
+      ? []
+      : [
+          `release: ${release.detail}${release.context ? ` (${release.context})` : ''}`,
+          ...(release.steps ?? []).map((step) => `  update: ${step}`),
+        ];
   if (reply.state === 'stopped') {
     if (json) {
-      write(JSON.stringify({ state: 'stopped', holder: reply.holder, service }));
+      write(
+        JSON.stringify({
+          state: 'stopped',
+          holder: reply.holder,
+          service,
+          release: release?.state ?? null,
+        })
+      );
     } else {
       write(reply.holder ? `stopped; ${holderLine(reply.holder)}` : 'stopped');
       if (service) write(`service: ${service}`);
+      for (const line of releaseLines()) write(line);
     }
     return STATUS_STOPPED_EXIT;
   }
@@ -122,10 +144,11 @@ export async function runStatus(
   }
   const status = reply.reply.status as Record<string, unknown>;
   if (json) {
-    write(JSON.stringify({ state: 'running', status, service }));
+    write(JSON.stringify({ state: 'running', status, service, release: release?.state ?? null }));
   } else {
     for (const line of statusLines(status)) write(line);
     if (service) write(`service: ${service}`);
+    for (const line of releaseLines()) write(line);
   }
   return 0;
 }
