@@ -88,6 +88,7 @@ import { createJevClient } from '../replay/jev-client.js';
 import { createRecordOrders, type RecordOrderEvent } from './record-orders.js';
 import { createUpkeepOrders, type UpkeepEvent } from './upkeep-orders.js';
 import { closeUpkeepKind } from './upkeep-close.js';
+import { writebackUpkeepKind } from './upkeep-writeback.js';
 import { initTokenEstimator } from '@jungjaehoon/mama-core/runtime/token-estimator';
 import {
   createStimulusDelivery,
@@ -815,6 +816,17 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
               closeUpkeepKind({
                 since: options.upkeep.closeSince,
                 access: () => access,
+                timeZone: () => options.timeZone.get(),
+              }),
+              writebackUpkeepKind({
+                // The connectors the common session reads in full; the surface always states them,
+                // and a missing list must not be read as "none" or as some wider grant.
+                wideReadConnectors: () => {
+                  if (access.connectorWideRead === undefined)
+                    throw new Error('The common access states no connector-wide reads');
+                  return access.connectorWideRead;
+                },
+                ownerPrincipalId: options.ownerPrincipalId,
                 timeZone: () => options.timeZone.get(),
               }),
             ],

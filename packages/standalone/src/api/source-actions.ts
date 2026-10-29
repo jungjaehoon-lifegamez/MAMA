@@ -8,6 +8,52 @@ export interface SourcePorts {
   timeZone: TimeZoneSetting;
 }
 
+/** The observation handles a source read surfaced: search its hits, read the refs it opened. */
+function receiptRefs(action: string, data: unknown): string[] {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
+  const body = data as Record<string, unknown>;
+  const refOf = (value: unknown): string | null => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const ref = (value as Record<string, unknown>).observationRef;
+      if (typeof ref === 'string' && ref.trim() !== '') return ref;
+    }
+    return null;
+  };
+  if (action === 'source.search')
+    return Array.isArray(body.hits)
+      ? body.hits.flatMap((hit) => (refOf(hit) === null ? [] : [refOf(hit)!]))
+      : [];
+  if (action === 'source.read') {
+    // A batch read lists one result per ref; a single read is the observation itself. A failed
+    // per-ref result opened nothing, so only completed refs count.
+    if (Array.isArray(body.results))
+      return body.results.flatMap((entry) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+        const ref = refOf(entry);
+        return (entry as Record<string, unknown>).status === 'completed' && ref !== null
+          ? [ref]
+          : [];
+      });
+    const single = refOf(body);
+    return single === null ? [] : [single];
+  }
+  return [];
+}
+
+/**
+ * The read receipt (docs/development/work/ledger-upkeep.md, U2): source.search and source.read
+ * store every observation handle they returned in tool_traces.evidence_json, in full, so the
+ * write-back scan can tell which questions read sources. output_summary is bounded at 4,000 chars
+ * and 40 array items (trace-summary.ts), so it can never be the source of truth. Returns a JSON
+ * object string (never an array; the trace store requires an object), or undefined when the call
+ * surfaced no handle. The paged `nextRead` re-reads the same ref, so handles are deduplicated.
+ */
+export function readReceiptEvidence(action: string, data: unknown): string | undefined {
+  if (action !== 'source.search' && action !== 'source.read') return undefined;
+  const observationRefs = [...new Set(receiptRefs(action, data))];
+  return observationRefs.length === 0 ? undefined : JSON.stringify({ observationRefs });
+}
+
 function replayReadAllowance(
   allowance: MemoryReadAllowance | undefined
 ): { maxSourceMs: number } | undefined {

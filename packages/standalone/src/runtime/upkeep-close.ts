@@ -2,7 +2,7 @@ import { readableScopeIds, type JudgmentAccess } from '@jungjaehoon/mama-core/kn
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import { localNow } from './timezone.js';
 import {
-  noUpdateNames,
+  noUpdateCites,
   UPKEEP_SCAN_PAGE,
   UPKEEP_WINDOW_MS,
   type UpkeepKind,
@@ -145,7 +145,10 @@ export function closeUpkeepKind(options: CloseKindOptions): UpkeepKind {
         current.text.trim() !== '' &&
         current.model_run_id !== null &&
         runIds.includes(current.model_run_id);
-      return summarized || noUpdateNames(adapter, runIds, [commitmentId]);
+      return (
+        summarized ||
+        noUpdateCites(adapter, runIds, { field: 'commitmentIds', values: [commitmentId] })
+      );
     },
     render: (subjects, now) => {
       const zone = options.timeZone();
