@@ -81,7 +81,7 @@ live check passes.
 - Ops: `status` (pid, version, started, boot stage, running turns per session, connectors' last poll
   and error, last error), `stop`. W1.1 built `status`, `stop` and (W2.1d) `probe`; `drain` and
   the draining `stop` below were not built and are W2.3's first PR ([update.md](update.md)).
-- CLI: `status` (exit 0 running, 3 stopped) plus the service manager's state; `stop` drains and
+- CLI: `status` (exit 0 running, 3 stopped) plus the service manager's state; `stop` (from W2.3's first PR, #533) drains and
   reports running turns, then stops through the service manager when installed, `--now` skips the
   wait; `register-owner` holds the lock while it runs (it opens the database itself,
   `register-owner.ts:62`); `replay` and `backfill` boot through `bootDaemon`, so their
@@ -115,7 +115,7 @@ live check passes.
 
 ### W1.3 Backup and restore (R4)
 
-- `mama backup` requires a stopped install (`--restart` drains, stops, backs up and starts): the
+- `mama backup` requires a stopped install (`--restart`, from W2.3's first PR, #533, drains, stops, backs up and starts): the
   database and each `raw.db` copied, the state files under the root and `member_root`, the common
   skills under `tools_root/skills` (owner-published, `s/runtime/skills.ts:446-479`), a manifest
   with versions and SHA-256, verified with `integrity_check` and the hashes. Credentials, including

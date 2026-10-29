@@ -81,7 +81,7 @@ runs the checkout. Windows is out: `mama service` throws there (`s/cli/commands/
   `current`, `latest`, `error`. `checkedAt` outlives restarts. Replay never checks.
 - `mama status` and a doctor check `release` read only that file: "newer release X (checked T)"
   with the kind's path, or "last check failed at T: <code>". No network call from either.
-- `Check` gains a stable `code` (such as `backend.too_old`, `backend.signed_out`), because details
+- `Check` gains a stable `code` (such as `backend.too_old`, `backend.signed_out`, `update.open`), because details
   carry versions (`s/cli/runtime/diagnostics.ts:335,342`) that a backend self-update changes.
 - Tests: status and doctor with a network that throws; a second boot the same day makes no call; a
   failed check shown; each kind from a fixture tree; npm's environment holds no credential name.
@@ -104,13 +104,13 @@ runs loaded code and Node built-ins only. npm and toolkit children get the scrub
 | 8   | Write `runtime/update.hold`; rename the package to `.mama-os-<from>`, then the staged one into its place                                                                           | new                                                                                                                  |
 | 9   | Run the child `<node> <cli> update --continue` (stdio inherited); exit 0 is done; non-zero, a signal or no `running` at `<to>` rolls back                                          | new                                                                                                                  |
 
-| #   | Step (child, new code)                                                                                                                                                                          | Reuses                                                                        |
-| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| 10  | `mama service install`; `start.sh` gains `[ -f runtime/update.hold ] && exit 0`                                                                                                                 | `installService` (`service.ts:127`), `startScript` (`launch-files.ts:49`)     |
-| 11  | `doctor --offline`: a failure (name and code) not seen at step 3 exits non-zero                                                                                                                 | PR 2                                                                          |
-| 12  | `mama tools install` when the toolkit's `requirementsSha256` differs from the new lock                                                                                                          | `document-toolkit.ts:514`, `readDocumentToolkit` (`toolkit-state.ts:50`)      |
-| 13  | Journal phase `candidate`; remove the hold file; `service start`. The daemon reads the journal and boots with claims held, so boot's recovery drain (`owner-runtime.ts:1202-1205`) runs nothing | `startService` (`service.ts:268`)                                             |
-| 14  | Wait for `running` at `<to>` and `/health`, up to 600 s; then `release`, close the journal, delete the snapshot, the copies and the old folder; report                                          | `waitForBoot` (`init.ts:291`), which must be exported; 600 s as `init.ts:658` |
+| #   | Step (child, new code)                                                                                                                                                                                        | Reuses                                                                        |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| 10  | `mama service install`; `start.sh` gains `[ -f runtime/update.hold ] && exit 0`                                                                                                                               | `installService` (`service.ts:127`), `startScript` (`launch-files.ts:49`)     |
+| 11  | `doctor --offline`: a failure (name and code) not seen at step 3 exits non-zero; the running update's own journal check (`update.open`) is left out                                                           | PR 2                                                                          |
+| 12  | `mama tools install` when the toolkit's `requirementsSha256` differs from the new lock                                                                                                                        | `document-toolkit.ts:514`, `readDocumentToolkit` (`toolkit-state.ts:50`)      |
+| 13  | Journal phase `candidate`; remove the hold file; `service start`. The daemon reads the journal and boots with claims held, so boot's recovery drain (`owner-runtime.ts:1202-1205`) runs nothing               | `startService` (`service.ts:268`)                                             |
+| 14  | Wait for `running` at `<to>` and `/health`, up to 600 s; then write `phase: committed` to the journal durably before `release`, close the journal, delete the snapshot, the copies and the old folder; report | `waitForBoot` (`init.ts:291`), which must be exported; 600 s as `init.ts:658` |
 
 - The old folder, not a reinstall: mama-os depends on core `^8.8.0`, so reinstalling `<from>` can
   bring a newer core. A global package holds its own `node_modules`. A test proves a package
@@ -118,6 +118,8 @@ runs loaded code and Node built-ins only. npm and toolkit children get the scrub
 - Journal fields: phase, step, from, to, prefix, registry, Node path, the previous CLI's absolute
   path, snapshot, schema before, last input id, toolkit hash before, the copied files. While it is
   open, doctor fails and prints `<node> <previous CLI> update --rollback` with absolute paths.
+- A journal at `committed` is never rolled back: the candidate may have run inputs, so recovery
+  only finishes step 14's cleanup.
 - Rollback (the parent, or `--rollback` after a killed updater):
   1. Stop through the service manager; a failing candidate restarts on failure.
   2. Write the hold file; put `.mama-os-<from>` back in place.
@@ -132,7 +134,9 @@ runs loaded code and Node built-ins only. npm and toolkit children get the scrub
 - A failing rollback stops with the hold file in place. The journal, the snapshot and both folders
   are kept, the absolute rollback command is printed, and it exits 1.
 - Tests: each step fails in turn and ends on `<from>` with equal `work.list` counts; a killed parent
-  at each step leaves a journal that `--rollback` resolves; inputs accepted by a held candidate
+  at each step from 6 on leaves a journal that `--rollback` resolves (or, at `committed`, finishes);
+  a killed parent before step 6 leaves only the staging prefix, which the next `mama update` removes
+  under `update.lock` and doctor reports; inputs accepted by a held candidate
   survive a rollback without a schema move; refusals (checkout, a lower target, a second updater,
   no service file, changed `bin`); the snapshot is 0600; npm children see no credential name.
 - CI leg in `upgrade-check`: a local registry (verdaccio) serves this build at two versions and a
