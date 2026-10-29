@@ -8,6 +8,7 @@ import { runStatus, runStop, STATUS_STOPPED_EXIT } from '../../src/cli/commands/
 import {
   acquireInstallLock,
   daemonControlPaths,
+  lockHolder,
   startDaemonControl,
   type InstallLock,
 } from '../../src/cli/runtime/daemon-control.js';
@@ -100,6 +101,7 @@ describe('mama status', () => {
         version: '0.0.0-fixture',
         startedAt: 0,
         stage: 'running',
+        drain: { holds: 1, since: 0 },
         runningTurns: [{ session: 'owner:runtime', count: 1 }],
         inputs: [{ status: 'claimed', count: 1 }],
         connectors: [{ name: 'chatwork', healthy: false, lastPoll: null, error: 'room failed' }],
@@ -110,6 +112,9 @@ describe('mama status', () => {
     lines.length = 0;
     expect(await runStatus([], { configPath, write })).toBe(0);
     expect(lines[0]).toMatch(/^running: daemon \(pid 42, version 0\.0\.0-fixture/);
+    expect(lines).toContain(
+      `claims held for a drain since ${new Date(0).toLocaleString('sv-SE')}: new inputs wait`
+    );
     expect(lines).toContain('turns running: owner:runtime 1');
     expect(lines).toContain('inputs waiting: claimed 1');
     expect(lines).toContain('connector chatwork: failing, last poll not yet, error: room failed');
@@ -130,15 +135,39 @@ describe('mama status', () => {
   });
 });
 
+/** A drain handler whose counts the test sets; it records each hold and release. */
+function drainFixture(boundMs = 60_000) {
+  const counts = { running: 0, claimed: 0 };
+  const events: string[] = [];
+  return {
+    counts,
+    events,
+    hold: () => {
+      events.push('hold');
+      return {
+        boundMs,
+        counts: () => ({ ...counts }),
+        release: () => events.push('release'),
+      };
+    },
+  };
+}
+
 describe('mama stop', () => {
-  async function servedDaemon(root: string, onStop: (lock: InstallLock) => void) {
+  async function servedDaemon(
+    root: string,
+    onStop: (lock: InstallLock) => void,
+    drain = drainFixture()
+  ) {
     const paths = daemonControlPaths(root);
     const lock = acquireInstallLock(paths, 'daemon');
-    const server = await startDaemonControl(paths, {
-      status: () => ({}),
-      stop: () => onStop(lock),
-    });
-    return { paths, lock, server };
+    const server = await startDaemonControl(
+      paths,
+      { status: () => ({}), stop: () => onStop(lock), hold: drain.hold },
+      5_000,
+      5
+    );
+    return { paths, lock, server, drain };
   }
 
   it('asks the daemon through its socket and waits for its lock to go', async () => {
@@ -150,7 +179,9 @@ describe('mama stop', () => {
     const lines: string[] = [];
     const write = (line: string) => lines.push(line);
     expect(await runStop([], { configPath, write, pollMs: 10, settleMs: 5 })).toBe(0);
-    expect(lines).toEqual(['stopping', 'stopped']);
+    expect(lines).toEqual(['drained: nothing runs; stopping', 'stopping', 'stopped']);
+    // The daemon's own stop ended the drain; the hold was let go once.
+    expect(daemon.drain.events).toEqual(['hold', 'release']);
     lines.length = 0;
     expect(await runStop([], { configPath, write })).toBe(0);
     expect(lines).toEqual(['already stopped']);
@@ -168,7 +199,7 @@ describe('mama stop', () => {
     expect(
       await runStop([], { configPath, write: (line) => lines.push(line), pollMs: 10, settleMs: 5 })
     ).toBe(1);
-    expect(lines[1]).toMatch(/^stopped, but daemon \(pid \d+\) holds the install now/);
+    expect(lines[2]).toMatch(/^stopped, but daemon \(pid \d+\) holds the install now/);
     await daemon.server.close();
     next?.release();
   });
@@ -187,7 +218,7 @@ describe('mama stop', () => {
         settleMs: 5,
       })
     ).toBe(1);
-    expect(lines[1]).toMatch(/^not stopped yet: daemon \(pid \d+\) holds the install/);
+    expect(lines[2]).toMatch(/^not stopped yet: daemon \(pid \d+\) holds the install/);
     await daemon.server.close();
     daemon.lock.release();
   });
@@ -225,13 +256,21 @@ describe('mama stop', () => {
       return { status: 1, stdout: '', stderr: '', signal: null, pid: 1, output: [] };
     }) as never);
     const lines: string[] = [];
+    // The LaunchAgent's daemon serves its socket too; it is drained before the bootout.
+    const launchdServer = await startDaemonControl(paths, {
+      status: () => ({}),
+      stop: () => {},
+      hold: drainFixture().hold,
+    } as never);
     expect(
       await runStop([], { configPath, write: (line) => lines.push(line), pollMs: 5, settleMs: 5 })
     ).toBe(0);
     expect(lines).toEqual([
+      'drained: nothing runs; stopping',
       'stopped (launchd service unloaded); mama service start starts it again',
     ]);
     expect(vi.mocked(spawnSync).mock.calls.some(([, args]) => args?.[0] === 'bootout')).toBe(true);
+    await launchdServer.close();
 
     // A daemon started in a terminal while the LaunchAgent runs another pid: the agent is unloaded
     // so it cannot start a replacement, and the terminal daemon is asked directly.
@@ -253,12 +292,134 @@ describe('mama stop', () => {
       stop: () => {
         void server.close().then(() => terminal.release());
       },
-    });
+      hold: drainFixture().hold,
+    } as never);
     lines.length = 0;
     expect(
       await runStop([], { configPath, write: (line) => lines.push(line), pollMs: 5, settleMs: 5 })
     ).toBe(0);
-    expect(lines).toEqual(['stopping', 'stopped (launchd service unloaded)']);
+    expect(lines).toEqual([
+      'drained: nothing runs; stopping',
+      'stopping',
+      'stopped (launchd service unloaded)',
+    ]);
     expect(vi.mocked(spawnSync).mock.calls.some(([, args]) => args?.[0] === 'bootout')).toBe(true);
+  });
+
+  /** launchctl print reports this process as the LaunchAgent's daemon; bootout releases it. */
+  function launchdRuns(lock: InstallLock, events: string[]) {
+    vi.mocked(spawnSync).mockImplementation(((command: string, args: string[]) => {
+      if (command === 'launchctl' && args[0] === 'print') {
+        return {
+          status: 0,
+          stdout: `service = {\n\tstate = running\n\tpid = ${process.pid}\n}`,
+          stderr: '',
+          signal: null,
+          pid: 1,
+          output: [],
+        };
+      }
+      if (command === 'launchctl' && args[0] === 'bootout') {
+        events.push('bootout');
+        lock.release();
+      }
+      return { status: 0, stdout: '', stderr: '', signal: null, pid: 1, output: [] };
+    }) as never);
+  }
+
+  it('waits for what runs and stops through launchd only once it is idle, holding claims throughout', async () => {
+    onPlatform('darwin');
+    const { home: root, configPath } = home('mama-stop-drain-');
+    const drain = drainFixture();
+    drain.counts.running = 1;
+    drain.counts.claimed = 2;
+    const daemon = await servedDaemon(root, () => {}, drain);
+    launchdRuns(daemon.lock, drain.events);
+    const lines: string[] = [];
+    const stopping = runStop([], {
+      configPath,
+      write: (line) => lines.push(line),
+      pollMs: 5,
+      settleMs: 5,
+    });
+    await vi.waitFor(() =>
+      expect(lines).toContain(
+        'draining: new inputs wait; waiting for 1 turn running, 2 inputs claimed (at most 1 min)'
+      )
+    );
+    drain.counts.running = 0;
+    drain.counts.claimed = 1;
+    await vi.waitFor(() =>
+      expect(lines).toContain('still draining: 0 turns running, 1 input claimed')
+    );
+    expect(drain.events).toEqual(['hold']);
+    drain.counts.claimed = 0;
+    expect(await stopping).toBe(0);
+    expect(lines.slice(-2)).toEqual([
+      'drained: nothing runs; stopping',
+      'stopped (launchd service unloaded); mama service start starts it again',
+    ]);
+    // The bootout came while claims were held, and the hold ended after it.
+    await vi.waitFor(() => expect(drain.events).toEqual(['hold', 'bootout', 'release']));
+    await daemon.server.close();
+  });
+
+  it('ends the hold past its bound, changes nothing and names the counts', async () => {
+    onPlatform('darwin');
+    const { home: root, configPath } = home('mama-stop-bound-');
+    const drain = drainFixture(30);
+    drain.counts.running = 1;
+    drain.counts.claimed = 1;
+    const stop = vi.fn();
+    const daemon = await servedDaemon(root, stop, drain);
+    launchdRuns(daemon.lock, drain.events);
+    const lines: string[] = [];
+    expect(await runStop([], { configPath, write: (line) => lines.push(line) })).toBe(1);
+    expect(lines.at(-1)).toBe(
+      'not stopped: still 1 turn running, 1 input claimed after 1 min; nothing changed, new inputs are claimed again (mama stop --now interrupts them)'
+    );
+    await vi.waitFor(() => expect(drain.events).toEqual(['hold', 'release']));
+    expect(stop).not.toHaveBeenCalled();
+    expect(lockHolder(daemon.paths)?.command).toBe('daemon');
+    await daemon.server.close();
+    daemon.lock.release();
+  });
+
+  it('keeps the old stop with --now: no drain, launchd unloads at once', async () => {
+    onPlatform('darwin');
+    const { home: root, configPath } = home('mama-stop-now-');
+    const drain = drainFixture();
+    drain.counts.running = 1;
+    const daemon = await servedDaemon(root, () => {}, drain);
+    launchdRuns(daemon.lock, drain.events);
+    const lines: string[] = [];
+    expect(
+      await runStop(['--now'], {
+        configPath,
+        write: (line) => lines.push(line),
+        pollMs: 5,
+        settleMs: 5,
+      })
+    ).toBe(0);
+    expect(lines).toEqual([
+      'stopped (launchd service unloaded); mama service start starts it again',
+    ]);
+    expect(drain.events).toEqual(['bootout']);
+    await expect(runStop(['--later'], { configPath })).rejects.toThrow('Usage: mama stop [--now]');
+    await daemon.server.close();
+  });
+
+  it('refuses to stop a daemon that cannot be drained, and names --now', async () => {
+    onPlatform('linux');
+    const { home: root, configPath } = home('mama-stop-silent-');
+    const lock = acquireInstallLock(daemonControlPaths(root), 'daemon');
+    const lines: string[] = [];
+    expect(await runStop([], { configPath, write: (line) => lines.push(line) })).toBe(1);
+    expect(lines).toEqual([
+      expect.stringMatching(
+        /^not stopped: daemon \(pid \d+\) holds the install does not answer on its control socket; mama stop --now stops it without draining$/
+      ),
+    ]);
+    lock.release();
   });
 });

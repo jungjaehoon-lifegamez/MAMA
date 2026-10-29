@@ -16,6 +16,7 @@ import { spawn } from 'node:child_process';
 import {
   acquireInstallLock,
   daemonControlPaths,
+  drainDaemon,
   InstallBusyError,
   lockHolder,
   requestDaemonControl,
@@ -175,6 +176,67 @@ describe('control socket', () => {
       await server.close();
       lock.release();
     }
+  });
+
+  it('holds claims while a drain stays open, and lets go on its bound, its close or the server close', async () => {
+    const paths = daemonControlPaths(root());
+    const lock = acquireInstallLock(paths, 'daemon');
+    const counts = { running: 1, claimed: 1 };
+    const events: string[] = [];
+    let boundMs = 60_000;
+    let refuse = false;
+    const server = await startDaemonControl(
+      paths,
+      {
+        status: () => ({}),
+        stop: () => {},
+        probe: async () => ({}),
+        hold: () => {
+          if (refuse) throw new Error('MAMA is stopping');
+          events.push('hold');
+          return { boundMs, counts: () => ({ ...counts }), release: () => events.push('release') };
+        },
+      },
+      5_000,
+      5
+    );
+    try {
+      // Counts go out as they change; idle keeps the hold until the client lets go.
+      const progress: unknown[] = [];
+      const drain = (await drainDaemon(paths, (line) => progress.push(line)))!;
+      await vi.waitFor(() => expect(progress).toHaveLength(1));
+      counts.running = 0;
+      counts.claimed = 0;
+      expect(await drain.outcome).toEqual({ kind: 'idle' });
+      expect(progress).toEqual([
+        { running: 1, claimed: 1, bound: 60_000, idle: false },
+        { running: 0, claimed: 0, bound: 60_000, idle: true },
+      ]);
+      expect(events).toEqual(['hold']);
+      drain.release();
+      await vi.waitFor(() => expect(events).toEqual(['hold', 'release']));
+
+      // Past its bound the daemon ends the drain with the counts and lets go.
+      counts.running = 1;
+      boundMs = 20;
+      const bounded = (await drainDaemon(paths, () => {}))!;
+      expect(await bounded.outcome).toEqual({ kind: 'bound', bound: 20, running: 1, claimed: 0 });
+      await vi.waitFor(() => expect(events).toEqual(['hold', 'release', 'hold', 'release']));
+
+      // A daemon that stops ends an open drain, so its server closes.
+      boundMs = 60_000;
+      const open = (await drainDaemon(paths, () => {}))!;
+      await vi.waitFor(() => expect(events).toHaveLength(5));
+      refuse = true;
+      const refused = (await drainDaemon(paths, () => {}))!;
+      expect(await refused.outcome).toEqual({ kind: 'refused', error: 'MAMA is stopping' });
+      await server.close();
+      expect(await open.outcome).toEqual({ kind: 'closed' });
+      expect(events.at(-1)).toBe('release');
+    } finally {
+      lock.release();
+    }
+    expect(await drainDaemon(paths, () => {})).toBeNull();
   });
 
   it('reports stopped when a dead holder left its token behind', async () => {

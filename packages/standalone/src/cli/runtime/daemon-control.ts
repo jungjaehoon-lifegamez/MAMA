@@ -8,7 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { connect, createServer, type Server } from 'node:net';
+import { connect, createServer, type Server, type Socket } from 'node:net';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { CliInputError } from '../prompt.js';
@@ -170,13 +170,29 @@ export function lockHolder(paths: DaemonControlPaths): LockOwner | null {
   }
 }
 
-export type DaemonControlOp = 'status' | 'stop' | 'probe';
+export type DaemonControlOp = 'status' | 'stop' | 'probe' | 'drain';
+
+/** What a drain waits for: model runs of this boot still running, and inputs a delivery owns. */
+export interface DrainCounts {
+  readonly running: number;
+  readonly claimed: number;
+}
+
+/** Claims held for one drain connection, from `hold` until `release`. */
+export interface ClaimHold {
+  /** How long the drain may wait, fixed when the hold began. */
+  readonly boundMs: number;
+  counts(): DrainCounts;
+  release(): void;
+}
 
 export interface DaemonControlHandlers {
   status(): Promise<Record<string, unknown>> | Record<string, unknown>;
   stop(): void;
   /** One real backend turn; it throws what failed. */
   probe(): Promise<Record<string, unknown>>;
+  /** Stop claiming new work until the hold is released; it throws when it cannot hold. */
+  hold(): ClaimHold;
 }
 
 export interface DaemonControlServer {
@@ -185,22 +201,34 @@ export interface DaemonControlServer {
 
 const MAX_REQUEST_BYTES = 4096;
 
+/** A drain repeats its counts this often while they stay the same, so a waiting terminal sees why. */
+const DRAIN_REPEAT_MS = 30_000;
+
 /**
- * Serve status, stop and a backend probe to the CLI. Only the lock holder calls this, so removing a socket left by
- * a dead holder never removes a live one. Each boot writes a new token; a request without it is
- * refused.
+ * Serve status, stop, a backend probe and a drain to the CLI. Only the lock holder calls this, so
+ * removing a socket left by a dead holder never removes a live one. Each boot writes a new token; a
+ * request without it is refused. Every op but `drain` answers once and ends the connection. A
+ * drain keeps its connection open and holds claims for as long as it stays open: it sends its
+ * counts as lines until nothing runs, then says idle and goes on holding, so the stop that follows
+ * starts nothing new; a client that dies lets go. Past the hold's bound it sends the counts and
+ * ends, which lets go too.
  */
 export async function startDaemonControl(
   paths: DaemonControlPaths,
   handlers: DaemonControlHandlers,
   /** How long a client may take to send its request; tests shorten it. */
-  requestTimeoutMs = 5_000
+  requestTimeoutMs = 5_000,
+  /** How often a drain counts what still runs; tests shorten it. */
+  drainPollMs = 1_000
 ): Promise<DaemonControlServer> {
   const token = randomBytes(32).toString('hex');
   rmSync(paths.tokenPath, { force: true });
   writeFileSync(paths.tokenPath, `${token}\n`, { mode: 0o600, flag: 'wx' });
   rmSync(paths.socketPath, { force: true });
   const expected = Buffer.from(token, 'utf8');
+  // Open drains: the server's close waits for every connection, and a drain ends only when its
+  // client lets go, so closing the server ends them.
+  const drains = new Set<Socket>();
   const server: Server = createServer((socket) => {
     let buffer = '';
     socket.setEncoding('utf8');
@@ -218,8 +246,10 @@ export async function startDaemonControl(
       buffer = '';
       // The deadline is for sending a request; answering a probe takes a model turn.
       socket.setTimeout(0);
-      void answer(line).then(
-        (reply) => socket.end(`${JSON.stringify(reply)}\n`),
+      void answer(line, socket).then(
+        (reply) => {
+          if (reply) socket.end(`${JSON.stringify(reply)}\n`);
+        },
         (error: unknown) =>
           socket.end(
             `${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })}\n`
@@ -227,7 +257,49 @@ export async function startDaemonControl(
       );
     });
   });
-  async function answer(line: string): Promise<Record<string, unknown>> {
+  function drain(socket: Socket): void {
+    const hold = handlers.hold();
+    drains.add(socket);
+    const started = Date.now();
+    let last = '';
+    let lastAt = 0;
+    const timer = setInterval(tick, drainPollMs);
+    socket.once('close', () => {
+      clearInterval(timer);
+      drains.delete(socket);
+      hold.release();
+    });
+    function tick(): void {
+      // A throw here would escape the timer and end the daemon; the client gets it instead.
+      try {
+        const counts = hold.counts();
+        const idle = counts.running === 0 && counts.claimed === 0;
+        if (!idle && Date.now() - started >= hold.boundMs) {
+          clearInterval(timer);
+          socket.end(
+            `${JSON.stringify({ ok: false, error: 'drain bound passed', bound: hold.boundMs, ...counts })}\n`
+          );
+          return;
+        }
+        const line = JSON.stringify({ ok: true, drain: { ...counts, bound: hold.boundMs, idle } });
+        if (line !== last || Date.now() - lastAt >= DRAIN_REPEAT_MS) {
+          socket.write(`${line}\n`);
+          last = line;
+          lastAt = Date.now();
+        }
+        // Nothing new is claimed while held, so idle stays idle; the hold goes on until the client
+        // closes or the daemon stops.
+        if (idle) clearInterval(timer);
+      } catch (error) {
+        clearInterval(timer);
+        socket.end(
+          `${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })}\n`
+        );
+      }
+    }
+    tick();
+  }
+  async function answer(line: string, socket: Socket): Promise<Record<string, unknown> | null> {
     let request: { token?: unknown; op?: unknown };
     try {
       request = JSON.parse(line) as { token?: unknown; op?: unknown };
@@ -244,6 +316,10 @@ export async function startDaemonControl(
       return { ok: true };
     }
     if (request.op === 'probe') return { ok: true, probe: await handlers.probe() };
+    if (request.op === 'drain') {
+      drain(socket);
+      return null;
+    }
     return { ok: false, error: 'unknown op' };
   }
   try {
@@ -262,6 +338,7 @@ export async function startDaemonControl(
   return {
     close: () =>
       new Promise<void>((resolve) => {
+        for (const socket of drains) socket.destroy();
         server.close(() => {
           rmSync(paths.socketPath, { force: true });
           rmSync(paths.tokenPath, { force: true });
@@ -321,6 +398,98 @@ export async function requestDaemonControl(
       } catch (holderError) {
         reject(holderError);
       }
+    });
+  });
+}
+
+/** One drain line: what still runs, the hold's bound, and whether nothing runs any more. */
+export interface DrainProgress extends DrainCounts {
+  readonly bound: number;
+  readonly idle: boolean;
+}
+
+export type DrainOutcome =
+  /** Nothing runs; claims stay held until `release`. */
+  | { kind: 'idle' }
+  /** The bound passed first; the daemon let go and changed nothing. */
+  | { kind: 'bound'; bound: number; running: number; claimed: number }
+  | { kind: 'refused'; error: string }
+  /** The connection ended before idle: the daemon stopped or died. */
+  | { kind: 'closed' };
+
+export interface DaemonDrain {
+  readonly outcome: Promise<DrainOutcome>;
+  /** End the hold; the daemon claims again. */
+  release(): void;
+}
+
+/**
+ * Hold the install's claims for as long as the returned drain is not released, and report each
+ * count the daemon sends. Null when nothing serves the install. The connection has no deadline
+ * after it opens: a drain waits as long as its bound allows.
+ */
+export async function drainDaemon(
+  paths: DaemonControlPaths,
+  onProgress: (progress: DrainProgress) => void
+): Promise<DaemonDrain | null> {
+  let token: string;
+  try {
+    token = readFileSync(paths.tokenPath, 'utf8').trim();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return null;
+  }
+  return await new Promise<DaemonDrain | null>((resolve, reject) => {
+    const socket = connect(paths.socketPath);
+    let connected = false;
+    let settle!: (outcome: DrainOutcome) => void;
+    const outcome = new Promise<DrainOutcome>((done) => {
+      settle = done;
+    });
+    let buffer = '';
+    socket.setEncoding('utf8');
+    socket.on('connect', () => {
+      connected = true;
+      socket.write(`${JSON.stringify({ token, op: 'drain' })}\n`);
+      resolve({ outcome, release: () => socket.destroy() });
+    });
+    socket.on('data', (chunk: string) => {
+      buffer += chunk;
+      for (let newline = buffer.indexOf('\n'); newline !== -1; newline = buffer.indexOf('\n')) {
+        const line = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        let reply: Record<string, unknown>;
+        try {
+          reply = JSON.parse(line) as Record<string, unknown>;
+        } catch {
+          settle({ kind: 'refused', error: 'The daemon sent an unreadable reply' });
+          socket.destroy();
+          return;
+        }
+        if (reply.ok !== true) {
+          settle(
+            reply.error === 'drain bound passed'
+              ? {
+                  kind: 'bound',
+                  bound: Number(reply.bound),
+                  running: Number(reply.running),
+                  claimed: Number(reply.claimed),
+                }
+              : { kind: 'refused', error: String(reply.error) }
+          );
+          continue;
+        }
+        const progress = reply.drain as DrainProgress;
+        onProgress(progress);
+        if (progress.idle) settle({ kind: 'idle' });
+      }
+    });
+    // A settled outcome stays; a close before any answer is the daemon going away.
+    socket.on('close', () => settle({ kind: 'closed' }));
+    socket.on('error', (error: NodeJS.ErrnoException) => {
+      if (connected) return; // the close that follows settles the outcome
+      if (error.code === 'ENOENT' || error.code === 'ECONNREFUSED') resolve(null);
+      else reject(error);
     });
   });
 }

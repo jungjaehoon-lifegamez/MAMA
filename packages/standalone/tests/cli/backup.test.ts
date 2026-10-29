@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   chmodSync,
   copyFileSync,
@@ -21,6 +21,7 @@ import { basename, dirname, join } from 'node:path';
 import Database from 'better-sqlite3';
 import * as tar from 'tar';
 import { runBackup } from '../../src/cli/commands/backup.js';
+import { serviceFile } from '../../src/cli/commands/service.js';
 import { verifyArchive, type BackupManifest } from '../../src/cli/runtime/backup.js';
 import {
   acquireInstallLock,
@@ -489,5 +490,75 @@ describe('mama backup', () => {
       })
     ).rejects.toThrow(/root\/start.sh has another mode/);
     expect(readFileSync(archive).length).toBeGreaterThan(0);
+  });
+});
+
+describe('mama backup --restart', () => {
+  const platform = process.platform;
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: platform });
+    vi.unstubAllEnvs();
+  });
+
+  /** A systemd unit that runs; each systemctl call is recorded with the backups present then. */
+  function systemd(root: string) {
+    // launchd is asked only on macOS; this test's service manager is the recorded systemctl.
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    vi.stubEnv('XDG_CONFIG_HOME', '');
+    const calls: string[] = [];
+    const run = vi.fn((command: string, args: string[]) => {
+      const backups = existsSync(join(root, 'backups')) ? readdirSync(join(root, 'backups')) : [];
+      calls.push(`${command} ${args.join(' ')} [${backups.join(',')}]`);
+      const state = args.includes('is-active');
+      return {
+        status: 0,
+        stdout: state ? 'active\n' : '',
+        stderr: '',
+        signal: null,
+        pid: 1,
+        output: [],
+      } as never;
+    });
+    return { calls, run };
+  }
+
+  it('refuses without a service to start it again, before stopping anything', async () => {
+    const installed = install();
+    const { run } = systemd(installed.root);
+    await expect(
+      runBackup(['--restart'], {
+        home: installed.home,
+        configPath: installed.configPath,
+        platform: 'linux',
+        run,
+        write: () => {},
+      })
+    ).rejects.toThrow(/--restart starts MAMA again through its service, and none is installed/);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('stops through the service, backs up, and starts it again, also after a failed backup', async () => {
+    const installed = install();
+    const { calls, run } = systemd(installed.root);
+    const options = {
+      home: installed.home,
+      configPath: installed.configPath,
+      platform: 'linux' as const,
+      run,
+      write: () => {},
+      settleMs: 1,
+    };
+    file(serviceFile(options), '[Unit]\n');
+    const archive = await runBackup(['--restart'], options);
+    expect(calls).toEqual([
+      'systemctl --user is-active mama.service []',
+      'systemctl --user stop mama.service []',
+      `systemctl --user start mama.service [${basename(archive)}]`,
+    ]);
+
+    calls.length = 0;
+    rmSync(join(installed.root, 'memory.db'));
+    await expect(runBackup(['--restart'], options)).rejects.toThrow(/Backup failed/);
+    expect(calls.at(-1)).toMatch(/^systemctl --user start mama\.service /);
   });
 });

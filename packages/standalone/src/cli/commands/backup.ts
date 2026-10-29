@@ -32,38 +32,62 @@ import {
   daemonControlPaths,
   refuseWhileRestoring,
 } from '../runtime/daemon-control.js';
+import { runStop } from './control.js';
 import { pathsFor } from './daemon.js';
+import { serviceFile, startService, type ServiceOptions } from './service.js';
 
-export interface BackupOptions {
-  home?: string;
-  configPath?: string;
-  write?: (line: string) => void;
-  now?: () => Date;
+export type BackupOptions = ServiceOptions;
+
+const USAGE = 'Usage: mama backup [--include-secrets] [--logs] [--restart]';
+
+interface BackupFlags {
+  includeSecrets: boolean;
+  includeLogs: boolean;
+  restart: boolean;
 }
 
-const USAGE = 'Usage: mama backup [--include-secrets] [--logs]';
-
-function parse(args: readonly string[]): { includeSecrets: boolean; includeLogs: boolean } {
+function parse(args: readonly string[]): BackupFlags {
   let includeSecrets = false;
   let includeLogs = false;
+  let restart = false;
   for (const arg of args) {
     if (arg === '--include-secrets') includeSecrets = true;
     else if (arg === '--logs') includeLogs = true;
+    else if (arg === '--restart') restart = true;
     else throw new CliInputError(USAGE);
   }
-  return { includeSecrets, includeLogs };
+  return { includeSecrets, includeLogs, restart };
 }
 
 /**
  * `mama backup`: one verified archive of a stopped install. It holds the install while it works,
  * so the daemon cannot start beside it, and writes the archive 0600 under `<root>/backups/`,
- * the one folder the agents cannot read. Returns the archive's path.
+ * the one folder the agents cannot read. Returns the archive's path. `--restart` drains and stops
+ * the running install first and starts it again through its service afterwards, also after a
+ * failed backup, since it ran before.
  */
 export async function runBackup(
   args: readonly string[],
   options: BackupOptions = {}
 ): Promise<string> {
   const flags = parse(args);
+  if (!flags.restart) return await backupStopped(flags, options);
+  // Only the service starts it again; a daemon run in a terminal would stay stopped.
+  if (!existsSync(serviceFile(options))) {
+    throw new CliInputError(
+      'mama backup --restart starts MAMA again through its service, and none is installed: run mama service install, or mama stop and mama backup'
+    );
+  }
+  if ((await runStop([], options)) !== 0)
+    throw new CliInputError('Not backed up: MAMA did not stop');
+  try {
+    return await backupStopped(flags, options);
+  } finally {
+    await startService(options);
+  }
+}
+
+async function backupStopped(flags: BackupFlags, options: BackupOptions): Promise<string> {
   const home = options.home ?? homedir();
   const configPath = options.configPath ?? defaultConfigPath(home);
   const write = options.write ?? ((line: string) => console.log(line));
@@ -159,7 +183,7 @@ export async function runBackup(
     }
     write('  Codex homes and their sessions left out; sessions start over after a restore');
     if (!flags.includeLogs) write('  logs left out (--logs adds them)');
-    write('The install is still stopped; mama service start starts it.');
+    if (!flags.restart) write('The install is still stopped; mama service start starts it.');
     return final;
   } catch (error) {
     if (error instanceof CliInputError) throw error;

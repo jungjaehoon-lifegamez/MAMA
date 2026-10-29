@@ -1,6 +1,11 @@
 import { homedir } from 'node:os';
 import { CliInputError } from '../prompt.js';
-import { lockHolder, type LockOwner } from '../runtime/daemon-control.js';
+import {
+  drainDaemon,
+  lockHolder,
+  type DrainCounts,
+  type LockOwner,
+} from '../runtime/daemon-control.js';
 import {
   defaultServiceRun,
   SYSTEMD_UNIT,
@@ -39,6 +44,12 @@ function statusLines(status: Record<string, unknown>): string[] {
     `running: ${String(status.command)} (pid ${String(status.pid)}, version ${String(status.version)}, since ${localTime(status.startedAt)})`,
   ];
   if (status.stage !== 'running') lines.push(`boot stage: ${String(status.stage)}`);
+  const drain = status.drain as { holds: number; since: number } | null | undefined;
+  if (drain) {
+    lines.push(
+      `claims held for ${drain.holds === 1 ? 'a drain' : `${drain.holds} drains`} since ${localTime(drain.since)}: new inputs wait`
+    );
+  }
   const turns = Array.isArray(status.runningTurns)
     ? (status.runningTurns as Array<{ session: string; count: number }>)
     : [];
@@ -166,18 +177,83 @@ function finish(outcome: StopOutcome, write: (line: string) => void, done: strin
   return 1;
 }
 
+function waitingFor(counts: DrainCounts): string {
+  const turns = `${counts.running} turn${counts.running === 1 ? '' : 's'} running`;
+  const inputs = `${counts.claimed} input${counts.claimed === 1 ? '' : 's'} claimed`;
+  return `${turns}, ${inputs}`;
+}
+
+function minutes(ms: number): string {
+  return `${Math.ceil(ms / 60_000)} min`;
+}
+
 /**
- * Stop the install's daemon. A daemon run by a loaded LaunchAgent is unloaded, so KeepAlive does
- * not restart it; any other daemon is asked through the control socket. A replay, backfill or
- * register-owner is left to finish. A running turn is interrupted; at the next start MAMA delivers
- * its stored result or tells its sender that it was interrupted.
+ * Stop the install's daemon. A daemon is drained first: it claims nothing new, and the stop waits
+ * until its running turns and claimed inputs finish, so their replies are delivered. The drain's
+ * connection stays open through the stop, so nothing starts in between; inputs that arrive wait
+ * for the next start. `--now` skips the drain and interrupts what runs; at the next start MAMA
+ * delivers its stored result or tells its sender that it was interrupted.
  */
 export async function runStop(
   args: readonly string[],
   options: ControlOptions = {}
 ): Promise<number> {
-  if (args.length !== 0) throw new CliInputError('Usage: mama stop');
+  const now = args.length === 1 && args[0] === '--now';
+  if (args.length > 1 || (args.length === 1 && !now)) {
+    throw new CliInputError('Usage: mama stop [--now]');
+  }
   const write = options.write ?? ((line: string) => console.log(line));
+  const holder = lockHolder(installControlPaths(options));
+  // A replay, backfill or register-owner is left to finish; a stopped install has nothing to drain.
+  if (now || holder?.command !== 'daemon') return await stopNow(options, write);
+  let reported = false;
+  const drain = await drainDaemon(installControlPaths(options), (progress) => {
+    if (progress.idle) return;
+    write(
+      reported
+        ? `still draining: ${waitingFor(progress)}`
+        : `draining: new inputs wait; waiting for ${waitingFor(progress)} (at most ${minutes(progress.bound)})`
+    );
+    reported = true;
+  });
+  if (drain === null) {
+    write(
+      `not stopped: ${holderLine(holder)} does not answer on its control socket; mama stop --now stops it without draining`
+    );
+    return 1;
+  }
+  try {
+    const outcome = await drain.outcome;
+    if (outcome.kind === 'bound') {
+      write(
+        `not stopped: still ${waitingFor(outcome)} after ${minutes(outcome.bound)}; nothing changed, new inputs are claimed again (mama stop --now interrupts them)`
+      );
+      return 1;
+    }
+    if (outcome.kind === 'refused') {
+      write(`not stopped: the daemon refused the drain: ${outcome.error}`);
+      return 1;
+    }
+    if (outcome.kind === 'closed') {
+      write(
+        'not stopped by this command: the daemon ended the drain before it was idle; check mama status'
+      );
+      return 1;
+    }
+    write('drained: nothing runs; stopping');
+    // Still held: the service manager's stop or the socket's stop comes next.
+    return await stopNow(options, write);
+  } finally {
+    drain.release();
+  }
+}
+
+/**
+ * Today's stop, also `--now`. A daemon run by a loaded LaunchAgent is unloaded, so KeepAlive does
+ * not restart it; any other daemon is asked through the control socket. A replay, backfill or
+ * register-owner is left to finish. A running turn is interrupted.
+ */
+async function stopNow(options: ControlOptions, write: (line: string) => void): Promise<number> {
   let holder = lockHolder(installControlPaths(options));
   const service = launchdService();
   const run = options.run ?? defaultServiceRun;
