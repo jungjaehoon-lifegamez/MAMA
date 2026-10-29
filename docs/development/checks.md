@@ -2671,3 +2671,9 @@ The implementation writes raw/index data during import only. Replay is the owner
   - A line count of an export with embedded newlines miscounted items.
   - Ignoring `applies_until` counted folded-away states as open.
 - Still open: U1–U3 as designed.
+
+### Ledger upkeep U2 write-back: deployed (2026-10-29)
+
+- Result: PR #530 merged (dd992f42f) and deployed at 21:57 KST. Source reads now leave full read receipts, and the hourly write-back order finds question turns that read sources and cited none. Owner decision: owner DMs relayed by a connector count as common ([design](work/ledger-upkeep.md#u2-write-back-order)).
+- Evidence: on a DB copy the scan found 6 qualifying turns in 7 days (0 with the first filter, which read a `$.scopes` array no live row has), in 52 ms. Live boot applied standalone migration 002 with no errors. The same deploy moved the daemon agent to `gpt-6.1-terra` at effort `medium`; the 23:00 report ran on it (committed, 35 s).
+- Still open: the "Done when" SQL on 2026-11-05. U3 (board reconcile). A rollback below migration 002 refuses to boot.
