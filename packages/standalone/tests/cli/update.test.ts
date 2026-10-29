@@ -3,11 +3,13 @@
  * refusal, each failing step, and each step an updater can be killed at.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { acquireInstallLock } from '../../src/cli/runtime/daemon-control.js';
 import { isCredentialEnvName } from '../../src/runtime/backend-security.js';
 import { rollbackCommand } from '../../src/cli/runtime/update-journal.js';
+import { TOOLKIT_ASSETS } from '../../src/tools/toolkit-state.js';
 import { expectClean, fixture, killedAt, NAME, roots } from '../helpers/update-install.js';
 
 // This Mac's live daemon has the global LaunchAgent label; nothing here may reach launchctl.
@@ -165,6 +167,16 @@ describe('mama update', () => {
     }
   );
 
+  it('leaves a toolkit alone when the new version locks the same requirements', async () => {
+    const lock = createHash('sha256')
+      .update(readFileSync(join(TOOLKIT_ASSETS, 'requirements.lock')))
+      .digest('hex');
+    const f = fixture({ toolkit: lock });
+    expect(await f.run([])).toBe(0);
+    expect(f.calls.some((call) => call.startsWith('tools install'))).toBe(false);
+    expectClean(f, '1.1.0');
+  });
+
   it('a doctor failure seen before the update is not held against it', async () => {
     const f = fixture({ releases: { '1.1.0': { doctorFails: 'backend' } } });
     f.state.checks = [
@@ -191,6 +203,9 @@ describe('mama update', () => {
       const journal = f.journal()!;
       expect(journal.step).toBe(journalStep);
       expect(statSync(f.paths.journal).mode & 0o777).toBe(0o600);
+      // From the stop on, start.sh finds the hold: nothing starts the install half-changed. A
+      // killed child at step 13 or 14 had removed it to start the candidate.
+      expect(existsSync(f.paths.hold)).toBe(journalStep >= 7 && journalStep < 13);
       // The command doctor prints names the previous CLI where it is now, by absolute paths.
       const previous =
         journalStep >= 8 ? join(f.scope, '.mama-os-1.0.0', 'dist', 'cli', 'index.js') : f.cliPath;

@@ -30,6 +30,8 @@ Use `mama` from `@jungjaehoon/mama-os` to configure and run the owner agent. Sta
 | `mama uninstall [--dry-run] [--data [--toolkit]]`      | Stops MAMA (whatever holds the install) and removes its service; the data stays. With `--data`, after you type the MAMA home's path back on a terminal, it also removes the MAMA home (config, credentials, workspace, logs, backups and, by default, the database), the folder and temporary files of each person MAMA registered under `member_root` and the folders it retired, and the common skills under `tools_root`; `--toolkit` also removes the toolkit's versions (LibreOffice and the fonts stay: Homebrew installed them, and the command names the `brew uninstall --cask` that removes them). `member_root` and `tools_root` themselves go only once nothing else is in them. Paths your config sets outside the MAMA home (a database, a log, a Codex home, the Jev key) are listed as staying, not removed. `--dry-run` lists all of it, with sizes, and changes nothing. If whatever holds the install cannot be stopped, nothing changes. `npm uninstall -g @jungjaehoon/mama-os` removes the program. |
 | `mama restore <archive>`                               | Puts a `mama backup` archive onto this stopped install. The restored `config.yaml` is the backup's settings with this install's paths, and every part goes where that config puts it; stored attachment paths move to this install's roots. Every destination goes aside while its copy takes its place; if any step fails, all of them are put back. This install's credentials and `start.sh` stay when the archive has none.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `mama restore --rollback`                              | Puts back an install whose restore was interrupted, from the journal under `~/.mama/backups/`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `mama update [<version>] [--dry-run]`                  | Updates an npm install to the registry's latest release, or to `<version>`: it installs the new version beside the old one first (a failure changes nothing), drains and stops, takes a backup with credentials, swaps the two, and starts the new version with new work held until it runs. If any step fails, the old version is put back and started. `--dry-run` shows the plan. A checkout prints its git steps instead.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `mama update --rollback`                               | Resolves an update that was interrupted, from its journal in `~/.mama/runtime/`; `mama doctor` prints the full command.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 ## Create an installation
 
@@ -165,6 +167,26 @@ and file snapshots cannot move. Restoring an older backup brings back whatever w
 was taken. If a restore is interrupted, the daemon and `mama doctor` refuse until
 `mama restore --rollback` puts the install back (or finishes clearing a restore that had already
 taken effect).
+
+## Update
+
+`mama update` serves an npm install (`npm install -g @jungjaehoon/mama-os`), run with the `mama`
+the service runs. It asks the registry npm uses, then shows the plan; `--dry-run` stops there. It
+installs the new version next to the old one, so a failed download changes nothing. Then it lets
+running turns finish (new messages wait), stops the service, takes a backup with credentials in
+`~/.mama/backups/`, and swaps the new version in. The new version writes `start.sh` and the service
+file, checks the install, and starts with new work held; once it runs and its viewer answers, the
+held work runs and the backup and the old version are removed.
+
+If a step fails, the old version is put back with its own `start.sh` and service file and started
+again. The database is restored from the backup only when the new version changed its schema;
+the report then says how many inputs (messages, source changes, reports) that arrived after the
+backup were dropped. A version older than the one running is refused. If the update itself is
+killed, the install stays stopped and `mama doctor` prints the `mama update --rollback` command
+that resolves it.
+
+A checkout updates by git: `mama update` prints the steps (stop, `git pull`, `pnpm install`,
+`pnpm build`, `service install`, `service start`).
 
 ## Replay prepared history
 

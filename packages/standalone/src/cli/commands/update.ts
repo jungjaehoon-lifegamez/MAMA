@@ -555,6 +555,9 @@ async function update(
       write(`not updated: the stop did not finish (above); ${from} stays installed`);
       return 1;
     }
+    // From the stop on, a start (a reboot, an owner's mama service start) finds the hold and
+    // exits: a parent that dies after the stop leaves the install stopped, not half-changed.
+    writeFileSync(paths.hold, `${process.pid}\n`, { mode: 0o600 });
     journal.stopped = true;
     journal.step = 7;
     save(context, journal);
@@ -580,6 +583,7 @@ async function update(
       rmSync(paths.copies, { recursive: true, force: true });
       rmSync(places.staging, { recursive: true, force: true });
       removeUpdateJournal(paths.journal);
+      rmSync(paths.hold, { force: true });
       try {
         await deps.start();
         write(`${from} started again`);
@@ -589,11 +593,10 @@ async function update(
       return 1;
     }
 
-    // Step 8: the hold, then the swap. From here a failure rolls back.
+    // Step 8: the swap, on the hold written after the stop. From here a failure rolls back.
     try {
       journal.step = 8;
       save(context, journal);
-      writeFileSync(paths.hold, `${process.pid}\n`, { mode: 0o600 });
       renameSync(places.package, places.aside);
       renameSync(places.staged, places.package);
     } catch (error) {
@@ -796,7 +799,7 @@ async function rollBack(context: Context, journal: UpdateJournal): Promise<boole
     }
     return true;
   } catch (error) {
-    if (!existsSync(paths.hold)) writeFileSync(paths.hold, `${process.pid}\n`, { mode: 0o600 });
+    writeFileSync(paths.hold, `${process.pid}\n`, { mode: 0o600 });
     const current = readUpdateJournal(paths.journal) ?? journal;
     write(
       `rollback stopped: ${message(error)}. The install stays stopped on its hold file; the journal, the snapshot and both package folders are kept. Resolve it with: ${rollbackCommand(current)}`
