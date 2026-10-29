@@ -4,11 +4,13 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { acquireInstallLock } from '../../src/cli/runtime/daemon-control.js';
 import { isCredentialEnvName } from '../../src/runtime/backend-security.js';
 import { rollbackCommand } from '../../src/cli/runtime/update-journal.js';
+import { compareReleases } from '../../src/cli/runtime/release-check.js';
+import { UPDATE_HOLD_LINE } from '../../src/cli/launch-files.js';
 import { TOOLKIT_ASSETS } from '../../src/tools/toolkit-state.js';
 import { expectClean, fixture, killedAt, NAME, roots } from '../helpers/update-install.js';
 
@@ -92,7 +94,7 @@ describe('mama update', () => {
     const f = fixture({ releases: { '1.1.0': { bin: ['mama'] } } });
     const held = acquireInstallLock(f.paths.lock, 'update');
     try {
-      await expect(f.run([])).rejects.toThrow(/^Already updating since .+ \(pid \d+\)$/);
+      await expect(f.run([])).rejects.toThrow(/^Already updating since .+ \(update, pid \d+\)$/);
     } finally {
       held.release();
     }
@@ -282,5 +284,160 @@ describe('mama update', () => {
     expect(await f.run(['--rollback'])).toBe(0);
     expectClean(f, '1.0.0');
     expect(f.state.running).toBe('1.0.0');
+  });
+
+  it('orders releases by semver precedence, prereleases included', async () => {
+    expect(compareReleases('0.79.0', '0.79.0-rc.1')).toBeGreaterThan(0);
+    expect(compareReleases('0.79.0-rc.2', '0.79.0')).toBeLessThan(0);
+    expect(compareReleases('0.79.0-rc.2', '0.79.0-beta.2')).toBeGreaterThan(0);
+    expect(compareReleases('0.79.0-rc.10', '0.79.0-rc.2')).toBeGreaterThan(0);
+    expect(compareReleases('0.79.0-rc.1', '0.79.0-rc.1.1')).toBeLessThan(0);
+    expect(compareReleases('0.79.0-1', '0.79.0-rc')).toBeLessThan(0);
+    expect(compareReleases('0.79.0+build.5', '0.79.0')).toBe(0);
+    expect(compareReleases('0.80.0', '0.79.9')).toBeGreaterThan(0);
+    expect(() => compareReleases('0.79', '0.79.0')).toThrow('0.79 is not a semver version');
+
+    // The release from a candidate is an update; a candidate after its release is a downgrade.
+    const rc = fixture({ from: '1.1.0-rc.1', releases: { '1.1.0-rc.1': {} } });
+    expect(await rc.run(['1.1.0'])).toBe(0);
+    expectClean(rc, '1.1.0');
+    const release = fixture({ from: '1.1.0', releases: { '1.1.0-rc.2': {} } });
+    await expect(release.run(['1.1.0-rc.2'])).rejects.toThrow(
+      'Refused: 1.1.0-rc.2 is older than 1.1.0, which runs now'
+    );
+    const beta = fixture({
+      from: '1.1.0-beta.2',
+      releases: { '1.1.0-beta.2': {}, '1.1.0-rc.2': {} },
+    });
+    expect(await beta.run(['1.1.0-rc.2'])).toBe(0);
+    expectClean(beta, '1.1.0-rc.2');
+  });
+
+  it('refuses a start.sh that would not stop a start during the update', async () => {
+    const f = fixture();
+    writeFileSync(
+      f.startPath,
+      f.launch
+        .split('\n')
+        .filter((line) => line !== UPDATE_HOLD_LINE)
+        .join('\n')
+    );
+    await expect(f.run([])).rejects.toThrow(
+      `${f.startPath} does not stop a start while an update holds the install; run mama service install, then mama update`
+    );
+    expect(f.calls).toEqual([]);
+    expectClean(f, '1.0.0');
+  });
+
+  it('says whether the service still runs when the stop at step 6 fails', async () => {
+    const running = fixture();
+    running.state.stopFails = true;
+    expect(await running.run([])).toBe(1);
+    expect(running.output()).toContain('1.0.0 stays installed and still runs');
+    // The service manager took the stop, then the stop reported a failure.
+    const down = fixture();
+    down.state.stopFails = true;
+    down.state.running = null;
+    expect(await down.run([])).toBe(1);
+    expect(down.output()).toContain(
+      'the service is not running; 1.0.0 stays installed, and mama service start starts it again'
+    );
+    expectClean(down, '1.0.0');
+  });
+
+  it('refuses a wait that is not a number of milliseconds', async () => {
+    const f = fixture({ env: { MAMA_UPDATE_WAIT_MS: '5m' } });
+    await expect(f.run(['--dry-run'])).rejects.toThrow(
+      'MAMA_UPDATE_WAIT_MS must be a whole number of milliseconds above 0, not "5m"'
+    );
+  });
+
+  it('removes what a snapshot cut off mid-backup left, credentials included', async () => {
+    const f = fixture();
+    await killedAt(f, 'backup#1');
+    const journal = f.journal()!;
+    expect(journal.schemaBefore).toBeNull();
+    expect(f.backups().sort()).toEqual(
+      [
+        `${journal.snapshot!.split('/').pop()!}.partial`,
+        journal.snapshotStaging!.split('/').pop()!,
+      ].sort()
+    );
+    expect(await f.run(['--rollback'])).toBe(0);
+    expect(f.calls).not.toContain('restore');
+    expectClean(f, '1.0.0');
+  });
+
+  it('lets an orphaned child finish while --rollback waits for it', async () => {
+    const f = fixture({ releases: { '1.1.0': { crash: true } } });
+    f.state.orphanParent = true;
+    // The child waits for the candidate at step 14 when the parent is killed.
+    f.state.pauseAt = 'status#2';
+    void f.run([]);
+    await vi.waitFor(() => expect(f.state.resume).not.toBeNull());
+    expect(f.journal()!.phase).toBe('candidate');
+    // A second writer on the same journal is refused while the child lives.
+    await expect(f.run(['--rollback'])).rejects.toThrow(
+      /^The update's update --continue \(pid \d+\) still runs and writes the journal/
+    );
+    expect(f.journal()!.phase).toBe('candidate');
+    f.state.resume!();
+    expect(await f.state.child).toBe(1);
+    expect(f.output()).toContain(
+      `the updater that started this is gone, so roll back with: '${f.nodePath}' '${join(f.scope, '.mama-os-1.0.0', 'dist', 'cli', 'index.js')}' update --rollback`
+    );
+    expect(f.journal()!.failure?.step).toBe(14);
+    expect(await f.run(['--rollback'])).toBe(0);
+    expectClean(f, '1.0.0');
+    expect(f.state.running).toBe('1.0.0');
+  });
+
+  it('an orphaned child that confirms its candidate finishes the update alone', async () => {
+    const f = fixture();
+    f.state.orphanParent = true;
+    void f.run([]);
+    await vi.waitFor(() => expect(f.state.child).not.toBeNull());
+    expect(await f.state.child).toBe(0);
+    expectClean(f, '1.1.0');
+    expect(f.state.held).toBe(false);
+  });
+
+  it('drains, not --now, when a retried rollback finds the previous version running', async () => {
+    const f = fixture({ releases: { '1.1.0': { crash: true } } });
+    // The rollback is killed after it started 1.0.0 again: 1.0.0 runs real turns, unheld.
+    f.state.killAt = 'npm ls#1';
+    void f.run([]);
+    await vi.waitFor(() => expect(f.state.killAt).toBeNull());
+    expect(f.state.running).toBe('1.0.0');
+    expect(f.journal()!.phase).toBe('rollback');
+    f.calls.length = 0;
+    expect(await f.run(['--rollback'])).toBe(0);
+    expect(f.calls).toContain('stop');
+    expect(f.calls).not.toContain('stop --now');
+    expectClean(f, '1.0.0');
+  });
+
+  it("reads npm ls's tree when npm exits 1 for another package's problem", async () => {
+    const f = fixture({ releases: { '1.1.0': { crash: true } } });
+    f.state.lsProblems = true;
+    expect(await f.run([])).toBe(1);
+    expect(f.output()).toContain('rolled back: 1.0.0 runs again');
+    expectClean(f, '1.0.0');
+    expect(f.state.running).toBe('1.0.0');
+  });
+
+  it('names the failed step and the command when the rollback child dies on a signal', async () => {
+    const f = fixture({ releases: { '1.1.0': { crash: true } } });
+    f.state.rollbackChildKilled = true;
+    expect(await f.run([])).toBe(1);
+    expect(f.output()).toContain(
+      `rollback did not finish: 1.0.0's update --rollback --continue ended on SIGKILL; the update had failed at step 14: MAMA did not finish starting`
+    );
+    expect(f.output()).toContain(
+      `Resolve it with: '${f.nodePath}' '${f.cliPath}' update --rollback`
+    );
+    expect(existsSync(f.paths.hold)).toBe(true);
+    expect(await f.run(['--rollback'])).toBe(0);
+    expectClean(f, '1.0.0');
   });
 });

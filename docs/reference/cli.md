@@ -171,7 +171,8 @@ taken effect).
 ## Update
 
 `mama update` serves an npm install (`npm install -g @jungjaehoon/mama-os`), run with the `mama`
-the service runs. It asks the registry npm uses, then shows the plan; `--dry-run` stops there. It
+the service runs. Its `start.sh` must be one `mama service install` wrote with this version or
+later (it stops any start while an update is under way); `mama update` says so otherwise. It asks the registry npm uses, then shows the plan; `--dry-run` stops there. It
 installs the new version next to the old one, so a failed download changes nothing. Then it lets
 running turns finish (new messages wait), stops the service, takes a backup with credentials in
 `~/.mama/backups/`, and swaps the new version in. The new version writes `start.sh` and the service

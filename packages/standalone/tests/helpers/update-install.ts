@@ -15,6 +15,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -26,12 +27,13 @@ import { startScript } from '../../src/cli/launch-files.js';
 import { serviceFile } from '../../src/cli/commands/service.js';
 import {
   runUpdate,
-  takeUpdateLock,
+  takeLock,
   type UpdateDeps,
   type UpdateOptions,
 } from '../../src/cli/commands/update.js';
 import type { Check } from '../../src/cli/runtime/diagnostics.js';
 import { readUpdateJournal, updatePaths } from '../../src/cli/runtime/update-journal.js';
+import { backupFiles } from '../../src/cli/runtime/backup.js';
 
 export const roots: string[] = [];
 
@@ -166,13 +168,24 @@ export function fixture(
     backupFails: false,
     /** `name#n`: the n-th call of that dep never returns; the updater was killed there. */
     killAt: null as string | null,
+    /** `name#n`: the n-th call of that dep waits for `resume()`. */
+    pauseAt: null as string | null,
+    resume: null as (() => void) | null,
+    /** The parent is killed (and its update.lock freed) once its `--continue` child starts. */
+    orphanParent: false,
+    /** The orphaned child's own run, which goes on. */
+    child: null as Promise<number> | null,
     /** The previous version's start fails during a rollback. */
     rollbackStartFails: false,
+    /** The previous version's `--rollback --continue` dies on a signal. */
+    rollbackChildKilled: false,
+    /** npm ls exits 1 for a problem elsewhere in the prefix, and still prints its tree. */
+    lsProblems: false,
     checks: [] as Check[],
     journalModes: [] as number[],
   };
   const paths = updatePaths(root);
-  const locks: Array<{ release(): void }> = [];
+  const locks: Array<{ path: string; lock: { release(): void } }> = [];
   const packageVersion = (at = packageRoot) =>
     (JSON.parse(readFileSync(join(at, 'package.json'), 'utf8')) as { version: string }).version;
   const inputs = () => {
@@ -191,9 +204,18 @@ export function fixture(
     counts.set(name, count);
     if (state.killAt === `${name}#${count}`) {
       state.killAt = null;
-      // A killed process's lock goes with it.
-      for (const lock of locks.splice(0)) lock.release();
+      // A killed process's lock goes with it; here parent and child die together.
+      for (const { lock } of locks.splice(0)) lock.release();
       return new Promise<T>(() => {});
+    }
+    if (state.pauseAt === `${name}#${count}`) {
+      state.pauseAt = null;
+      return new Promise<T>((resolve, reject) => {
+        state.resume = () => {
+          state.resume = null;
+          Promise.resolve().then(run).then(resolve, reject);
+        };
+      });
     }
     return Promise.resolve().then(run);
   };
@@ -224,7 +246,17 @@ export function fixture(
       });
     }
     if (args[0] === 'ls') {
-      return JSON.stringify({ dependencies: { [NAME]: { version: packageVersion() } } });
+      return await step('npm ls', () => {
+        const tree = JSON.stringify({ dependencies: { [NAME]: { version: packageVersion() } } });
+        if (state.lsProblems) {
+          throw Object.assign(new Error('npm failed'), {
+            code: 1,
+            stdout: tree,
+            stderr: 'npm error code ELSPROBLEMS\n',
+          });
+        }
+        return tree;
+      });
     }
     throw new Error(`unexpected npm ${args.join(' ')}`);
   };
@@ -270,15 +302,24 @@ export function fixture(
         // The new templates, as the new version writes them.
         writeFileSync(startPath, `${launch}# ${version}\n`, { mode: 0o700 });
       }),
-    backup: (prefix) =>
-      step('backup', () => {
+    backup: (prefix, now) => {
+      // As mama backup does: its staging folder and the partial archive (credentials in it)
+      // exist while it works, and are what a cut-off backup leaves.
+      const files = backupFiles(join(root, 'backups'), now, prefix);
+      mkdirSync(files.staging, { recursive: true, mode: 0o700 });
+      writeFileSync(files.partial, 'partial snapshot with credentials', { mode: 0o600 });
+      return step('backup', () => {
+        rmSync(files.staging, { recursive: true, force: true });
+        rmSync(files.partial, { force: true });
         if (state.backupFails) throw new Error('Backup failed and nothing was kept: disk full');
         state.journalModes.push(statSync(paths.journal).mode & 0o777);
-        mkdirSync(join(root, 'backups'), { recursive: true, mode: 0o700 });
-        const archive = join(root, 'backups', `${prefix}-20261030-000000.tar.gz`);
-        copyFileSync(databasePath, archive);
-        return archive;
-      }),
+        // The journal names it before it is written.
+        expect(readUpdateJournal(paths.journal)?.snapshot).toBe(files.final);
+        copyFileSync(databasePath, files.final);
+        return files.final;
+      });
+    },
+    serviceRuns: () => state.running !== null,
     restore: (archive) =>
       step('restore', () => {
         copyFileSync(archive, databasePath);
@@ -305,7 +346,14 @@ export function fixture(
         }
         return {
           state: 'running' as const,
-          reply: { ok: true, status: { stage: 'running', version: state.running } },
+          reply: {
+            ok: true,
+            status: {
+              stage: 'running',
+              version: state.running,
+              update: state.held ? { since: 1, to: state.running } : null,
+            },
+          },
         };
       }),
     health: async (port) => {
@@ -317,16 +365,38 @@ export function fixture(
       expect(node).toBe(nodePath);
       // `<node> <cli> update …`: the package now at the CLI's path is the program that runs.
       expect(args[0]).toBe('update');
-      const code = await runUpdate(
-        args.slice(1),
-        settings(packageVersion(dirname(dirname(dirname(cli)))))
-      );
-      return { code, signal: null };
+      const run = () =>
+        runUpdate(args.slice(1), settings(packageVersion(dirname(dirname(dirname(cli))))));
+      if (state.orphanParent && args[1] === '--continue') {
+        state.orphanParent = false;
+        state.child = run();
+        // The parent is SIGKILLed: its update.lock goes, its child goes on.
+        await vi.waitFor(() =>
+          expect(locks.some(({ path }) => path === paths.continuation.lockPath)).toBe(true)
+        );
+        for (const held of locks.filter(({ path }) => path === paths.lock.lockPath)) {
+          held.lock.release();
+          locks.splice(locks.indexOf(held), 1);
+        }
+        return await new Promise<never>(() => {});
+      }
+      if (state.rollbackChildKilled && args[1] === '--rollback') {
+        state.rollbackChildKilled = false;
+        return { code: null, signal: 'SIGKILL' };
+      }
+      return { code: await run(), signal: null };
     },
-    lock: (lockPaths) => {
-      const lock = takeUpdateLock(lockPaths);
-      locks.push(lock);
-      return lock;
+    lock: (lockPaths, command) => {
+      const lock = takeLock(lockPaths, command);
+      const entry = { path: lockPaths.lockPath, lock };
+      locks.push(entry);
+      return {
+        owner: lock.owner,
+        release: () => {
+          lock.release();
+          if (locks.includes(entry)) locks.splice(locks.indexOf(entry), 1);
+        },
+      };
     },
     version: () => version,
     runningPackage: () => packageRoot,

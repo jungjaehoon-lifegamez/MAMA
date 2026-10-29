@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { defaultConfigPath, loadConfig, type W1Config } from '../../runtime/config.js';
 import { CliInputError } from '../prompt.js';
 import { acquireInstallLock, daemonControlPaths } from '../runtime/daemon-control.js';
+import { readUpdateJournal, rollbackCommand, updatePaths } from '../runtime/update-journal.js';
 import {
   applyModes,
   clearOwnerThreads,
@@ -30,6 +31,8 @@ export interface RestoreOptions {
   home?: string;
   configPath?: string;
   write?: (line: string) => void;
+  /** `mama update`'s rollback, which restores its own snapshot while its journal is open. */
+  updateRollback?: boolean;
 }
 
 const USAGE = 'Usage: mama restore <archive> | mama restore --rollback';
@@ -72,6 +75,14 @@ export async function runRestore(
     if (existsSync(journalPath(root))) {
       throw new CliInputError(
         'An earlier restore was interrupted; mama restore --rollback resolves it first'
+      );
+    }
+    // An unfinished update swaps packages and may restore its own snapshot; a second restore
+    // under it would be undone or would undo it.
+    const update = options.updateRollback ? null : readUpdateJournal(updatePaths(root).journal);
+    if (update !== null) {
+      throw new CliInputError(
+        `An update (${update.from} → ${update.to}) is unfinished; resolve it first: ${rollbackCommand(update)}`
       );
     }
     if (!existsSync(configPath)) {

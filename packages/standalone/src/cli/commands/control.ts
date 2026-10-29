@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import { defaultConfigPath } from '../../runtime/config.js';
 import { CliInputError } from '../prompt.js';
 import { releaseReport } from '../runtime/release-check.js';
+import { unfinishedUpdate } from '../runtime/update-journal.js';
 import {
   drainDaemon,
   lockHolder,
@@ -130,6 +131,14 @@ export async function runStatus(
           ...(release.fix === undefined ? [] : [`  fix: ${release.fix}`]),
         ];
   if (reply.state === 'stopped') {
+    // A stopped install may be stopped by an unfinished update: start.sh exits on its hold file.
+    const update = unfinishedUpdate(dirname(options.configPath ?? defaultConfigPath(home)));
+    const updateLine =
+      update === null
+        ? null
+        : 'journal' in update
+          ? `update unfinished: ${update.journal.from} → ${update.journal.to} (${update.journal.phase}, step ${update.journal.step}); resolve it with: ${update.command}`
+          : `update hold file ${update.hold} is in place with no journal, so start.sh exits at once; remove it, then mama service start`;
     if (json) {
       write(
         JSON.stringify({
@@ -137,10 +146,12 @@ export async function runStatus(
           holder: reply.holder,
           service,
           release: release?.state ?? null,
+          update: updateLine,
         })
       );
     } else {
       write(reply.holder ? `stopped; ${holderLine(reply.holder)}` : 'stopped');
+      if (updateLine) write(updateLine);
       if (service) write(`service: ${service}`);
       for (const line of releaseLines()) write(line);
     }

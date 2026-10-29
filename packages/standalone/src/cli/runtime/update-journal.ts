@@ -46,9 +46,13 @@ export interface UpdateJournal {
   readonly previousCli: string;
   /** Step 3's doctor failures, which step 11 compares with its own. */
   readonly failuresBefore: readonly DoctorFailure[];
-  /** The service manager's stop at step 6 returned. */
-  stopped: boolean;
+  /**
+   * The snapshot's archive, named before step 7's backup starts so an update cut off mid-backup
+   * still finds what it left; it is a complete snapshot only once `schemaBefore` is set.
+   */
   snapshot: string | null;
+  /** That backup's staging folder, removed with the archive and its partial file. */
+  snapshotStaging: string | null;
   /** Each migration source's stored version when the snapshot was taken. */
   schemaBefore: readonly { name: string; stored: number }[] | null;
   /** The newest mailbox input when the snapshot was taken; a restore drops those after it. */
@@ -77,6 +81,12 @@ export interface UpdatePaths {
   readonly copies: string;
   /** `update.lock`: one updater per install, CLI or chat (PR 4 reads its holder). */
   readonly lock: LockPaths;
+  /**
+   * Held by the continuation child (`--continue`, `--rollback --continue`) for its life. A parent
+   * killed while its child runs frees update.lock; this one tells `--rollback` the child still
+   * writes the journal.
+   */
+  readonly continuation: LockPaths;
 }
 
 export function updatePaths(mamaRoot: string): UpdatePaths {
@@ -89,6 +99,10 @@ export function updatePaths(mamaRoot: string): UpdatePaths {
     lock: {
       lockPath: join(runtime, 'update.lock'),
       holderPath: join(runtime, 'update.holder.json'),
+    },
+    continuation: {
+      lockPath: join(runtime, 'update.continue.lock'),
+      holderPath: join(runtime, 'update.continue.holder.json'),
     },
   };
 }
@@ -182,6 +196,30 @@ export function writeUpdateJournal(path: string, journal: UpdateJournal): void {
 export function removeUpdateJournal(path: string): void {
   rmSync(path, { force: true });
   syncFile(dirname(path));
+}
+
+/** The snapshot's archive, its partial file and its backup's staging folder, whatever exists. */
+export function removeSnapshot(journal: UpdateJournal): void {
+  if (journal.snapshot !== null) {
+    rmSync(journal.snapshot, { force: true });
+    rmSync(`${journal.snapshot}.partial`, { force: true });
+  }
+  if (journal.snapshotStaging !== null) {
+    rmSync(journal.snapshotStaging, { recursive: true, force: true });
+  }
+}
+
+/**
+ * What an unfinished update leaves for `mama status` and doctor to name: an open journal and the
+ * command that resolves it, or a hold file with no journal, which start.sh exits on.
+ */
+export function unfinishedUpdate(
+  mamaRoot: string
+): { journal: UpdateJournal; command: string } | { hold: string } | null {
+  const paths = updatePaths(mamaRoot);
+  const journal = readUpdateJournal(paths.journal);
+  if (journal !== null) return { journal, command: rollbackCommand(journal) };
+  return existsSync(paths.hold) ? { hold: paths.hold } : null;
 }
 
 /**

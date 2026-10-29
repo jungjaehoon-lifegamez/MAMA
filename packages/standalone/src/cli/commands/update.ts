@@ -25,14 +25,15 @@ import { backendEnvironment } from '../../runtime/backend-security.js';
 import { defaultConfigPath, loadConfig } from '../../runtime/config.js';
 import { STANDALONE_MIGRATION_SOURCE } from '../../storage/migrations-source.js';
 import { readDocumentToolkit, TOOLKIT_ASSETS } from '../../tools/toolkit-state.js';
-import { readStartScript, startExports } from '../launch-files.js';
+import { readStartScript, startExports, UPDATE_HOLD_LINE } from '../launch-files.js';
 import { CliInputError } from '../prompt.js';
-import { compareVersions } from '../runtime/backend-probe.js';
 import {
   acquireInstallLock,
   daemonControlPaths,
   InstallBusyError,
+  lockHolder,
   refuseWhileRestoring,
+  type LockPaths,
   requestDaemonControl,
   type DaemonControlReply,
   type InstallLock,
@@ -45,11 +46,13 @@ import {
   runningPackageRoot,
   updateSteps,
 } from '../runtime/install-kind.js';
-import { npmErrorCode } from '../runtime/release-check.js';
+import { compareReleases, npmErrorCode } from '../runtime/release-check.js';
+import { backupFiles } from '../runtime/backup.js';
 import {
   leftoverStaging,
   packagePlaces,
   readUpdateJournal,
+  removeSnapshot,
   removeUpdateJournal,
   rollbackCommand,
   updatePaths,
@@ -62,7 +65,13 @@ import { runBackup } from './backup.js';
 import { runStop } from './control.js';
 import { viewerHealth, waitForBoot } from './init.js';
 import { runRestore } from './restore.js';
-import { installService, serviceFile, startService, type ServiceOptions } from './service.js';
+import {
+  installService,
+  serviceFile,
+  serviceRuns,
+  startService,
+  type ServiceOptions,
+} from './service.js';
 import { runTools } from './tools.js';
 
 /*
@@ -95,8 +104,10 @@ export interface UpdateDeps {
   stop(now: boolean): Promise<number>;
   start(): Promise<void>;
   installService(nodePath: string, cliPath: string): Promise<void>;
-  /** `mama backup --include-secrets` under the given name; the archive's path. */
-  backup(prefix: string): Promise<string>;
+  /** `mama backup --include-secrets` under the given name, started at `now`; the archive's path. */
+  backup(prefix: string, now: Date): Promise<string>;
+  /** Whether the installed service runs the daemon now. */
+  serviceRuns(): boolean;
   restore(archive: string): Promise<void>;
   toolsInstall(): Promise<void>;
   /** `mama doctor --offline`'s checks. */
@@ -110,8 +121,8 @@ export interface UpdateDeps {
     args: string[],
     env: NodeJS.ProcessEnv
   ): Promise<CliResult>;
-  /** `update.lock`; a test drops it to stand for a killed updater. */
-  lock(paths: UpdatePaths): InstallLock;
+  /** `update.lock`, or the continuation's lock; a test drops one to stand for a killed process. */
+  lock(paths: LockPaths, command: string): InstallLock;
   /** This CLI's own version and package, read before anything is renamed. */
   version(): string;
   runningPackage(): string;
@@ -196,7 +207,13 @@ function defaultDeps(options: UpdateOptions, home: string, configPath: string): 
   const service: ServiceOptions = { ...options, home, configPath };
   const write = options.write;
   const env = options.env ?? process.env;
-  const wait = Number(env.MAMA_UPDATE_WAIT_MS);
+  const waitSetting = env.MAMA_UPDATE_WAIT_MS;
+  const wait = waitSetting === undefined ? BOOT_WAIT_MS : Number(waitSetting);
+  if (!Number.isSafeInteger(wait) || wait <= 0) {
+    throw new CliInputError(
+      `MAMA_UPDATE_WAIT_MS must be a whole number of milliseconds above 0, not ${JSON.stringify(waitSetting)}`
+    );
+  }
   return {
     npm: defaultNpm,
     stop: async (now) => await runStop(now ? ['--now'] : [], service),
@@ -206,20 +223,26 @@ function defaultDeps(options: UpdateOptions, home: string, configPath: string): 
     installService: async (nodePath, cliPath) => {
       await installService([], { ...service, nodePath, cliPath });
     },
-    backup: async (prefix) =>
-      await runBackup(['--include-secrets'], { ...service, archivePrefix: prefix }),
-    restore: async (archive) => await runRestore([archive], { home, configPath, write }),
+    backup: async (prefix, now) =>
+      await runBackup(['--include-secrets'], {
+        ...service,
+        archivePrefix: prefix,
+        now: () => now,
+      }),
+    serviceRuns: () => serviceRuns(service),
+    restore: async (archive) =>
+      await runRestore([archive], { home, configPath, write, updateRollback: true }),
     toolsInstall: async () => await runTools(['install'], { home, configPath, write }),
     diagnostics: async () => await runDiagnostics({ home, configPath, offline: true }),
     control: async (op) =>
       await requestDaemonControl(daemonControlPaths(dirname(configPath)), op, 10_000),
     health: viewerHealth,
     runCli: defaultRunCli,
-    lock: takeUpdateLock,
+    lock: takeLock,
     version: resolvePackageVersion,
     runningPackage: runningPackageRoot,
-    // The release checks replace the wait so a candidate that never boots fails in minutes.
-    bootWaitMs: Number.isInteger(wait) && wait > 0 ? wait : BOOT_WAIT_MS,
+    // The release checks shorten the wait so a candidate that never boots fails in minutes.
+    bootWaitMs: wait,
     pollMs: 1_000,
   };
 }
@@ -271,17 +294,39 @@ export async function runUpdate(
   return await update(context, mode.version, mode.dryRun, options);
 }
 
-/** One updater per install: `update.lock`, which `/update` (PR 4) reads before it starts one. */
-export function takeUpdateLock(paths: UpdatePaths): InstallLock {
+/**
+ * One updater per install: `update.lock` (which `/update`, PR 4, reads before it starts one), and
+ * the continuation's own lock for the child's life.
+ */
+export function takeLock(paths: LockPaths, command: string): InstallLock {
   try {
-    return acquireInstallLock(paths.lock, 'update');
+    return acquireInstallLock(paths, command);
   } catch (error) {
     if (!(error instanceof InstallBusyError)) throw error;
     const holder = error.holder;
     throw new CliInputError(
       holder === null
-        ? `Another mama update holds ${paths.lock.lockPath}`
-        : `Already updating since ${new Date(holder.startedAt).toLocaleString('sv-SE')} (pid ${holder.pid})`
+        ? `Another mama update holds ${paths.lockPath}`
+        : `Already updating since ${new Date(holder.startedAt).toLocaleString('sv-SE')} (${holder.command}, pid ${holder.pid})`
+    );
+  }
+}
+
+/**
+ * The continuation child's lock, for as long as it writes the journal. Its parent holds
+ * update.lock; a parent killed meanwhile frees that one, and `--rollback` then finds this one held
+ * and waits, instead of a second writer acting on the same journal.
+ */
+function takeContinuation(context: Context, command: string): InstallLock {
+  return context.deps.lock(context.paths.continuation, command);
+}
+
+/** Refuse while a continuation child (a killed parent's) still runs. */
+function refuseWhileContinuing(paths: UpdatePaths): void {
+  const child = lockHolder(paths.continuation);
+  if (child !== null) {
+    throw new CliInputError(
+      `The update's ${child.command} (pid ${child.pid}) still runs and writes the journal; wait for it to end, then run this again`
     );
   }
 }
@@ -408,8 +453,20 @@ async function update(
       'mama update starts MAMA again through its service, and none is installed: run mama service install first'
     );
   }
+  // Only start.sh reads the hold file. One from before PR 3 (an `npm i -g` without `mama service
+  // install`) would boot an unheld daemon on a reboot mid-update.
+  const startPath = join(root, 'start.sh');
+  if (
+    !readFileSync(startPath, 'utf8')
+      .split('\n')
+      .some((line) => line.trim() === UPDATE_HOLD_LINE)
+  ) {
+    throw new CliInputError(
+      `${startPath} does not stop a start while an update holds the install; run mama service install, then mama update`
+    );
+  }
   refuseWhileRestoring(root);
-  const lock = deps.lock(paths);
+  const lock = deps.lock(paths.lock, 'update');
   try {
     const open = readUpdateJournal(paths.journal);
     if (open !== null) {
@@ -450,7 +507,7 @@ async function update(
         `${registry} has no single ${PACKAGE_NAME}@${version ?? 'latest'} (npm printed ${JSON.stringify(target.slice(0, 80))}); nothing changed`
       );
     }
-    const order = compareVersions(target, from);
+    const order = compareReleases(target, from);
     if (order === 0) {
       write(`already on ${from}`);
       return 0;
@@ -538,8 +595,8 @@ async function update(
       packageCli,
       previousCli: join(places.aside, packageCli),
       failuresBefore,
-      stopped: false,
       snapshot: null,
+      snapshotStaging: null,
       schemaBefore: null,
       lastInputId: null,
       toolkitBefore: null,
@@ -552,20 +609,33 @@ async function update(
     if ((await deps.stop(false)) !== 0) {
       removeUpdateJournal(paths.journal);
       rmSync(places.staging, { recursive: true, force: true });
-      write(`not updated: the stop did not finish (above); ${from} stays installed`);
+      // A stop can fail after the service manager took it (a release that took too long), so the
+      // install may be down now; this names which, as mama backup --restart does.
+      write(
+        deps.serviceRuns()
+          ? `not updated: the stop did not finish (above); ${from} stays installed and still runs`
+          : `not updated: the stop did not finish cleanly (above) and the service is not running; ${from} stays installed, and mama service start starts it again`
+      );
       return 1;
     }
     // From the stop on, a start (a reboot, an owner's mama service start) finds the hold and
     // exits: a parent that dies after the stop leaves the install stopped, not half-changed.
     writeFileSync(paths.hold, `${process.pid}\n`, { mode: 0o600 });
-    journal.stopped = true;
+    // Step 7: the snapshot, what the rollback compares with, and the launch files. Its files are
+    // named first, so an update cut off mid-backup removes what that backup left.
+    const startedBackup = new Date();
+    const planned = backupFiles(
+      join(realpathSync(root), 'backups'),
+      startedBackup,
+      `mama-update-${from}`
+    );
     journal.step = 7;
+    journal.snapshot = planned.final;
+    journal.snapshotStaging = planned.staging;
     save(context, journal);
-
-    // Step 7: the snapshot, what the rollback compares with, and the launch files.
     try {
-      journal.snapshot = await deps.backup(`mama-update-${from}`);
-      save(context, journal);
+      // Named by the same backupFiles as the journal's planned paths.
+      await deps.backup(`mama-update-${from}`, startedBackup);
       const config = loadConfig({ home, path: context.configPath, onIgnored: () => {} });
       journal.schemaBefore = schemaStored(config.database.path);
       journal.lastInputId = lastInputId(config.database.path);
@@ -579,11 +649,12 @@ async function update(
       save(context, journal);
     } catch (error) {
       write(`not updated: ${message(error)}`);
-      if (journal.snapshot !== null) rmSync(journal.snapshot, { force: true });
+      removeSnapshot(journal);
       rmSync(paths.copies, { recursive: true, force: true });
       rmSync(places.staging, { recursive: true, force: true });
-      removeUpdateJournal(paths.journal);
+      // The hold goes before the journal: a cut here leaves a journal, which names its fix.
       rmSync(paths.hold, { force: true });
+      removeUpdateJournal(paths.journal);
       try {
         await deps.start();
         write(`${from} started again`);
@@ -644,6 +715,22 @@ async function update(
  * step and exits non-zero; the parent rolls back.
  */
 async function continueUpdate(context: Context): Promise<number> {
+  const own = takeContinuation(context, 'update --continue');
+  try {
+    return await continueUpdateHeld(context);
+  } finally {
+    own.release();
+  }
+}
+
+/** What to print when the parent that would roll back is gone. */
+function orphanNote(context: Context, journal: UpdateJournal): string {
+  return lockHolder(context.paths.lock) === null
+    ? `; the updater that started this is gone, so roll back with: ${rollbackCommand(journal)}`
+    : '';
+}
+
+async function continueUpdateHeld(context: Context): Promise<number> {
   const { home, root, write, deps, paths } = context;
   const journal = readUpdateJournal(paths.journal);
   if (journal === null || journal.phase !== 'prepare' || journal.step < 9) {
@@ -706,7 +793,7 @@ async function continueUpdate(context: Context): Promise<number> {
   } catch (error) {
     journal.failure = { step: journal.step, message: message(error) };
     save(context, journal);
-    write(`update step ${journal.step} failed: ${message(error)}`);
+    write(`update step ${journal.step} failed: ${message(error)}${orphanNote(context, journal)}`);
     return 1;
   }
   // On disk before the release: from here the candidate claims, and nothing rolls it back.
@@ -725,7 +812,7 @@ async function finishCommitted(context: Context, journal: UpdateJournal): Promis
     );
   }
   const places = packagePlaces(journal.prefix, journal.from, journal.to);
-  if (journal.snapshot !== null) rmSync(journal.snapshot, { force: true });
+  removeSnapshot(journal);
   rmSync(paths.copies, { recursive: true, force: true });
   rmSync(places.aside, { recursive: true, force: true });
   rmSync(places.staging, { recursive: true, force: true });
@@ -742,8 +829,9 @@ async function finishCommitted(context: Context, journal: UpdateJournal): Promis
 
 /** `mama update --rollback`: resolve the journal a killed updater left. */
 async function resolveJournal(context: Context): Promise<number> {
-  const lock = context.deps.lock(context.paths);
+  const lock = context.deps.lock(context.paths.lock, 'update --rollback');
   try {
+    refuseWhileContinuing(context.paths);
     const journal = readUpdateJournal(context.paths.journal);
     if (journal === null) {
       context.write('no update is unfinished');
@@ -761,6 +849,21 @@ async function resolveJournal(context: Context): Promise<number> {
 }
 
 /**
+ * The rollback's stop. A daemon that answers as the held candidate runs nothing, and one that does
+ * not answer has nothing to drain: `--now`. One that answers without a hold claims work (the old
+ * version a rollback already started, or a daemon the stop at step 6 never reached), so it drains.
+ */
+async function stopForRollback(context: Context, journal: UpdateJournal): Promise<number> {
+  const reply = await context.deps.control('status').catch(() => null);
+  const status =
+    reply?.state === 'running' && reply.reply.ok === true
+      ? (reply.reply.status as { update?: { to?: unknown } | null })
+      : null;
+  const heldCandidate = journal.phase === 'candidate' && status?.update?.to === journal.to;
+  return await context.deps.stop(status === null || heldCandidate);
+}
+
+/**
  * Rollback steps 1-3, in whichever CLI runs (the parent, or `--rollback`): stop, hold, put the
  * previous package back, and hand the rest to it. Only renames and the service manager's stop,
  * so it runs from loaded code. True when the previous version runs again.
@@ -772,9 +875,8 @@ async function rollBack(context: Context, journal: UpdateJournal): Promise<boole
     `rolling back to ${journal.from}: step ${journal.failure?.step ?? journal.step} failed: ${journal.failure?.message ?? 'unknown'}`
   );
   try {
-    // Before the stop was confirmed the old version may still run turns, so it drains; after it,
-    // whatever runs is the held candidate, which runs nothing, or a crashing one.
-    if ((await deps.stop(journal.stopped)) !== 0) throw new Error('the service did not stop');
+    if ((await stopForRollback(context, journal)) !== 0)
+      throw new Error('the service did not stop');
     writeFileSync(paths.hold, `${process.pid}\n`, { mode: 0o600 });
     // The previous version boots without a hold from here.
     journal.phase = 'rollback';
@@ -793,11 +895,14 @@ async function rollBack(context: Context, journal: UpdateJournal): Promise<boole
       ['update', '--rollback', '--continue'],
       env
     );
-    if (result.code !== 0) {
-      // The previous version printed why and left the hold and the journal.
-      return false;
-    }
-    return true;
+    if (result.code === 0) return true;
+    // What it printed may be cut off (a signal); the failed step and the command are said here.
+    writeFileSync(paths.hold, `${process.pid}\n`, { mode: 0o600 });
+    const current = readUpdateJournal(paths.journal) ?? journal;
+    write(
+      `rollback did not finish: ${journal.from}'s update --rollback --continue ${result.signal === null ? `exited ${String(result.code)}` : `ended on ${result.signal}`}; the update had failed at step ${current.failure?.step ?? current.step}: ${current.failure?.message ?? 'unknown'}. The install stays stopped on its hold file. Resolve it with: ${rollbackCommand(current)}`
+    );
+    return false;
   } catch (error) {
     writeFileSync(paths.hold, `${process.pid}\n`, { mode: 0o600 });
     const current = readUpdateJournal(paths.journal) ?? journal;
@@ -810,7 +915,37 @@ async function rollBack(context: Context, journal: UpdateJournal): Promise<boole
 
 /** Rollback steps 4-7, in the previous version's CLI with its package back in place. */
 async function finishRollback(context: Context): Promise<number> {
-  const { home, root, write, deps, paths, env } = context;
+  const own = takeContinuation(context, 'update --rollback --continue');
+  try {
+    return await finishRollbackHeld(context);
+  } finally {
+    own.release();
+  }
+}
+
+/**
+ * `npm ls -g --json`'s answer for MAMA OS. npm exits 1 for problems elsewhere in the prefix
+ * (ELSPROBLEMS) and still prints the tree, so the tree decides, not the exit.
+ */
+async function installedVersion(context: Context, journal: UpdateJournal): Promise<unknown> {
+  let text: string;
+  try {
+    text = await context.deps.npm(
+      ['ls', '-g', '--prefix', journal.prefix, '--depth=0', '--json', '--no-update-notifier'],
+      journal.nodePath,
+      context.env
+    );
+  } catch (error) {
+    const stdout = (error as { stdout?: unknown }).stdout;
+    if (typeof stdout !== 'string' || stdout.trim() === '') throw error;
+    text = stdout;
+  }
+  const listed = JSON.parse(text) as { dependencies?: Record<string, { version?: unknown }> };
+  return listed.dependencies?.[PACKAGE_NAME]?.version;
+}
+
+async function finishRollbackHeld(context: Context): Promise<number> {
+  const { home, root, write, deps, paths } = context;
   const journal = readUpdateJournal(paths.journal);
   if (journal === null || journal.phase !== 'rollback') {
     throw new CliInputError('mama update --rollback --continue runs only under a rollback');
@@ -856,18 +991,11 @@ async function finishRollback(context: Context): Promise<number> {
       version: journal.from,
       next: 'the rollback stops here',
     });
-    const listed = JSON.parse(
-      await deps.npm(
-        ['ls', '-g', '--prefix', journal.prefix, '--depth=0', '--json', '--no-update-notifier'],
-        journal.nodePath,
-        env
-      )
-    ) as { dependencies?: Record<string, { version?: string }> };
-    const installed = listed.dependencies?.[PACKAGE_NAME]?.version;
+    const installed = await installedVersion(context, journal);
     if (installed !== journal.from) {
       throw new Error(`npm ls -g shows ${PACKAGE_NAME} ${String(installed)}, not ${journal.from}`);
     }
-    if (journal.snapshot !== null) rmSync(journal.snapshot, { force: true });
+    removeSnapshot(journal);
     rmSync(paths.copies, { recursive: true, force: true });
     rmSync(places.staging, { recursive: true, force: true });
     removeUpdateJournal(paths.journal);
@@ -884,7 +1012,8 @@ async function finishRollback(context: Context): Promise<number> {
     // Stopped on the hold file, everything kept, so this can be run again.
     let stopped = '';
     try {
-      await deps.stop(true);
+      // The previous version may have started and run turns: it drains (stopForRollback).
+      await stopForRollback(context, journal);
     } catch (stopError) {
       stopped = `; stopping it failed too: ${message(stopError)}`;
     }

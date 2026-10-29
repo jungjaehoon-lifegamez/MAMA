@@ -1071,10 +1071,24 @@ function updateChecks(root: string, home: string): Check[] {
         status: 'fail',
         detail:
           journal.phase === 'committed'
-            ? `the update to ${journal.to} took effect; its cleanup is unfinished`
+            ? `the update to ${journal.to} took effect, but it was not finished: its inputs may stay held, and nothing runs until the command below finishes it`
             : `the update from ${journal.from} to ${journal.to} is unfinished (${journal.phase}, step ${journal.step}); the daemon stays stopped or held until it is resolved`,
         code: 'update.open',
         fix: rollbackCommand(journal),
+      },
+    ];
+  }
+  const hold = updatePaths(root).hold;
+  if (existsSync(hold)) {
+    return [
+      {
+        name: 'update',
+        status: 'fail',
+        detail:
+          'an update hold file is in place with no update journal; start.sh exits at once, so the daemon does not start',
+        code: 'update.hold',
+        context: hold,
+        fix: `rm ${hold}, then mama service start`,
       },
     ];
   }

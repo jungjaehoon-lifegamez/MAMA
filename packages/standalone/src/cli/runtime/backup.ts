@@ -609,6 +609,25 @@ function listable(mode: number): number {
   return mode | (mode & 0o400 ? 0o100 : 0) | (mode & 0o40 ? 0o10 : 0) | (mode & 0o4 ? 0o1 : 0);
 }
 
+/**
+ * Where a backup started at `now` by process `pid` writes in `folder`: the archive, the partial
+ * file it is written to, and its staging folder. `mama update` records them before its snapshot,
+ * so an update cut off mid-backup removes what that backup left (credentials included).
+ */
+export function backupFiles(
+  folder: string,
+  now: Date,
+  prefix?: string,
+  pid: number = process.pid
+): { final: string; partial: string; staging: string } {
+  const final = join(folder, archiveName(now, prefix));
+  return {
+    final,
+    partial: `${final}.partial`,
+    staging: join(folder, `.staging-${pid}-${now.getTime()}`),
+  };
+}
+
 export function archiveName(now: Date, prefix = 'mama-backup'): string {
   const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
   return `${prefix}-${stamp}.tar.gz`;

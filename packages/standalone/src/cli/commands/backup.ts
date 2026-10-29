@@ -16,7 +16,7 @@ import { resolvePackageVersion } from '../../package-version.js';
 import { defaultConfigPath, loadConfig } from '../../runtime/config.js';
 import { CliInputError } from '../prompt.js';
 import {
-  archiveName,
+  backupFiles,
   checkDatabase,
   collectEntries,
   copyDatabase,
@@ -132,9 +132,7 @@ async function backupStopped(flags: BackupFlags, options: BackupOptions): Promis
     throw error;
   }
   const now = options.now?.() ?? new Date();
-  const final = join(folder, archiveName(now, options.archivePrefix));
-  const staging = join(folder, `.staging-${process.pid}-${now.getTime()}`);
-  const partial = `${final}.partial`;
+  const { final, staging, partial } = backupFiles(folder, now, options.archivePrefix);
   try {
     const plan = planBackup(config, configPath, { ...flags, home });
     mkdirSync(folder, { recursive: true, mode: 0o700 });

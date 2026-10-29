@@ -21,7 +21,12 @@ import { loadConnector } from '../../src/connectors/index.js';
 import { compareVersions, probeBackend } from '../../src/cli/runtime/backend-probe.js';
 import { runDiagnostics, type Check } from '../../src/cli/runtime/diagnostics.js';
 import { systemdUnitPath } from '../../src/cli/runtime/systemd-service.js';
-import { updatePaths, writeUpdateJournal } from '../../src/cli/runtime/update-journal.js';
+import {
+  removeUpdateJournal,
+  updatePaths,
+  writeUpdateJournal,
+} from '../../src/cli/runtime/update-journal.js';
+import { runStatus } from '../../src/cli/commands/control.js';
 import {
   readStartScript,
   shellWords,
@@ -304,8 +309,8 @@ describe('mama doctor', () => {
       packageCli: join('dist', 'cli', 'index.js'),
       previousCli: join(aside, 'dist', 'cli', 'index.js'),
       failuresBefore: [],
-      stopped: true,
       snapshot: null,
+      snapshotStaging: null,
       schemaBefore: null,
       lastInputId: null,
       toolkitBefore: null,
@@ -324,6 +329,41 @@ describe('mama doctor', () => {
       code: 'update.open',
       fix: `'${installed.node}' '${join(aside, 'dist', 'cli', 'index.js')}' update --rollback`,
     });
+    // mama status names it too while the daemon is stopped.
+    const lines: string[] = [];
+    expect(
+      await runStatus([], {
+        home: installed.home,
+        configPath: installed.configPath,
+        write: (line) => lines.push(line),
+      })
+    ).toBe(3);
+    expect(lines).toContain(
+      `update unfinished: 1.0.0 → 1.1.0 (prepare, step 9); resolve it with: ${open.fix}`
+    );
+
+    // A hold file left without its journal: start.sh exits at once, and nothing else said why.
+    const { hold, journal } = updatePaths(installed.root);
+    writeFileSync(hold, '1\n');
+    removeUpdateJournal(journal);
+    expect(byName(await runDiagnostics(base(installed))).update).toEqual({
+      name: 'update',
+      status: 'fail',
+      detail:
+        'an update hold file is in place with no update journal; start.sh exits at once, so the daemon does not start',
+      code: 'update.hold',
+      context: hold,
+      fix: `rm ${hold}, then mama service start`,
+    });
+    lines.length = 0;
+    await runStatus([], {
+      home: installed.home,
+      configPath: installed.configPath,
+      write: (line) => lines.push(line),
+    });
+    expect(lines).toContain(
+      `update hold file ${hold} is in place with no journal, so start.sh exits at once; remove it, then mama service start`
+    );
   });
 
   it('passes a healthy install and exits 0', async () => {

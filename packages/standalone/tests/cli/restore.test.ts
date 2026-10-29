@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmSync,
   readlinkSync,
   realpathSync,
   renameSync,
@@ -205,7 +206,8 @@ describe('mama restore', () => {
     file(join(runtime, 'update.hold'), '1\n', 0o600);
     file(join(runtime, 'update', 'start.sh'), '#!/bin/sh\n# saved\n', 0o600);
     file(join(a.root, 'start.sh'), '#!/bin/sh\n# saved\n', 0o700);
-    await runRestore([archive], options(a));
+    // As the update's rollback runs it, under its own open journal.
+    await runRestore([archive], { ...options(a), updateRollback: true });
     expect(readFileSync(join(runtime, 'update.json'), 'utf8')).toBe('{"phase":"rollback"}\n');
     expect(existsSync(join(runtime, 'update.hold'))).toBe(true);
     expect(existsSync(join(runtime, 'update', 'start.sh'))).toBe(true);
@@ -397,6 +399,27 @@ describe('mama restore', () => {
     const config = yaml.load(readFileSync(b.configPath, 'utf8')) as Record<string, unknown>;
     delete config.wiki;
     writeFileSync(b.configPath, yaml.dump(config));
+    // Nor while an update is unfinished: its own rollback may restore its snapshot.
+    const updateJournal = join(b.root, 'runtime', 'update.json');
+    writeFileSync(
+      updateJournal,
+      JSON.stringify({
+        format: 'mama-update',
+        phase: 'candidate',
+        step: 14,
+        from: '1.0.0',
+        to: '1.1.0',
+        prefix: '/fixture/prefix',
+        nodePath: '/fixture/node',
+        packageCli: 'dist/cli/index.js',
+        previousCli:
+          '/fixture/prefix/lib/node_modules/@jungjaehoon/.mama-os-1.0.0/dist/cli/index.js',
+      })
+    );
+    await expect(runRestore([archive], options(b))).rejects.toThrow(
+      "An update (1.0.0 → 1.1.0) is unfinished; resolve it first: '/fixture/node' '/fixture/prefix/lib/node_modules/@jungjaehoon/mama-os/dist/cli/index.js' update --rollback"
+    );
+    rmSync(updateJournal);
     // The backup has its wiki on; this install has no place for it.
     await expect(runRestore([archive], options(b))).rejects.toThrow(/wiki/);
     expect(readFileSync(join(b.root, 'owner-policy.md'), 'utf8')).toBe('policy from b');
