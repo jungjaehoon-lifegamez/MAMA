@@ -56,6 +56,12 @@ function statusLines(status: Record<string, unknown>): string[] {
       `claims held for ${drain.holds === 1 ? 'a drain' : `${drain.holds} drains`} since ${localTime(drain.since)}: new inputs wait`
     );
   }
+  const update = status.update as { since: number; to: string } | null | undefined;
+  if (update) {
+    lines.push(
+      `claims held since ${localTime(update.since)} for the update to ${update.to}: new inputs wait until mama update confirms it`
+    );
+  }
   const turns = Array.isArray(status.runningTurns)
     ? (status.runningTurns as Array<{ session: string; count: number }>)
     : [];

@@ -32,6 +32,13 @@ import {
 import { probeBackend, type BackendName, type ProbeRun, defaultProbeRun } from './backend-probe.js';
 import { restoreJournalPath, type DaemonControlReply } from './daemon-control.js';
 import { releaseReport } from './release-check.js';
+import { installKind } from './install-kind.js';
+import {
+  leftoverStaging,
+  readUpdateJournal,
+  rollbackCommand,
+  updatePaths,
+} from './update-journal.js';
 import {
   CORE_MIGRATION_SOURCE,
   MIGRATIONS_DIR,
@@ -185,6 +192,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
       fix: 'mama restore --rollback',
     });
   }
+  checks.push(...updateChecks(root, home));
 
   let config: W1Config | null = null;
   // Setting names can be anything the owner typed, so they stay out of the report.
@@ -1032,6 +1040,58 @@ async function daemonChecks(
     );
   }
   return checks;
+}
+
+/**
+ * An unfinished `mama update`: its journal (docs/development/work/update.md, PR 3), with the
+ * command that resolves it by absolute paths, or a staging prefix an updater killed before it
+ * wrote its journal left behind.
+ */
+function updateChecks(root: string, home: string): Check[] {
+  const path = updatePaths(root).journal;
+  let journal;
+  try {
+    journal = readUpdateJournal(path);
+  } catch (error) {
+    return [
+      {
+        name: 'update',
+        status: 'fail',
+        detail: 'an unfinished update left a journal that cannot be read',
+        code: 'update.open',
+        context: message(error),
+        fix: `read ${path}; mama update --rollback needs it`,
+      },
+    ];
+  }
+  if (journal !== null) {
+    return [
+      {
+        name: 'update',
+        status: 'fail',
+        detail:
+          journal.phase === 'committed'
+            ? `the update to ${journal.to} took effect; its cleanup is unfinished`
+            : `the update from ${journal.from} to ${journal.to} is unfinished (${journal.phase}, step ${journal.step}); the daemon stays stopped or held until it is resolved`,
+        code: 'update.open',
+        fix: rollbackCommand(journal),
+      },
+    ];
+  }
+  const install = installKind(root, home);
+  const staging = install.kind === 'npm' ? leftoverStaging(dirname(install.packageRoot)) : [];
+  return staging.length === 0
+    ? []
+    : [
+        {
+          name: 'update',
+          status: 'warn',
+          detail: 'an interrupted mama update left its staging folder; the install runs as before',
+          code: 'update.staging',
+          context: staging.join(', '),
+          fix: 'the next mama update removes it',
+        },
+      ];
 }
 
 /** The daemon's last daily release check, from its file; doctor itself asks no registry. */

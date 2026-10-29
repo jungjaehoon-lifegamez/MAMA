@@ -162,6 +162,10 @@ describe('install kind', () => {
     expect(updateSteps(install)).toEqual([
       `no update path: ${packageRoot} is neither an npm global install nor a checkout`,
     ]);
+    // Known folder or not, `other` has no update path.
+    expect(() => requireServicePackage(install, packageRoot)).toThrow(
+      `The service runs a package mama cannot update: ${packageRoot} is neither an npm global install nor a checkout`
+    );
 
     const bare = temp('mama-kind-none-');
     expect(installKind(join(bare, '.mama'), bare)).toMatchObject({

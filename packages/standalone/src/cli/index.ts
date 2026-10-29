@@ -105,13 +105,19 @@ async function main(): Promise<void> {
     process.exitCode = await runStatus(process.argv.slice(3));
     return;
   }
+  if (command === 'update') {
+    // Everything the updater runs after it swaps its own package is imported by this module.
+    const { runUpdate } = await import('./commands/update.js');
+    process.exitCode = await runUpdate(process.argv.slice(3));
+    return;
+  }
   if (command === 'stop') {
     const { runStop } = await import('./commands/control.js');
     process.exitCode = await runStop(process.argv.slice(3));
     return;
   }
   console.log(
-    'Usage: mama init [--non-interactive] | init --section <part> | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop [--now] | service install|start|stop|restart|status|uninstall | uninstall [--dry-run] [--data [--toolkit]] | doctor [--json] [--offline] [--report] | logs [-n <lines>] [--follow] | backup [--include-secrets] [--logs] [--restart] | restore <archive> | restore --rollback'
+    'Usage: mama init [--non-interactive] | init --section <part> | tools install | secret set <NAME> | secret list | register-owner <telegram id> | daemon | replay | backfill <file> | status [--json] | stop [--now] | service install|start|stop|restart|status|uninstall | uninstall [--dry-run] [--data [--toolkit]] | doctor [--json] [--offline] [--report] | logs [-n <lines>] [--follow] | backup [--include-secrets] [--logs] [--restart] | restore <archive> | restore --rollback | update [<version>] [--dry-run] | update --rollback'
   );
 }
 

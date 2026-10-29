@@ -31,6 +31,9 @@ export interface DaemonControlPaths {
   readonly tokenPath: string;
 }
 
+/** A lock and the file naming its holder: the install's, or another one such as `update.lock`. */
+export type LockPaths = Pick<DaemonControlPaths, 'lockPath' | 'holderPath'>;
+
 export function daemonControlPaths(mamaRoot: string): DaemonControlPaths {
   const runtimeRoot = join(mamaRoot, 'runtime');
   return {
@@ -113,7 +116,7 @@ function isBusy(error: unknown): boolean {
  * `mama status` probe reads the file.
  */
 export function acquireInstallLock(
-  paths: DaemonControlPaths,
+  paths: LockPaths,
   command: string,
   options: { busyTimeoutMs?: number } = {}
 ): InstallLock {
@@ -154,7 +157,7 @@ export function acquireInstallLock(
  * shared lock, which the holder's exclusive one refuses; when nothing holds it, the read takes the
  * shared lock for an instant only.
  */
-export function lockHolder(paths: DaemonControlPaths): LockOwner | null {
+export function lockHolder(paths: LockPaths): LockOwner | null {
   if (!existsSync(paths.lockPath)) return null;
   const db = new Database(paths.lockPath, { readonly: true, timeout: 0 });
   try {
@@ -170,7 +173,7 @@ export function lockHolder(paths: DaemonControlPaths): LockOwner | null {
   }
 }
 
-export type DaemonControlOp = 'status' | 'stop' | 'probe' | 'drain';
+export type DaemonControlOp = 'status' | 'stop' | 'probe' | 'drain' | 'release';
 
 /** What a drain waits for: model runs of this boot still running, and inputs a delivery owns. */
 export interface DrainCounts {
@@ -193,6 +196,11 @@ export interface DaemonControlHandlers {
   probe(): Promise<Record<string, unknown>>;
   /** Stop claiming new work until the hold is released; it throws when it cannot hold. */
   hold(): ClaimHold;
+  /**
+   * End the hold an update candidate boots with (docs/development/work/update.md, step 14);
+   * `held` says whether there was one.
+   */
+  release(): { held: boolean };
 }
 
 export interface DaemonControlServer {
@@ -205,7 +213,7 @@ const MAX_REQUEST_BYTES = 4096;
 export const DRAIN_REPEAT_MS = 30_000;
 
 /**
- * Serve status, stop, a backend probe and a drain to the CLI. Only the lock holder calls this, so
+ * Serve status, stop, a backend probe, a drain and an update's release to the CLI. Only the lock holder calls this, so
  * removing a socket left by a dead holder never removes a live one. Each boot writes a new token; a
  * request without it is refused. Every op but `drain` answers once and ends the connection. A
  * drain keeps its connection open and holds claims for as long as it stays open: it sends its
@@ -316,6 +324,7 @@ export async function startDaemonControl(
       return { ok: true };
     }
     if (request.op === 'probe') return { ok: true, probe: await handlers.probe() };
+    if (request.op === 'release') return { ok: true, ...handlers.release() };
     if (request.op === 'drain') {
       drain(socket);
       return null;

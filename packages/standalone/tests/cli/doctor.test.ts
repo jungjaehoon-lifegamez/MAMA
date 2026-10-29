@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   truncateSync,
@@ -20,6 +21,7 @@ import { loadConnector } from '../../src/connectors/index.js';
 import { compareVersions, probeBackend } from '../../src/cli/runtime/backend-probe.js';
 import { runDiagnostics, type Check } from '../../src/cli/runtime/diagnostics.js';
 import { systemdUnitPath } from '../../src/cli/runtime/systemd-service.js';
+import { updatePaths, writeUpdateJournal } from '../../src/cli/runtime/update-journal.js';
 import {
   readStartScript,
   shellWords,
@@ -249,6 +251,81 @@ describe('Node path and start.sh reading', () => {
 });
 
 describe('mama doctor', () => {
+  it('names an unfinished update with the command that resolves it, and staging left before one', async () => {
+    const installed = install();
+    // An npm install: start.sh runs the package under a prefix's lib/node_modules.
+    const prefix = join(installed.home, 'prefix');
+    const scope = join(prefix, 'lib', 'node_modules', '@jungjaehoon');
+    const packageRoot = join(scope, 'mama-os');
+    mkdirSync(join(packageRoot, 'dist', 'cli'), { recursive: true });
+    writeFileSync(
+      join(packageRoot, 'package.json'),
+      JSON.stringify({ name: '@jungjaehoon/mama-os', version: '1.0.0' })
+    );
+    writeFileSync(join(packageRoot, 'dist', 'cli', 'index.js'), '');
+    writeFileSync(
+      join(installed.root, 'start.sh'),
+      startScript({
+        home: installed.home,
+        nodePath: installed.node,
+        cliPath: join(packageRoot, 'dist', 'cli', 'index.js'),
+        executablePaths: ['/fixture/bin/claude'],
+        viewer: {},
+        logLevel: 'info',
+      }),
+      { mode: 0o700 }
+    );
+    expect(byName(await runDiagnostics(base(installed))).update).toBeUndefined();
+
+    // An updater killed while it staged, before its journal.
+    mkdirSync(join(scope, '.mama-update-1.1.0'));
+    expect(byName(await runDiagnostics(base(installed))).update).toEqual({
+      name: 'update',
+      status: 'warn',
+      detail: 'an interrupted mama update left its staging folder; the install runs as before',
+      code: 'update.staging',
+      // The package's real path: the folder npm names.
+      context: join(realpathSync(scope), '.mama-update-1.1.0'),
+      fix: 'the next mama update removes it',
+    });
+
+    // One killed after the swap: the previous CLI is set aside, and the command names it.
+    const aside = join(scope, '.mama-os-1.0.0');
+    mkdirSync(join(installed.root, 'runtime'), { recursive: true });
+    writeUpdateJournal(updatePaths(installed.root).journal, {
+      format: 'mama-update',
+      phase: 'prepare',
+      step: 9,
+      from: '1.0.0',
+      to: '1.1.0',
+      prefix,
+      registry: 'http://registry.fixture.test/',
+      nodePath: installed.node,
+      packageCli: join('dist', 'cli', 'index.js'),
+      previousCli: join(aside, 'dist', 'cli', 'index.js'),
+      failuresBefore: [],
+      stopped: true,
+      snapshot: null,
+      schemaBefore: null,
+      lastInputId: null,
+      toolkitBefore: null,
+      toolkitInstalled: false,
+      copies: [],
+      failure: null,
+      startedAt: '2026-10-30T00:00:00.000Z',
+    });
+    mkdirSync(aside);
+    const open = byName(await runDiagnostics(base(installed))).update;
+    expect(open).toEqual({
+      name: 'update',
+      status: 'fail',
+      detail:
+        'the update from 1.0.0 to 1.1.0 is unfinished (prepare, step 9); the daemon stays stopped or held until it is resolved',
+      code: 'update.open',
+      fix: `'${installed.node}' '${join(aside, 'dist', 'cli', 'index.js')}' update --rollback`,
+    });
+  });
+
   it('passes a healthy install and exits 0', async () => {
     const installed = install();
     const by = byName(await runDiagnostics(base(installed)));

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,8 +10,14 @@ import { bootDaemon, type DaemonHandle } from '../../src/cli/commands/daemon.js'
 import {
   daemonControlPaths,
   drainDaemon,
+  requestDaemonControl,
   type DrainProgress,
 } from '../../src/cli/runtime/daemon-control.js';
+import {
+  updatePaths,
+  writeUpdateJournal,
+  type UpdateJournal,
+} from '../../src/cli/runtime/update-journal.js';
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
 import { createNativeSession } from '../../src/runtime/native-session.js';
 import { createOwnerRuntime } from '../../src/runtime/owner-runtime.js';
@@ -53,7 +59,10 @@ afterEach(async () => {
  * own; only the model transport and Telegram's API are replaced. Each model turn waits until the
  * test lets it answer.
  */
-async function boot(extra: Partial<Parameters<typeof bootDaemon>[0]> = {}) {
+async function boot(
+  extra: Partial<Parameters<typeof bootDaemon>[0]> = {},
+  prepare: (home: string) => void = () => {}
+) {
   const home = realpathSync(mkdtempSync(join(tmpdir(), 'mama-drain-home-')));
   const memberRoot = realpathSync(mkdtempSync(join(tmpdir(), 'mama-drain-members-')));
   roots.push(home, memberRoot);
@@ -150,6 +159,7 @@ async function boot(extra: Partial<Parameters<typeof bootDaemon>[0]> = {}) {
     },
     ...extra,
   };
+  prepare(home);
   let daemon = await bootDaemon(options);
   daemons.push(daemon);
   const send = async (messageId: number, text = `Question ${messageId}`) =>
@@ -201,6 +211,81 @@ function delivered(): string[] {
     ...transport.sendMessage.mock.calls.map((call) => String(call[1])),
   ];
 }
+
+/** An open `mama update` journal at `phase`, as the updater leaves it before the start. */
+function updateJournal(home: string, phase: UpdateJournal['phase']): void {
+  mkdirSync(join(home, 'runtime'), { recursive: true });
+  writeUpdateJournal(updatePaths(home).journal, {
+    format: 'mama-update',
+    phase,
+    step: 13,
+    from: '0.0.1',
+    to: '9.9.9',
+    prefix: '/fixture/prefix',
+    registry: 'http://registry.fixture.test/',
+    nodePath: '/fixture/node',
+    packageCli: 'dist/cli/index.js',
+    previousCli: '/fixture/prefix/lib/node_modules/@jungjaehoon/.mama-os-0.0.1/dist/cli/index.js',
+    failuresBefore: [],
+    stopped: true,
+    snapshot: null,
+    schemaBefore: null,
+    lastInputId: null,
+    toolkitBefore: null,
+    toolkitInstalled: false,
+    copies: [],
+    failure: null,
+    startedAt: new Date().toISOString(),
+  });
+}
+
+describe('an update candidate', { timeout: 30_000 }, () => {
+  it('boots with claims held, so its recovery runs nothing, until the updater releases it', async () => {
+    const f = await boot();
+    // A message that waited through the update's drain and stop.
+    const drain = (await f.hold())!;
+    expect(await drain.outcome).toEqual({ kind: 'idle' });
+    await f.send(61);
+    expect(f.status(61)).toBe('pending');
+    updateJournal(f.home, 'candidate');
+    await f.restart();
+    drain.release();
+    expect(f.logs).toContainEqual(
+      'update: booted as the candidate for 9.9.9; claims held until confirmed'
+    );
+    // Boot's recovery drain and the ticks after it claim nothing; accepting goes on.
+    await f.send(62);
+    await f.runtime.runtime.drainOnce();
+    expect([f.status(61), f.status(62)]).toEqual(['pending', 'pending']);
+    expect(f.turns).toHaveLength(0);
+    const status = await requestDaemonControl(daemonControlPaths(f.home), 'status');
+    expect(status.state === 'running' && status.reply.status).toEqual(
+      expect.objectContaining({ update: { since: expect.any(Number), to: '9.9.9' } })
+    );
+
+    const released = await requestDaemonControl(daemonControlPaths(f.home), 'release');
+    expect(released.state === 'running' && released.reply).toEqual({ ok: true, held: true });
+    expect(f.logs).toContainEqual('update: 9.9.9 confirmed; claims released');
+    // Not awaited: a drain waits for the turns it starts.
+    void f.runtime.runtime.drainOnce();
+    await vi.waitFor(() => expect(f.turns).toHaveLength(1));
+    f.turns[0]!.answer();
+    await vi.waitFor(() => expect(f.turns).toHaveLength(2));
+    f.turns[1]!.answer();
+    await vi.waitFor(() => expect([f.status(61), f.status(62)]).toEqual(['acked', 'acked']));
+    const again = await requestDaemonControl(daemonControlPaths(f.home), 'release');
+    expect(again.state === 'running' && again.reply).toEqual({ ok: true, held: false });
+  });
+
+  it('holds nothing when the journal is in its rollback: the previous version runs as before', async () => {
+    const f = await boot({}, (home) => updateJournal(home, 'rollback'));
+    await f.send(71);
+    void f.runtime.runtime.drainOnce();
+    await vi.waitFor(() => expect(f.turns).toHaveLength(1));
+    f.turns[0]!.answer();
+    await vi.waitFor(() => expect(f.status(71)).toBe('acked'));
+  });
+});
 
 describe('drain', { timeout: 30_000 }, () => {
   it('lets the running turn finish and deliver while new inputs wait, and runs them after the restart', async () => {

@@ -609,7 +609,7 @@ function listable(mode: number): number {
   return mode | (mode & 0o400 ? 0o100 : 0) | (mode & 0o40 ? 0o10 : 0) | (mode & 0o4 ? 0o1 : 0);
 }
 
-export function archiveName(now: Date): string {
+export function archiveName(now: Date, prefix = 'mama-backup'): string {
   const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
-  return `mama-backup-${stamp}.tar.gz`;
+  return `${prefix}-${stamp}.tar.gz`;
 }

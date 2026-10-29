@@ -46,6 +46,13 @@ export function versionedNodePath(path: string): boolean {
 export const START_SCRIPT_MARKER =
   '# Written by mama init or mama service install; mama service install rewrites it.';
 
+/**
+ * While `mama update` swaps or rolls back the package, start.sh exits at once and cleanly, so a
+ * service manager (or a reboot) starts nothing on a half-switched install and does not restart it
+ * (docs/development/work/update.md, steps 8 and 13). Relative to the `cd` before it.
+ */
+export const UPDATE_HOLD_LINE = '[ -f runtime/update.hold ] && exit 0';
+
 export function startScript(options: {
   home: string;
   nodePath: string;
@@ -67,6 +74,7 @@ export function startScript(options: {
     'umask 077',
     `export PATH=${shellQuote(startPathEntries(options).join(':'))}`,
     `cd ${shellQuote(root)}`,
+    UPDATE_HOLD_LINE,
     'set -a',
     `. ${shellQuote(join(root, 'auth.env'))}`,
     'set +a',
@@ -278,6 +286,7 @@ export function readStartScript(script: string, home: string): StartScriptReadin
     'set +a',
     'umask 077',
     `cd ${shellQuote(root)}`,
+    UPDATE_HOLD_LINE,
     `. ${shellQuote(join(root, 'auth.env'))}`,
     ...crashLogLines(root),
   ]);
