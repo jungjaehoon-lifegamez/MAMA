@@ -42,8 +42,9 @@ describe('owner standing prompt', () => {
     expect(daily).not.toContain('help topic corrections');
     // Only what this turn can read is judged; DM-only or tool-order lessons are said to be unjudged.
     expect(daily).toContain('cannot be judged here');
-    expect(daily).toContain('lastEventBefore');
-    expect(daily).toContain('at most ten a day');
+    // Stale work moved to the board reconcile order (upkeep-reconcile.ts), which the host places
+    // and checks; the daily page no longer carries it.
+    expect(daily).not.toContain('lastEventBefore');
   });
 
   it('says the workspace .git is a boundary marker, not a repository', () => {

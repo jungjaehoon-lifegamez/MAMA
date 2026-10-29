@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is already current. A status-only revision does not count. An item that
   stays unchecked is ordered again, and after three orders it is logged as lost. `work.no_update`
   can now name work items (`commitmentIds`) as well as observations.
+- A daily board check. Once a day, before the first full report, MAMA orders work items to
+  compare with the board: up to ten open items whose Trello card moved after the item was last
+  revised, and up to ten items in progress or in review with no source event in over 30 days,
+  oldest first. The agent reads each card live and either revises the item with the reason or
+  says why it stays. Each item is checked like the closing summaries. An item that was kept, or
+  given up on after three tries, comes back only after it is revised again. The stale-work step
+  leaves the daily page, since this order now does it.
 - Telegram commands MAMA answers itself, without a model turn, listed in the bot's command menu:
   `/whoami` (your Telegram ID and whether MAMA knows you as an owner or a member), `/status`
   (MAMA's version, whether a turn is running in this conversation, what waits; owners, in their
@@ -57,6 +64,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message it was answering is told it was interrupted and is not run again, and messages sent
   after it still run. In the common group an owner stops the common session's turn and a member
   their own.
+
+### Changed
+
+- A closing summary, once checked, is not ordered again even if a later write clears or replaces
+  it. Before, an order was placed again when that happened within a week.
 
 ### Fixed
 

@@ -50,7 +50,13 @@ export interface WorkListTextWindow {
   readonly complete: boolean;
 }
 
-type PublicWorkStatus = 'pending' | 'in_progress' | 'review' | 'blocked' | 'done' | 'cancelled';
+export type PublicWorkStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'review'
+  | 'blocked'
+  | 'done'
+  | 'cancelled';
 
 interface WorkListFilter {
   readonly status?: readonly PublicWorkStatus[];
@@ -661,6 +667,34 @@ function workListReadSnapshot(ctx: WorkListViewContext, filter: WorkListFilter):
     throw new Error('work.list observed time must be a non-negative epoch-millisecond integer');
   }
   return { items: Object.freeze(items), readVersion: workListReadVersion(items), observedAt };
+}
+
+export interface WorkLedgerEntry {
+  /** The item with its revision chain. */
+  readonly item: CommitmentView;
+  readonly status: PublicWorkStatus;
+  /** Its latest source event, as lastEventBefore reads it. */
+  readonly lastEvent: number | null;
+  /** Whether work.list items with `stale` (status and lastEventBefore) selects it. */
+  readonly stale: boolean;
+}
+
+/**
+ * The ledger as work.list reads it, for a host scan that must choose what the agent's own
+ * work.list call would: the same fold, visibility, status and latest-source-event definitions.
+ */
+export function workListLedger(
+  ctx: WorkListViewContext,
+  stale: { readonly status: readonly PublicWorkStatus[]; readonly lastEventBefore: number }
+): WorkLedgerEntry[] {
+  const snapshot = workListReadSnapshot(ctx, stale);
+  const now = ctx.now?.() ?? snapshot.observedAt;
+  return snapshot.items.map((item) => ({
+    item,
+    status: workListStatus(item),
+    lastEvent: workListLastEvent(item),
+    stale: workListMatches(item, stale, now, ctx.timeZone),
+  }));
 }
 
 function encodeWorkListCursor(cursor: WorkListCursor): string {

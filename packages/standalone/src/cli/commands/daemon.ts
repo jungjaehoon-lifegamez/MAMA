@@ -869,6 +869,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       // order a live run left in the mailbox.
       upkeep: {
         closeSince: upkeepCloseSince(join(paths.runtimeRoot, 'upkeep-state.json')),
+        fullReportHours: () => config.reports.full_report_hours,
         scan: options.mode !== 'replay',
         onEvent: (event: UpkeepEvent) => {
           const line = `upkeep ${event.kind} ${event.type}${
