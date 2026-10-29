@@ -72,6 +72,10 @@ Some closed items do carry full summaries, so the agent can do this. The gap is 
     scope columns: a non-chat source the owner reads connector-wide (`connectorWideRead`),
     unscoped or scoped to the common principal; or a chat message scoped to the common principal
     outside every private Telegram channel. Anything else is dropped.
+  - Owner decision 2026-10-29: the owner's DMs that a connector relays (Kagemusha, Slack,
+    Chatwork, iMessage, Discord) are common. The common session already reads them
+    connector-wide, so a write-back may record them in the ledger. "The owner's own DM chat"
+    above means the owner's private chat with MAMA itself.
 - **Two scan choices:** a search hit counts as consulting a source, as an opened read does (a
   question answered from a search preview is the same gap; the order still marks which were
   opened). "Cites none" is checked against every ref the turn consulted, personal ones included,
