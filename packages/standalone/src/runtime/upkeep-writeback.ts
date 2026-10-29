@@ -1,5 +1,4 @@
 import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
-import type { MemoryScopeRef } from '@jungjaehoon/mama-core/memory/types';
 import { localNow } from './timezone.js';
 import {
   noUpdateCites,
@@ -16,12 +15,12 @@ const MAX_REFS_PER_SUBJECT = 30;
 
 export interface WritebackKindOptions {
   /**
-   * The common session's scopes (ownerAccess.defaultScopes, not .scopes, which pulls in granted
-   * member partitions). Only observations bound within this set, and to nothing outside it, cross
-   * into the common write-back order.
+   * The non-chat connectors the common session reads in full (ownerAccess.connectorWideRead).
+   * Their observations carry no memory scope, and the owner read path admits them by connector
+   * (observations.ts isObservationVisibilityRowVisible), so the same list decides they are common.
    */
-  commonScopes: () => readonly MemoryScopeRef[];
-  /** The common session's principal: its question turns qualify, and its own DM is never dropped. */
+  wideReadConnectors: () => readonly string[];
+  /** The common session's principal: its question turns qualify, and its chat scope is common. */
   ownerPrincipalId: string;
   timeZone: () => string;
 }
@@ -39,35 +38,41 @@ interface WritebackSubject extends UpkeepSubject {
 
 /**
  * The privacy boundary (docs/development/work/ledger-upkeep.md, U2; Codex: "U2 crossed the
- * personal boundary"). A handle `${col}` is carried only when its observation is bound within the
- * common scope set AND to nothing outside it (so a member's personal-scoped record is dropped),
- * and when it is not another person's Telegram DM (so no private chat reaches the common session).
- * The common session's own DM (ownerPrincipalId) is never dropped by the channel clause. Fails
- * closed: an unbound or unknown handle has no common binding and is dropped.
+ * personal boundary"). It reads the observation's own scope columns, which appendObservationVersion
+ * derives from the flat scope bag every connector and chat write carries, and decides "common" the
+ * way the common session's reads already do (action-surface.ts ownerAccess):
+ * - a non-chat source the owner reads connector-wide, unscoped or scoped to the common principal;
+ * - a chat message scoped to the common principal (`user:<owner>`), outside every private
+ *   Telegram channel, so no DM, the owner's own included, reaches the common order.
+ * Chat is never admitted by connector: its commonness is its scope. Anything else (another
+ * principal's scope, an owner-visibility record, an unknown handle) is dropped.
  */
-function commonScopeFilter(
+function commonSourceFilter(
   col: string,
-  commonScopes: readonly MemoryScopeRef[],
+  wideReadConnectors: readonly string[],
   ownerPrincipalId: string
 ): { sql: string; params: string[] } {
-  const pairs = commonScopes.map(() => '(?,?)').join(',');
-  const scopeKey = (alias: string) =>
-    `(json_extract(${alias}.value, '$.kind'), coalesce(json_extract(${alias}.value, '$.id'), json_extract(${alias}.value, '$.externalId')))`;
-  const pairParams = commonScopes.flatMap((scope) => [scope.kind, scope.id]);
+  const connectorWide =
+    wideReadConnectors.length === 0
+      ? ''
+      : `(o.source <> 'chat' AND o.source IN (${wideReadConnectors.map(() => '?').join(',')})
+           AND (o.memory_scope_kind IS NULL
+                OR (o.memory_scope_kind = 'user' AND o.memory_scope_id = ?))) OR`;
   const sql = `EXISTS (
       SELECT 1 FROM observation_versions o
        WHERE o.observation_id = ${col}
-         AND EXISTS (SELECT 1 FROM json_each(json_extract(o.scope_json, '$.scopes')) s
-                      WHERE ${scopeKey('s')} IN (VALUES ${pairs}))
-         AND NOT EXISTS (SELECT 1 FROM json_each(json_extract(o.scope_json, '$.scopes')) s
-                          WHERE ${scopeKey('s')} NOT IN (VALUES ${pairs})))
-    AND NOT EXISTS (
-      SELECT 1 FROM connector_event_index c
-       WHERE c.current_observation_id = ${col} AND c.source_connector = 'chat'
-         AND c.channel IN (SELECT 'telegram:' || external_id FROM external_identities
-                            WHERE connector = 'telegram' AND namespace = 'private'
-                              AND principal_id <> ?))`;
-  return { sql, params: [...pairParams, ...pairParams, ownerPrincipalId] };
+         AND (${connectorWide}
+              (o.source = 'chat' AND o.memory_scope_kind = 'user' AND o.memory_scope_id = ?
+               AND o.channel IS NOT NULL
+               AND o.channel NOT IN (SELECT 'telegram:' || external_id FROM external_identities
+                                      WHERE connector = 'telegram' AND namespace = 'private'))))`;
+  return {
+    sql,
+    params: [
+      ...(wideReadConnectors.length === 0 ? [] : [...wideReadConnectors, ownerPrincipalId]),
+      ownerPrincipalId,
+    ],
+  };
 }
 
 /** `${alias}`'s run belongs to the question turn `r`: the turn's own run or a direct child run. */
@@ -132,16 +137,14 @@ export function writebackUpkeepKind(options: WritebackKindOptions): UpkeepKind {
     // keeps the common session's queue, the owner's, workable.
     maxPerOrder: 3,
     scan: (adapter, now, page) => {
-      const common = options.commonScopes();
-      // No common scope means nothing may be carried; no subject can qualify.
-      if (common.length === 0) return [];
+      const wide = options.wideReadConnectors();
       // Consulting a source is a search hit or an opened read: a question answered from a search
       // preview without opening the record is the same unrecorded gap. The order still marks which
       // were opened. The turn qualifies when it consulted a common source and cited none of what
       // it consulted.
       const commonRead = readRefsSubquery(
         'any',
-        commonScopeFilter('ref.value', common, options.ownerPrincipalId)
+        commonSourceFilter('ref.value', wide, options.ownerPrincipalId)
       );
       const allRead = readRefsSubquery('any');
       // A subject older than the attempt window would count its attempts from zero again; the
@@ -153,7 +156,8 @@ export function writebackUpkeepKind(options: WritebackKindOptions): UpkeepKind {
           `SELECT r.model_run_id AS runId, r.created_at AS askedAt
              FROM model_runs r
              JOIN mailbox_inputs m
-               ON m.stimulus_id = json_extract(r.input_refs_json, '$.sourceMessageRef')
+               ON m.principal_id = json_extract(r.input_refs_json, '$.principalId')
+              AND m.stimulus_id = json_extract(r.input_refs_json, '$.sourceMessageRef')
               AND m.kind = 'owner_message'
             WHERE r.status = 'committed'
               AND r.created_at >= ?
@@ -166,7 +170,7 @@ export function writebackUpkeepKind(options: WritebackKindOptions): UpkeepKind {
                      WHERE e.edge_type = 'derived_from' AND e.object_kind = 'observation'
                        AND ${inTurnRuns('e')}
                        AND e.object_id IN (SELECT oref FROM (${allRead.sql})))
-            -- One row per turn: a handed-off common input leaves an owner_message row per principal.
+            -- One row per turn: mailbox_inputs has no unique (principal_id, stimulus_id) constraint.
             GROUP BY r.model_run_id, r.created_at
             ORDER BY r.created_at, r.model_run_id
             LIMIT ? OFFSET ?`
@@ -182,7 +186,7 @@ export function writebackUpkeepKind(options: WritebackKindOptions): UpkeepKind {
 
       // Assemble each subject's carried handles: the common-scope refs the turn opened first, then
       // its common-scope search hits, up to thirty, oldest first.
-      const common2 = commonScopeFilter('ref.value', common, options.ownerPrincipalId);
+      const common2 = commonSourceFilter('ref.value', wide, options.ownerPrincipalId);
       const refRows = adapter
         .prepare(
           `WITH turn(id) AS (VALUES ${rows.map(() => '(?)').join(',')}),

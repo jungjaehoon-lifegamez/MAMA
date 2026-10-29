@@ -819,9 +819,13 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
                 timeZone: () => options.timeZone.get(),
               }),
               writebackUpkeepKind({
-                // The common scopes only: defaultScopes, never access.scopes (granted member
-                // partitions), so no member-personal observation reaches the common session.
-                commonScopes: () => access.defaultScopes ?? access.scopes,
+                // The connectors the common session reads in full; the surface always states them,
+                // and a missing list must not be read as "none" or as some wider grant.
+                wideReadConnectors: () => {
+                  if (access.connectorWideRead === undefined)
+                    throw new Error('The common access states no connector-wide reads');
+                  return access.connectorWideRead;
+                },
                 ownerPrincipalId: options.ownerPrincipalId,
                 timeZone: () => options.timeZone.get(),
               }),

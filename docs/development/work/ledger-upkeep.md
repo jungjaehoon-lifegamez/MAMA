@@ -68,6 +68,14 @@ Some closed items do carry full summaries, so the agent can do this. The gap is 
 - **Common sources only:** only observations in common scope are carried. The owner's own DM chat
   and anything personal-scoped are dropped, so no personal observation reaches the common session.
   The question text is never carried.
+  - "Common" is decided the way the common session's reads decide it, from the observation's own
+    scope columns: a non-chat source the owner reads connector-wide (`connectorWideRead`),
+    unscoped or scoped to the common principal; or a chat message scoped to the common principal
+    outside every private Telegram channel. Anything else is dropped.
+- **Two scan choices:** a search hit counts as consulting a source, as an opened read does (a
+  question answered from a search preview is the same gap; the order still marks which were
+  opened). "Cites none" is checked against every ref the turn consulted, personal ones included,
+  so a turn that cited anything it read is not a subject.
 - **Read receipt (prerequisite):**
   - `source.search` and `source.read` record the observation refs they returned in
     `tool_traces.evidence_json`, in full.
