@@ -988,6 +988,54 @@ describe('one stimulus intake and delivery', () => {
     ]);
   });
 
+  it('runs an upkeep order through its own port: rendered, checked, and settled when parked', async () => {
+    const upkeep = {
+      isUpkeepRow: (row: { kind?: string; channelKey: string }) =>
+        row.kind === 'scheduled' && row.channelKey === 'operator:close',
+      render: vi.fn(() => '[upkeep_close] fixture order'),
+      onResult: vi.fn(),
+      onLost: vi.fn(),
+    };
+    const records = recordOrders();
+    const scheduled = vi.fn();
+    const delivery = createDelivery({
+      recordOrders: records,
+      upkeep,
+      onScheduledResult: scheduled,
+    });
+    const row = claimed({
+      stimulusId: 'upkeep:close:1:fixture',
+      kind: 'scheduled',
+      channelKey: 'operator:close',
+      payload: { order: 'upkeep', kind: 'close', subjects: [{ key: 'c-1:2' }] },
+    });
+    let prompt = '';
+    await delivery.deliver(
+      row,
+      context(
+        (text) => {
+          prompt = text;
+        },
+        { modelRunId: 'run-7' }
+      )
+    );
+    expect(prompt).toContain('[upkeep_close] fixture order');
+    // Like a record order, it never reaches the owner and its run goes to its check.
+    expect(scheduled).not.toHaveBeenCalled();
+    expect(records.onResult).not.toHaveBeenCalled();
+    expect(upkeep.onResult).toHaveBeenCalledWith(
+      expect.objectContaining({ stimulusId: 'upkeep:close:1:fixture' }),
+      'run-7'
+    );
+    await delivery.onUncertain!(row, 'no result after restart');
+    await delivery.onDead!(row, 'lease expired');
+    expect(upkeep.onLost.mock.calls.map((call) => call[1])).toEqual([
+      'no result after restart',
+      'lease expired',
+    ]);
+    expect(records.onLost).not.toHaveBeenCalled();
+  });
+
   it('closes each kind of parked row only where its remaining duty has a place, live only', async () => {
     const records = recordOrders();
     const closed: Array<[string, string]> = [];

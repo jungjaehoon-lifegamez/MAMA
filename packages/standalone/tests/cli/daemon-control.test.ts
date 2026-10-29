@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as egressProxy from '../../src/runtime/egress-proxy.js';
@@ -17,6 +26,7 @@ import {
   StopDuringBootError,
   askDaemon,
   runDaemon,
+  upkeepCloseSince,
 } from '../../src/cli/commands/daemon.js';
 import type { W1Config } from '../../src/runtime/config.js';
 
@@ -414,5 +424,24 @@ describe('daemon boot holds the install', () => {
     expect(lockHolder(daemonControlPaths(home))).toBeNull();
     const daemon = await boot(home, []).run;
     await daemon.stop();
+  });
+});
+
+describe('upkeep start', () => {
+  it('writes the instant closing summaries start once, and keeps it after a restart', () => {
+    const path = join(root(), 'runtime', 'upkeep-state.json');
+    expect(upkeepCloseSince(path, 1_000)).toBe(1_000);
+    expect(upkeepCloseSince(path, 2_000)).toBe(1_000);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
+  it('publishes the state through a rename: no temporary sibling is left and the target is whole', () => {
+    const runtimeDir = join(root(), 'runtime');
+    const path = join(runtimeDir, 'upkeep-state.json');
+    expect(upkeepCloseSince(path, 3_000)).toBe(3_000);
+    // The write lands on a temporary file and is renamed onto the target, so a later boot never
+    // reads a partial file and no `.tmp` sibling survives the call.
+    expect(readdirSync(runtimeDir)).toEqual(['upkeep-state.json']);
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ closeSince: 3_000 });
   });
 });

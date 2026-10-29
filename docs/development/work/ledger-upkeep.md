@@ -104,8 +104,9 @@ Some closed items do carry full summaries, so the agent can do this. The gap is 
 
 ## What already exists and is reused
 
-- **`record-orders.ts`:** the three-attempt retry, the lost report, and the recovery read of
-  stored orders. Their mechanism moves into the shared kind; record orders keep their own check.
+- **`record-orders.ts`:** stays as it is. Its batches follow live deltas and ride with the next
+  delta, so a separate runner (`upkeep-orders.ts`) serves the upkeep kinds. The two share the
+  child-run wait (`runningChildren`).
 - **`stimulus-delivery.ts`:** the `scheduled` branch.
 - **`turn-orders.ts`:** the wording of `deltaRecordOrder`'s steps.
 - **The daily page's "Stale work" step:** becomes U3's first subject list.
@@ -155,22 +156,27 @@ Some closed items do carry full summaries, so the agent can do this. The gap is 
 
 ## Failure modes
 
-| Failure                                               | Handling                                                                                     |
-| ----------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| An order run fails or is stopped                      | The subject retries. A third failure is reported lost and the subject is not selected again. |
-| A close order changes the status again                | It adds no new closing revision, so there is no new subject.                                 |
-| A personal observation would reach the common session | Only common-scope refs are carried.                                                          |
-| Stored card moves lag the board                       | The order reads the card live. Stored moves only choose the subjects.                        |
-| One card is cited by two items                        | Both items become subjects, and the agent judges.                                            |
+| Failure                                                         | Handling                                                                                     |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| An order run fails or is stopped                                | The subject retries. A third failure is reported lost and the subject is not selected again. |
+| A close order changes the status again                          | It adds no new closing revision, so there is no new subject.                                 |
+| A personal observation would reach the common session           | Only common-scope refs are carried.                                                          |
+| Stored card moves lag the board                                 | The order reads the card live. Stored moves only choose the subjects.                        |
+| One card is cited by two items                                  | Both items become subjects, and the agent judges.                                            |
+| A revision sets the status to done again                        | The subject is the transition into a closed status, so it stays the same subject.            |
+| A finished order's child runs still write                       | The kind places no new order until that check ends.                                          |
+| A replay daemon finds an upkeep order a live run left           | It serves the order but scans for none.                                                      |
+| A subject waits past the seven-day window (the daemon was down) | It leaves the scan without a lost report, and its stored orders show the attempts.           |
 
 ## Order of work
 
-- **PR 1:** the shared order kind, plus `work.no_update` taking `commitmentIds`. Record orders'
-  check and behaviour stay as they are, and their tests pass unchanged.
-- **PR 2 (U2):** the read receipt and the write-back order.
-- **PR 3 (U1):** the hourly scan and the close order. Beside it, in the development session, the
-  one-time summary script for items closed before the deploy.
-- **PR 4 (U3):** the daily scan, and the move of the stale step out of help topic `daily`.
+- **PR 1 (U1):** the upkeep runner (`upkeep-orders.ts`: scan, order, per-subject check, attempts
+  counted from stored orders, lost after three), its delivery branches, `work.no_update` taking
+  `commitmentIds`, and the closing summary kind (`upkeep-close.ts`). `closeSince` is written once
+  to `runtime/upkeep-state.json` at the first live start. Beside it, in the development session,
+  the one-time summary script for items closed before that instant.
+- **PR 2 (U2):** the read receipt and the write-back kind.
+- **PR 3 (U3):** the daily kind, and the move of the stale step out of help topic `daily`.
 - **After each PR:** a live check with its "Done when" SQL, recorded in checks.md.
 
 ## Review
