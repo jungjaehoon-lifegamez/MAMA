@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Closing summaries for finished work. Every hour MAMA orders the work it saw closed or cancelled
   since its first start with this version, ten items at a time. For each, the agent writes one
   summary: the rounds, the points of outside feedback, who did what, and how it ended. Then a
-  later question reads one place. The order is checked item by item: only a revision from the
-  order's run that sets a description counts, and a status-only revision does not. An item that
+  later question reads one place. The order is checked item by item: a revision from the order's
+  run that leaves a description counts, as does a `work.no_update` naming an item whose summary
+  is already current. A status-only revision does not count. An item that
   stays unchecked is ordered again, and after three orders it is logged as lost. `work.no_update`
   can now name work items (`commitmentIds`) as well as observations.
 - Telegram commands MAMA answers itself, without a model turn, listed in the bot's command menu:

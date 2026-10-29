@@ -21,6 +21,8 @@ import type { StimulusReceipt } from '@jungjaehoon/mama-core/runtime/runtime';
 export const UPKEEP_MAX_ATTEMPTS = 3;
 /** How far back stored orders are read to count a subject's attempts. */
 export const UPKEEP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/** Candidates per scan page. */
+export const UPKEEP_SCAN_PAGE = 200;
 
 export interface UpkeepSubject {
   /** Stable per subject: the same fact always gets the same key. */
@@ -35,8 +37,11 @@ export interface UpkeepKind {
   /** How often the host scans. */
   intervalMs: number;
   maxPerOrder: number;
-  /** Candidate subjects, oldest first. */
-  scan(adapter: DatabaseAdapter, now: number): UpkeepSubject[];
+  /**
+   * Candidate subjects, oldest first, one page at a time: the runner reads further pages while
+   * settled subjects fill the earlier ones.
+   */
+  scan(adapter: DatabaseAdapter, now: number, page: number): UpkeepSubject[];
   /** Whether the subject's work is done, judged from the runs of the orders that carried it. */
   checked(adapter: DatabaseAdapter, subject: UpkeepSubject, runIds: readonly string[]): boolean;
   render(subjects: readonly UpkeepSubject[], now: Date): string;
@@ -253,7 +258,14 @@ export function createUpkeepOrders(options: UpkeepOrdersOptions): UpkeepOrders {
     // child runs may still write is not over yet.
     if (anyOpen || [...checking].some((id) => id.startsWith(`upkeep:${kind.name}:`))) return;
     const due: UpkeepSubject[] = [];
-    for (const subject of kind.scan(options.adapter, at)) {
+    const candidates = function* (): Generator<UpkeepSubject> {
+      for (let page = 0; ; page += 1) {
+        const rows = kind.scan(options.adapter, at, page);
+        yield* rows;
+        if (rows.length < UPKEEP_SCAN_PAGE) return;
+      }
+    };
+    for (const subject of candidates()) {
       if (due.length >= kind.maxPerOrder) break;
       const state = states.get(subject.key);
       const orders = state?.orders ?? [];

@@ -1,6 +1,6 @@
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import { readDocumentToolkit } from '../../tools/document-toolkit.js';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -330,7 +330,10 @@ export function upkeepCloseSince(path: string, now = Date.now()): number {
     return stored;
   }
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify({ closeSince: now }, null, 2)}\n`, { mode: 0o600 });
+  // Written once and read at every start: a partial file would stop each boot, so it appears whole.
+  const temporary = `${path}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify({ closeSince: now }, null, 2)}\n`, { mode: 0o600 });
+  renameSync(temporary, path);
   return now;
 }
 

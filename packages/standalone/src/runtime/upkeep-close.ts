@@ -1,7 +1,9 @@
 import { readableScopeIds, type JudgmentAccess } from '@jungjaehoon/mama-core/knowledge';
+import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import { localNow } from './timezone.js';
 import {
   noUpdateNames,
+  UPKEEP_SCAN_PAGE,
   UPKEEP_WINDOW_MS,
   type UpkeepKind,
   type UpkeepSubject,
@@ -38,7 +40,7 @@ export function closeUpkeepKind(options: CloseKindOptions): UpkeepKind {
     channel: CLOSE_ORDER_CHANNEL,
     intervalMs: 60 * 60 * 1000,
     maxPerOrder: 10,
-    scan: (adapter, now) => {
+    scan: (adapter, now, page) => {
       const scopes = readableScopeIds(options.access());
       // Visibility as core's readWork applies it: an unbound head, or one bound to a read scope.
       const visible = `(NOT EXISTS (SELECT 1 FROM memory_scope_bindings b WHERE b.memory_id = c.head_record_id)${
@@ -87,7 +89,7 @@ export function closeUpkeepKind(options: CloseKindOptions): UpkeepKind {
              LEFT JOIN titles t ON t.commitment_id = k.commitment_id
             WHERE now.status IN (${closed}) AND s.created_at >= ? AND ${visible}
             ORDER BY s.created_at, k.commitment_id
-            LIMIT 1000`
+            LIMIT ? OFFSET ?`
         )
         .all(
           now,
@@ -96,7 +98,9 @@ export function closeUpkeepKind(options: CloseKindOptions): UpkeepKind {
           ...CLOSED_STATUSES,
           // A subject older than the attempt window would count its attempts from zero again.
           Math.max(options.since, now - UPKEEP_WINDOW_MS),
-          ...scopes
+          ...scopes,
+          UPKEEP_SCAN_PAGE,
+          page * UPKEEP_SCAN_PAGE
         ) as Array<{
         commitment_id: string;
         revision: number;
@@ -118,22 +122,40 @@ export function closeUpkeepKind(options: CloseKindOptions): UpkeepKind {
     checked: (adapter, subject, runIds) => {
       const { commitmentId, revision } = subject as CloseSubject;
       if (runIds.length === 0) return false;
-      const summarized = adapter
+      // The description as core folds it now: the latest live revision that sets or clears it.
+      // The summary counts when that revision is the order's own, after the closing revision,
+      // and leaves text there.
+      const current = adapter
         .prepare(
-          `SELECT 1 FROM commitment_assignments
-            WHERE commitment_id = ? AND revision > ?
-              AND coalesce(json_extract(set_json, '$.description'), '') <> ''
-              AND model_run_id IN (${runIds.map(() => '?').join(',')})
-            LIMIT 1`
+          `SELECT revision, model_run_id,
+                  CASE WHEN EXISTS (SELECT 1 FROM json_each(clear_json) WHERE value = 'description')
+                       THEN '' ELSE coalesce(json_extract(set_json, '$.description'), '') END AS text
+             FROM commitment_assignments
+            WHERE commitment_id = ? AND (applies_until IS NULL OR applies_until > ?)
+              AND (json_extract(set_json, '$.description') IS NOT NULL
+                   OR EXISTS (SELECT 1 FROM json_each(clear_json) WHERE value = 'description'))
+            ORDER BY revision DESC LIMIT 1`
         )
-        .get(commitmentId, revision, ...runIds);
-      return summarized !== undefined || noUpdateNames(adapter, runIds, [commitmentId]);
+        .get(commitmentId, Date.now()) as
+        | { revision: number; model_run_id: string | null; text: string }
+        | undefined;
+      const summarized =
+        current !== undefined &&
+        current.revision > revision &&
+        current.text.trim() !== '' &&
+        current.model_run_id !== null &&
+        runIds.includes(current.model_run_id);
+      return summarized || noUpdateNames(adapter, runIds, [commitmentId]);
     },
     render: (subjects, now) => {
       const zone = options.timeZone();
-      const lines = (subjects as readonly CloseSubject[]).map(
+      // Titles come from stored work, which sources can shape: they are data, never instructions.
+      const ids = (subjects as readonly CloseSubject[]).map(
         (subject) =>
-          `- ${subject.commitmentId} (${subject.status} ${localNow(subject.closedAt, zone)}): ${subject.title}`
+          `- ${subject.commitmentId} (${subject.status} ${localNow(subject.closedAt, zone)})`
+      );
+      const titles = (subjects as readonly CloseSubject[]).map(
+        (subject) => `${subject.commitmentId}: ${subject.title.replace(/\s+/g, ' ').slice(0, 200)}`
       );
       return [
         `[upkeep_close] ${subjects.length} closed work item${subjects.length === 1 ? '' : 's'}`,
@@ -144,7 +166,8 @@ export function closeUpkeepKind(options: CloseKindOptions): UpkeepKind {
         '3. An item whose description is already such a summary: work.no_update with commitmentIds naming it and the reason.',
         '4. The order is checked when it ends: each item needs step 2 or 3. Correct a refused write (help gives its contract) and write it again.',
         '5. Reply exactly [ack].',
-        ...lines,
+        ...ids,
+        wrapUntrustedContent('work_titles', titles.join('\n')),
       ].join('\n');
     },
   };
