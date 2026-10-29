@@ -246,10 +246,11 @@ describe('board reconcile scan: moved cards', () => {
     h.orders.tick('reconcile');
     expect(h.accepted).toHaveLength(1);
     expect(h.accepted[0]!.channelKey).toBe(RECONCILE_ORDER_CHANNEL);
-    expect(h.keys(0)).toEqual([`move:${item}:trello:card-1:a-move`]);
+    expect(h.keys(0)).toEqual([`move:${item}:trello:a-move`]);
     const text = h.orders.render(h.finish(0), new Date(NOW));
     expect(text).toContain('[upkeep_reconcile] 1 work item to reconcile with the board');
-    expect(text).toContain(`- moved ${item} (in_progress): card card-1 (trello)`);
+    expect(text).toContain(`- moved ${item} (in_progress), after the item's latest revision`);
+    expect(text).toContain('card card-1 (trello) moved');
     expect(text).toContain(`event ${move}`);
     expect(text).toContain('trello.read view=card id=<card id>');
     expect(text).toContain('lastEventBefore, not changedBefore');
@@ -301,7 +302,7 @@ describe('board reconcile scan: moved cards', () => {
     expect(h.accepted).toHaveLength(0);
   });
 
-  it('makes each item citing a moved card its own subject, and a newer move a new one', async () => {
+  it('makes each item citing a moved card its own subject, and keeps only the latest move', async () => {
     const { adapter, knowledge } = await setup();
     const c1 = boardEvent(adapter, created('a-c1', 'card-1', NOW - 5 * DAY));
     const first = await work(knowledge, 'w-first', {
@@ -320,8 +321,35 @@ describe('board reconcile scan: moved cards', () => {
     h.orders.tick('reconcile');
     // The latest move per item and card: the earlier move of the same card is not listed again.
     expect(h.keys(0).sort()).toEqual(
-      [`move:${first}:trello:card-1:a-m2`, `move:${second}:trello:card-1:a-m2`].sort()
+      [`move:${first}:trello:a-m2`, `move:${second}:trello:a-m2`].sort()
     );
+    const subject = parseUpkeepOrder(h.accepted[0]!.payload as never).subjects[0] as unknown as {
+      moves: Array<{ event: string }>;
+    };
+    expect(subject.moves.map((move) => move.event)).toEqual(['a-m2']);
+  });
+
+  it('folds every moved card of one item into one subject, keyed by its latest move', async () => {
+    const { adapter, knowledge } = await setup();
+    const c1 = boardEvent(adapter, created('a-c1', 'card-1', NOW - 5 * DAY));
+    const c2 = boardEvent(adapter, created('a-c2', 'card-2', NOW - 5 * DAY));
+    const item = await work(knowledge, 'w-two-cards', {
+      status: 'in_progress',
+      eventAt: NOW - 5 * DAY,
+      cites: [c1, c2],
+    });
+    boardEvent(adapter, moved('a-m2', 'card-2', NOW - 2 * DAY));
+    boardEvent(adapter, moved('a-m1', 'card-1', NOW - 3 * DAY));
+    const h = harness(adapter, knowledge);
+    h.orders.tick('reconcile');
+    expect(h.keys(0)).toEqual([`move:${item}:trello:a-m2`]);
+    const text = h.orders.render(h.finish(0), new Date(NOW));
+    expect(text).toMatch(/card card-1 \(trello\) moved .*; card card-2 \(trello\) moved/);
+    // A newer move of either card is a new subject.
+    boardEvent(adapter, moved('a-m3', 'card-1', NOW - DAY));
+    const next = harness(adapter, knowledge, { at: NOW + DAY });
+    next.orders.tick('reconcile');
+    expect(next.keys(0)).toEqual([`move:${item}:trello:a-m3`]);
   });
 });
 
@@ -357,12 +385,13 @@ describe('board reconcile scan: stale work', () => {
     await revise(knowledge, rewritten, { id: 'r-rewritten', set: { priority: 'high' } });
     const h = harness(adapter, knowledge);
     h.orders.tick('reconcile');
-    expect(h.keys(0)).toEqual([`stale:${older}`, `stale:${rewritten}`, `stale:${old}`]);
+    expect(h.keys(0)).toEqual([`stale:${older}:1`, `stale:${rewritten}:2`, `stale:${old}:1`]);
     const text = h.orders.render(h.finish(0), new Date(NOW));
     expect(text).toContain(`- stale ${older} (in_progress): latest source event`);
     expect(text).toContain('cards card-1 (trello)');
     expect(text).toContain(`- stale ${old} (review): latest source event`);
-    expect(text).toContain('no linked card');
+    expect(text).toContain('cites no card');
+    expect(text).toContain('trello.read view=search');
   });
 
   it('folds the status as core does: a done revision past its applies_until leaves the item in progress', async () => {
@@ -380,10 +409,10 @@ describe('board reconcile scan: stale work', () => {
     });
     const h = harness(adapter, knowledge);
     h.orders.tick('reconcile');
-    expect(h.keys(0)).toEqual([`stale:${item}`]);
+    expect(h.keys(0)).toEqual([`stale:${item}:2`]);
   });
 
-  it('orders moved cards first and at most ten subjects a day', async () => {
+  it('gives moved items and stale items ten slots each, so neither starves the other', async () => {
     const { adapter, knowledge } = await setup();
     const staleIds: string[] = [];
     for (let n = 0; n < 12; n += 1)
@@ -393,18 +422,23 @@ describe('board reconcile scan: stale work', () => {
           eventAt: NOW - (60 - n) * DAY,
         })
       );
-    const c1 = boardEvent(adapter, created('a-c1', 'card-1', NOW - 5 * DAY));
-    const movedItem = await work(knowledge, 'w-moved', {
-      status: 'in_progress',
-      eventAt: NOW - 5 * DAY,
-      cites: [c1],
-    });
-    boardEvent(adapter, moved('a-m1', 'card-1', NOW - DAY));
+    const movedIds: string[] = [];
+    for (let n = 0; n < 12; n += 1) {
+      const cited = boardEvent(adapter, created(`a-c${n}`, `card-${n}`, NOW - 5 * DAY));
+      movedIds.push(
+        await work(knowledge, `w-moved-${n}`, {
+          status: 'in_progress',
+          eventAt: NOW - 5 * DAY,
+          cites: [cited],
+        })
+      );
+      boardEvent(adapter, moved(`a-m${n}`, `card-${n}`, NOW - 2 * DAY + n * 60_000));
+    }
     const h = harness(adapter, knowledge);
     h.orders.tick('reconcile');
     expect(h.keys(0)).toEqual([
-      `move:${movedItem}:trello:card-1:a-m1`,
-      ...staleIds.slice(0, 9).map((id) => `stale:${id}`),
+      ...movedIds.slice(0, 10).map((id, n) => `move:${id}:trello:a-m${n}`),
+      ...staleIds.slice(0, 10).map((id) => `stale:${id}:1`),
     ]);
   });
 });
@@ -454,17 +488,20 @@ describe('board reconcile cadence', () => {
     expect(kind.scan(adapter, NOW - 8 * 60 * 60 * 1000, 0)).toHaveLength(1);
   });
 
-  it('fails the scan loudly when no full report hour follows midnight', async () => {
+  it('runs until the next midnight with no full report hour after midnight', async () => {
     const { adapter, knowledge } = await oneStale();
-    for (const hours of [[], [0, 12]]) {
-      const kind = reconcileUpkeepKind({
+    const scan = (hours: number[], at: number) =>
+      reconcileUpkeepKind({
         knowledge,
         access: () => access,
         timeZone: () => 'UTC',
         fullReportHours: () => hours,
-      });
-      expect(() => kind.scan(adapter, NOW, 0)).toThrow(/names no hour after midnight/);
-    }
+      }).scan(adapter, at, 0);
+    // No full report: due all day.
+    expect(scan([], NOW + 17 * 60 * 60 * 1000)).toHaveLength(1);
+    // A report at midnight is not a morning one: due until the next, at 12.
+    expect(scan([0, 12], NOW + 5 * 60 * 60 * 1000)).toHaveLength(1);
+    expect(scan([0, 12], NOW + 6 * 60 * 60 * 1000)).toEqual([]);
   });
 });
 
@@ -503,11 +540,11 @@ describe('board reconcile check', () => {
     await h.settled();
     const by = (key: string) =>
       h.events.find((event) => 'subject' in event && event.subject === key)?.type;
-    expect(by(`stale:${revised}`)).toBe('checked');
-    expect(by(`stale:${child}`)).toBe('checked');
-    expect(by(`stale:${noUpdate}`)).toBe('checked');
-    expect(by(`stale:${elsewhere}`)).toBe('waiting');
-    expect(by(`stale:${untouched}`)).toBe('waiting');
+    expect(by(`stale:${revised}:1`)).toBe('checked');
+    expect(by(`stale:${child}:1`)).toBe('checked');
+    expect(by(`stale:${noUpdate}:1`)).toBe('checked');
+    expect(by(`stale:${elsewhere}:1`)).toBe('waiting');
+    expect(by(`stale:${untouched}:1`)).toBe('waiting');
   });
 
   it('retries an unchecked subject once a day and reports it lost after three, never ordering it again', async () => {
@@ -522,11 +559,57 @@ describe('board reconcile check', () => {
     }
     expect(h.events.at(-1)).toMatchObject({
       type: 'lost',
-      subject: `stale:${item}`,
+      subject: `stale:${item}:1`,
       attempt: UPKEEP_MAX_ATTEMPTS,
     });
+    // Past the seven days the stored orders are counted over (and the mailbox keeps acked rows),
+    // the subject stays lost.
+    for (const day of [4, 8, 9, 16]) {
+      const later = harness(adapter, knowledge, { at: NOW + day * DAY });
+      later.orders.tick('reconcile');
+      expect(later.accepted).toHaveLength(0);
+    }
+  });
+
+  it('never orders a kept item again until a revision from outside the orders', async () => {
+    const { adapter, knowledge } = await setup();
+    const kept = await work(knowledge, 'w-kept', {
+      status: 'in_progress',
+      eventAt: NOW - 40 * DAY,
+    });
+    const revisedByOrder = await work(knowledge, 'w-revised-by-order', {
+      status: 'review',
+      eventAt: NOW - 45 * DAY,
+    });
+    const h = harness(adapter, knowledge);
     h.orders.tick('reconcile');
-    expect(h.accepted).toHaveLength(UPKEEP_MAX_ATTEMPTS);
+    expect(h.keys(0)).toEqual([`stale:${revisedByOrder}:1`, `stale:${kept}:1`]);
+    const row = h.finish(0);
+    h.orderRun(0, 'run-1');
+    adapter
+      .prepare(
+        `INSERT INTO tool_traces (trace_id, model_run_id, tool_name, input_summary, execution_status, created_at)
+         VALUES ('trace-kept', 'run-1', 'work.no_update', ?, 'completed', ?)`
+      )
+      .run(JSON.stringify({ reason: 'still waiting on the client', commitmentIds: [kept] }), NOW);
+    // The order keeps the other item with a revision that leaves it in review.
+    await revise(knowledge, revisedByOrder, {
+      id: 'r-keep',
+      set: { priority: 'high' },
+      runId: 'run-1',
+    });
+    h.orders.onResult(row, 'run-1');
+    await h.settled();
+    for (const day of [1, 8, 9]) {
+      const later = harness(adapter, knowledge, { at: NOW + day * DAY });
+      later.orders.tick('reconcile');
+      expect(later.accepted).toHaveLength(0);
+    }
+    // A revision from anywhere else, still with no new source event, makes it a subject again.
+    await revise(knowledge, kept, { id: 'r-outside', set: { assignee: 'someone' } });
+    const after = harness(adapter, knowledge, { at: NOW + 10 * DAY });
+    after.orders.tick('reconcile');
+    expect(after.keys(0)).toEqual([`stale:${kept}:2`]);
   });
 });
 

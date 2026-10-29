@@ -114,25 +114,30 @@ Some closed items do carry full summaries, so the agent can do this. The gap is 
 - **Done when:** for seven days after deploy, every daily order's subjects are checked, and the
   owner gives no manual "compare with the board" instruction.
 - **As built (PR 3, `upkeep-reconcile.ts`):**
-  - Cadence: the hourly tick finds the order due from local midnight until the first hour in
-    `reports.full_report_hours` (in `timezone`), once a local day, read from the stored orders.
-    A restart that morning places no second order, and an unchecked subject waits for the next
-    day, so its attempts count one a day. No full-report hour after midnight fails the scan
-    loudly in `daemon.log`.
+  - Cadence: the hourly tick finds the order due from local midnight until the first hour after
+    midnight in `reports.full_report_hours` (in `timezone`), or until the next midnight when there
+    is none, once a local day, read from the stored orders. A restart that morning places no
+    second order, and an unchecked subject waits for the next day, so its attempts count one a
+    day.
   - Stale items come from `work.list`'s own read (`workListLedger`): the same fold, visibility,
     status and `lastEventBefore` definition. The text moved from help topic `daily` into the
-    order.
+    order, with the search for the card of board work that cites none.
   - A move is a stored board event whose action data names the list the card went to
     (`data.listAfter`), within the seven-day attempt window. "After the item's latest revision"
     compares with the latest revision time on the source timeline (event time, else write time),
     because a backfill writes earlier periods last.
-  - Keys: `stale:<item>`; `move:<item>:<connector>:<card>:<event>`. The item is in the move key
-    because the check is per item and two items citing one card are two subjects.
-  - One order carries at most ten subjects: moves first, because they leave the window, then
-    stale items oldest first.
-  - A stale item kept with `work.no_update` or a revision without a new source event stays
-    stale. It is ordered again once its checked order leaves the seven-day window: a weekly
-    re-check.
+  - Keys:
+    - `move:<item>:<connector>:<latest move event>`: one subject per item, carrying each cited
+      card's latest move. A new move is a new subject; two items citing one card are two.
+    - `stale:<item>:<revision>`: the item's latest revision not written by a reconcile order or
+      its child runs. A kept item (a no-update, or the order's own revision) is not a new subject;
+      a revision from anywhere else is.
+  - Settled for good: the mailbox deletes acked order rows after seven days, so attempts counted
+    from stored orders forget a subject after a week. The runner writes checked and lost subjects
+    to `upkeep_settled` (standalone migration 003) and never orders them again. Stale subjects have
+    no time bound, so without it a kept or lost item came back every eight days.
+  - Caps: at most ten moved items and ten stale items an order (the runner's optional `group`), so
+    neither starves the other.
 
 ## What already exists and is reused
 

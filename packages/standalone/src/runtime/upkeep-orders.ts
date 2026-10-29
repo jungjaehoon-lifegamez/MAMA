@@ -15,6 +15,9 @@ import type { StimulusReceipt } from '@jungjaehoon/mama-core/runtime/runtime';
  *        │                  accept(order on kind.channel)
  *        ▼                          ▼
  *   onResult / onLost ──> per subject: checked │ waiting (picked by the next tick) │ lost
+ *
+ * Checked and lost subjects are also written to upkeep_settled: the mailbox deletes acked order
+ * rows after seven days, and a settled subject must never be ordered again.
  */
 
 /** A subject is ordered at most this many times; then it is reported lost and left alone. */
@@ -23,6 +26,11 @@ export const UPKEEP_MAX_ATTEMPTS = 3;
 export const UPKEEP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 /** Candidates per scan page. */
 export const UPKEEP_SCAN_PAGE = 200;
+
+/** Every order of a kind has an id with this prefix; its runs carry it as sourceMessageRef. */
+export function upkeepOrderIdPrefix(kindName: string): string {
+  return `upkeep:${kindName}:`;
+}
 
 export interface UpkeepSubject {
   /** Stable per subject: the same fact always gets the same key. */
@@ -37,6 +45,11 @@ export interface UpkeepKind {
   /** How often the host scans. */
   intervalMs: number;
   maxPerOrder: number;
+  /**
+   * The subject's group, when the kind's subjects come in kinds of their own: maxPerOrder then
+   * bounds each group, so one group never starves the other.
+   */
+  group?(subject: UpkeepSubject): string;
   /**
    * Candidate subjects, oldest first, one page at a time: the runner reads further pages while
    * settled subjects fill the earlier ones.
@@ -237,17 +250,23 @@ export function createUpkeepOrders(options: UpkeepOrdersOptions): UpkeepOrders {
   ): void => {
     if (settledOrders.has(orderId)) return;
     settledOrders.add(orderId);
-    const { states } = storedSubjects(options.adapter, kind, now());
+    const at = now();
+    const { states } = storedSubjects(options.adapter, kind, at);
+    const record = options.adapter.prepare(
+      `INSERT OR REPLACE INTO upkeep_settled (kind, subject_key, state, settled_at) VALUES (?, ?, ?, ?)`
+    );
     for (const subject of order.subjects) {
       const orders = states.get(subject.key)?.orders ?? [];
       if (kind.checked(options.adapter, subject, orderRunIds(options.adapter, orders))) {
+        record.run(kind.name, subject.key, 'checked', at);
         options.onEvent?.({ type: 'checked', kind: kind.name, subject: subject.key });
         continue;
       }
       const attempt = orders.length;
-      if (attempt >= UPKEEP_MAX_ATTEMPTS)
+      if (attempt >= UPKEEP_MAX_ATTEMPTS) {
+        record.run(kind.name, subject.key, 'lost', at);
         options.onEvent?.({ type: 'lost', kind: kind.name, subject: subject.key, attempt, reason });
-      else
+      } else
         options.onEvent?.({
           type: 'waiting',
           kind: kind.name,
@@ -266,8 +285,17 @@ export function createUpkeepOrders(options: UpkeepOrdersOptions): UpkeepOrders {
     const { states, anyOpen } = storedSubjects(options.adapter, kind, at);
     // One order of a kind at a time keeps the common session's queue for the owner; an order whose
     // child runs may still write is not over yet.
-    if (anyOpen || [...checking].some((id) => id.startsWith(`upkeep:${kind.name}:`))) return;
+    if (anyOpen || [...checking].some((id) => id.startsWith(upkeepOrderIdPrefix(kind.name))))
+      return;
+    const settled = new Set(
+      (
+        options.adapter
+          .prepare(`SELECT subject_key FROM upkeep_settled WHERE kind = ?`)
+          .all(kind.name) as Array<{ subject_key: string }>
+      ).map((row) => row.subject_key)
+    );
     const due: UpkeepSubject[] = [];
+    const perGroup = new Map<string, number>();
     const candidates = function* (): Generator<UpkeepSubject> {
       for (let page = 0; ; page += 1) {
         const rows = kind.scan(options.adapter, at, page);
@@ -276,7 +304,10 @@ export function createUpkeepOrders(options: UpkeepOrdersOptions): UpkeepOrders {
       }
     };
     for (const subject of candidates()) {
-      if (due.length >= kind.maxPerOrder) break;
+      if (kind.group === undefined && due.length >= kind.maxPerOrder) break;
+      const group = kind.group?.(subject);
+      if (group !== undefined && (perGroup.get(group) ?? 0) >= kind.maxPerOrder) continue;
+      if (settled.has(subject.key)) continue;
       const state = states.get(subject.key);
       const orders = state?.orders ?? [];
       // Reported lost when its last order was settled; it is never ordered again.
@@ -287,9 +318,10 @@ export function createUpkeepOrders(options: UpkeepOrdersOptions): UpkeepOrders {
       )
         continue;
       due.push(subject);
+      if (group !== undefined) perGroup.set(group, (perGroup.get(group) ?? 0) + 1);
     }
     if (due.length === 0) return;
-    const id = `upkeep:${kind.name}:${at}:${randomUUID().slice(0, 8)}`;
+    const id = `${upkeepOrderIdPrefix(kind.name)}${at}:${randomUUID().slice(0, 8)}`;
     const payload: UpkeepOrderPayload = { order: 'upkeep', kind: kind.name, subjects: due };
     const receipt = options.accept({
       id,
