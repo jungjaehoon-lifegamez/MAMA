@@ -88,6 +88,7 @@ import { createJevClient } from '../replay/jev-client.js';
 import { createRecordOrders, type RecordOrderEvent } from './record-orders.js';
 import { createUpkeepOrders, type UpkeepEvent } from './upkeep-orders.js';
 import { closeUpkeepKind } from './upkeep-close.js';
+import { writebackUpkeepKind } from './upkeep-writeback.js';
 import { initTokenEstimator } from '@jungjaehoon/mama-core/runtime/token-estimator';
 import {
   createStimulusDelivery,
@@ -815,6 +816,13 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
               closeUpkeepKind({
                 since: options.upkeep.closeSince,
                 access: () => access,
+                timeZone: () => options.timeZone.get(),
+              }),
+              writebackUpkeepKind({
+                // The common scopes only: defaultScopes, never access.scopes (granted member
+                // partitions), so no member-personal observation reaches the common session.
+                commonScopes: () => access.defaultScopes ?? access.scopes,
+                ownerPrincipalId: options.ownerPrincipalId,
                 timeZone: () => options.timeZone.get(),
               }),
             ],

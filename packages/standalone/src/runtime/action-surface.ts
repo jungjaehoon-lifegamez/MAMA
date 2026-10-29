@@ -51,7 +51,7 @@ import {
   createAttachmentActionRegistrations,
   type AttachmentActionPorts,
 } from '../api/attachment-actions.js';
-import { sourceActionRegistrations } from '../api/source-actions.js';
+import { readReceiptEvidence, sourceActionRegistrations } from '../api/source-actions.js';
 import { ownerTimeZoneActionRegistrations } from '../api/owner-timezone-actions.js';
 import { ownerPolicyActionRegistrations } from '../api/owner-policy-actions.js';
 import { actionCatalogLine, helpActionRegistrations } from '../api/help-actions.js';
@@ -673,11 +673,15 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
         result,
       });
     }
+    const evidence =
+      result.status === 'completed' ? readReceiptEvidence(action, result.data) : undefined;
     const common = {
       tool_name: action,
       gateway_call_id: session?.gatewayCallId ?? null,
       input_summary: traceSummary(caller ? { callerPrincipalId: caller, input } : input),
       output_summary: traceSummary(result),
+      // The write-back read receipt (U2): the full handles, not the bounded output_summary.
+      ...(evidence === undefined ? {} : { evidence_json: evidence }),
       execution_status: result.status,
       duration_ms: durationMs,
       ...(result.status === 'failed' ? { failure_code: result.error.code } : {}),

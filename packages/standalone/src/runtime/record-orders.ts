@@ -2,7 +2,7 @@ import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
 import type { MailboxRow, Stimulus } from '@jungjaehoon/mama-core/runtime/mailbox';
 import type { StimulusReceipt } from '@jungjaehoon/mama-core/runtime/runtime';
 import type { RecordOrderPort } from './stimulus-delivery.js';
-import { orderRunIds, runningChildren } from './upkeep-orders.js';
+import { noUpdateCites, orderRunIds, runningChildren } from './upkeep-orders.js';
 import {
   RECORD_ORDER_CHANNEL,
   parseRecordOrder,
@@ -85,25 +85,10 @@ function noUpdateIn(
   orderIds: readonly string[],
   cites: readonly string[] | null
 ): boolean {
-  const runIds = orderRunIds(adapter, orderIds);
-  if (runIds.length === 0) return false;
-  const citing =
-    cites === null
-      ? ''
-      : `AND EXISTS (
-            SELECT 1 FROM json_each(CASE WHEN json_valid(t.input_summary)
-                THEN json_extract(t.input_summary, '$.observationRefs') END) ref
-             WHERE ref.value IN (${cites.map(() => '?').join(',')}))`;
-  return (
-    adapter
-      .prepare(
-        `SELECT 1 FROM tool_traces t
-          WHERE t.tool_name = 'work.no_update' AND t.execution_status = 'completed'
-            AND t.model_run_id IN (${runIds.map(() => '?').join(',')})
-            ${citing}
-          LIMIT 1`
-      )
-      .get(...runIds, ...(cites ?? [])) !== undefined
+  return noUpdateCites(
+    adapter,
+    orderRunIds(adapter, orderIds),
+    cites === null ? null : { field: 'observationRefs', values: cites }
   );
 }
 

@@ -118,26 +118,36 @@ export function orderRunIds(adapter: DatabaseAdapter, orderIds: readonly string[
   ).map((row) => row.id);
 }
 
-/** A completed work.no_update in these runs naming one of the given work items. */
-export function noUpdateNames(
+/**
+ * A completed work.no_update in these runs. With `cites`, the no-update must name one of the
+ * values in that input field (`commitmentIds` for a work item, `observationRefs` for a source);
+ * with `cites` null, any no-update in the runs counts. The field name is a fixed union, never
+ * caller text, so it interpolates into the json path safely.
+ */
+export function noUpdateCites(
   adapter: DatabaseAdapter,
   runIds: readonly string[],
-  commitmentIds: readonly string[]
+  cites: { field: 'commitmentIds' | 'observationRefs'; values: readonly string[] } | null
 ): boolean {
-  if (runIds.length === 0 || commitmentIds.length === 0) return false;
+  if (runIds.length === 0) return false;
+  if (cites !== null && cites.values.length === 0) return false;
+  const citing =
+    cites === null
+      ? ''
+      : `AND EXISTS (
+            SELECT 1 FROM json_each(CASE WHEN json_valid(t.input_summary)
+                THEN json_extract(t.input_summary, '$.${cites.field}') END) ref
+             WHERE ref.value IN (${cites.values.map(() => '?').join(',')}))`;
   return (
     adapter
       .prepare(
         `SELECT 1 FROM tool_traces t
           WHERE t.tool_name = 'work.no_update' AND t.execution_status = 'completed'
             AND t.model_run_id IN (${runIds.map(() => '?').join(',')})
-            AND EXISTS (
-              SELECT 1 FROM json_each(CASE WHEN json_valid(t.input_summary)
-                  THEN json_extract(t.input_summary, '$.commitmentIds') END) ref
-               WHERE ref.value IN (${commitmentIds.map(() => '?').join(',')}))
+            ${citing}
           LIMIT 1`
       )
-      .get(...runIds, ...commitmentIds) !== undefined
+      .get(...runIds, ...(cites?.values ?? [])) !== undefined
   );
 }
 
