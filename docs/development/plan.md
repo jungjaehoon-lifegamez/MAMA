@@ -15,7 +15,8 @@ Rules: [AGENTS.md](../../AGENTS.md). Keep this plan under 200 lines and each che
 - C6 passes with search through the packed core's public exports (W3, W4's search half; [check](checks.md#c6-with-search-a-consumer-searches-its-own-records-without-a-model-w4-2026-10-05)).
 - Standing owner rules are written into the owner policy in owner chat turns (W37.1, #430; [check](checks.md#how-corrections-reach-each-turn-kind-w37-decided-2026-10-06)).
 
-- Ledger upkeep (closing summaries, write-back after a source answer, daily board reconcile) came before 1.0 W2.3 (owner, 2026-10-17): [design](work/ledger-upkeep.md), [measured](checks.md#ledger-upkeep-measured-2026-10-17). U1–U3 are deployed (#529, #530, #531). Their "Done when" checks run on 2026-11-05 (U1, U2) and 2026-11-06 (U3). Next: 1.0 W2.3.
+- Ledger upkeep (closing summaries, write-back after a source answer, daily board reconcile) came before 1.0 W2.3 (owner, 2026-10-17): [design](work/ledger-upkeep.md), [measured](checks.md#ledger-upkeep-measured-2026-10-17). U1–U3 are deployed (#529, #530, #531). Their "Done when" checks run on 2026-11-05 (U1, U2) and 2026-11-06 (U3).
+- 1.0 W2.3 code is deployed: drain (#533), install kind and release check (#534), `mama update` (#535), `/update` (#536) ([design](work/update.md)). Its proof waits for a clean macOS account with its own test bot and group, which the owner creates (B2 needs it too). Next while waiting: W2.4 install command.
 
 ## Owner checks
 
