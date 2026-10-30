@@ -510,18 +510,89 @@ describe('mama stop', () => {
     const lock = acquireInstallLock(paths, 'daemon');
     rmSync(paths.holderPath);
     const lines: string[] = [];
+    const started = Date.now();
     expect(
       await runStop([], {
+        configPath,
+        write: (line) => lines.push(line),
+        pollMs: 5,
+        controlWaitMs: 200,
+      })
+    ).toBe(1);
+    // It waited for the holder file, once: the stop without a drain it then runs keeps the
+    // drained stop's start, so the two waits do not add up.
+    expect(Date.now() - started).toBeGreaterThanOrEqual(200);
+    expect(Date.now() - started).toBeLessThan(400);
+    expect(lines).toEqual([
+      'not stopped: unknown (pid 0) holds the install and stops when it finishes',
+    ]);
+    lock.release();
+  });
+
+  it('--now meets a booting daemon in the pid-0 stretch under launchd', async () => {
+    onPlatform('darwin');
+    const { home: root, configPath } = home('mama-stop-now-unnamed-');
+    const daemon = await bootingDaemon(root, false);
+    const lines: string[] = [];
+    const stopping = runStop(['--now'], {
+      configPath,
+      write: (line) => lines.push(line),
+      pollMs: 5,
+      settleMs: 5,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    const server = await daemon.finishBoot();
+    expect(await stopping).toBe(0);
+    expect(lines).toEqual([
+      'stopped (launchd service unloaded); mama service start starts it again',
+    ]);
+    // No drain: the bootout came once the holder was named, and let go of the install.
+    expect(daemon.drain.events).toEqual(['bootout']);
+    await server.close();
+  });
+
+  it('--now still names a holder that never writes its holder file once the wait is over', async () => {
+    onPlatform('darwin');
+    const { home: root, configPath } = home('mama-stop-now-unnamed-bound-');
+    const paths = daemonControlPaths(root);
+    const lock = acquireInstallLock(paths, 'daemon');
+    rmSync(paths.holderPath);
+    const events: string[] = [];
+    launchdRuns(lock, events);
+    const lines: string[] = [];
+    const started = Date.now();
+    expect(
+      await runStop(['--now'], {
         configPath,
         write: (line) => lines.push(line),
         pollMs: 5,
         controlWaitMs: 30,
       })
     ).toBe(1);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(30);
     expect(lines).toEqual([
-      'not stopped: unknown (pid 0) holds the install and stops when it finishes',
+      'not stopped (launchd service unloaded): unknown (pid 0) holds the install and stops when it finishes',
     ]);
+    expect(events).toEqual(['bootout']);
+  });
+
+  it('finds the install free when a stopping daemon lets go after closing its socket', async () => {
+    onPlatform('linux');
+    const { home: root, configPath } = home('mama-stop-closing-');
+    // A daemon at the end of its stop: the socket is closed and the lock not yet let go.
+    const lock = acquireInstallLock(daemonControlPaths(root), 'daemon');
+    const lines: string[] = [];
+    const stopping = runStop([], {
+      configPath,
+      write: (line) => lines.push(line),
+      pollMs: 5,
+      settleMs: 5,
+    });
+    // The stop's first try found no socket.
+    await new Promise((resolve) => setImmediate(resolve));
     lock.release();
+    expect(await stopping).toBe(0);
+    expect(lines).toEqual(['already stopped']);
   });
 
   it('names --now when a daemon older than the drain refuses it, or one stops answering', async () => {
