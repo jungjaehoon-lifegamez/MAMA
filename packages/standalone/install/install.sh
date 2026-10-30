@@ -1,12 +1,13 @@
 #!/bin/sh
 # MAMA OS installer (docs/development/work/install.md).
 #
-#   curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | sh
-#   ... | sh -s -- --backend codex --no-init
+#   curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | sh -s -- --backend claude --non-interactive
 #
-# It installs a pinned Node.js into ~/.mama/node, MAMA OS into ~/.mama/npm, the `mama` command
-# into ~/.mama/bin, the backend CLI with its vendor's installer when it is missing, and a marked
-# PATH block in the login shell's startup file; then it runs `mama init`.
+# It asks nothing: the person's agent runs it from a shell without a terminal. It installs a pinned
+# Node.js into ~/.mama/node, MAMA OS into ~/.mama/npm, the `mama` command into ~/.mama/bin, the
+# backend CLI with its vendor's installer when none that runs is found, and a marked PATH block in
+# the login shell's startup file; then it runs `mama init --non-interactive`, which opens the setup
+# page for the bot token and the pairing code.
 #
 # The whole body is one function, called on the last line, so a download cut off midway runs
 # nothing. scripts/sync-versions.js writes the version lines from package.json and
@@ -34,14 +35,16 @@ mama_install() {
 
   usage() {
     say 'Usage: install.sh [--backend claude|codex] [--non-interactive | --no-init]'
-    say '  --backend          the backend CLI MAMA runs; asked on the terminal when not given'
-    say '  --non-interactive  run mama init --non-interactive (it reads MAMA_INIT_* variables)'
-    say '  --no-init          install only, and print the mama init command'
-    say 'Piped from curl: curl -fsSL <url> | sh -s -- --backend codex --no-init'
+    say '  --backend          the backend CLI MAMA runs; a new install needs it'
+    say '  --non-interactive  run mama init --non-interactive: it reads MAMA_INIT_* variables and'
+    say '                     opens the setup page; a new install needs it or --no-init'
+    say '  --no-init          install only, and print the init command'
+    say 'An install already set up needs no option: it runs mama init --non-interactive.'
+    say 'Piped from curl: curl -fsSL <url> | sh -s -- --backend claude --non-interactive'
   }
 
   backend=''
-  init_mode=terminal
+  init_mode=''
   while [ $# -gt 0 ]; do
     case $1 in
       --backend)
@@ -54,7 +57,7 @@ mama_install() {
         shift
         ;;
       --non-interactive | --no-init)
-        [ "$init_mode" = terminal ] || fail 'choose one of --non-interactive and --no-init'
+        [ -z "$init_mode" ] || fail 'choose one of --non-interactive and --no-init'
         init_mode=${1#--}
         shift
         ;;
@@ -72,15 +75,6 @@ mama_install() {
     '' | claude | codex) ;;
     *) fail "--backend must be claude or codex, not $backend" ;;
   esac
-
-  # The question and mama init read the terminal; piped from curl, stdin is the script itself.
-  terminal=no
-  if (: </dev/tty) 2>/dev/null; then terminal=yes; fi
-  if [ "$terminal" = no ]; then
-    [ -n "$backend" ] || fail 'no terminal to ask on: pass --backend claude or --backend codex'
-    [ "$init_mode" != terminal ] ||
-      fail 'mama init needs a terminal: pass --non-interactive (MAMA_INIT_* variables) or --no-init'
-  fi
 
   [ -n "${HOME:-}" ] && [ -d "$HOME" ] || fail 'HOME is not set to a folder'
   root=$HOME/.mama
@@ -151,6 +145,14 @@ mama_install() {
   if [ "$holds_mama" = no ] && { [ "$set_up" = yes ] || [ -f "$root/start.sh" ]; }; then
     fail "$root is set up by another MAMA install (not in $prefix); this installer will not take it over. Nothing was changed. mama update --dry-run shows how that install updates."
   fi
+  # Nothing reads a terminal. A new install is told its backend and how to set up; one already set
+  # up runs as it was installed, so the bare command mama update and doctor print runs as is.
+  if [ "$set_up" = no ]; then
+    [ -n "$backend" ] || fail 'a new install needs --backend claude or --backend codex'
+    [ -n "$init_mode" ] ||
+      fail 'a new install needs --non-interactive (mama init reads MAMA_INIT_* variables and opens the setup page) or --no-init'
+  fi
+  [ -n "$init_mode" ] || init_mode=non-interactive
 
   case $(uname -s) in
     Darwin) os=darwin ;;
@@ -169,22 +171,9 @@ mama_install() {
     linux-arm64) node_sha256=$NODE_SHA256_LINUX_ARM64 ;;
   esac
 
-  # Every question before any change. ~/.local/bin is where the vendor installers put the backend.
+  # ~/.local/bin is where the vendor installers put the backend.
   PATH=$HOME/.local/bin:$PATH
   export PATH
-  if [ -z "$backend" ]; then
-    for name in claude codex; do
-      found=$(command -v "$name" 2>/dev/null || true)
-      [ -n "$found" ] || found="not installed; this installer installs it with its vendor's installer"
-      say "  $name: $found"
-    done
-    printf 'Backend MAMA runs (claude or codex): ' >/dev/tty
-    IFS= read -r backend </dev/tty || fail 'no answer'
-    case $backend in
-      claude | codex) ;;
-      *) fail "the backend is claude or codex, not $backend" ;;
-    esac
-  fi
 
   # Linux: the parent of member_root and tools_root, and linger, in one sudo call. sudo keeps the
   # umask 077 above; 022 inside, or the parent would be 0700 and init's folder check would fail.
@@ -198,7 +187,7 @@ mama_install() {
       *) user_ok=yes ;;
     esac
     if [ "$user_ok" = no ]; then
-      say "The user name $user has characters MAMA's default folders do not take, so nothing is run with sudo; mama init asks for two folders outside your home instead."
+      say "The user name $user has characters MAMA's default folders do not take, so nothing is run with sudo; set MAMA_INIT_MEMBER_ROOT and MAMA_INIT_TOOLS_ROOT to two folders outside your home instead."
     elif [ -n "$(find /var/lib/mama -prune -type d -user 0 -perm 0755 2>/dev/null)" ] &&
       [ -n "$(find "/var/lib/mama/$user" -prune -type d -user "$(id -u)" -perm 0700 2>/dev/null)" ] &&
       [ -e "/var/lib/systemd/linger/$user" ]; then
@@ -210,7 +199,7 @@ mama_install() {
       if command -v sudo >/dev/null 2>&1 && sudo sh -c "$privileged" </dev/null; then
         say "Done."
       else
-        say "That did not run. Run it yourself later; mama init offers other folders meanwhile."
+        say "That did not run. Run it later, or set MAMA_INIT_MEMBER_ROOT and MAMA_INIT_TOOLS_ROOT to two folders outside your home."
       fi
     fi
   fi
@@ -329,12 +318,23 @@ exec $(quote "$node_dir/bin/node") $(quote "$cli") \"\$@\""; then
     say "Another mama comes first on this PATH: $other. The startup block below puts $wrapper ahead of it in new terminals."
   fi
 
-  # The backend CLI: kept when it is on PATH (mama init checks its version and sign-in), else the
-  # vendor's documented installer, into ~/.local/bin.
-  backend_path=$(command -v "$backend" 2>/dev/null || true)
-  if [ -n "$backend_path" ]; then
+  # The backend CLI: kept when the one on PATH runs (mama init checks its version and sign-in),
+  # else the vendor's documented installer, into ~/.local/bin. A found command counts only when
+  # `--version` exits 0 and prints a version, as backend-probe.ts reads it: a shim with no real CLI
+  # behind it (cmux's exits 127) is no backend. A set-up install run without --backend keeps its own.
+  backend_runs() {
+    backend_version=$("$1" --version </dev/null 2>/dev/null) &&
+      printf '%s\n' "$backend_version" | grep -Eq '[[:digit:]]+[.][[:digit:]]+[.][[:digit:]]+'
+  }
+  backend_path=''
+  [ -z "$backend" ] || backend_path=$(command -v "$backend" 2>/dev/null || true)
+  if [ -z "$backend" ]; then
+    :
+  elif [ -n "$backend_path" ] && backend_runs "$backend_path"; then
     say "$backend is installed: $backend_path"
   else
+    [ -z "$backend_path" ] ||
+      say "$backend_path does not run (its --version printed no version), so it does not count."
     case $backend in
       claude)
         vendor_url=https://claude.ai/install.sh
@@ -367,13 +367,20 @@ exec $(quote "$node_dir/bin/node") $(quote "$cli") \"\$@\""; then
     backend_path=$(command -v "$backend" 2>/dev/null || true)
     [ -n "$backend_path" ] ||
       fail "$backend's installer finished, but $backend is not on PATH or in $HOME/.local/bin; see $vendor_page"
+    backend_runs "$backend_path" ||
+      fail "$backend's installer finished, but $backend_path does not run (its --version printed no version); see $vendor_page"
     say "$backend installed: $backend_path"
   fi
 
   # The login shell's startup file: the text between the markers is rewritten on each run.
   path_line="export PATH=\"\$HOME/.mama/bin:\$PATH\""
   fish_dirs="$root/bin"
-  if [ -x "$HOME/.local/bin/$backend" ]; then
+  # The backend named, or without --backend either one the vendor installers put there.
+  local_backend=no
+  for name in ${backend:-claude codex}; do
+    if [ -x "$HOME/.local/bin/$name" ]; then local_backend=yes; fi
+  done
+  if [ "$local_backend" = yes ]; then
     path_line="export PATH=\"\$HOME/.mama/bin:\$HOME/.local/bin:\$PATH\""
     fish_dirs="$fish_dirs $HOME/.local/bin"
   fi
@@ -428,19 +435,19 @@ $path_line
     fi
   fi
 
-  # mama init: npm and init run by full path with the managed Node first on PATH.
+  # mama init: npm and init run by full path with the managed Node first on PATH. Init reads the
+  # backend this script installed; a set-up install run without --backend has its own.
+  if [ -n "$backend" ]; then
+    MAMA_INIT_BACKEND=$backend
+    export MAMA_INIT_BACKEND
+  fi
   case $init_mode in
     no-init)
-      say "Installed. $reopen, then run: mama init"
-      say "(or now: $wrapper init)"
+      say "Installed. $reopen to have mama on PATH."
+      say "Set up with: ${backend:+MAMA_INIT_BACKEND=$backend }MAMA_INIT_MODEL=<model> $wrapper init --non-interactive"
       ;;
     non-interactive)
       PATH="$node_dir/bin:$PATH" "$wrapper" init --non-interactive </dev/null
-      ;;
-    terminal)
-      # mama init requires a terminal on both stdin and stdout.
-      PATH="$node_dir/bin:$PATH" "$wrapper" init </dev/tty >/dev/tty
-      say "$reopen to have mama on PATH."
       ;;
   esac
 }

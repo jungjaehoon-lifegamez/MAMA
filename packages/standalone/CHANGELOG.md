@@ -103,14 +103,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   folders on MAMA's machine. `/update` is in the bot's command menu (#536).
 - An install command, `install.sh`, attached to each MAMA OS release starting with the next one
   (#538):
-  - It runs on macOS and Linux, on x64 or arm64. It asks its one question, the backend (Claude
-    Code or Codex), before it changes anything. `--backend`, `--non-interactive` and `--no-init`
-    let it run without a terminal.
+  - It runs on macOS and Linux, on x64 or arm64, and reads no terminal. A new install is given
+    its backend (Claude Code or Codex) with `--backend`, and `--non-interactive` or `--no-init`.
   - It puts Node.js in `~/.mama/node`, at a version it pins and checks by hash, MAMA OS in
     `~/.mama/npm`, and a `mama` command in `~/.mama/bin`. The backend is installed with its
-    vendor's installer when it is not on PATH.
+    vendor's installer when none that runs is on PATH.
   - It adds `~/.mama/bin` to PATH in a marked block of your shell's startup file (for fish it
-    prints the line instead), then runs `mama init`.
+    prints the line instead), then runs `mama init --non-interactive`.
   - On Linux it shows one `sudo` command and runs it: MAMA's folders under `/var/lib/mama`, and
     linger, so the service keeps running after you log out. If sudo is refused, it prints the
     command and goes on.
@@ -164,6 +163,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   makes it again (#539).
 - `mama service install`, for an npm install, also puts the npm prefix's `bin` folder on
   `start.sh`'s PATH, where npm puts commands installed beside MAMA (#539).
+- The install script asks nothing and runs from an agent's shell. A found backend must run before
+  the installer is skipped: its `--version` must exit 0 and print a version, so a shim with no
+  backend behind it gets the vendor's installer. A set-up install needs no flags: it runs
+  `mama init --non-interactive`, and without `--backend` it keeps the backend it has.
 
 ### Fixed
 
