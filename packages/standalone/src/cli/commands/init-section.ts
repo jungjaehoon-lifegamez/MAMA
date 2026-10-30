@@ -27,7 +27,7 @@ import {
   terminalSignIn,
   checkTelegram,
   collectConnectors,
-  gwsConnectorNames,
+  writeSourceTools,
 } from './init-questions.js';
 
 /** The parts of a setup `mama init --section` asks again; the folders stay, member data is there. */
@@ -190,8 +190,18 @@ export async function runInitSection(section: string, options: InitOptions = {})
       if (jevKey !== undefined)
         writeFileSync(jevKeyFile, `${jevKey}\n`, { flag: 'wx', mode: 0o600 });
       for (const { temporary, path } of staged) renameSync(temporary, path);
-      if (connectors && Object.keys(connectors).some((name) => gwsConnectorNames.has(name)))
-        write('Log in with the Google scopes your selected connectors need: gws auth login.');
+      if (connectors)
+        writeSourceTools(
+          connectors,
+          {
+            root,
+            home,
+            platform: options.platform ?? process.platform,
+            backend: config.agent.backend,
+          },
+          options,
+          write
+        );
       if (reshaped)
         write(
           'config.yaml was written again in plain YAML; its comments and layout were not kept.'

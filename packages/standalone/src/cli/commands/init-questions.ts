@@ -1,11 +1,15 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
-import type { ConnectorsConfig } from '../../connectors/framework/types.js';
+import { cliAuth, type ConnectorsConfig } from '../../connectors/framework/types.js';
+import { gwsTool } from '../../connectors/framework/gws-utils.js';
 import { backendEnvironment } from '../../runtime/backend-security.js';
 import { CliInputError, nonblankLine, type PromptAdapter } from '../prompt.js';
 import { shellQuote, type SecretName } from '../secrets.js';
 import { probeBackend, type ProbeRun } from '../runtime/backend-probe.js';
 import { telegramCheck } from '../runtime/diagnostics.js';
+import { serviceSight, sourceToolLines, sourceTools } from '../runtime/source-tools.js';
+import { findExecutable, findIn } from '../launch-files.js';
+import { serviceLaunch, type ServiceOptions } from './service.js';
 
 /** The questions and checks `mama init` asks, shared by a whole setup and by `--section`. */
 
@@ -40,7 +44,6 @@ const connectorSecrets: Record<string, SecretName[]> = {
   'claude-code': [],
 };
 
-export const gwsConnectorNames = new Set(['calendar', 'gmail', 'drive', 'sheets']);
 const noSecretConnectorNames = new Set(['obsidian', 'imessage', 'claude-code']);
 
 export async function yes(prompt: PromptAdapter, label: string): Promise<boolean> {
@@ -88,7 +91,7 @@ export async function collectConnectors(
         enabled: true,
         pollIntervalMinutes: 5,
         channels: { inbox: { role: 'hub' } },
-        auth: { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' },
+        auth: cliAuth(gwsTool),
       };
       continue;
     }
@@ -147,7 +150,7 @@ export async function collectConnectors(
         channels: Object.fromEntries(
           folderIds.map((folderId) => [folderId, { role: 'hub', folderId }])
         ),
-        auth: { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' },
+        auth: cliAuth(gwsTool),
       };
       continue;
     }
@@ -169,7 +172,7 @@ export async function collectConnectors(
             ...(dataRange ? { dataRange } : {}),
           },
         },
-        auth: { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' },
+        auth: cliAuth(gwsTool),
       };
       continue;
     }
@@ -195,14 +198,42 @@ export async function collectConnectors(
       channels: Object.fromEntries(
         ids.map((id) => [id, { role: 'hub', ...(name === 'trello' ? { boardId: id } : {}) }])
       ),
-      auth: gwsConnectorNames.has(name)
-        ? { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' }
-        : noSecretConnectorNames.has(name)
-          ? { type: 'none' }
-          : { type: 'token', tokenName: connectorSecrets[name].at(-1)! },
+      auth:
+        name === 'calendar'
+          ? cliAuth(gwsTool)
+          : noSecretConnectorNames.has(name)
+            ? { type: 'none' }
+            : { type: 'token', tokenName: connectorSecrets[name].at(-1)! },
     };
   }
   return config;
+}
+
+/**
+ * For the sources just set up, each tool they run that the service cannot find, with how to
+ * install it, and each one's login (install.md, PR 3). It reports; the setup is already saved.
+ */
+export function writeSourceTools(
+  connectors: ConnectorsConfig,
+  install: { root: string; home: string; platform: NodeJS.Platform; backend: string },
+  options: Pick<ServiceOptions, 'findExecutable' | 'nodePath' | 'cliPath' | 'toolDirectoryExists'>,
+  write: (line: string) => void
+): void {
+  const { root, home, platform, backend } = install;
+  const service = serviceSight(
+    root,
+    home,
+    platform,
+    () => serviceLaunch(backend, options),
+    options.toolDirectoryExists
+  );
+  const reports = sourceTools(
+    Object.entries(connectors).map(([name, connector]) => ({ name, needs: [connector.auth] })),
+    service,
+    { root, home },
+    { inDirs: findIn, shell: options.findExecutable ?? findExecutable }
+  );
+  for (const line of sourceToolLines(reports)) write(line);
 }
 
 export type TelegramCall = Parameters<typeof telegramCheck>[2];

@@ -11,7 +11,8 @@ import type {
   IConnector,
   NormalizedItem,
 } from '../framework/types.js';
-import { execGwsAsync, execGwsTextAsync } from '../framework/gws-utils.js';
+import { cliAuth } from '../framework/types.js';
+import { execGwsAsync, execGwsTextAsync, gwsTool } from '../framework/gws-utils.js';
 import { readConnectorState, writeConnectorState } from '../framework/connector-state.js';
 
 interface DriveFile {
@@ -119,9 +120,7 @@ export class DriveConnector implements IConnector {
   getAuthRequirements(): AuthRequirement[] {
     return [
       {
-        type: 'cli',
-        cli: 'gws',
-        cliAuthCommand: 'gws auth login',
+        ...cliAuth(gwsTool),
         description: 'Google Workspace CLI authentication. Run: gws auth login',
       },
     ];

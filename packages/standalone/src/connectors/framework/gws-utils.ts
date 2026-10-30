@@ -1,4 +1,17 @@
 import { execFile } from 'node:child_process';
+import type { SourceTool } from './types.js';
+
+/**
+ * The Google Workspace CLI the Google sources (calendar, gmail, drive, sheets) run. The npm
+ * package is a Node script (`bin` run.js, `postinstall` `node install.js`) that fetches the
+ * native binary; the Homebrew formula installs that binary.
+ */
+export const gwsTool: SourceTool = {
+  command: 'gws',
+  loginArgs: 'auth login',
+  npmPackage: '@googleworkspace/cli',
+  brewFormula: 'googleworkspace-cli',
+};
 
 export interface GwsCallOptions {
   maxBuffer?: number;

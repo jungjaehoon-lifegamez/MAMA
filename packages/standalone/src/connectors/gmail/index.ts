@@ -11,7 +11,8 @@ import type {
   IConnector,
   NormalizedItem,
 } from '../framework/types.js';
-import { execGwsAsync, execGwsTextAsync } from '../framework/gws-utils.js';
+import { cliAuth } from '../framework/types.js';
+import { execGwsAsync, execGwsTextAsync, gwsTool } from '../framework/gws-utils.js';
 
 interface GmailMessage {
   id: string;
@@ -68,9 +69,7 @@ export class GmailConnector implements IConnector {
   getAuthRequirements(): AuthRequirement[] {
     return [
       {
-        type: 'cli',
-        cli: 'gws',
-        cliAuthCommand: 'gws auth login',
+        ...cliAuth(gwsTool),
         description: 'Google Workspace CLI authentication. Run: gws auth login',
       },
     ];

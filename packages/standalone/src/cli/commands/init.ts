@@ -54,7 +54,7 @@ import {
   type BackendSignIn,
   checkTelegram,
   collectConnectors,
-  gwsConnectorNames,
+  writeSourceTools,
   report,
   text,
   validTimezone,
@@ -70,6 +70,8 @@ export interface InitOptions {
   cliPath?: string;
   nodePath?: string;
   findExecutable?: (name: string) => string | undefined;
+  /** Which package-manager tool folders exist for start.sh's PATH; tests name them. */
+  toolDirectoryExists?: (path: string) => boolean;
   platform?: NodeJS.Platform;
   /** This account's name and uid, for the per-user folders; tests name them. */
   user?: string;
@@ -591,10 +593,13 @@ export async function runInit(
         write(
           `Jev is on (jev.enabled in config.yaml); its key is ${shellQuote(join(root, 'jev-key'))} (0600). Turn it off by removing jev.enabled.`
         );
-      if (Object.keys(answers.connectors).some((name) => gwsConnectorNames.has(name))) {
-        if (!locate('gws')) write('Install gws; the Google sources need it.');
-        write('Log in with the Google scopes your selected connectors need: gws auth login.');
-      }
+      // start.sh does not exist yet: the service step writes it from this shell.
+      writeSourceTools(
+        answers.connectors,
+        { root, home, platform, backend: answers.backend },
+        options,
+        write
+      );
     } else {
       config = loadConfig({ home, path: configPath });
     }
@@ -644,6 +649,9 @@ export async function runInit(
           ...(options.findExecutable ? { findExecutable: options.findExecutable } : {}),
           ...(options.nodePath ? { nodePath: options.nodePath } : {}),
           ...(options.cliPath ? { cliPath: options.cliPath } : {}),
+          ...(options.toolDirectoryExists
+            ? { toolDirectoryExists: options.toolDirectoryExists }
+            : {}),
         };
         // Linux keeps the user's services running after logout only with linger (B4). Enabling it
         // can need privileges this account lacks; that must not stop the service from starting.

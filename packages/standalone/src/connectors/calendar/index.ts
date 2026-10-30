@@ -8,7 +8,8 @@ import type {
   NormalizedItem,
   ConnectorPollCursor,
 } from '../framework/types.js';
-import { execGwsAsync } from '../framework/gws-utils.js';
+import { cliAuth } from '../framework/types.js';
+import { execGwsAsync, gwsTool } from '../framework/gws-utils.js';
 import { readConnectorState, writeConnectorState } from '../framework/connector-state.js';
 
 interface CalendarEvent {
@@ -133,9 +134,7 @@ export class CalendarConnector implements IConnector {
   getAuthRequirements(): AuthRequirement[] {
     return [
       {
-        type: 'cli',
-        cli: 'gws',
-        cliAuthCommand: 'gws auth login',
+        ...cliAuth(gwsTool),
         description:
           'Google Calendar read access through Google Workspace CLI. Run: gws auth login',
       },

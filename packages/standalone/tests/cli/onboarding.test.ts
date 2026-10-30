@@ -12,7 +12,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import * as yaml from 'js-yaml';
 import { tmpdir } from 'node:os';
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
@@ -30,6 +30,7 @@ import {
   type DaemonControlReply,
 } from '../../src/cli/runtime/daemon-control.js';
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
+import { startScript } from '../../src/cli/launch-files.js';
 
 let home: string;
 let root: string;
@@ -163,7 +164,9 @@ function options(adapter: PromptAdapter, overrides: Partial<InitOptions> = {}) {
     platform: 'linux',
     user: 'fixture',
     uid: process.getuid!(),
-    findExecutable: (name: string) => join(home, 'bin', name),
+    // The backend is found; gws is not, and this machine's own tool folders are not looked in.
+    findExecutable: (name: string) => (name === 'gws' ? undefined : join(home, 'bin', name)),
+    toolDirectoryExists: () => false,
     installToolkit: async () => {},
     probeRun: probeOk,
     telegramCall: telegram.call,
@@ -1336,4 +1339,138 @@ describe('secret rotation', () => {
       expect(readFileSync(join(root, 'auth.env'), 'utf8')).toBe('# retained\n');
     }
   );
+});
+
+describe('tools a source needs (install.md, PR 3)', () => {
+  /** An executable `gws` in `folder` under this test's HOME. */
+  function gwsIn(folder: string): string {
+    const path = join(home, folder, 'gws');
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, '#!/bin/sh\n', { mode: 0o755 });
+    return path;
+  }
+  /** A shell that finds the backend, and gws only at `gws`. */
+  const shell = (gws?: string) => (name: string) =>
+    name === 'gws' ? gws : join(home, 'bin', name);
+  /** What the install command makes: start.sh will run ~/.mama/node on the ~/.mama/npm package. */
+  const managed = () => ({
+    nodePath: join(root, 'node', 'bin', 'node'),
+    cliPath: join(
+      root,
+      'npm',
+      'lib',
+      'node_modules',
+      '@jungjaehoon',
+      'mama-os',
+      'dist',
+      'cli',
+      'index.js'
+    ),
+  });
+  const gmail = () => ['codex', 'fixture-model', memberRoot, toolsRoot, 'gmail', 'n', 'n', 'n'];
+  async function init(overrides: Partial<InitOptions>): Promise<string> {
+    const p = prompt(gmail(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    await runInit([], options(p.adapter, overrides));
+    return p.output.join('\n');
+  }
+
+  it('mama init: gws missing names how to install it, with the managed Node on a script-made install', async () => {
+    const npm = await init({ findExecutable: shell() });
+    expect(npm).toContain(
+      [
+        "gmail runs gws, which the service's PATH does not have. Install it with one of:",
+        '  npm install -g @googleworkspace/cli',
+        '  brew install googleworkspace-cli',
+        'Then log in to gws with the scopes gmail needs:',
+        '  gws auth login',
+      ].join('\n')
+    );
+    rmSync(root, { recursive: true, force: true });
+    const script = await init({ findExecutable: shell(), ...managed() });
+    expect(script).toContain(
+      [
+        "gmail runs gws, which the service's PATH does not have. Install it:",
+        '  PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/node/bin/npm install -g --prefix ~/.mama/npm @googleworkspace/cli',
+        'Then log in to gws with the scopes gmail needs:',
+        '  PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login',
+      ].join('\n')
+    );
+  });
+
+  it("mama init: gws on the shell's PATH only is carried into start.sh, so only its login is named", async () => {
+    const output = await init({ findExecutable: shell(gwsIn('shell-bin')) });
+    expect(output).toContain('Log in to gws with the scopes gmail needs: gws auth login');
+    expect(output).not.toContain('Install it');
+  });
+
+  it("mama init: gws on the service's PATH only is logged in to as the service runs it", async () => {
+    // The managed prefix's bin is on start.sh's PATH (PR 2), not on the shell's.
+    gwsIn('.mama/npm/bin');
+    const output = await init({ findExecutable: shell(), ...managed() });
+    expect(output).toContain(
+      'Log in to gws with the scopes gmail needs: PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login'
+    );
+    expect(output).not.toContain('Install it');
+  });
+
+  describe('init --section connectors, against start.sh', () => {
+    /** A finished setup whose start.sh's PATH names `folders` (and the system's). */
+    async function setUp(folders: string[], node = join(home, 'node', 'bin', 'node')) {
+      await runInit([], options(prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]).adapter));
+      writeFileSync(
+        join(root, 'start.sh'),
+        startScript({
+          home,
+          nodePath: node,
+          cliPath: join(home, 'cli', 'index.js'),
+          executablePaths: [join(home, 'bin', 'codex'), ...folders.map((f) => join(f, 'x'))],
+          exists: () => false,
+          viewer: {},
+          logLevel: 'info',
+        }),
+        { mode: 0o700 }
+      );
+    }
+    async function section(findExecutable: InitOptions['findExecutable']): Promise<string> {
+      const p = prompt(['gmail'], []);
+      await runInit(['--section', 'connectors'], options(p.adapter, { findExecutable }));
+      return p.output.join('\n');
+    }
+
+    it('gws missing', async () => {
+      await setUp([]);
+      expect(await section(shell())).toContain(
+        "gmail runs gws, which the service's PATH does not have. Install it with one of:\n  npm install -g @googleworkspace/cli"
+      );
+    });
+
+    it("gws on the shell's PATH only: mama service install adds its folder", async () => {
+      await setUp([]);
+      const found = gwsIn('shell-bin');
+      const output = await section(shell(found));
+      expect(output).toContain(
+        `gmail runs gws; this shell finds ${found}, but the service's PATH does not name ${dirname(found)}. mama service install adds it; mama service restart then applies it.`
+      );
+      expect(output).toContain('Log in to gws with the scopes gmail needs: gws auth login');
+      expect(output).not.toContain('Install it');
+    });
+
+    it("gws on the service's PATH", async () => {
+      const found = gwsIn('tool-bin');
+      await setUp([dirname(found)]);
+      const output = await section(shell());
+      expect(output).toContain(
+        'Log in to gws with the scopes gmail needs: ~/tool-bin/gws auth login'
+      );
+      expect(output).not.toContain('Install it');
+    });
+
+    it('on a script-made install, in the managed prefix', async () => {
+      const found = gwsIn('.mama/npm/bin');
+      await setUp([dirname(found)], join(root, 'node', 'bin', 'node'));
+      expect(await section(shell())).toContain(
+        'Log in to gws with the scopes gmail needs: PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login'
+      );
+    });
+  });
 });

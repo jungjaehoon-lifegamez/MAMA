@@ -18,6 +18,11 @@
  * 5. The Node move (move.mjs, PR 2): the daemon booted on the managed Node, then the script run
  *    again with other pins: a patch move, the move back killed after each step and recovered, a
  *    Node that cannot boot MAMA put back, and a major move with its rebuilt prefix.
+ * 6. A source's tool (PR 3): Gmail enabled without gws, doctor names the two commands; the first
+ *    runs as printed, with no Node on PATH but the one it names, and installs the real
+ *    @googleworkspace/cli from npmjs (its postinstall fetches the binary from GitHub); the
+ *    second, `gws auth login`, needs a browser, so the same command runs `--version` and
+ *    `auth --help` instead. Doctor then finds gws on the service's PATH.
  *
  * Run after `pnpm build`: node packages/standalone/scripts/install-check/run.mjs [--vendor-installers]
  * It downloads Node.js from nodejs.org twice (two fresh homes) and the dependencies through the
@@ -451,6 +456,55 @@ try {
     serviceEnv,
     track: (child) => children.push(child),
   });
+
+  // 6. A source's tool. No Node on this PATH: gws is a Node script, so the commands must bring
+  // the managed one. The stand-in service manager stays first, as in step 2.
+  const bare = '/usr/bin:/bin:/usr/sbin:/sbin';
+  const toolEnv = {
+    HOME: home,
+    PATH: bare,
+    npm_config_cache: join(homedir(), '.npm'),
+    npm_config_update_notifier: 'false',
+    ...(process.env.TMPDIR ? { TMPDIR: process.env.TMPDIR } : {}),
+  };
+  for (const command of ['node', 'gws']) {
+    const found = capture('sh', ['-c', `command -v ${command} || true`], toolEnv).stdout.trim();
+    expect(found === '', `${command} is on ${bare} (${found})`);
+  }
+  writeFileSync(
+    join(mama, 'connectors.json'),
+    `${JSON.stringify({
+      gmail: {
+        enabled: true,
+        pollIntervalMinutes: 5,
+        channels: { inbox: { role: 'hub' } },
+        auth: { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' },
+      },
+    })}\n`
+  );
+  const gmailCheck = () => {
+    const report = capture(wrapper, ['doctor', '--json', '--offline'], {
+      ...toolEnv,
+      PATH: `${fakes}:${bare}`,
+    });
+    return JSON.parse(report.stdout).checks.find((check) => check.name === 'source gmail');
+  };
+  const missing = gmailCheck();
+  const printed = /^install it: (.*); then log in: (.*)$/.exec(missing?.fix ?? '');
+  const install =
+    'PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/node/bin/npm install -g --prefix ~/.mama/npm @googleworkspace/cli';
+  const login = 'PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login';
+  expect(
+    printed?.[1] === install && printed?.[2] === login,
+    `doctor's fix for Gmail without gws: ${JSON.stringify(missing)}`
+  );
+  expect(capture('sh', ['-c', install], toolEnv).status === 0, `${install} failed`);
+  for (const args of ['--version', 'auth --help']) {
+    const run = capture('sh', ['-c', login.replace(/ auth login$/, ` ${args}`)], toolEnv);
+    expect(run.status === 0, `gws ${args}, as the printed login runs it, exited ${run.status}`);
+  }
+  expect(gmailCheck() === undefined, `doctor after the install: ${JSON.stringify(gmailCheck())}`);
+  console.log('install check: gws installed and run as doctor printed, with only the managed Node');
   console.log('install check: passed');
 } finally {
   for (const child of children) {

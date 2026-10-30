@@ -14,8 +14,10 @@ import { readDocumentToolkit } from '../../tools/document-toolkit.js';
 import {
   readStartScript,
   shellWords,
+  findExecutable,
+  findIn,
   startExports,
-  startPathValue,
+  startScriptPath,
   versionedNodePath,
   CRASH_LOG_CAP_BYTES,
   CRASH_LOG_NAME,
@@ -33,6 +35,7 @@ import { probeBackend, type BackendName, type ProbeRun, defaultProbeRun } from '
 import { restoreJournalPath, type DaemonControlReply } from './daemon-control.js';
 import { releaseReport } from './release-check.js';
 import { installKind, packageRootOf } from './install-kind.js';
+import { sourceTools, type ServiceSight } from './source-tools.js';
 import {
   INSTALL_COMMAND,
   managedNodePath,
@@ -87,6 +90,8 @@ export interface DiagnosticsOptions {
     params?: Record<string, string>
   ) => Promise<Record<string, unknown>>;
   findIn?: (name: string, dirs: string[]) => string | undefined;
+  /** Where this shell finds a command; tests replace it. */
+  findExecutable?: (name: string) => string | undefined;
   /** Ask the install's daemon for its status; tests replace it. */
   askStatus?: () => Promise<DaemonControlReply>;
   /** Builds a source as boot does; tests replace it so no source reaches the network. */
@@ -97,21 +102,8 @@ export interface DiagnosticsOptions {
   portInUse?: (port: number, host: string) => Promise<boolean>;
 }
 
-/** The PATH a service manager gives a unit that does not set one ($PATH in start.sh). */
-const SERVICE_DEFAULT_PATH: Record<string, string[]> = {
-  darwin: ['/usr/bin', '/bin', '/usr/sbin', '/sbin'],
-  linux: ['/usr/local/sbin', '/usr/local/bin', '/usr/sbin', '/usr/bin', '/sbin', '/bin'],
-};
 /** systemd states of an installed unit that can be started or is running. */
 const SYSTEMD_USABLE = new Set(['active', 'inactive', 'activating', 'deactivating', 'reloading']);
-
-function findIn(name: string, dirs: string[]): string | undefined {
-  for (const dir of dirs) {
-    const path = join(dir, name);
-    if (existsSync(path)) return path;
-  }
-  return undefined;
-}
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -243,7 +235,10 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
 
   // What the service runs: the start script's Node, PATH and exports, not this shell's.
   const startPath = join(root, 'start.sh');
-  let servicePath = SERVICE_DEFAULT_PATH[platform] ?? [];
+  let servicePath = startScriptPath(null, home, platform);
+  // The Node start.sh runs: on an install the install command made, a source's tool installs
+  // beside MAMA with that Node (install.md, PR 3).
+  let serviceNode: string | null = null;
   let exports: Record<string, string> = {};
   // A script mama did not write is assumed to load auth.env; a generated one must still.
   let loadsAuth = true;
@@ -278,13 +273,9 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
           fix: 'mama service install --replace rewrites it',
         });
       }
-      if (reading.path !== null) {
-        servicePath = [
-          ...startPathValue(reading.path, home),
-          ...(/\$\{?PATH\}?/.test(reading.path) ? servicePath : []),
-        ];
-      }
+      servicePath = startScriptPath(reading, home, platform);
       const [, node, cli] = reading.exec === null ? [] : shellWords(reading.exec);
+      serviceNode = node ?? null;
       if (!reading.generated) {
         checks.push({
           name: 'start.sh',
@@ -402,7 +393,10 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
     }
 
     checks.push(
-      ...(await sourceChecks(config, configPath, servicePath, locate, secret, {
+      ...(await sourceChecks(config, configPath, locate, secret, {
+        service: { path: servicePath, nodePath: serviceNode },
+        findShell: options.findExecutable ?? findExecutable,
+        home,
         env: serviceEnv,
         online: !options.offline,
         load: options.loadSource ?? loadConnector,
@@ -766,10 +760,12 @@ export async function telegramCheck(
 async function sourceChecks(
   config: W1Config,
   configPath: string,
-  servicePath: string[],
   locate: (name: string, dirs: string[]) => string | undefined,
   secret: (name: string) => boolean,
   start: {
+    service: ServiceSight;
+    findShell: (name: string) => string | undefined;
+    home: string;
     env: NodeJS.ProcessEnv;
     online: boolean;
     load: typeof loadConnector;
@@ -826,23 +822,32 @@ async function sourceChecks(
     const secrets = needs.flatMap((need) =>
       need.type === 'token' && need.tokenName && !secret(need.tokenName) ? [need.tokenName] : []
     );
-    const commands = needs.flatMap((need) =>
-      need.type === 'cli' && need.cli && !locate(need.cli, servicePath)
-        ? [{ cli: need.cli, login: need.cliAuthCommand }]
-        : []
+    const tools = sourceTools(
+      [{ name, needs }],
+      start.service,
+      { root: dirname(configPath), home: start.home },
+      { inDirs: locate, shell: start.findShell }
     );
-    if (secrets.length > 0 || commands.length > 0) {
+    const missing = tools.filter((tool) => tool.servicePath === null);
+    if (secrets.length > 0 || missing.length > 0) {
       checks.push({
         name: `source ${name}`,
         status: 'fail',
         detail: [
           ...(secrets.length > 0 ? [`${secrets.length} secret(s) it needs are not set`] : []),
-          ...commands.map(({ cli }) => `the ${cli} command is not on the service's PATH`),
+          ...missing.map(
+            ({ tool, shellPath }) =>
+              `the ${tool.command} command is not on the service's PATH${shellPath === null ? '' : `; this shell finds ${shellPath}`}`
+          ),
         ].join('; '),
         ...(secrets.length > 0 ? { context: secrets.join(', ') } : {}),
         fix: [
           ...secrets.map(secretFix),
-          ...commands.map(({ cli, login }) => `install ${cli}${login ? ` and run ${login}` : ''}`),
+          ...missing.map(({ shellPath, install, login }) =>
+            shellPath === null
+              ? `install it: ${install.join(' or ')}; then log in: ${login}`
+              : `mama service install adds ${dirname(shellPath)} to start.sh's PATH, mama service restart applies it; then log in: ${login}`
+          ),
         ].join('; '),
       });
       continue;
@@ -872,9 +877,10 @@ async function sourceChecks(
               detail: 'starts, but its credentials or sign-in are refused, so its polls fail',
               fix:
                 needs
-                  .map(
-                    (need) =>
-                      need.cliAuthCommand ?? (need.tokenName ? secretFix(need.tokenName) : '')
+                  .map((need) =>
+                    need.type === 'cli' && need.cli !== undefined
+                      ? tools.find(({ tool }) => tool.command === need.cli)!.login
+                      : (need.cliAuthCommand ?? (need.tokenName ? secretFix(need.tokenName) : ''))
                   )
                   .filter(Boolean)
                   .join('; ') || undefined,

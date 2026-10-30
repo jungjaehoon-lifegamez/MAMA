@@ -16,6 +16,15 @@ export function findExecutable(name: string): string | undefined {
   return undefined;
 }
 
+/** The first of `dirs` that holds `name`, as a service whose PATH is `dirs` finds it. */
+export function findIn(name: string, dirs: readonly string[]): string | undefined {
+  for (const dir of dirs) {
+    const path = join(dir, name);
+    if (existsSync(path)) return path;
+  }
+  return undefined;
+}
+
 /**
  * A Node path that survives an upgrade. Homebrew removes a version's Cellar folder when it
  * upgrades, but keeps `<prefix>/opt/<formula>` (and `<prefix>/bin/node` for `node`) pointing at
@@ -320,6 +329,26 @@ export function startPathValue(value: string, home: string): string[] {
     .split(':')
     .map((entry) => entry.replace(/^(\$HOME|\$\{HOME\}|~)(?=\/|$)/, home))
     .filter((entry) => entry !== '' && entry !== '$PATH' && entry !== '${PATH}');
+}
+
+/** The PATH a service manager gives a unit that does not set one ($PATH in start.sh). */
+const SERVICE_DEFAULT_PATH: Record<string, string[]> = {
+  darwin: ['/usr/bin', '/bin', '/usr/sbin', '/sbin'],
+  linux: ['/usr/local/sbin', '/usr/local/bin', '/usr/sbin', '/usr/bin', '/sbin', '/bin'],
+};
+
+/** The folders the service's commands are found in: start.sh's PATH, or the manager's own. */
+export function startScriptPath(
+  reading: StartScriptReading | null,
+  home: string,
+  platform: NodeJS.Platform
+): string[] {
+  const inherited = SERVICE_DEFAULT_PATH[platform] ?? [];
+  if (reading === null || reading.path === null) return inherited;
+  return [
+    ...startPathValue(reading.path, home),
+    ...(/\$\{?PATH\}?/.test(reading.path) ? inherited : []),
+  ];
 }
 
 /** The values a start.sh's carried `export` lines set, unquoted. */

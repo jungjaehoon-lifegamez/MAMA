@@ -31,6 +31,27 @@ export interface AuthRequirement extends AuthConfig {
   description: string;
 }
 
+/** A command a source runs (its `type: 'cli'` requirement), how a person installs it, its login. */
+export interface SourceTool {
+  /** The command's name, as `cli` in the requirement and in connectors.json. */
+  readonly command: string;
+  /** The arguments after the command that sign it in. */
+  readonly loginArgs: string;
+  /** The npm package that installs the command. */
+  readonly npmPackage: string;
+  /** The Homebrew formula that installs the command. */
+  readonly brewFormula: string;
+}
+
+/** The `type: 'cli'` requirement that names a tool, as connectors.json and the source carry it. */
+export function cliAuth(tool: SourceTool): AuthConfig {
+  return {
+    type: 'cli',
+    cli: tool.command,
+    cliAuthCommand: `${tool.command} ${tool.loginArgs}`,
+  };
+}
+
 export interface ConnectorConfig {
   enabled: boolean;
   pollIntervalMinutes: number;
