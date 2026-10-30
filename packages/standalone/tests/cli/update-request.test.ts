@@ -219,8 +219,10 @@ describe('/update, the daemon side', () => {
       PRINTED.starting,
       // Loaded, never run yet: launchd has not spawned it.
       '\tstate = not running\n\tlast exit code = (never exited)\n',
-      // No exit code line at all.
-      '\tstate = not running\n',
+      // Neither an exit code nor a terminating signal.
+      '\tstate = not running\n\truns = 1\n',
+      // Only a nested section says not running; the job's own state is xpcproxy.
+      '\tstate = xpcproxy\n\tpid = 4243\n\tlast exit code = (never exited)\n\t\tstate = not running\n\t\tlast exit code = 0\n',
       PRINTED.running,
     ]) {
       const f = fixture();
@@ -243,6 +245,35 @@ describe('/update, the daemon side', () => {
       expect(calls).toEqual([['launchctl', 'print', 'gui/501/com.mama.update']]);
       expect(existsSync(updateRequestPath(f.root))).toBe(false);
     }
+  });
+
+  it.each([
+    ['exited', '\tstate = not running\n\truns = 1\n\tlast exit code = 0\n'],
+    // As launchctl print shows a one-shot job sent kill -9 (no exit code line at all).
+    ['killed', '\tstate = not running\n\truns = 1\n\tlast terminating signal = Killed: 9\n'],
+  ])('boots out a job that %s and starts the update again', (_how, printed) => {
+    const f = fixture();
+    vi.stubEnv('HOME', f.home);
+    const calls: string[][] = [];
+    const result = requestUpdate({
+      mamaRoot: f.root,
+      home: f.home,
+      origin: { chatId: '7101', messageId: 31 },
+      version: '1.0.0',
+      platform: 'darwin',
+      run: (command, args) => {
+        calls.push([command, ...args]);
+        return done(0, args[0] === 'print' ? printed : '');
+      },
+      uid: 501,
+      log: () => {},
+    });
+    expect(result.kind).toBe('started');
+    expect(calls.map((call) => call.slice(0, 2).join(' '))).toEqual([
+      'launchctl print',
+      'launchctl bootout',
+      'launchctl bootstrap',
+    ]);
   });
 
   it('starts with a release check it cannot read, and logs why the reply names no target', () => {

@@ -183,34 +183,47 @@ describe('/update progress', () => {
     expect(f.telegram).toEqual([]);
   });
 
-  it('drops what is unsent when the flush passes its deadline, and sends what comes after', async () => {
+  it('past the flush deadline drops queued steps but still sends the outcome', async () => {
     const f = reported();
     const log: string[] = [];
     const calls: string[] = [];
-    let hang = true;
     vi.useFakeTimers();
     try {
       const sink = telegramProgress({
         root: f.root,
         log: (line) => log.push(line),
-        call: async (_token, _method, params = {}) => {
+        // A slow Bot API: each send ends only at its own timeout.
+        call: async (_token, _method, params = {}, timeoutMs) => {
           calls.push(params.text);
-          // A Bot API that does not answer; the real call ends on its own timeout.
-          if (hang) await new Promise(() => {});
+          await new Promise((resolve) => setTimeout(resolve, timeoutMs));
           return { ok: true };
         },
       });
       for (const step of [6, 7, 8]) sink.send({ kind: 'step', from: '1.0.0', to: '1.1.0', step });
-      const flushed = sink.flush();
+      sink.send({ kind: 'updated', from: '1.0.0', to: '1.1.0', running: true });
+      let flushed = false;
+      const flush = sink.flush().then(() => {
+        flushed = true;
+      });
+      // Step 6 is sent by 3 s; step 7 is in flight at the 5 s deadline; step 8 is still queued.
       await vi.advanceTimersByTimeAsync(PROGRESS_FLUSH_DEADLINE_MS);
-      await flushed;
       expect(log).toEqual([
-        `update progress: 3 message(s) not sent within ${PROGRESS_FLUSH_DEADLINE_MS} ms; dropped`,
+        `update progress: 1 step message(s) not sent within ${PROGRESS_FLUSH_DEADLINE_MS} ms; dropped`,
       ]);
-      expect(calls).toEqual(['update 1.0.0 → 1.1.0: step 6 (drain and stop)']);
-      hang = false;
+      expect(flushed).toBe(false);
+      // Step 7 ends at 6 s, the outcome at 9 s: each within its own timeout.
+      await vi.advanceTimersByTimeAsync(2 * PROGRESS_SEND_TIMEOUT_MS);
+      await flush;
+      expect(calls).toEqual([
+        'update 1.0.0 → 1.1.0: step 6 (drain and stop)',
+        'update 1.0.0 → 1.1.0: step 7 (snapshot)',
+        'updated: 1.0.0 → 1.1.0; it runs',
+      ]);
+      // What comes after the flush is sent as usual.
       sink.send({ kind: 'step', from: '1.0.0', to: '1.1.0', step: 9 });
-      await sink.flush();
+      const next = sink.flush();
+      await vi.advanceTimersByTimeAsync(PROGRESS_SEND_TIMEOUT_MS);
+      await next;
       expect(calls.at(-1)).toBe('update 1.0.0 → 1.1.0: step 9 (hand over to the new version)');
     } finally {
       vi.useRealTimers();

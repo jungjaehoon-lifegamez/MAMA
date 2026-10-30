@@ -108,8 +108,9 @@ export function progressText(event: UpdateProgress): string {
 export interface ProgressSink {
   send(event: UpdateProgress): void;
   /**
-   * Wait until every event sent so far has gone out (or failed and been logged), for at most
-   * PROGRESS_FLUSH_DEADLINE_MS; what is still unsent then is dropped and counted in the log.
+   * Wait until every event sent so far has gone out (or failed and been logged). Past
+   * PROGRESS_FLUSH_DEADLINE_MS, step messages not yet sent are dropped and counted in the log;
+   * the outcomes (updated, failed, rolled back, …) are still sent, each within its own timeout.
    */
   flush(): Promise<void>;
 }
@@ -120,7 +121,10 @@ export interface ProgressSink {
  * a second when it answers at all.
  */
 export const PROGRESS_SEND_TIMEOUT_MS = 3_000;
-/** The whole flush's limit, however many sends wait: the stopped window grows by at most this. */
+/**
+ * How long a flush waits for step messages: past it, the steps still queued are dropped, so a
+ * slow Bot API holds the stopped install for this plus the few outcome sends at most.
+ */
 export const PROGRESS_FLUSH_DEADLINE_MS = 5_000;
 
 export const NO_PROGRESS: ProgressSink = {
@@ -145,8 +149,8 @@ export function telegramProgress(options: {
   const call = options.call ?? defaultTelegramCall;
   let target: { token: string; chatId: string } | null = null;
   let chain = Promise.resolve();
-  /** Sends queued or in flight; a flush past its deadline drops the queued ones. */
-  let pending = 0;
+  /** Step messages queued and not yet begun; a flush past its deadline drops them. */
+  let queuedSteps = 0;
   let generation = 0;
   let lastStep: number | null = null;
   const deliver = async (text: string): Promise<void> => {
@@ -185,13 +189,14 @@ export function telegramProgress(options: {
       }
       const text = progressText(event);
       const queuedIn = generation;
-      pending += 1;
+      const isStep = event.kind === 'step';
+      if (isStep) queuedSteps += 1;
       chain = chain.then(async () => {
-        try {
-          if (queuedIn === generation) await deliver(text);
-        } finally {
-          pending -= 1;
+        if (isStep) {
+          queuedSteps -= 1;
+          if (queuedIn !== generation) return;
         }
+        await deliver(text);
       });
     },
     flush: async () => {
@@ -202,12 +207,13 @@ export function telegramProgress(options: {
       const outcome = await Promise.race([chain.then(() => 'sent' as const), late]);
       clearTimeout(timer);
       if (outcome === 'late') {
-        // The one in flight ends on its own timeout; those queued behind it are not sent.
+        // Steps queued now are skipped; the one in flight and the outcomes still go, each
+        // within PROGRESS_SEND_TIMEOUT_MS.
         options.log(
-          `update progress: ${pending} message(s) not sent within ${PROGRESS_FLUSH_DEADLINE_MS} ms; dropped`
+          `update progress: ${queuedSteps} step message(s) not sent within ${PROGRESS_FLUSH_DEADLINE_MS} ms; dropped`
         );
         generation += 1;
-        chain = Promise.resolve();
+        await chain;
       }
     },
   };

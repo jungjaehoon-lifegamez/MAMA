@@ -78,9 +78,9 @@ export interface UpdateJobOptions {
 }
 
 /**
- * The update job as `launchctl print` shows it: not loaded; finished (`state = not running` with
- * a `last exit code`), which a new /update boots out; or anything else loaded, which runs or is
- * starting. Two /update messages are answered concurrently, and right after a bootstrap the job
+ * The update job as `launchctl print` shows it: not loaded; finished (the top-level `state = not
+ * running` with a real `last exit code`, or a `last terminating signal` for a job killed by one),
+ * which a new /update boots out; or anything else loaded, which runs or is starting. Two /update messages are answered concurrently, and right after a bootstrap the job
  * can be loaded with no pid yet; booting that out would kill the update the first one started.
  */
 function launchdJob(run: ServiceRun, uid: number): 'none' | 'finished' | 'running' {
@@ -90,8 +90,11 @@ function launchdJob(run: ServiceRun, uid: number): 'none' | 'finished' | 'runnin
   if (result.status !== 0) {
     throw new Error(`launchctl print ${UPDATE_JOB_LABEL} failed: exit ${String(result.status)}`);
   }
-  const state = /^\s*state = (.+?)\s*$/m.exec(result.stdout)?.[1];
-  const exited = /^\s*last exit code = (?!\(never exited\))\S/m.test(result.stdout);
+  // Top-level lines carry one tab; the nested sections' own `state = active` lines carry two.
+  const state = /^\tstate = (.+?)\s*$/m.exec(result.stdout)?.[1];
+  const exited =
+    /^\tlast exit code = (?!\(never exited\))\S/m.test(result.stdout) ||
+    /^\tlast terminating signal = \S/m.test(result.stdout);
   return state === 'not running' && exited ? 'finished' : 'running';
 }
 
