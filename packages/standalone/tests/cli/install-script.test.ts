@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -17,6 +18,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -215,8 +217,79 @@ describe('install.sh', () => {
     seedInstall();
     const result = await run(['--backend', 'codex', '--no-init'], { SHELL: '/usr/bin/fish' });
     expect(result.status, result.output).toBe(0);
-    expect(result.output).toContain(`fish_add_path ${join(root(), 'bin')}`);
+    expect(result.output).toContain(`In fish, run once: fish_add_path ${join(root(), 'bin')}`);
+    expect(result.output).not.toContain('Open a new terminal');
     expect(readdirSync(home).sort()).toEqual(['.mama']);
+  });
+
+  it('zsh with ZDOTDIR: the block goes in $ZDOTDIR/.zshrc', async () => {
+    seedInstall();
+    const zdotdir = join(home, '.config', 'zsh');
+    mkdirSync(zdotdir, { recursive: true });
+    const result = await run(['--backend', 'codex', '--no-init'], { ZDOTDIR: zdotdir });
+    expect(result.status, result.output).toBe(0);
+    expect(readFileSync(join(zdotdir, '.zshrc'), 'utf8')).toBe(`${block()}\n`);
+    expect(existsSync(join(home, '.zshrc'))).toBe(false);
+  });
+
+  it('a read-only startup file is refused with exit 1 and left as it was', async () => {
+    seedInstall();
+    const rc = join(home, '.zshrc');
+    writeFileSync(rc, 'mine\n');
+    chmodSync(rc, 0o444);
+    const result = await run(['--backend', 'codex', '--no-init']);
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain(`could not write ${rc}`);
+    expect(result.output).not.toContain('Installed.');
+    expect(readFileSync(rc, 'utf8')).toBe('mine\n');
+    expect(statSync(rc).mode & 0o777).toBe(0o444);
+    // The temporary file beside it is removed on the way out.
+    expect(readdirSync(home).sort()).toEqual(['.mama', '.zshrc']);
+  });
+
+  it('a wrapper that cannot be written is refused with exit 1', async () => {
+    seedInstall();
+    mkdirSync(join(root(), 'bin'), { mode: 0o500 });
+    const result = await run(['--backend', 'codex', '--no-init']);
+    chmodSync(join(root(), 'bin'), 0o700);
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain(`could not write ${join(root(), 'bin', 'mama')}`);
+    expect(readdirSync(join(root(), 'bin'))).toEqual([]);
+  });
+
+  it('a startup file that is a link stays a link; its target gets the block', async () => {
+    seedInstall();
+    mkdirSync(join(home, 'dotfiles'));
+    const target = join(home, 'dotfiles', 'zshrc');
+    writeFileSync(target, 'mine\n');
+    chmodSync(target, 0o644);
+    symlinkSync('dotfiles/zshrc', join(home, '.zshrc'));
+    const result = await run(['--backend', 'codex', '--no-init']);
+    expect(result.status, result.output).toBe(0);
+    expect(lstatSync(join(home, '.zshrc')).isSymbolicLink()).toBe(true);
+    expect(readFileSync(target, 'utf8')).toBe(`mine\n\n${block()}\n`);
+    // The mode is the file's own, not the installer's umask.
+    expect(statSync(target).mode & 0o777).toBe(0o644);
+  });
+
+  it('a startup file with CRLF line ends keeps one block across runs', async () => {
+    seedInstall();
+    const rc = join(home, '.zshrc');
+    writeFileSync(rc, 'mine\r\n# >>> mama >>>\r\nexport PATH="/old:$PATH"\r\n# <<< mama <<<\r\n');
+    expect((await run(['--backend', 'codex', '--no-init'])).status).toBe(0);
+    const once = readFileSync(rc, 'utf8');
+    expect(once).toBe(`mine\r\n${block()}\n`);
+    expect((await run(['--backend', 'codex', '--no-init'])).status).toBe(0);
+    expect(readFileSync(rc, 'utf8')).toBe(once);
+  });
+
+  it('removes what a killed run left beside the managed Node', async () => {
+    seedInstall();
+    mkdirSync(join(root(), 'node.4242.tmp'));
+    writeFileSync(join(root(), 'node.4242.tar.gz'), 'partial');
+    writeFileSync(join(root(), 'backend-install.4242.sh'), 'partial');
+    expect((await run(['--backend', 'codex', '--no-init'])).status).toBe(0);
+    expect(readdirSync(root()).sort()).toEqual(['bin', 'node', 'npm']);
   });
 
   it('refuses a startup file whose block has no end marker, changing nothing', async () => {

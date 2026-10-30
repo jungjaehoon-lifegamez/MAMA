@@ -48,10 +48,13 @@ else
 fi
 
 # Sync doc versions, and the install script's MAMA OS version and Node pin, with package.json and
-# install/node.json (auto-stage if changed)
+# install/node.json (auto-stage if changed). The script is staged only when the sync rewrote it, so
+# its own unstaged changes stay unstaged.
+INSTALL_SH=packages/standalone/install/install.sh
+INSTALL_SH_BEFORE=$(git hash-object "$INSTALL_SH")
 node scripts/sync-versions.js
-git diff --quiet -- README.md packages/*/README.md packages/claude-code-plugin/.mcp.json packages/standalone/install/install.sh ||
-  git add README.md packages/*/README.md packages/claude-code-plugin/.mcp.json packages/standalone/install/install.sh
+git diff --quiet -- README.md packages/*/README.md packages/claude-code-plugin/.mcp.json || git add README.md packages/*/README.md packages/claude-code-plugin/.mcp.json
+[ "$(git hash-object "$INSTALL_SH")" = "$INSTALL_SH_BEFORE" ] || git add "$INSTALL_SH"
 
 # Run typecheck for standalone package
 echo "Running typecheck..."

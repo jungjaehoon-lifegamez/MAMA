@@ -10,8 +10,8 @@
  *    `~/.mama/bin/mama service install` through the stand-in service manager with another Node
  *    first on PATH: start.sh names the managed Node, installKind is npm at ~/.mama/npm, doctor's
  *    Node check is ok, and `mama update N+1 --dry-run` shows N → N+1.
- * 3. A second run changes no file; a run cut off after Node skips Node the next time; a truncated
- *    script runs nothing.
+ * 3. A second run changes no file; a run on a finished install exits 0 at init's status; a run cut
+ *    off after Node skips Node the next time; a truncated script runs nothing.
  * 4. With --vendor-installers (CI only): codex in step 1 and claude here come from their vendors'
  *    installers as the script runs them, with no terminal, at or above backend-probe.ts's minimums.
  *    Without it a stub codex is first on PATH, so the script finds a backend and installs none.
@@ -355,6 +355,20 @@ try {
   expect(second.status === 0, `the second run exited ${second.status}`);
   const changed = sameSnapshot(before, Object.assign({}, ...watched.map(snapshot)));
   expect(changed.length === 0, `the second run changed ${changed.join(', ')}`);
+
+  // A run on a finished install ends at init's status and exits 0. Init's service step is
+  // recorded as done here, since this check boots no daemon to finish it.
+  capture(managedNode, [join(here, 'managed.mjs'), 'finish', packageRoot], { ...base, HOME: home });
+  const finished = await runScript(
+    'finished',
+    text,
+    ['--backend', 'codex', '--non-interactive'],
+    scriptEnv(home)
+  );
+  expect(
+    finished.status === 0 && finished.output.includes('MAMA is already set up here'),
+    `a run on a finished install exited ${finished.status}`
+  );
 
   // A run cut off after Node (npm cannot reach its registry) skips Node the next time.
   const cutHome = join(root, 'cut-home');

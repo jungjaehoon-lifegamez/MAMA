@@ -143,7 +143,14 @@ mama_install() {
   # umask 077 above; 022 inside, or the parent would be 0700 and init's folder check would fail.
   if [ "$os" = linux ]; then
     user=$(id -un)
-    if ! printf '%s\n' "$user" | LC_ALL=C grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$'; then
+    # default-roots.ts's pattern, ^[A-Za-z0-9][A-Za-z0-9._-]*$, spelled out: a range in a
+    # bracket expression follows the locale.
+    alnum=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
+    case $user in
+      '' | [!$alnum]* | *[!$alnum._-]*) user_ok=no ;;
+      *) user_ok=yes ;;
+    esac
+    if [ "$user_ok" = no ]; then
       say "The user name $user has characters MAMA's default folders do not take, so nothing is run with sudo; mama init asks for two folders outside your home instead."
     elif [ -n "$(find /var/lib/mama -prune -type d -user 0 -perm 0755 2>/dev/null)" ] &&
       [ -n "$(find "/var/lib/mama/$user" -prune -type d -user "$(id -u)" -perm 0700 2>/dev/null)" ] &&
@@ -165,10 +172,13 @@ mama_install() {
   download=$root/node.$$.tar.gz
   unpack=$root/node.$$.tmp
   vendor_script=$root/backend-install.$$.sh
-  trap 'rm -rf "$download" "$unpack" "$vendor_script"' EXIT
+  write_tmp=''
+  trap 'rm -rf "$download" "$unpack" "$vendor_script" ${write_tmp:+"$write_tmp"}' EXIT
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
+  # What a run killed outright (SIGKILL, a power cut) left behind.
+  rm -rf "$root"/node.*.tmp "$root"/node.*.tar.gz "$root"/backend-install.*.sh
 
   # Node.js: the pinned release, checked against the pinned SHA-256.
   node_now=''
@@ -230,15 +240,32 @@ mama_install() {
 
   # `mama`: the managed Node on the package's CLI by full paths. The bin's own `#!/usr/bin/env node`
   # would run whichever Node comes first, or none on a clean account.
+  # write_file writes $2 to $1 when it differs, and returns 1 when it does not. It writes a
+  # temporary file beside the real one (a link is followed to its target, so the link stays) and
+  # renames it into place, so a failed write, a full disk included, leaves the old file whole. The
+  # temporary file starts as a copy of the old one, mode included, so a read-only file is refused.
   write_file() {
-    if [ -f "$1" ] && printf '%s\n' "$2" | cmp -s - "$1"; then return 1; fi
-    mkdir -p "$(dirname "$1")"
-    # Through the existing file, so a startup file that is a link stays one.
-    printf '%s\n' "$2" >"$1"
+    write_target=$1
+    while [ -L "$write_target" ]; do
+      write_link=$(readlink "$write_target") || fail "could not read the link $write_target"
+      case $write_link in
+        /*) write_target=$write_link ;;
+        *) write_target=$(dirname "$write_target")/$write_link ;;
+      esac
+    done
+    if [ -f "$write_target" ] && printf '%s\n' "$2" | cmp -s - "$write_target"; then return 1; fi
+    mkdir -p "$(dirname "$write_target")" || fail "could not create $(dirname "$write_target")"
+    write_tmp=$write_target.mama.$$
+    if [ -e "$write_target" ]; then
+      cp -p "$write_target" "$write_tmp" || fail "could not write $1"
+    fi
+    printf '%s\n' "$2" >"$write_tmp" || fail "could not write $1"
+    mv -f "$write_tmp" "$write_target" || fail "could not write $1"
+    write_tmp=''
   }
   if write_file "$wrapper" "#!/bin/sh
 exec $(quote "$node_dir/bin/node") $(quote "$cli") \"\$@\""; then
-    chmod 700 "$wrapper"
+    chmod 700 "$wrapper" || fail "could not make $wrapper executable"
     say "mama command written: $wrapper"
   fi
   other=$(command -v mama 2>/dev/null || true)
@@ -295,8 +322,9 @@ exec $(quote "$node_dir/bin/node") $(quote "$cli") \"\$@\""; then
     fish_dirs="$fish_dirs $HOME/.local/bin"
   fi
   startup=''
+  reopen='Open a new terminal'
   case $(basename "${SHELL:-sh}") in
-    zsh) startup=$HOME/.zshrc ;;
+    zsh) startup=${ZDOTDIR:-$HOME}/.zshrc ;;
     bash)
       if [ "$os" = linux ]; then
         startup=$HOME/.bashrc
@@ -307,7 +335,8 @@ exec $(quote "$node_dir/bin/node") $(quote "$cli") \"\$@\""; then
       fi
       ;;
     fish)
-      say "fish: run once to put mama on PATH: fish_add_path $fish_dirs"
+      reopen="In fish, run once: fish_add_path $fish_dirs"
+      say "fish: no startup file is written. $reopen"
       ;;
     *) startup=$HOME/.profile ;;
   esac
@@ -317,25 +346,25 @@ exec $(quote "$node_dir/bin/node") $(quote "$cli") \"\$@\""; then
 $path_line
 # <<< mama <<<"
     current=''
-    if [ -f "$startup" ]; then
-      opened=$(grep -c '^# >>> mama >>>$' "$startup" || true)
-      closed=$(grep -c '^# <<< mama <<<$' "$startup" || true)
-      [ "$opened" = "$closed" ] ||
-        fail "$startup has a '# >>> mama >>>' line without its '# <<< mama <<<' line, or the other way round; fix it, then run this installer again"
-      current=$(cat "$startup")
+    if [ -e "$startup" ]; then
+      current=$(cat "$startup") || fail "could not read $startup"
     fi
+    # Markers match with a trailing carriage return too (a file saved with CRLF line ends). Unequal
+    # counts exit 3: a block without its end line would otherwise swallow the rest of the file.
     updated=$(printf '%s\n' "$current" | MAMA_BLOCK=$block awk '
-      $0 == "# >>> mama >>>" { if (!done) print ENVIRON["MAMA_BLOCK"]; done = 1; skip = 1; next }
-      skip { if ($0 == "# <<< mama <<<") skip = 0; next }
-      { print }
+      { line = $0; sub(/\r$/, "", line) }
+      line == "# >>> mama >>>" { opened++; if (!done) print ENVIRON["MAMA_BLOCK"]; done = 1; skip = 1; next }
+      line == "# <<< mama <<<" { closed++; if (skip) { skip = 0; next } }
+      skip { next }
+      { print; last = line }
       END {
+        if (opened != closed) exit 3
         if (!done) {
           if (NR > 0 && last != "") print ""
           print ENVIRON["MAMA_BLOCK"]
         }
       }
-      { last = $0 }
-    ')
+    ') || fail "$startup has a '# >>> mama >>>' line without its '# <<< mama <<<' line, or the other way round; fix it, then run this installer again"
     # An absent or empty file gets the block alone.
     [ -n "$current" ] || updated=$block
     if write_file "$startup" "$updated"; then
@@ -346,7 +375,7 @@ $path_line
   # mama init: npm and init run by full path with the managed Node first on PATH.
   case $init_mode in
     no-init)
-      say "Installed. Open a new terminal and run: mama init"
+      say "Installed. $reopen, then run: mama init"
       say "(or now: $wrapper init)"
       ;;
     non-interactive)
@@ -355,7 +384,7 @@ $path_line
     terminal)
       # mama init requires a terminal on both stdin and stdout.
       PATH="$node_dir/bin:$PATH" "$wrapper" init </dev/tty >/dev/tty
-      say "Open a new terminal to have mama on PATH."
+      say "$reopen to have mama on PATH."
       ;;
   esac
 }

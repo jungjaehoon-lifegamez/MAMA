@@ -4,6 +4,8 @@
  *
  *   managed.mjs init <packageRoot>   mama init with fixed answers, stopped before the service step
  *   managed.mjs kind <packageRoot>   installKind of this HOME's install, as JSON
+ *   managed.mjs finish <packageRoot> record init's service step as done, as a real boot would:
+ *                                    the check boots no daemon (no service manager, no model)
  *
  * Init's answers are the `--non-interactive` ones (MAMA_INIT_*): the interactive init pairs the
  * owner over Telegram, which the check has no bot for. The Bot API is a stand-in that accepts the
@@ -21,6 +23,11 @@ const home = homedir();
 if (command === 'kind') {
   const { installKind } = await load('cli/runtime/install-kind.js');
   process.stdout.write(JSON.stringify(installKind(join(home, '.mama'), home)));
+} else if (command === 'finish') {
+  const { readInitState, writeInitState } = await load('cli/runtime/init-state.js');
+  const root = join(home, '.mama');
+  const state = readInitState(root);
+  writeInitState(root, { version: state.version, done: [...state.done, 'service'] });
 } else if (command === 'init') {
   const { runInit } = await load('cli/commands/init.js');
   // The service step is the check's next step, through ~/.mama/bin/mama, as the owner runs it.
@@ -65,5 +72,5 @@ if (command === 'kind') {
     }
   }
 } else {
-  throw new Error(`usage: managed.mjs init|kind <packageRoot>`);
+  throw new Error(`usage: managed.mjs init|kind|finish <packageRoot>`);
 }

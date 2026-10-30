@@ -416,10 +416,13 @@ export async function runInit(
       // An install set up before init kept its steps, or by hand: init will not take it over.
       if (state === null)
         throw new CliInputError('config.yaml already exists; init will not overwrite it.');
-      if (initComplete(state))
-        throw new CliInputError(
+      // A status, not a refusal: running the install command again on a set-up install ends here.
+      if (initComplete(state)) {
+        write(
           'MAMA is already set up here; mama doctor checks it and mama service restart restarts it.'
         );
+        return;
+      }
       write(`continuing setup: done so far: ${state.done.join(', ')}`);
     } else {
       state = null;

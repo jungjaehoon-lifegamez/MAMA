@@ -565,10 +565,13 @@ describe('mama init', () => {
     } finally {
       daemon.release();
     }
-    // A finished setup is not run again.
-    await expect(runInit([], options(prompt([], []).adapter))).rejects.toThrow(
-      /already set up here/
-    );
+    // A finished setup is not run again; saying so is a status, so the command exits 0.
+    const finished = prompt([], []);
+    const o = options(finished.adapter);
+    await runInit([], o);
+    expect(finished.output.join('\n')).toContain('MAMA is already set up here');
+    expect(o.started).toEqual([]);
+    expect(readInitState(root)?.done).toEqual(['config', 'owner', 'toolkit', 'service']);
   });
 
   it("picks the next free viewer port when another account's MAMA has the default", async () => {

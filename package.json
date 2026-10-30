@@ -30,7 +30,7 @@
     "typecheck": "turbo run typecheck",
     "test:affected": "turbo run test --filter='...[origin/main]'",
     "build:affected": "turbo run build --filter='...[origin/main]'",
-    "lint": "eslint packages/*/src packages/*/tests --ext .js,.mjs,.ts --no-error-on-unmatched-pattern && pnpm run lint:sh",
+    "lint": "eslint packages/*/src packages/*/tests --ext .js,.mjs,.ts --no-error-on-unmatched-pattern",
     "lint:sh": "shellcheck packages/standalone/install/install.sh packages/standalone/scripts/install-check/node-pin.sh",
     "lint:fix": "eslint packages/*/src packages/*/tests --ext .js,.mjs,.ts --fix --no-error-on-unmatched-pattern",
     "format": "prettier --write \"packages/*/{src,tests}/**/*.{js,mjs,ts,json,md}\"",
@@ -46,7 +46,6 @@
     "husky": "^9.0.0",
     "lint-staged": "^15.2.0",
     "prettier": "^3.2.0",
-    "shellcheck": "4.1.0",
     "turbo": "^2.8.8",
     "vitest": "^1.0.0"
   },

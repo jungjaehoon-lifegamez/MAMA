@@ -160,6 +160,17 @@ jobs:
           echo "$CHANGELOG" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
+      # The install command attached to this release installs the MAMA OS version it names; a
+      # mismatch is refused here, before the tag and any publish (docs/development/work/install.md).
+      - name: Check the install script names this release
+        run: |
+          VERSION="${{ steps.versions.outputs.mama_os }}"
+          NAMED=$(sed -n 's/^ *MAMA_OS_VERSION=//p' packages/standalone/install/install.sh)
+          if [[ "$NAMED" != "$VERSION" ]]; then
+            echo "::error::install.sh installs mama-os '$NAMED', not $VERSION; node scripts/sync-versions.js writes it"
+            exit 1
+          fi
+
       - name: Commit version bumps
         if: ${{ !inputs.dry_run && inputs.bump_versions }}
         run: |
@@ -454,16 +465,11 @@ jobs:
         with:
           ref: ${{ needs.prepare-release.outputs.release_tag }}
 
-      # The install command (install.sh) installs the MAMA OS version it names, so it is attached
-      # only when that is this release and npm serves it (docs/development/work/install.md).
-      - name: Check the install script names this release on npm
+      # The install command (install.sh, its version checked in prepare-release) installs this
+      # MAMA OS from npm, so it is attached only once npm serves it.
+      - name: Wait for npm to serve this MAMA OS
         run: |
           VERSION="${{ needs.prepare-release.outputs.mama_os_version }}"
-          NAMED=$(sed -n 's/^ *MAMA_OS_VERSION=//p' packages/standalone/install/install.sh)
-          if [[ "$NAMED" != "$VERSION" ]]; then
-            echo "::error::install.sh installs mama-os '$NAMED', not $VERSION; node scripts/sync-versions.js writes it"
-            exit 1
-          fi
           # The registry can show a publish from an earlier job a few minutes late.
           PUBLISHED=""
           for attempt in $(seq 1 10); do
