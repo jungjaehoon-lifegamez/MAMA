@@ -21,6 +21,9 @@ afterEach(() => {
 function setup() {
   const queued: ScheduledInput[] = [];
   const sent: string[] = [];
+  const retired: string[] = [];
+  const logs: string[] = [];
+  const held: Array<[string, string]> = [];
   const statePath = join(root, 'runtime', 'report-schedule-state.json');
   let pending = false;
   let send = async (text: string) => {
@@ -42,8 +45,13 @@ function setup() {
         return { state: 'accepted' as const, inputId: input.id };
       },
     },
-    hasPendingReport: () => pending,
+    hasPendingReport: (report: string, hourKey: string) => {
+      held.push([report, hourKey]);
+      return pending;
+    },
     sendToOwner: (text: string, _key: string) => send(text),
+    retireUndelivered: (key: string) => retired.push(key),
+    log: (line: string) => logs.push(line),
     onError: (error: unknown) => {
       throw error;
     },
@@ -53,6 +61,9 @@ function setup() {
     scheduler: createReportScheduler(options),
     queued,
     sent,
+    retired,
+    logs,
+    held,
     statePath,
     setPending: (value: boolean) => {
       pending = value;
@@ -216,7 +227,7 @@ describe('KST report scheduler', () => {
     expect(ctx.queued).toHaveLength(1);
   });
 
-  it('leaves a failed send unwritten and asks the model again on the next tick', async () => {
+  it('leaves a failed send unwritten, holds its hour, and saves the hour once the stored result is sent', async () => {
     const ctx = setup();
     const now = new Date('2026-01-01T04:00:00Z');
     ctx.scheduler.tick(now);
@@ -227,18 +238,46 @@ describe('KST report scheduler', () => {
       'send failed'
     );
     expect(existsSync(ctx.statePath)).toBe(false);
-    // The runtime parks the accepted failure uncertain, so it is no longer pending.
-    ctx.setPending(false);
+    // The parked turn holds a saved result for this report and hour, so the daemon says pending.
     ctx.scheduler.tick(new Date(now.getTime() + 60_000));
-    expect(ctx.queued).toHaveLength(2);
-    expect(ctx.queued[0]!.id).not.toBe(ctx.queued[1]!.id);
+    expect(ctx.held.at(-1)).toEqual(['full', '2026-01-01:13']);
+    expect(ctx.queued).toHaveLength(1);
+    // Reconciliation sends the same stored result.
     ctx.setSend(async (text) => {
       ctx.sent.push(text);
     });
-    await ctx.scheduler.onResult(ctx.result(), { response: 'new report' });
-    expect(ctx.sent).toEqual(['new report']);
+    await ctx.scheduler.onResult(ctx.result(), { response: 'report' });
+    expect(ctx.sent).toEqual(['report']);
     expect(JSON.parse(readFileSync(ctx.statePath, 'utf8')).lastFullKey).toBe('2026-01-01:13');
   });
+
+  it.each([
+    ['full', { lastFullKey: '2026-01-01:18', lastReminderKey: null }],
+    ['reminder', { lastFullKey: null, lastReminderKey: '2026-01-01:14' }],
+  ] as const)(
+    'skips a %s report older than the latest sent hour and retires its receipt',
+    async (report, saved) => {
+      const ctx = setup();
+      mkdirSync(join(root, 'runtime'), { recursive: true });
+      const stored = JSON.stringify(saved);
+      writeFileSync(ctx.statePath, stored);
+      const scheduler = createReportScheduler(ctx.options);
+      await scheduler.onResult(
+        {
+          stimulusId: 'report:2026-01-01:13:fixture',
+          payload: { report, hourKey: '2026-01-01:13', previousFullReportAt: '2026-01-01:08' },
+          occurredAt: 0,
+        },
+        { response: 'an old report' }
+      );
+      expect(ctx.sent).toEqual([]);
+      expect(ctx.retired).toEqual([`report:2026-01-01:13:${report}`]);
+      expect(ctx.logs).toEqual([
+        `scheduled report superseded stimulus_id=report:2026-01-01:13:fixture report=${report} hour=2026-01-01:13 latest=${report === 'full' ? saved.lastFullKey : saved.lastReminderKey}`,
+      ]);
+      expect(readFileSync(ctx.statePath, 'utf8')).toBe(stored);
+    }
+  );
 
   it.each([
     ['2026-01-01T00:00:00Z', 'reminder', '2026-01-01:09'],

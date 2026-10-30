@@ -11,7 +11,7 @@ import type { OwnerMessageInput, TurnIntake } from '../../gateways/turn-contract
 import { TelegramGateway, type TelegramGatewayOptions } from '../../gateways/telegram.js';
 import { DiscordGateway, type DiscordGatewayOptions } from '../../gateways/discord.js';
 import { SlackGateway, type SlackGatewayOptions } from '../../gateways/slack.js';
-import { OwnerMessageLedger } from '../../gateways/telegram-message-ledger.js';
+import { OwnerMessageLedger, outboundLedgerKey } from '../../gateways/telegram-message-ledger.js';
 import {
   sourceDeltaStimulusId,
   stimulusFailureReason,
@@ -1257,15 +1257,18 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
             return receipt;
           },
         },
-        hasPendingReport: () =>
+        hasPendingReport: (report, hourKey) =>
           Boolean(
             owner!.database.adapter
               .prepare(
-                `SELECT 1 FROM mailbox_inputs m LEFT JOIN native_input_deliveries n ON n.input_id = m.id WHERE m.principal_id = ? AND m.kind = 'scheduled' AND m.channel_key = 'schedule' AND m.status IN ('pending', 'claimed') AND (n.state IS NULL OR n.state != 'uncertain') LIMIT 1`
+                `SELECT 1 FROM mailbox_inputs m LEFT JOIN native_input_deliveries n ON n.input_id = m.id WHERE m.principal_id = ? AND m.kind = 'scheduled' AND m.channel_key = 'schedule' AND m.status IN ('pending', 'claimed') AND (n.state IS NULL OR n.state != 'uncertain' OR (json_extract(m.payload_json, '$.report') = ? AND json_extract(m.payload_json, '$.hourKey') = ? AND EXISTS (SELECT 1 FROM native_turn_results r WHERE r.receipt_json = n.receipt_json AND r.principal_id = m.principal_id))) LIMIT 1`
               )
-              .get(OWNER_PRINCIPAL_ID)
+              .get(OWNER_PRINCIPAL_ID, report, hourKey)
           ),
         sendToOwner: (text, key) => gateways.get(reportRoute)!.sendToOwner(text, key),
+        // Every messenger keys outbound text the same way in the one shared ledger.
+        retireUndelivered: (key) => messageLedger!.retireUndelivered(outboundLedgerKey(key)),
+        log: (line) => logger.info(line),
         onError: (error) =>
           logger.error(`report scheduler failed reason=${stimulusFailureReason(error)}`),
       });

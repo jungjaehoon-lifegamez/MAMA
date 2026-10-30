@@ -27,9 +27,16 @@ export interface ReportSchedulerOptions {
    * then.
    */
   dailyPages?: { written(day: string, since: number): boolean };
-  /** Includes queued/retrying inputs across restarts, excludes uncertain failed turns. */
-  hasPendingReport: () => boolean;
+  /**
+   * Includes queued/retrying inputs across restarts. An uncertain turn holds only its own report
+   * and hour, and only with a saved result: reconciliation resends that result, so a new turn
+   * would only write a second text under the same delivery key.
+   */
+  hasPendingReport: (report: 'full' | 'reminder' | 'daily', hourKey: string) => boolean;
   sendToOwner: (text: string, idempotencyKey: string) => Promise<void>;
+  /** Drop the owner-message receipt a superseded report left undelivered under this key. */
+  retireUndelivered: (idempotencyKey: string) => void;
+  log: (line: string) => void;
   onError: (error: unknown) => void;
 }
 
@@ -61,7 +68,6 @@ export function createReportScheduler(options: ReportSchedulerOptions) {
   let state = loadState(options.statePath);
   let timer: ReturnType<typeof setInterval> | undefined;
   const tick = (now = new Date()): void => {
-    if (options.hasPendingReport()) return;
     const parts = new Intl.DateTimeFormat('en-CA', {
       timeZone: options.timeZone.get(),
       year: 'numeric',
@@ -104,13 +110,11 @@ export function createReportScheduler(options: ReportSchedulerOptions) {
       dailyDay !== null &&
       (state.lastDailyKey ?? '') < dailyDay;
     if (!reportDue && !dailyDue) return;
+    const report = dailyDue ? 'daily' : full ? 'full' : 'reminder';
+    if (options.hasPendingReport(report, hourKey)) return;
     const payload: Record<string, JsonValue> = dailyDue
-      ? { report: 'daily', hourKey, day: dailyDay! }
-      : {
-          report: full ? 'full' : 'reminder',
-          hourKey,
-          ...(full ? { previousFullReportAt: state.lastFullKey } : {}),
-        };
+      ? { report, hourKey, day: dailyDay! }
+      : { report, hourKey, ...(full ? { previousFullReportAt: state.lastFullKey } : {}) };
     options.intake.acceptScheduled({
       id: `report:${hourKey}:${randomUUID()}`,
       channelKey: REPORT_CHANNEL,
@@ -141,6 +145,21 @@ export function createReportScheduler(options: ReportSchedulerOptions) {
       result: Pick<NativeTurnResult, 'response'>
     ): Promise<void> => {
       const { report, hourKey, day } = scheduledReport(row.payload);
+      // The state key is the latest hour sent. A report older than it was covered by a newer one,
+      // and saving its hour would move the key back; the daily key keeps its latest day the same way.
+      const latest =
+        report === 'full'
+          ? state.lastFullKey
+          : report === 'reminder'
+            ? state.lastReminderKey
+            : null;
+      if (latest && hourKey < latest) {
+        options.retireUndelivered(`report:${hourKey}:${report}`);
+        options.log(
+          `scheduled report superseded stimulus_id=${row.stimulusId} report=${report} hour=${hourKey} latest=${latest}`
+        );
+        return;
+      }
       const text = result.response.trim();
       if (!text) throw new Error('Scheduled report returned empty output');
       // An [ack] without the page would leave the day unwritten for good; failing the turn retries it.

@@ -262,6 +262,8 @@ describe('TelegramGateway', () => {
       intake: { acceptScheduled: () => ({ state: 'accepted', inputId: 'fixture' }) },
       hasPendingReport: () => false,
       sendToOwner: (text, key) => gateway.sendToOwner(text, key),
+      retireUndelivered: () => {},
+      log: () => {},
       onError: () => {},
     });
     const row = {
