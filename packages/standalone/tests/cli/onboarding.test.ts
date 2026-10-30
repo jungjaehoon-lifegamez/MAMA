@@ -20,6 +20,7 @@ import { defaultToolsRoot } from '../../src/cli/commands/tools.js';
 import { runInit, type InitOptions } from '../../src/cli/commands/init.js';
 import { runSecret } from '../../src/cli/commands/secret.js';
 import type { PromptAdapter } from '../../src/cli/prompt.js';
+import type { OpenRun } from '../../src/cli/runtime/setup-page.js';
 import { loadConfig } from '../../src/runtime/config.js';
 import { loadConnectorConfig } from '../../src/connectors/config-loader.js';
 import { defaultRoots, prepareRoot } from '../../src/cli/runtime/default-roots.js';
@@ -51,13 +52,22 @@ const fixtureSecrets = {
 
 /**
  * The new bot: nothing waits when setup starts; then the owner messages it privately and sends
- * /bind in the common group. Codes the pairing step sends are kept, so the terminal can type the
- * owner's.
+ * /bind in the common group, at once or (`bind()`) later. Codes the pairing step sends are kept,
+ * so the owner can enter theirs.
  */
-function fakeBot() {
+function fakeBot(options: { bindEarly?: boolean } = {}) {
   const sent: Array<{ chat_id: string; text: string }> = [];
   const polls: Array<{ offset: string; timeout: string }> = [];
-  const updates = [
+  const bindUpdate = {
+    update_id: 2,
+    message: {
+      chat: { id: -100, type: 'supergroup' },
+      from: { id: Number(OWNER_ID) },
+      text: '/bind',
+      entities: [{ type: 'bot_command', offset: 0, length: 5 }],
+    },
+  };
+  const updates: Array<{ update_id: number; message: Record<string, unknown> }> = [
     {
       update_id: 1,
       message: {
@@ -66,15 +76,7 @@ function fakeBot() {
         text: 'hello',
       },
     },
-    {
-      update_id: 2,
-      message: {
-        chat: { id: -100, type: 'supergroup' },
-        from: { id: Number(OWNER_ID) },
-        text: '/bind',
-        entities: [{ type: 'bot_command', offset: 0, length: 5 }],
-      },
-    },
+    ...(options.bindEarly === false ? [] : [bindUpdate]),
   ];
   const call: NonNullable<InitOptions['telegramCall']> = async (_token, method, params = {}) => {
     if (method === 'getMe')
@@ -108,9 +110,58 @@ function fakeBot() {
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
   };
-  return { call, sent, polls, code };
+  return { call, sent, polls, code, bind: () => updates.push(bindUpdate) };
 }
 let telegram: ReturnType<typeof fakeBot>;
+
+/** A form POST to the setup page, as the browser sends it; the page's reply. */
+async function post(url: string, fields: Record<string, string>): Promise<string> {
+  const response = await fetch(url, { method: 'POST', body: new URLSearchParams(fields) });
+  return await response.text();
+}
+
+/**
+ * The owner at the setup page: the opener stand-in reads the redirect file as the browser would.
+ * The owner enters each token in turn, then each code (`sent` is the newest the bot sent them),
+ * then runs `after`.
+ */
+function person(entries: { tokens?: string[]; codes?: string[]; after?: () => void } = {}): {
+  openRun: OpenRun;
+  opened: string[][];
+  replies: string[];
+  url: () => string;
+} {
+  const opened: string[][] = [];
+  const replies: string[] = [];
+  let url = '';
+  return {
+    opened,
+    replies,
+    url: () => url,
+    openRun: async (command, args) => {
+      opened.push([command, ...args]);
+      url = /url=(http[^"]+)"/.exec(readFileSync(args[0]!, 'utf8'))![1]!;
+      void (async () => {
+        for (const token of entries.tokens ?? [fixtureSecrets.MAMA_TELEGRAM_TOKEN])
+          replies.push(await post(url, { token }));
+        for (const code of entries.codes ?? ['sent'])
+          replies.push(await post(url, { code: code === 'sent' ? await telegram.code() : code }));
+        entries.after?.();
+      })();
+      return 0;
+    },
+  };
+}
+
+/** The answers --non-interactive reads; the page takes the token and the code. */
+function variables(backend = 'codex'): NodeJS.ProcessEnv {
+  return {
+    MAMA_INIT_BACKEND: backend,
+    MAMA_INIT_MODEL: 'fixture-model',
+    MAMA_INIT_MEMBER_ROOT: memberRoot,
+    MAMA_INIT_TOOLS_ROOT: toolsRoot,
+  };
+}
 
 function prompt(
   answers: string[],
@@ -187,6 +238,8 @@ function options(adapter: PromptAdapter, overrides: Partial<InitOptions> = {}) {
     }),
     // This machine's own MAMA may hold the default port; the fixture sees every port free.
     portAnswers: async () => false,
+    // No browser opens; the owner enters the token and the bot's code.
+    openRun: person().openRun,
     pollMs: 1,
     ...overrides,
   };
@@ -402,15 +455,7 @@ describe('mama init', () => {
             ran.push(command);
             return 0;
           },
-          env: {
-            MAMA_INIT_BACKEND: 'claude',
-            MAMA_TELEGRAM_TOKEN: fixtureSecrets.MAMA_TELEGRAM_TOKEN,
-            MAMA_INIT_COMMON_CHAT_ID: '-100',
-            MAMA_INIT_OWNER_TELEGRAM_ID: OWNER_ID,
-            MAMA_INIT_MODEL: 'fixture-model',
-            MAMA_INIT_MEMBER_ROOT: memberRoot,
-            MAMA_INIT_TOOLS_ROOT: toolsRoot,
-          },
+          env: variables('claude'),
         })
       )
     ).rejects.toThrow('claude is not signed in. Run: claude auth login, then mama init again.');
@@ -533,25 +578,31 @@ describe('mama init', () => {
     expect(o.started).toEqual([{ MAMA_API_PORT: '3848' }]);
   });
 
-  it.each(['100', '0', '-0', 'group', '-100abc', '-01'])(
-    'refuses a non-group Telegram common destination before writing setup: %s',
-    async (chatId) => {
-      const p = prompt([], [], [false, false]);
-      const env = {
-        MAMA_INIT_BACKEND: 'codex',
-        MAMA_INIT_MODEL: 'fixture-model',
-        MAMA_TELEGRAM_TOKEN: fixtureSecrets.MAMA_TELEGRAM_TOKEN,
-        MAMA_INIT_COMMON_CHAT_ID: chatId,
-        MAMA_INIT_OWNER_TELEGRAM_ID: OWNER_ID,
-        MAMA_INIT_MEMBER_ROOT: memberRoot,
-        MAMA_INIT_TOOLS_ROOT: toolsRoot,
-      };
-      await expect(runInit(['--non-interactive'], options(p.adapter, { env }))).rejects.toThrow(
-        /group or supergroup.*negative.*private chats.*personal intake/
-      );
-      expect(existsSync(root)).toBe(false);
+  it('reads no token or Telegram ID from the environment: the page and the bot name them', async () => {
+    const p = prompt([], [], [false, false]);
+    const env = {
+      ...variables(),
+      MAMA_TELEGRAM_TOKEN: 'fixture-variable-token',
+      MAMA_INIT_COMMON_CHAT_ID: '-555',
+      MAMA_INIT_OWNER_TELEGRAM_ID: '999',
+    };
+    await runInit(['--non-interactive'], options(p.adapter, { env }));
+    expect(loadConfig({ home }).telegram).toMatchObject({
+      owner_chat_id: '-100',
+      allowed_chats: ['-100'],
+    });
+    const auth = readFileSync(join(root, 'auth.env'), 'utf8');
+    expect(auth).toContain(`MAMA_TELEGRAM_TOKEN='${fixtureSecrets.MAMA_TELEGRAM_TOKEN}'`);
+    expect(auth).not.toContain('fixture-variable-token');
+    const database = await openCoreDatabase({ path: loadConfig({ home }).database.path });
+    try {
+      const repo = createPrincipalRepository(database.adapter);
+      expect(repo.resolveByExternal('telegram', 'private', OWNER_ID)).toBeTruthy();
+      expect(repo.resolveByExternal('telegram', 'private', '999')).toBeFalsy();
+    } finally {
+      await database.close();
     }
-  );
+  });
 
   it('pairs the owner by the code the bot sent and the common group by /bind, typing no ID', async () => {
     const p = prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
@@ -785,24 +836,21 @@ describe('mama init', () => {
     expect(existsSync(join(root, 'config.yaml'))).toBe(false);
   });
 
-  it('sets up from MAMA_INIT_* variables without a terminal, and names a missing one', async () => {
+  it('sets up from MAMA_INIT_* variables and the setup page, refusing a missing one before the page opens', async () => {
     const p = prompt([], [], [false, false]);
-    const env = {
-      MAMA_INIT_BACKEND: 'codex',
-      MAMA_INIT_MODEL: 'fixture-model',
-      MAMA_TELEGRAM_TOKEN: fixtureSecrets.MAMA_TELEGRAM_TOKEN,
-      MAMA_INIT_COMMON_CHAT_ID: '-100',
-      MAMA_INIT_MEMBER_ROOT: memberRoot,
-      MAMA_INIT_TOOLS_ROOT: toolsRoot,
-      MAMA_INIT_TIMEZONE: 'Asia/Tokyo',
-    };
-    await expect(runInit(['--non-interactive'], options(p.adapter, { env }))).rejects.toThrow(
-      /needs MAMA_INIT_OWNER_TELEGRAM_ID/
-    );
+    const env = { ...variables(), MAMA_INIT_TIMEZONE: 'Asia/Tokyo' };
+    delete env.MAMA_INIT_MODEL;
+    const before = person();
+    await expect(
+      runInit(['--non-interactive'], options(p.adapter, { env, openRun: before.openRun }))
+    ).rejects.toThrow(/needs MAMA_INIT_MODEL/);
+    // Refused before the owner pairs.
+    expect(before.opened).toEqual([]);
+    expect(telegram.sent).toEqual([]);
     expect(existsSync(root)).toBe(false);
     await runInit(
       ['--non-interactive'],
-      options(p.adapter, { env: { ...env, MAMA_INIT_OWNER_TELEGRAM_ID: OWNER_ID } })
+      options(p.adapter, { env: { ...env, MAMA_INIT_MODEL: 'fixture-model' } })
     );
     const config = loadConfig({ home });
     expect(config.timezone).toBe('Asia/Tokyo');
@@ -1031,6 +1079,113 @@ describe('mama init', () => {
     };
     await expect(runInit([], options(p.adapter))).rejects.toThrow(/cancelled/);
     expect(existsSync(root)).toBe(false);
+  });
+});
+
+describe('the setup page in mama init', () => {
+  const setUp = (overrides: Partial<InitOptions> = {}) => {
+    const p = prompt([], [], [false, false]);
+    return {
+      p,
+      run: () =>
+        runInit(['--non-interactive'], options(p.adapter, { env: variables(), ...overrides })),
+    };
+  };
+
+  it('says each step in order, and keeps the URL and the token out of every line and reply', async () => {
+    const owner = person();
+    const { p, run } = setUp({ openRun: owner.openRun });
+    await run();
+    const steps = [
+      /^setup page: opened in the browser from (.+)\/open\.html; it closes at \d\d:\d\d$/,
+      /^bot token accepted for @fixture_bot$/,
+      /send @fixture_bot a new private message .*enter it on the setup page\.$/,
+      /^pairing code accepted$/,
+      /^Add @fixture_bot to the group for common work/,
+      /^setup page closed$/,
+      /^Setup written\./,
+    ];
+    const at = steps.map((step) => p.output.findIndex((line) => step.test(line)));
+    expect(
+      at.every((index) => index >= 0),
+      p.output.join('\n')
+    ).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    const file = owner.opened[0]![1]!;
+    expect(owner.opened).toEqual([['xdg-open', file]]);
+    expect(p.output[at[0]!]).toContain(`from ${file};`);
+    // The redirect file's folder goes with the page.
+    expect(existsSync(file)).toBe(false);
+    const nonce = new URL(owner.url()).pathname.slice(1);
+    for (const text of [...p.output, ...owner.opened.flat()]) expect(text).not.toContain(nonce);
+    for (const text of [...p.output, ...owner.replies])
+      expect(text).not.toContain(fixtureSecrets.MAMA_TELEGRAM_TOKEN);
+    expect(owner.replies.at(-1)).toContain('send /bind in that group');
+    // The code the bot sent says where it goes.
+    expect(telegram.sent[0]!.text).toMatch(
+      /^Your MAMA pairing code: \d{6}\nEnter it on the setup page\.$/
+    );
+  });
+
+  it('shows a token Telegram refuses on the page, and takes the next one', async () => {
+    const owner = person({ tokens: ['fixture-refused', fixtureSecrets.MAMA_TELEGRAM_TOKEN] });
+    const { p, run } = setUp({
+      openRun: owner.openRun,
+      telegramCall: async (token, method, params) =>
+        token === 'fixture-refused'
+          ? { ok: false, error_code: 401 }
+          : await telegram.call(token, method, params),
+    });
+    await run();
+    expect(owner.replies[0]).toContain(
+      'Telegram refused the bot token; copy it again from BotFather.'
+    );
+    expect(owner.replies[0]).toContain('name="token"');
+    expect(p.output).toContain('Telegram refused the bot token; copy it again from BotFather.');
+    const auth = readFileSync(join(root, 'auth.env'), 'utf8');
+    expect(auth).toContain(`MAMA_TELEGRAM_TOKEN='${fixtureSecrets.MAMA_TELEGRAM_TOKEN}'`);
+    for (const text of [...p.output, ...owner.replies])
+      expect(text).not.toContain('fixture-refused');
+  });
+
+  it('shows a wrong code on the page, and takes the right one', async () => {
+    const owner = person({ codes: ['000000', 'sent'] });
+    const { p, run } = setUp({ openRun: owner.openRun });
+    await run();
+    const wrong = 'That is not a code the bot sent; enter the code from its latest message.';
+    expect(owner.replies[1]).toContain(wrong);
+    expect(owner.replies[1]).toContain('name="code"');
+    expect(p.output).toContain(wrong);
+    expect(loadConfig({ home }).telegram).toMatchObject({ owner_chat_id: '-100' });
+  });
+
+  it('takes a /bind sent before the code is entered, and one sent after', async () => {
+    // Before: the bot holds the /bind by the time the code is entered (the fixture's default).
+    await setUp().run();
+    expect(loadConfig({ home }).telegram).toMatchObject({ owner_chat_id: '-100' });
+    rmSync(root, { recursive: true, force: true });
+    // After: the page has closed when the /bind arrives.
+    telegram = fakeBot({ bindEarly: false });
+    const owner = person({ after: () => telegram.bind() });
+    const { p, run } = setUp({ openRun: owner.openRun });
+    await run();
+    expect(loadConfig({ home }).telegram).toMatchObject({ owner_chat_id: '-100' });
+    expect(p.output.indexOf('setup page closed')).toBeLessThan(
+      p.output.findIndex((line) => line.startsWith('Setup written'))
+    );
+  });
+
+  it('expires with nothing written when the code is not entered in time', async () => {
+    const owner = person({ codes: [] });
+    const { p, run } = setUp({ openRun: owner.openRun, setupPageMs: 200 });
+    await expect(run()).rejects.toThrow(
+      /^the setup page expired at \d\d:\d\d; nothing was written$/
+    );
+    expect(p.output).toContain('bot token accepted for @fixture_bot');
+    expect(p.output).toContain('setup page closed');
+    expect(existsSync(join(root, 'config.yaml'))).toBe(false);
+    expect(existsSync(join(root, 'auth.env'))).toBe(false);
+    expect(existsSync(owner.opened[0]![1]!)).toBe(false);
   });
 });
 

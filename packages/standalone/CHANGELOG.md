@@ -61,8 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     stopped. The answers get init's checks, the result must pass the checks MAMA runs at boot
     (delivery routes included) before anything is written, tokens go only to `auth.env`, and the
     other parts stay as they were. A new bot must already be in the common group.
-  - **Without a terminal:** `mama init --non-interactive` reads `MAMA_INIT_*` variables, with the
-    token from `MAMA_TELEGRAM_TOKEN` and the two Telegram IDs given directly.
+  - **Without a terminal:** `mama init --non-interactive` reads `MAMA_INIT_*` variables, and takes
+    the bot token and the pairing code on its setup page.
   - **No longer offered:** the Kagemusha bridge, which a fresh install cannot use, and the
     launch-agent question, since the service is installed for you.
 - `/stop` in Telegram stops the turn running in that conversation and keeps the conversation: the
@@ -138,6 +138,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   start the service once it is installed. Doctor's fix for a source that does not start, or
   whose sign-in is refused, names the same login command, and the sources' own errors point to
   `mama doctor` for those commands instead of a bare `gws auth login` (#543).
+- `mama init --non-interactive` opens a setup page on this machine for the bot token and the
+  pairing code, once every other answer has been checked:
+  - The page listens on 127.0.0.1 at a path of 32 random bytes, and answers only a request whose
+    one Host header names `localhost`, `127.0.0.1` or `[::1]`, on any port. The address goes
+    only into `open.html`, a 0600 file in a 0700 folder, which init opens with `open` or `xdg-open`;
+    the address is never printed or passed as an argument, and the folder goes with the page. If
+    no browser opens, init prints the file's `file://` path.
+  - It takes the token, checked with Telegram, then the code the bot sent, by form POST. A refused
+    token or a wrong code is shown with its form again. After one token and one code it closes.
+  - Unused, it closes after 15 minutes, and setup stops with nothing written. Neither the token nor
+    the address appears in a printed line or on the page.
 
 ### Changed
 
@@ -167,6 +178,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the installer is skipped: its `--version` must exit 0 and print a version, so a shim with no
   backend behind it gets the vendor's installer. A set-up install needs no flags: it runs
   `mama init --non-interactive`, and without `--backend` it keeps the backend it has.
+
+### Removed
+
+- The init variables `MAMA_INIT_OWNER_TELEGRAM_ID` and `MAMA_INIT_COMMON_CHAT_ID`, and
+  `MAMA_TELEGRAM_TOKEN` as an init variable (the secret name stays): the setup page takes the token,
+  and the bot's pairing code and `/bind` name the owner and the common group.
 
 ### Fixed
 

@@ -386,7 +386,7 @@ export async function checkTelegram(
   chatId: string | undefined,
   call: TelegramCall,
   write: (line: string) => void,
-  options: { groupRequired?: boolean } = {}
+  options: { groupRequired?: boolean; next?: string } = {}
 ): Promise<void> {
   const check = await telegramCheck(token, chatId, call);
   if (check.detail === 'Telegram refused the bot token') {
@@ -394,7 +394,7 @@ export async function checkTelegram(
   }
   if (check.detail.startsWith('could not reach Telegram')) {
     throw new CliInputError(
-      `${check.detail}, so the token is unchecked; check the network, then run mama init again.`
+      `${check.detail}, so the token is unchecked; check the network, then ${options.next ?? 'run mama init again'}.`
     );
   }
   // A new bot the common group cannot be shown to hold, or to read, would leave that channel silent.

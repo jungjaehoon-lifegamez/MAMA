@@ -31,8 +31,12 @@ function hostname(authority: string): string | null {
   return canonical;
 }
 
-/** DNS rebinding can reach the loopback socket: Host must be approved before local auth. */
-export function isAllowedViewerHost(req: IncomingMessage): boolean {
+/**
+ * DNS rebinding can reach the loopback socket: one Host header, naming localhost, 127.0.0.1 or
+ * [::1] on any port, or one of `configured`. The viewer configures its tunnel's names; the setup
+ * page none.
+ */
+export function isAllowedHost(req: IncomingMessage, configured: readonly string[] = []): boolean {
   const host = req.headers.host;
   if (typeof host !== 'string') return false;
   if (
@@ -44,11 +48,16 @@ export function isAllowedViewerHost(req: IncomingMessage): boolean {
   const requested = hostname(host);
   if (requested === null) return false;
   const allowed = new Set(['localhost', '127.0.0.1', '[::1]']);
-  for (const value of (process.env.MAMA_VIEWER_HOSTNAMES ?? '').split(',')) {
+  for (const value of configured) {
     const name = hostname(value.trim());
     if (name !== null) allowed.add(name);
   }
   return allowed.has(requested);
+}
+
+/** Host must be approved before local auth. */
+export function isAllowedViewerHost(req: IncomingMessage): boolean {
+  return isAllowedHost(req, (process.env.MAMA_VIEWER_HOSTNAMES ?? '').split(','));
 }
 
 function configuredValues(): string[] {

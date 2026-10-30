@@ -21,6 +21,7 @@ import {
 import { shellQuote, updateSecrets, type SecretName } from '../secrets.js';
 import type { ProbeRun } from '../runtime/backend-probe.js';
 import { defaultTelegramCall, portAnswers, telegramCheck } from '../runtime/diagnostics.js';
+import { openSetupPage, type OpenRun } from '../runtime/setup-page.js';
 import { defaultRoots, prepareRoot, type DefaultRoots } from '../runtime/default-roots.js';
 import {
   bindCommonGroup,
@@ -53,6 +54,7 @@ import {
   terminalSignIn,
   type BackendSignIn,
   checkTelegram,
+  type TelegramCall,
   collectConnectors,
   writeSourceTools,
   report,
@@ -81,6 +83,10 @@ export interface InitOptions {
   env?: NodeJS.ProcessEnv;
   /** Calls the Telegram Bot API; tests replace it. */
   telegramCall?: Parameters<typeof telegramCheck>[2];
+  /** Runs open or xdg-open on the setup page's redirect file; tests replace it. */
+  openRun?: OpenRun;
+  /** How long the setup page takes entries; 15 minutes by default. */
+  setupPageMs?: number;
   /** Runs the backend CLI to read its version and login; tests replace it. */
   probeRun?: ProbeRun;
   /** Runs a signed-out backend's login on the terminal; tests replace it. */
@@ -243,31 +249,164 @@ async function askAnswers(
 }
 
 /**
- * `--non-interactive`: the answers come from the environment (the Docker image and scripts use
- * this). Secrets come only from variables, never from flags, which `ps` shows. No source,
- * messenger besides Telegram, Jev or tunnel is set up this way; `mama init --section` adds the
- * first three from a terminal.
+ * The bot token and the pairing code, entered on the setup page (install.md, W2.4.5b). The token
+ * is checked as Telegram answers it; then pairOwner's `ask` is answered by the code's entry, whose
+ * reply waits for pairOwner: another `ask` means a wrong code, a return the right one. One process
+ * runs from the token to /bind, since the codes and the update offset live in pairOwner's memory.
+ */
+async function pairOnSetupPage(options: {
+  call: TelegramCall;
+  write: (line: string) => void;
+  platform: NodeJS.Platform;
+  openRun?: OpenRun;
+  lifetimeMs?: number;
+}): Promise<{ token: string; ownerId: string; chatId: string }> {
+  const { call, write } = options;
+  let taken!: (value: { token: string; botUsername: string }) => void;
+  const tokenTaken = new Promise<{ token: string; botUsername: string }>((resolve) => {
+    taken = resolve;
+  });
+  // pairOwner's first ask: it has dropped what the bot held from before (telegram-pairing.ts).
+  let asked!: () => void;
+  let notAsked!: (error: unknown) => void;
+  const firstAsk = new Promise<void>((resolve, reject) => {
+    asked = resolve;
+    notAsked = reject;
+  });
+  firstAsk.catch(() => {});
+  /** The ask waiting for an entry, and the entry waiting for pairOwner's verdict. */
+  let waiting: ((code: string) => void) | undefined;
+  let entry: { accept: (said: string) => void; refuse: (error: unknown) => void } | undefined;
+  /** pairOwner's last line: after a wrong code, the one that says so. */
+  let lastLine = '';
+  const page = await openSetupPage({
+    fields: [
+      {
+        name: 'token',
+        label: 'Telegram bot token (from BotFather)',
+        secret: true,
+        check: async (value) => {
+          let token: string;
+          let botUsername: string;
+          try {
+            token = nonblankLine(value).trim();
+            // The page asks again, so a network failure names the entry, not a rerun.
+            await checkTelegram(token, undefined, call, write, {
+              next: 'enter it again on the setup page',
+            });
+            botUsername = await botName({ token, call, write });
+          } catch (error) {
+            if (error instanceof CliInputError) write(error.message);
+            throw error;
+          }
+          write(`bot token accepted for @${botUsername}`);
+          taken({ token, botUsername });
+          // A message sent before pairOwner's first poll would be dropped with the held ones.
+          await firstAsk;
+          return `The bot token is accepted for @${botUsername}. In Telegram, send @${botUsername} a new private message; it answers with a pairing code.`;
+        },
+      },
+      {
+        name: 'code',
+        label: 'Pairing code (from the bot)',
+        secret: false,
+        check: (value) =>
+          new Promise<string>((accept, refuse) => {
+            const answer = waiting;
+            // The page takes one entry at a time, and asks for the code only after pairOwner did.
+            if (answer === undefined)
+              throw new Error('a pairing code was entered with none asked for');
+            waiting = undefined;
+            entry = { accept, refuse };
+            answer(value);
+          }),
+      },
+    ],
+    write,
+    platform: options.platform,
+    ...(options.openRun ? { openRun: options.openRun } : {}),
+    ...(options.lifetimeMs === undefined ? {} : { lifetimeMs: options.lifetimeMs }),
+  });
+  try {
+    const { token, botUsername } = await Promise.race([tokenTaken, page.stopped]);
+    const owner = await pairOwner({
+      token,
+      call,
+      botUsername,
+      write: (line) => {
+        lastLine = line;
+        write(line);
+      },
+      ask: (_label, signal) => {
+        // pairOwner asks again only after a wrong code, and wrote why just before.
+        entry?.refuse(new CliInputError(lastLine));
+        entry = undefined;
+        asked();
+        return new Promise<string>((resolve, reject) => {
+          waiting = resolve;
+          signal.addEventListener('abort', () => reject(new Error('pairing stopped')), {
+            once: true,
+          });
+          page.stopped.catch(reject);
+        });
+      },
+    });
+    write('pairing code accepted');
+    entry?.accept(
+      `The pairing code is accepted. Add @${botUsername} to the group for common work as an administrator, then send /bind in that group. This page has closed.`
+    );
+    const group = await bindCommonGroup({
+      token,
+      call,
+      write,
+      botUsername,
+      ownerId: owner.ownerId,
+      offset: owner.offset,
+      earlier: owner.groupMessages,
+    });
+    await confirmUpdates({ token, call, write, offset: group.offset });
+    // The bot's post in the group proved the token; the group's privacy and membership are only
+    // reported, and doctor checks them again later.
+    report(await telegramCheck(token, group.chatId, call), write);
+    return { token, ownerId: owner.ownerId, chatId: group.chatId };
+  } catch (error) {
+    // An entry still waiting gets the sentence that ends the setup.
+    notAsked(error);
+    entry?.refuse(error);
+    throw error;
+  } finally {
+    page.close();
+  }
+}
+
+/**
+ * `--non-interactive`: the answers come from the environment, and are all checked before the
+ * setup page opens, so a refused one does not make the owner pair again. The page takes the bot
+ * token and the pairing code: a secret never comes from a variable or a flag, which `ps` shows,
+ * and no Telegram ID is typed. No source, messenger besides Telegram, Jev or tunnel is set up this
+ * way; `mama init --section` adds the first three from a terminal.
  */
 async function environmentAnswers(
   env: NodeJS.ProcessEnv,
   defaults: DefaultRoots | undefined,
   checks: {
     backend(name: 'claude' | 'codex'): void;
-    telegram(token: string, chat?: string): Promise<void>;
     roots(
       memberRoot: string,
       toolsRoot: string,
       isDefault: { member: boolean; tools: boolean }
     ): { memberRoot: string; toolsRoot: string };
+    page(): Promise<{ token: string; ownerId: string; chatId: string }>;
   }
 ): Promise<InitAnswers> {
   const backend = requiredVariable(env, 'MAMA_INIT_BACKEND');
   if (backend !== 'claude' && backend !== 'codex')
     throw new CliInputError('MAMA_INIT_BACKEND must be claude or codex.');
   checks.backend(backend);
-  const token = requiredVariable(env, 'MAMA_TELEGRAM_TOKEN');
-  const chatId = validChatId(requiredVariable(env, 'MAMA_INIT_COMMON_CHAT_ID'));
-  await checks.telegram(token, chatId);
+  const model = requiredVariable(env, 'MAMA_INIT_MODEL');
+  const timezone = validTimezone(
+    env.MAMA_INIT_TIMEZONE?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone
+  );
   const memberAnswer = env.MAMA_INIT_MEMBER_ROOT?.trim() || defaults?.memberRoot;
   const toolsAnswer = env.MAMA_INIT_TOOLS_ROOT?.trim() || defaults?.toolsRoot;
   if (!memberAnswer || !toolsAnswer)
@@ -278,15 +417,14 @@ async function environmentAnswers(
     member: !env.MAMA_INIT_MEMBER_ROOT?.trim(),
     tools: !env.MAMA_INIT_TOOLS_ROOT?.trim(),
   });
+  const paired = await checks.page();
   return {
     backend,
-    model: requiredVariable(env, 'MAMA_INIT_MODEL'),
-    timezone: validTimezone(
-      env.MAMA_INIT_TIMEZONE?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone
-    ),
-    secrets: { MAMA_TELEGRAM_TOKEN: token },
-    chatId,
-    ownerTelegramId: validTelegramId(requiredVariable(env, 'MAMA_INIT_OWNER_TELEGRAM_ID')),
+    model,
+    timezone,
+    secrets: { MAMA_TELEGRAM_TOKEN: paired.token },
+    chatId: validChatId(paired.chatId),
+    ownerTelegramId: validTelegramId(paired.ownerId),
     memberRoot,
     toolsRoot,
     connectors: {},
@@ -517,6 +655,14 @@ export async function runInit(
           report(await telegramCheck(token, group.chatId, call), write);
           return { ownerId: owner.ownerId, chatId: group.chatId };
         },
+        page: () =>
+          pairOnSetupPage({
+            call,
+            write,
+            platform,
+            ...(options.openRun ? { openRun: options.openRun } : {}),
+            ...(options.setupPageMs === undefined ? {} : { lifetimeMs: options.setupPageMs }),
+          }),
       };
       answers = nonInteractive
         ? await environmentAnswers(options.env ?? process.env, defaults, checks)
