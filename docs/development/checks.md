@@ -2776,3 +2776,23 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Evidence: one Opus review said MERGE with no FIX-FIRST items. Its SHOULD-FIX was a far-future queue time silently stopping full reports, reproduced by a probe, now fixed. A reminder never superseded by a later full report is also fixed. The tests run on a real mailbox and ledger with rows shaped like the live ones, and each fix was checked to fail without it. CI green on dcc68cd5e. Merged as 3bd329c9a and deployed at 16:51 with a drained stop. The boot logged no new errors; rows still re-park, as designed, until the next full report saves its queue time.
 - Still open: confirm in daemon.log after the next full report that the 59 rows log `scheduled report superseded` and settle, `mama status` loses `claimed 59`, and the boot stops logging `requires reconciliation` for that key. An uncertain send within its own hour is still not resent (owner decision, at most once kept). Daily rows are never superseded.
 - Live 2026-10-30 18:00: the full report was delivered (`telegram outbound delivered idempotency_key="report:2026-10-30:18:full"`). On the next drains all 59 stuck rows logged `scheduled report superseded … hour=2026-10-17:18 covered_by_report_queued_at=2026-10-30T09:00:20.803Z` and settled. `mama status` went from `claimed 59` to only the running turn's claim. Nothing old was sent. The boot `requires reconciliation` line for that key is checked at the next restart.
+- Boot 2026-10-30 21:09 (deploy of #543): the `outbound:a060fb8f…` reconciliation line is gone, and no row parked. The three older `file:exec-…` failed-delivery lines are still logged on every boot (pre-existing, not #542).
+
+### W2.4 PR 3: tools a source needs, merged and deployed (#543, 2026-10-30)
+
+- Result: gws's requirement, install methods and login are one export (`gwsTool`). One helper, `sourceTools()`, reports for the enabled sources each tool the service's PATH lacks. It reads start.sh's PATH, or before start.sh exists the PATH `mama service install` will write. Callers: `mama init` (including a rerun of an interrupted init), `init --section connectors` and doctor.
+  - A script-made install gets the managed-Node commands. Other installs get `npm install -g @googleworkspace/cli` or `brew install googleworkspace-cli`.
+  - The lines say MAMA's service does not start with those sources until gws is on its PATH.
+  - Doctor's "does not start" check names the tool's login as its fix.
+  - The sources' own gws errors come from `gwsTool`, and Calendar no longer says to hand-edit start.sh.
+- Evidence: two Opus review rounds.
+  - The first was FIX-FIRST: a missing gws silently made boot fail and the rerun never named it.
+  - The verification found a regression: a rerun read connectors.json raw, so a hand-edited `"Gmail"` key blocked every rerun. It now reads it through `planConnectors`, as doctor and boot do.
+  - CodeRabbit found three more, all fixed.
+  - CI is green on cf0e6e961, including both install-check legs. On Ubuntu, step 6 installs the real `@googleworkspace/cli` as printed, with only the managed Node on PATH, and runs its login line (`--version`, `auth --help`).
+  - Merged as b5ecf304e and deployed at 21:09 with a drained stop; the boot was clean.
+- Still open, by design (#545, W2.4.5e):
+  - the agent-led enabling step refuses a source whose tool is missing;
+  - `gws auth login -s <services>`;
+  - the OAuth client step: gws 0.11.1 with a fresh HOME exits `401 No OAuth client configured`, and a testing-mode client's refresh token lasts 7 days (Q3).
+  - `gws auth login` itself was never run in CI.
