@@ -499,6 +499,13 @@ try {
     `doctor's fix for Gmail without gws: ${JSON.stringify(missing)}`
   );
   expect(capture('sh', ['-c', install], toolEnv).status === 0, `${install} failed`);
+  // The postinstall put the binary in place (npm may warn about install scripts and still run
+  // them); without it, run.js would fetch it on gws's first run instead.
+  const gwsBin = join(prefix, 'lib', 'node_modules', '@googleworkspace', 'cli', 'bin');
+  expect(
+    existsSync(gwsBin) && readdirSync(gwsBin).length > 0,
+    `the @googleworkspace/cli postinstall left no binary in ${gwsBin}`
+  );
   for (const args of ['--version', 'auth --help']) {
     const run = capture('sh', ['-c', login.replace(/ auth login$/, ` ${args}`)], toolEnv);
     expect(run.status === 0, `gws ${args}, as the printed login runs it, exited ${run.status}`);
