@@ -47,9 +47,10 @@ const SEMVER = '[0-9]+\\.[0-9]+\\.[0-9]+(?:-[a-zA-Z0-9.]+)?';
  * Patterns use a capture group around the prefix to preserve context.
  *
  * @param {Record<string, string>} versions - Package key -> version string
+ * @param {{ version: string, sha256: Record<string, string> }} nodePin - install/node.json
  * @returns {Array<{file: string, patterns: Array<{regex: RegExp, version: string, suffix?: boolean}>}>}
  */
-function buildRules(versions) {
+function buildRules(versions, nodePin) {
   const os = versions['mama-os'];
   const core = versions['mama-core'];
   const server = versions['mama-server'];
@@ -63,6 +64,17 @@ function buildRules(versions) {
     version,
     suffix: true,
   });
+  // A shell assignment on its own line: `  NAME=value`.
+  const assign = (name, pattern, version) => {
+    if (typeof version !== 'string' || !new RegExp(`^${pattern}$`).test(version)) {
+      throw new Error(`${name}: ${JSON.stringify(version)} does not match ${pattern}`);
+    }
+    return {
+      regex: new RegExp(`^(\\s*${name}=)${pattern}($)`, 'gm'),
+      version,
+      suffix: true,
+    };
+  };
   // Package README headers: Version **x.y.z**
   const header = (version) => ({
     regex: new RegExp(`(Version \\*\\*)${SEMVER}(\\*\\*)`, 'g'),
@@ -93,6 +105,21 @@ function buildRules(versions) {
     { file: 'packages/mama-core/README.md', patterns: [header(core)] },
     { file: 'packages/mcp-server/README.md', patterns: [header(server)] },
     { file: 'packages/claude-code-plugin/README.md', patterns: [header(plugin)] },
+    {
+      // The install command installs this MAMA OS on this Node (install/node.json).
+      file: 'packages/standalone/install/install.sh',
+      patterns: [
+        assign('MAMA_OS_VERSION', SEMVER, os),
+        assign('NODE_VERSION', SEMVER, nodePin.version),
+        ...['darwin-arm64', 'darwin-x64', 'linux-x64', 'linux-arm64'].map((platform) =>
+          assign(
+            `NODE_SHA256_${platform.toUpperCase().replace('-', '_')}`,
+            '[0-9a-f]{64}',
+            nodePin.sha256[platform]
+          )
+        ),
+      ],
+    },
     {
       // The plugin runs the server released with it.
       file: 'packages/claude-code-plugin/.mcp.json',
@@ -197,7 +224,10 @@ function parseFlags() {
 function main() {
   const opts = parseFlags();
   const versions = loadVersions();
-  const rules = buildRules(versions);
+  const nodePin = JSON.parse(
+    fs.readFileSync(path.join(ROOT, 'packages/standalone/install/node.json'), 'utf8')
+  );
+  const rules = buildRules(versions, nodePin);
 
   const mode = opts.check ? 'Checking' : opts.dryRun ? 'Dry run' : 'Syncing';
   console.log(`${mode} doc versions against package.json…\n`);

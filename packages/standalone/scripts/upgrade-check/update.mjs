@@ -20,57 +20,16 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
-import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { NAME, freePort, run, serveThisBuild, until } from '../local-registry.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const standalone = join(here, '..', '..');
-const core = join(standalone, '..', 'mama-core');
 const require = createRequire(join(standalone, 'package.json'));
 const Database = require('better-sqlite3');
 const yaml = require('js-yaml');
-const NAME = '@jungjaehoon/mama-os';
-/** Pinned: the registry is part of the check, not something it follows. */
-const VERDACCIO = 'verdaccio@6.11.1';
-
-function run(command, args, options = {}) {
-  const result = spawnSync(command, args, { encoding: 'utf8', timeout: 900_000, ...options });
-  if (result.error) {
-    throw result.error;
-  }
-  if (result.status !== 0) {
-    throw new Error(
-      `${command} ${args.join(' ')} exited ${result.status}\n${result.stdout ?? ''}\n${result.stderr ?? ''}`
-    );
-  }
-  return result.stdout ?? '';
-}
-
-const freePort = () =>
-  new Promise((resolve, reject) => {
-    const server = createServer();
-    server.on('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
-      server.close(() => resolve(port));
-    });
-  });
-
-async function until(what, check, timeoutMs) {
-  const started = Date.now();
-  for (;;) {
-    const value = await check();
-    if (value) {
-      return value;
-    }
-    if (Date.now() - started > timeoutMs) {
-      throw new Error(`${what}: not within ${timeoutMs} ms`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
-  }
-}
 
 function expect(ok, message) {
   if (!ok) {
@@ -93,117 +52,13 @@ export async function updateLeg({ root, home, env }) {
   const children = [];
 
   try {
-    // This build, packed as it would be published; N+1 and N+2 are the same build renumbered,
-    // and N+2's daemon exits at boot.
-    // pnpm writes core's version where the workspace names `workspace:*`.
-    const pack = (cwd, name) => {
-      const out = join(leg, 'packs', name);
-      mkdirSync(out, { recursive: true });
-      run('pnpm', ['pack', '--pack-destination', out], { cwd });
-      return join(
-        out,
-        readdirSync(out).find((file) => file.endsWith('.tgz'))
-      );
-    };
-    const corePack = pack(core, 'core');
-    const osPack = pack(standalone, 'os');
-    const variants = [];
-    for (const [version, crash] of [
-      [N, false],
-      [N1, false],
-      [N2, true],
-    ]) {
-      const folder = join(leg, 'variants', version);
-      mkdirSync(folder, { recursive: true });
-      run('tar', ['xzf', osPack, '-C', folder]);
-      const manifestPath = join(folder, 'package', 'package.json');
-      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-      manifest.version = version;
-      writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-      if (crash) {
-        const cli = join(folder, 'package', 'dist', 'cli', 'index.js');
-        const [shebang, ...rest] = readFileSync(cli, 'utf8').split('\n');
-        writeFileSync(
-          cli,
-          [
-            shebang,
-            "if (process.argv[2] === 'daemon') { console.error('upgrade check: this candidate exits at boot'); process.exit(1); }",
-            ...rest,
-          ].join('\n')
-        );
-      }
-      variants.push(
-        join(
-          folder,
-          run('npm', ['pack', join(folder, 'package'), '--pack-destination', folder, '--silent'])
-            .trim()
-            .split('\n')
-            .pop()
-        )
-      );
-    }
-
-    // The registry: our scope only from here, the rest proxied from npmjs.
-    const port = await freePort();
-    const registry = `http://127.0.0.1:${port}`;
-    const verdaccioRoot = join(leg, 'verdaccio');
-    mkdirSync(verdaccioRoot);
-    writeFileSync(
-      join(verdaccioRoot, 'config.yaml'),
-      [
-        `storage: ${JSON.stringify(join(verdaccioRoot, 'storage'))}`,
-        'auth:',
-        '  htpasswd:',
-        `    file: ${JSON.stringify(join(verdaccioRoot, 'htpasswd'))}`,
-        '    max_users: 1',
-        'uplinks:',
-        '  npmjs:',
-        '    url: https://registry.npmjs.org/',
-        'packages:',
-        "  '@jungjaehoon/*':",
-        '    access: $all',
-        '    publish: $authenticated',
-        "  '**':",
-        '    access: $all',
-        '    publish: $authenticated',
-        '    proxy: npmjs',
-        'log: { type: stdout, format: pretty, level: warn }',
-        '',
-      ].join('\n')
-    );
-    const verdaccio = spawn(
-      'npx',
-      [
-        '--yes',
-        VERDACCIO,
-        '--config',
-        join(verdaccioRoot, 'config.yaml'),
-        '--listen',
-        `127.0.0.1:${port}`,
-      ],
-      { stdio: ['ignore', 'inherit', 'inherit'], env: { ...process.env, HOME: homedir() } }
-    );
-    children.push(verdaccio);
-    await until(
-      'verdaccio answers',
-      async () => (await fetch(`${registry}/-/ping`).catch(() => null))?.ok === true,
-      180_000
-    );
-    const user = await (
-      await fetch(`${registry}/-/user/org.couchdb.user:upgrade-check`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: 'upgrade-check', password: 'upgrade-check' }),
-      })
-    ).json();
-    expect(typeof user.token === 'string', `verdaccio gave no token: ${JSON.stringify(user)}`);
-    const publishRc = join(leg, 'publish.npmrc');
-    writeFileSync(publishRc, `//127.0.0.1:${port}/:_authToken=${user.token}\n`, { mode: 0o600 });
-    for (const pack of [corePack, ...variants]) {
-      run('npm', ['publish', pack, '--registry', registry, '--userconfig', publishRc], {
-        stdio: 'inherit',
-      });
-    }
+    // This build as N and N+1, and an N+2 whose daemon exits at boot.
+    const served = await serveThisBuild({
+      dir: leg,
+      versions: [{ version: N }, { version: N1 }, { version: N2, crash: true }],
+    });
+    children.push(served.server);
+    const { registry } = served;
     console.log(`update leg: ${registry} serves ${NAME} ${N}, ${N1}, ${N2} (exits at boot)`);
 
     // The owner's npm names this registry; the npm cache is the machine's, as run.mjs's is.

@@ -14,4 +14,6 @@ paths = [
 ]
 regexes = [
   '''YOUR_.*_TOKEN_HERE''',
+  # The nodejs/release-keys commit node-pin verifies Node.js releases against (a public git SHA).
+  '''481637f813e912c4aa3622d7964ab426c97b8e8d''',
 ]

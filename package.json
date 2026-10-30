@@ -31,6 +31,7 @@
     "test:affected": "turbo run test --filter='...[origin/main]'",
     "build:affected": "turbo run build --filter='...[origin/main]'",
     "lint": "eslint packages/*/src packages/*/tests --ext .js,.mjs,.ts --no-error-on-unmatched-pattern",
+    "lint:sh": "shellcheck packages/standalone/install/install.sh packages/standalone/scripts/install-check/node-pin.sh",
     "lint:fix": "eslint packages/*/src packages/*/tests --ext .js,.mjs,.ts --fix --no-error-on-unmatched-pattern",
     "format": "prettier --write \"packages/*/{src,tests}/**/*.{js,mjs,ts,json,md}\"",
     "format:check": "prettier --check \"packages/*/{src,tests}/**/*.{js,mjs,ts,json,md}\"",

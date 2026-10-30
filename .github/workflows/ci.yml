@@ -164,6 +164,57 @@ jobs:
       - name: Upgrade from the previous release, then mama update and its rollback
         run: node packages/standalone/scripts/upgrade-check/run.mjs
 
+  # The install command (docs/development/work/install.md, PR 1): install/install.sh on a fresh
+  # HOME on macOS and Ubuntu. Ubuntu checks shellcheck, the synced version lines and the pinned
+  # Node's signed hashes. On both, the script's own tests run on that platform's shell tools, and
+  # run.mjs installs this build from a local registry with the real Node download and the vendors'
+  # backend installers, then inits it, writes the service files through a stand-in service manager
+  # and checks what they run.
+  install-check:
+    needs: [changes, setup]
+    if: ${{ github.event_name == 'push' || needs.changes.outputs.standalone == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@v6
+      # The setup job's build is Linux's; macOS builds its own.
+      - if: runner.os == 'Linux'
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            packages/*/dist
+            packages/standalone/ui/node_modules
+            packages/standalone/public/viewer
+          key: ${{ runner.os }}-build-${{ github.sha }}
+      - if: runner.os == 'macOS'
+        run: pnpm install && pnpm build
+      # The runner image's own shellcheck: nothing is downloaded for it.
+      - name: shellcheck
+        if: runner.os == 'Linux'
+        run: shellcheck --version && pnpm lint:sh
+      # The script's MAMA OS version and Node pin are what package.json and node.json say.
+      - name: sync-versions --check
+        if: runner.os == 'Linux'
+        run: node scripts/sync-versions.js --check
+      - name: node-pin
+        if: runner.os == 'Linux'
+        run: bash packages/standalone/scripts/install-check/node-pin.sh
+      - name: install.sh tests
+        working-directory: packages/standalone
+        run: npx vitest run tests/cli/install-script.test.ts
+      - name: install.sh on a fresh HOME
+        run: node packages/standalone/scripts/install-check/run.mjs --vendor-installers
+
   # Test plugin (independent)
   test-plugin:
     needs: [changes, setup]
