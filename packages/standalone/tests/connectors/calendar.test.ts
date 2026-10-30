@@ -102,7 +102,7 @@ describe('CalendarConnector (ported from the pre-stub connector)', () => {
   it.each([
     [
       Object.assign(new Error('spawn gws ENOENT'), { code: 'ENOENT' }),
-      /install.*gws.*PATH.*start\.sh/i,
+      /gws is not on the service's PATH; mama doctor names how to install it/,
     ],
     [new Error('401 invalid credentials'), /gws auth login/i],
     [new Error('403 insufficient scope'), /gws auth login/i],

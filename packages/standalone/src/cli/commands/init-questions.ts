@@ -1,11 +1,26 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
-import type { ConnectorsConfig } from '../../connectors/framework/types.js';
+import { resolve } from 'node:path';
+import {
+  cliAuth,
+  type AuthRequirement,
+  type ConnectorsConfig,
+  type IConnector,
+} from '../../connectors/framework/types.js';
+import { loadConnector } from '../../connectors/index.js';
+import type { W1Config } from '../../runtime/config.js';
+import { connectorLoadPaths, planConnectors } from '../../runtime/connectors.js';
+import { createTimeZoneSetting } from '../../runtime/timezone.js';
+import { gwsTool } from '../../connectors/framework/gws-utils.js';
 import { backendEnvironment } from '../../runtime/backend-security.js';
 import { CliInputError, nonblankLine, type PromptAdapter } from '../prompt.js';
 import { shellQuote, type SecretName } from '../secrets.js';
 import { probeBackend, type ProbeRun } from '../runtime/backend-probe.js';
 import { telegramCheck } from '../runtime/diagnostics.js';
+import { serviceSight, sourceToolLines, sourceTools } from '../runtime/source-tools.js';
+import { findExecutable, findIn } from '../launch-files.js';
+import { pathsFor } from './daemon.js';
+import { serviceLaunch, type ServiceOptions } from './service.js';
 
 /** The questions and checks `mama init` asks, shared by a whole setup and by `--section`. */
 
@@ -40,7 +55,6 @@ const connectorSecrets: Record<string, SecretName[]> = {
   'claude-code': [],
 };
 
-export const gwsConnectorNames = new Set(['calendar', 'gmail', 'drive', 'sheets']);
 const noSecretConnectorNames = new Set(['obsidian', 'imessage', 'claude-code']);
 
 export async function yes(prompt: PromptAdapter, label: string): Promise<boolean> {
@@ -88,7 +102,7 @@ export async function collectConnectors(
         enabled: true,
         pollIntervalMinutes: 5,
         channels: { inbox: { role: 'hub' } },
-        auth: { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' },
+        auth: cliAuth(gwsTool),
       };
       continue;
     }
@@ -147,7 +161,7 @@ export async function collectConnectors(
         channels: Object.fromEntries(
           folderIds.map((folderId) => [folderId, { role: 'hub', folderId }])
         ),
-        auth: { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' },
+        auth: cliAuth(gwsTool),
       };
       continue;
     }
@@ -169,7 +183,7 @@ export async function collectConnectors(
             ...(dataRange ? { dataRange } : {}),
           },
         },
-        auth: { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' },
+        auth: cliAuth(gwsTool),
       };
       continue;
     }
@@ -195,14 +209,89 @@ export async function collectConnectors(
       channels: Object.fromEntries(
         ids.map((id) => [id, { role: 'hub', ...(name === 'trello' ? { boardId: id } : {}) }])
       ),
-      auth: gwsConnectorNames.has(name)
-        ? { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' }
-        : noSecretConnectorNames.has(name)
-          ? { type: 'none' }
-          : { type: 'token', tokenName: connectorSecrets[name].at(-1)! },
+      auth:
+        name === 'calendar'
+          ? cliAuth(gwsTool)
+          : noSecretConnectorNames.has(name)
+            ? { type: 'none' }
+            : { type: 'token', tokenName: connectorSecrets[name].at(-1)! },
     };
   }
   return config;
+}
+
+/**
+ * For the sources just set up, each tool they run that the service cannot find, with how to
+ * install it, and each one's login (install.md, PR 3). connectors.json is read as boot and doctor
+ * read it (planConnectors), and each source names its tool in its own requirements, since
+ * connectors.json's `auth` is not what the source runs. `only` limits it to the sources just
+ * set up. It reports; the setup is already saved, and what boot refuses doctor names in full.
+ */
+export async function writeSourceTools(
+  only: readonly string[] | undefined,
+  install: { root: string; home: string; platform: NodeJS.Platform; configPath: string },
+  config: W1Config,
+  options: Pick<ServiceOptions, 'findExecutable' | 'nodePath' | 'cliPath' | 'toolDirectoryExists'>,
+  write: (line: string) => void,
+  /** What to do once a missing tool is installed. */
+  next: string
+): Promise<void> {
+  const { root, home, platform, configPath } = install;
+  const paths = pathsFor(configPath, config);
+  let plan: ReturnType<typeof planConnectors>;
+  try {
+    plan = planConnectors({
+      configPath: paths.connectorsConfigPath,
+      onIgnored: () => {},
+      ...(config.wiki?.enabled
+        ? { wikiRoot: resolve(config.wiki.vaultPath!, config.wiki.wikiDir!) }
+        : {}),
+    });
+  } catch (error) {
+    write(
+      `connectors.json does not load as boot reads it (${(error as Error).message}); mama doctor names what to correct.`
+    );
+    return;
+  }
+  const timeZone = createTimeZoneSetting(config.timezone);
+  const sources: { name: string; needs: AuthRequirement[] }[] = [];
+  for (const name of plan.enabledConnectorNames) {
+    if (only !== undefined && !only.includes(name)) continue;
+    let source: IConnector;
+    try {
+      source = await loadConnector(
+        name,
+        plan.config.config[name],
+        connectorLoadPaths(name, {
+          statePath: paths.connectorsRoot,
+          kagemushaDbPath: paths.kagemushaDbPath,
+          timeZone,
+        })
+      );
+    } catch (error) {
+      write(
+        `${name} cannot be built from connectors.json (${(error as Error).message}); mama doctor names it.`
+      );
+      continue;
+    }
+    sources.push({ name, needs: source.getAuthRequirements() });
+  }
+  // start.sh is read only when a source runs a tool.
+  if (!sources.some(({ needs }) => needs.some((need) => need.type === 'cli'))) return;
+  const service = serviceSight(
+    root,
+    home,
+    platform,
+    () => serviceLaunch(config.agent.backend, options),
+    options.toolDirectoryExists
+  );
+  const reports = sourceTools(
+    sources,
+    service,
+    { root, home },
+    { inDirs: findIn, shell: options.findExecutable ?? findExecutable }
+  );
+  for (const line of sourceToolLines(reports, next)) write(line);
 }
 
 export type TelegramCall = Parameters<typeof telegramCheck>[2];

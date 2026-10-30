@@ -145,6 +145,21 @@ describe('DriveConnector', () => {
       const connector = makeConnector(makeConfig());
       await expect(connector.init()).rejects.toThrow(/gws/i);
     });
+
+    it('tells a gws the service cannot find from one that is found but fails', async () => {
+      mockExecSync.mockImplementation(() => {
+        throw Object.assign(new Error('spawn gws ENOENT'), { code: 'ENOENT' });
+      });
+      await expect(makeConnector(makeConfig()).init()).rejects.toThrow(
+        "gws is not on the service's PATH; mama doctor names how to install it"
+      );
+      mockExecSync.mockImplementation(() => {
+        throw Object.assign(new Error('env: node: No such file or directory'), { code: 127 });
+      });
+      await expect(makeConnector(makeConfig()).init()).rejects.toThrow(
+        "gws is on the service's PATH but gws --version failed (env: node: No such file or directory)"
+      );
+    });
   });
 
   describe('authenticate', () => {
