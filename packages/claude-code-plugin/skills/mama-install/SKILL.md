@@ -37,12 +37,11 @@ read `open.html` and never POST to the setup page. The page is the person's.
 5. Setup is done when MAMA answers the person's message to their bot. Files on disk or a running
    service are not the end.
 
-Sources are chosen in the conversation. Install the tool a source needs with the command MAMA
-prints. For gws, the person creates its OAuth client and you move the downloaded JSON into place.
-The person completes the tool's login in the browser, and only then is the source enabled, with
-`mama init --section connectors --non-interactive`.
+Sources (Gmail, Calendar, Slack and the others) and Jev are not set up from the conversation
+yet: today each needs the person at a terminal, which this install does not use. Do not offer
+them during the install. If the person asks for one, say that MAMA cannot set it up through you
+yet, and that it works without them.
 
-One choice sends owner text out: Jev (TypeSafe). With it, the owner agent can judge many messages
-or items without reading them all; the text in those calls goes to the Jev service. Explain this
-and let the person choose. MAMA works the same without it. Jev is turned on later with
-`mama init --section jev`.
+If the person asks about Jev (TypeSafe): with it, the owner agent can judge many messages or items
+without reading them all, and the text in those calls goes to the Jev service. MAMA works the same
+without it.

@@ -89,7 +89,8 @@ The page takes one token and one code, then closes. Everyone who messages the bo
 setup waits gets a code, but only the code entered on the page counts, and only that person's
 `/bind` names the group. A `/bind` sent as an anonymous administrator cannot count; setup says so.
 The page lives 15 minutes, and setup waits 15 minutes for `/bind`; after either, setup stops
-without writing anything, and the install command run again starts over.
+without writing the setup (only the two folders stay), and the install command run again starts
+over.
 
 ### Signing in the backend
 
@@ -116,7 +117,8 @@ comes from the login it started on your machine.
 - The agent's shell does not read the PATH block the installer writes, so it runs
   `~/.mama/bin/mama` and the backend by their full paths.
 - Setup is done when MAMA answers your message to the bot. Sources, Discord, Slack and Jev are set
-  up afterwards with `mama init --section` (below).
+  up afterwards with `mama init --section` (below), which needs you at a terminal: the agent does
+  not set them up from the conversation yet, and does not offer them during the install.
 
 Before writing anything, `mama init` checks three things:
 

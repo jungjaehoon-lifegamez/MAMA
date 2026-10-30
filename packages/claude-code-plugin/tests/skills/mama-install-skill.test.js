@@ -49,12 +49,19 @@ describe('Story ONB-8: thin MAMA OS installation skill', () => {
     expect(content).not.toMatch(/\b(ask|type|paste)\b[^.]*\b(token|key|password|pairing code)\b/i);
   });
 
-  it('lets the owner choose Jev, turned on later', () => {
+  it('offers no source or Jev during the install, since neither is set up from the conversation yet', () => {
     const content = skill();
 
-    expect(content).toContain('Jev');
+    expect(content).toContain(
+      'Sources (Gmail, Calendar, Slack and the others) and Jev are not set up from the conversation yet'
+    );
+    expect(content).toContain('Do not offer them during the install.');
+    // No command that cannot run from the agent's shell: --section needs a terminal.
+    expect(content).not.toContain('--section');
+    // Bare `mama` in the agent's shell may be another program; a named command is the wrapper's.
+    expect(content).not.toMatch(/(^|[^/])\bmama (init|service|doctor|status|update)\b/);
+    // What Jev sends out stays explained, for when the person asks.
     expect(content).toContain('goes to the Jev service');
     expect(content).toContain('MAMA works the same without it');
-    expect(content).toContain('mama init --section jev');
   });
 });

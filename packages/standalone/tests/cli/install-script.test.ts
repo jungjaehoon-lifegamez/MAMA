@@ -174,7 +174,10 @@ describe('install.sh', () => {
     expect(readFileSync(join(home, '.zshrc'), 'utf8')).toBe(`${block()}\n`);
     expect(first.output).toContain(`Node.js ${pin.version} is in place`);
     expect(first.output).toContain(`MAMA OS ${version} is in place`);
-    expect(first.output).toContain(`${wrapper} init --non-interactive`);
+    // Quoted, and with ~/.local/bin first, where the vendor installers put the backend.
+    expect(first.output).toContain(
+      `Set up with: PATH="$HOME/.local/bin:$PATH" MAMA_INIT_BACKEND=codex MAMA_INIT_MODEL=<model> '${wrapper}' init --non-interactive`
+    );
     // npm is asked only what it holds, and the backend only its version; nothing is installed.
     expect(
       calls().every((call) => call.startsWith('npm ls -g --prefix') || call === 'codex --version')

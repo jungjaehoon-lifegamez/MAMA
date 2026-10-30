@@ -444,7 +444,9 @@ $path_line
   case $init_mode in
     no-init)
       say "Installed. $reopen to have mama on PATH."
-      say "Set up with: ${backend:+MAMA_INIT_BACKEND=$backend }MAMA_INIT_MODEL=<model> $wrapper init --non-interactive"
+      # ~/.local/bin first, as here: init looks for the backend on PATH, and a new shell may not
+      # read the startup block yet.
+      say "Set up with: PATH=\"\$HOME/.local/bin:\$PATH\" ${backend:+MAMA_INIT_BACKEND=$backend }MAMA_INIT_MODEL=<model> $(quote "$wrapper") init --non-interactive"
       ;;
     non-interactive)
       PATH="$node_dir/bin:$PATH" "$wrapper" init --non-interactive </dev/null

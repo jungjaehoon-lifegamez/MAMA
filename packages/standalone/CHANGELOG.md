@@ -47,9 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     installs the document tools, installs and starts the service through `mama service`, and
     waits until the daemon reports it is running and the viewer answers `/health`. Last, the
     daemon runs one real backend turn in a session of its own, so the login is proven as the
-    service runs it; a failure names `mama logs` and `mama doctor`, and `mama init` checks again
-    after a fix.
-  - **Repeat-safe:** a failed run continues from its last finished step without asking again.
+    service runs it; a failure names `mama logs` and `mama doctor`, and the install command run
+    again checks it after a fix.
+  - **Repeat-safe:** a failed run continues from its last finished step.
     On a finished setup, init says so, names `mama doctor`, `mama service restart` and
     `mama update`, and exits 0 (#538, #539).
   - **No typed Telegram IDs:** last, the bot sends a six-digit code to whoever messages it
@@ -148,8 +148,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     no browser opens, init prints the file's `file://` path.
   - It takes the token, checked with Telegram, then the code the bot sent, by form POST. A refused
     token or a wrong code is shown with its form again. After one token and one code it closes.
-  - Unused, it closes after 15 minutes, and setup stops with nothing written. Neither the token nor
-    the address appears in a printed line or on the page.
+  - Unused, it closes after 15 minutes, and setup stops without writing the setup; only the two
+    folders it made before the page opened stay. Neither the token nor the address appears in a
+    printed line or on the page.
 
 ### Changed
 
