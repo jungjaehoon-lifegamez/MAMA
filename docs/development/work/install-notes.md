@@ -1,7 +1,8 @@
 # Install command: notes (1.0 W2.4)
 
 Measurements and reasons behind [install.md](install.md), which stays the work list. Everything
-here was measured or read on 2026-10-30 at `4b25f4b45`. `s/` is `packages/standalone/src`.
+here was measured or read on 2026-10-30; line numbers are against `origin/main` at `1afb3fa3b`,
+and PR 3's against its head `3696b7041`. `s/` is `packages/standalone/src`.
 
 ## The owner decision this follows
 
@@ -128,9 +129,30 @@ Nothing in MAMA takes a secret in a browser today:
 The viewer's Host check (`s/api/viewer-request-security.ts:35-52`) is the pattern the page's check
 follows. The viewer itself is not reused: it starts with the daemon, after setup.
 
-What it proves: a code reaches only the chat it was sent to (`:88-94`). Entered on a page reachable
-only from this machine, it shows that the person at this machine's browser read that DM. The
-terminal gave the same proof from this machine's keyboard.
+What it proves. A code reaches only the chat it was sent to (`:88-94`). Reachable only from this
+machine is not reachable only by this person, because loopback is shared by every account on it.
+
+- The port is easy to find, so the nonce is the only barrier.
+- The page takes the first code it gets.
+- Pairing gives a code to any sender (`:115-146`).
+
+So an account that read the URL could fetch the page for the bot's name, DM the bot, and submit its
+own code first (review of `906d72b7c`). The URL must therefore reach no other account:
+
+- `open` and `xdg-open` take their target as an argument. On this Mac,
+  `ps -axww -o user=,args=` lists other accounts' arguments (`_usbmuxd … -launchd`, among others).
+  On Linux `/proc/<pid>/cmdline` is world-readable, and a browser that `xdg-open` starts keeps its
+  argument there.
+- A stdout line goes into whatever file the agent chose, which under umask 022 can be
+  world-readable.
+
+The redirect file solves both. It is 0600 in a 0700 folder, and `open` gets only its path, as
+Jupyter's `use_redirect_file` does. So only this account's browser learns the nonce. The code
+entered on the page then proves that the person using this account's browser read the bot's DM.
+
+The Host rule is the viewer's (`s/api/viewer-request-security.ts:11-52`) without its configured
+names: `localhost`, `127.0.0.1` or `[::1]` on any port, one Host header. A rebinding site still
+sends its own name, and an SSH forward on another local port still works.
 
 Rejected:
 
@@ -149,8 +171,10 @@ Rejected:
 Why `MAMA_TELEGRAM_TOKEN`, `MAMA_INIT_OWNER_TELEGRAM_ID` and `MAMA_INIT_COMMON_CHAT_ID` go as init
 answers:
 
-- With the IDs, an agent holding the token could read `getUpdates` itself and fill in whoever wrote,
-  so no proof would be asked for. B2 says no numeric ID is typed.
+- With the IDs, a script holding the token could fill in whichever sender wrote, so no proof would
+  be asked for. B2 says no numeric ID is typed.
+- The code protects against the wrong Telegram sender, not against the agent. An agent can still
+  register any ID with `mama register-owner <id>` while MAMA is stopped.
 - A token variable beside the page would be a second way in, and it is the way the token reached
   the transcript.
 - The only caller is the CI leg (`scripts/install-check/run.mjs:275-277`), whose Telegram stand-in
@@ -162,6 +186,8 @@ What this revision removes and adds:
 | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | The code file: the `mkdtemp` folder, its polling reader, its unlink and cleanup, and CI writing the file | One module, `s/cli/runtime/setup-page.ts`: one GET, one POST, two forms, the Host and nonce checks, the lifetime, `open`/`xdg-open`; an estimated 120–160 lines with its HTML |
 | The token file: the skill's 0600-file step and its notes                                                 | `tests/cli/setup-page.test.ts`                                                                                                                                                |
+| The skill's `npm i -g` and `mama --help` step, and its two test lines                                    | The redirect file: a `mkdtemp` folder and one 0600 HTML file, about 10 lines                                                                                                  |
+| W2.4.5a's refusal of a different `MAMA_INIT_BACKEND`, and its test                                       |                                                                                                                                                                               |
 | The init variable `MAMA_TELEGRAM_TOKEN` (`init.ts:262`, `run.mjs:275`)                                   | CI POSTs the token and the code to the page in place of the variable and the file                                                                                             |
 | `install.sh` unsetting the token for npm and the vendor installers, and its test                         |                                                                                                                                                                               |
 
@@ -187,7 +213,7 @@ Kept as a secondary path, it would need two input paths for one setup (`askAnswe
 `environmentAnswers`), B's fix (a real terminal device in place of `/dev/tty`), and a docs line for
 C. No consumer is named for it.
 
-What goes, by the line ranges at `4b25f4b45`:
+What goes, by the line ranges at `1afb3fa3b`:
 
 | Where                                             | What                                                                             | Lines            |
 | ------------------------------------------------- | -------------------------------------------------------------------------------- | ---------------- |
@@ -224,7 +250,7 @@ What makes the order matter:
 
 - A Google source's `init()` runs only `gws --version` (`s/connectors/gmail/index.ts:46-53`). The
   connector runtime awaits each `init()` (`s/runtime/connectors.ts:236-240`), and boot rethrows the
-  failure (`s/cli/commands/daemon.ts:1308-1323`). So a Google source enabled with gws missing stops
+  failure (`s/cli/commands/daemon.ts:1311-1326`). So a Google source enabled with gws missing stops
   MAMA from starting.
 - A missing login does not stop boot. Polls fail, and doctor's online check asks the source's
   credentials (PR 3's `diagnostics.ts:859-861`). So the host check that enabling needs is the
@@ -232,7 +258,7 @@ What makes the order matter:
   (`serviceSight`).
 - No path an agent can use enables a source today:
   - `--section` needs a terminal (`init-section.ts:64`);
-  - `--non-interactive` writes no connectors (`init.ts:286`; `:288` on PR 3's branch).
+  - `--non-interactive` writes no connectors (`init.ts:286`; `:292` on PR 3's branch).
 - Doctor sees only enabled sources (PR 3's `diagnostics.ts:760-858`). It cannot warn before
   enabling; the enabling step has to.
 
@@ -247,7 +273,7 @@ Why the non-interactive section takes connector blocks rather than one variable 
 So the blocks need no new vocabulary. One variable per question would add a name for each field of
 each connector.
 
-PR 3 (`feat/source-tools`, #543, head `8a7dbca7a`) states commands, which an agent can run as
+PR 3 (`feat/source-tools`, #543, head `3696b7041`) states commands, which an agent can run as
 printed. Three of its lines were written for a person who enables first and installs after, at a
 terminal:
 
@@ -280,6 +306,12 @@ Notes kept with the clean-account kit, run 2026-10-30.
   - `mama status` has no install-kind line (`s/cli/commands/control.ts:108-175`). The kind shows in
     `mama update --dry-run`'s plan line, "(npm install, prefix …)" (`update.ts:664`).
   - The registry read is at `update.ts:583`, not `:553`.
+  - Homebrew's `gws` 0.11.1 (`/opt/homebrew/bin/gws`, a Node script) is on every account's PATH too.
+    `start.sh`'s PATH names `/opt/homebrew/bin` (`s/cli/launch-files.ts:96`), so the service finds
+    it, and W2.4.5e's refusal cannot fire on this Mac. Its tests and the wave 3 host prove the
+    refusal.
+  - Homebrew's `codex` is 0.160.1, exactly the minimum (`backend-probe.ts:8-11`). Once the minimum
+    rises, the script keeps it and init refuses it as too old.
 - **E**, the toolkit's `brew install` on a Standard account (I7): not reached. The live proof
   records it.
 
