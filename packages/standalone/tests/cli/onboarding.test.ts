@@ -1537,17 +1537,21 @@ describe('tools a source needs (install.md, PR 3)', () => {
       );
     });
 
-    it('a start.sh that cannot be read keeps its own error', async () => {
-      await setUp([]);
-      chmodSync(join(root, 'start.sh'), 0o000);
-      try {
-        await expect(
-          runInit(['--section', 'connectors'], options(prompt(['gmail'], []).adapter))
-        ).rejects.toThrow(/EACCES/);
-      } finally {
-        chmodSync(join(root, 'start.sh'), 0o700);
+    // Root reads a file whatever its mode.
+    it.skipIf(process.getuid?.() === 0)(
+      'a start.sh that cannot be read keeps its own error',
+      async () => {
+        await setUp([]);
+        chmodSync(join(root, 'start.sh'), 0o000);
+        try {
+          await expect(
+            runInit(['--section', 'connectors'], options(prompt(['gmail'], []).adapter))
+          ).rejects.toThrow(/EACCES/);
+        } finally {
+          chmodSync(join(root, 'start.sh'), 0o700);
+        }
       }
-    });
+    );
 
     it("gws on the service's PATH", async () => {
       const found = gwsIn('tool-bin');
