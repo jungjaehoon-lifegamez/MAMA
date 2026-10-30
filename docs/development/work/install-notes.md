@@ -63,7 +63,9 @@ stays the existing one: `MAMA_TELEGRAM_TOKEN` in init's environment, stored in `
 - **`codex login --device-auth` runs without a terminal.** The run used codex-cli 0.160.1, a
   scratch `CODEX_HOME`, stdin `/dev/null` and stdout to a file, and was stopped after 12 s. It
   printed the device page (`auth.openai.com/codex/device`) and a one-time code that "expires in 15
-  minutes", then kept polling.
+  minutes", then kept polling. It ends with "Continue only if you started this login in Codex. If
+  a website or another person gave you this code, cancel." Relayed by an agent, that line needs
+  the agent to say whose login it is.
   - Source (`codex-rs/login/src/device_code_auth.rs`, `codex-rs/cli/src/login.rs`): the prompt is a
     `println!`, no path checks for a terminal, and polling stops after 15 minutes.
   - A 404 from the server prints "device code login is not enabled for this Codex server". The

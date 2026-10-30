@@ -1,9 +1,11 @@
 # Install command (1.0 W2.4)
 
 Rows I1, I4 and I5 of [v1.md](v1.md); plan [W2.4](v1-plan.md#w24-install-command-i1-i4-i5). Code
-read at `17dcbcafb`, revised at `4b25f4b45` for the owner decision of 2026-10-30. `s/` is
-`packages/standalone/src`. Vendor pages were read on 2026-10-30 ([Sources](#sources)).
-Measurements and reasons: [install-notes.md](install-notes.md).
+read at `17dcbcafb`, revised at `4b25f4b45` for the owner decision of 2026-10-30. Line numbers in
+the sections that describe built work (What the script makes, Node, Moving the managed Node, PR
+1–3) are from `17dcbcafb`; the rest cite `4b25f4b45`. `s/` is `packages/standalone/src`. Vendor
+pages were read on 2026-10-30 ([Sources](#sources)). Measurements and reasons:
+[install-notes.md](install-notes.md).
 
 ## Why
 
@@ -96,9 +98,9 @@ running Node is refused at step 2, before any change.
   - Claude Code: `curl -fsSL https://claude.ai/install.sh | bash`.
   - Codex: `curl -fsSL https://chatgpt.com/codex/install.sh | sh`, always with
     `CODEX_NON_INTERACTIVE=1` and `CODEX_HOME` unset. On a terminal its "Start Codex now?" prompt
-    starts Codex on `~/.codex`, not MAMA's managed home (`init-questions.ts:231`).
+    starts Codex on `~/.codex`, not MAMA's managed home (`init-questions.ts:246-247`).
 - `~/.local/bin` joins PATH before init: init and `service install` find the backend there
-  (`init-questions.ts:229`, `service.ts:154-159`), and `start.sh` carries its folder
+  (`init-questions.ts:245`, `service.ts:153-154`), and `start.sh` carries its folder
   (`launch-files.ts:102-118`).
 - Init signs nothing in. It refuses a missing, old or signed-out backend before writing anything
   (`init-questions.ts:238-292`), naming the login with the backend's full path. The agent runs that
@@ -143,7 +145,8 @@ running Node is refused at step 2, before any change.
 - The body is one function called on the last line, so a cut-off download runs nothing.
 - No terminal is read. A new install needs `--backend` and either `--non-interactive` (init reads
   `MAMA_INIT_*` and `MAMA_TELEGRAM_TOKEN`) or `--no-init`, which prints the init command. A set-up
-  install needs no flag, so the bare command that `mama update`, doctor and status print
+  install needs no flag and keeps accepting these, so the bare command that `mama update`, doctor
+  and status print
   (`s/cli/runtime/node-move-journal.ts:61-62`) runs as is.
 - Init gets `MAMA_INIT_BACKEND` from `--backend`. `MAMA_TELEGRAM_TOKEN` reaches init through the
   environment only, never a flag, and npm and the vendor installers run without it.
@@ -158,7 +161,7 @@ running Node is refused at step 2, before any change.
 | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `~/.mama/runtime/node-move.json` exists                                    | Finishes or undoes that move first, as above                                                                                                  |
 | `~/.mama/config.yaml` or `start.sh` exists and `~/.mama/npm` holds no MAMA | Refuses before any change: another install owns this account; `mama update --dry-run` shows how it updates                                    |
-| `~/.mama/config.yaml` exists and `~/.mama/npm` holds MAMA                  | Takes no flag; moves Node if the pin differs, then runs `mama init --non-interactive`, which resumes (`init.ts:415-423`) or says it is set up |
+| `~/.mama/config.yaml` exists and `~/.mama/npm` holds MAMA                  | Needs no flag; moves Node if the pin differs, then runs `mama init --non-interactive`, which resumes (`init.ts:415-423`) or says it is set up |
 | No setup yet, `~/.mama/node` has the pinned version                        | Skips Node                                                                                                                                    |
 | No setup yet, `npm ls -g --prefix ~/.mama/npm` shows the script's version  | Skips the package; another version is reinstalled                                                                                             |
 | `command -v mama` names another program                                    | Names it, and says the startup block puts the wrapper first                                                                                   |
@@ -250,9 +253,10 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
   - Remove the terminal mode: the `/dev/tty` probe, the backend question and
     `init </dev/tty >/dev/tty` (`install.sh:76-83,175-187,440-444`).
     - A new install needs `--backend` and `--non-interactive` or `--no-init`.
-    - A set-up install (`config.yaml` present) takes no flag. It skips the backend step, keeps
-      `~/.local/bin` in the startup block when a backend is there, and runs
-      `mama init --non-interactive`.
+    - A set-up install (`config.yaml` present) needs no flag. Without `--backend` it skips the
+      backend step and keeps `~/.local/bin` in the startup block when a backend is there; with it,
+      the backend step runs as today. It runs `mama init --non-interactive` unless `--no-init` is
+      given (`scripts/install-check/run.mjs:369` passes both flags).
   - A backend `command -v` finds counts only when `"$backend_path" --version </dev/null` exits 0
     and prints a version; otherwise the vendor installer runs, and the installed one must pass the
     same check (`install.sh:334-371`).
@@ -355,7 +359,9 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
     2. Take the token. Write it into a 0600 file with a short command; the install command loads
        it, because a long command's text stays in `ps` ([notes](install-notes.md#the-agents-shell)).
     3. Start the install in the background, with its output in a file.
-    4. Pass on the sign-in and pairing lines, and write the code where init says.
+    4. Pass on the sign-in and pairing lines, and write the code where init says. Codex's device
+       page warns to cancel a code "another person gave you"; say that this code comes from the
+       login the agent started on the person's machine.
     5. After a sign-in, run the same install command again. Use full paths.
     6. The setup is done when MAMA answers the person's message.
   - The Jev paragraph says Jev is turned on later with `mama init --section jev` (Q1).
@@ -447,7 +453,8 @@ The steps:
 7. **Leg B.** `mama uninstall --data` is run at a terminal (it needs one, `uninstall.ts:304`).
    Claude Code then installs with the `codex` backend. The managed home is signed in from the
    agent's background shell with `codex login`, or with `--device-auth` and device code login on.
-8. **Leg C.** `mama uninstall --data` and `claude auth logout` are run. Codex then installs with the
+8. **Leg C.** `mama uninstall --data` and `claude auth logout` are run. The person asks Codex to
+   install MAMA by following owner-setup.md on `main` (W2.4.5c; Codex has no plugin), with the
    `claude` backend:
    - `claude auth login` from Codex's shell (Q2 if it cannot complete);
    - whether Codex's background run survives the turns of the pairing relay.
