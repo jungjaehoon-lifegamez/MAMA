@@ -2796,3 +2796,9 @@ The implementation writes raw/index data during import only. Replay is the owner
   - `gws auth login -s <services>`;
   - the OAuth client step: gws 0.11.1 with a fresh HOME exits `401 No OAuth client configured`, and a testing-mode client's refresh token lasts 7 days (Q3).
   - `gws auth login` itself was never run in CI.
+
+### `mama stop` waits out a daemon's boot and stop windows (#546, 2026-10-30)
+
+- Result: the macOS install-check failure ("holds the install does not answer on its control socket", and "unknown (pid 0) holds the install") had one cause. A drained stop read the install state once. A daemon creates its lock, then its holder file, then its control socket, and at its own stop it closes the socket just before letting go of the lock. A stop that landed in between was refused. Now both the drained stop and `--now` read again while the lock is held with no holder file or no socket, for up to 5 s (`CONTROL_WAIT_MS`, named reason: no turn runs in that stretch). After that the old messages stand. `--now` on macOS no longer reports failure after it has already unloaded the service.
+- Evidence: an Opus review returned FIX-FIRST: fold the `--now` pid-0 variant in, since it is the same circuit and has production paths in `update.ts:1060`, `node-move.ts:354` and `install.sh:123`. Six new tests fail on main's `control.ts`. macOS install-check passed 4 of 4 runs on 56fc94f69 and 5 of 5 on the first head. Merged as 2bd134492 and deployed with a drained stop; the boot was clean.
+- Still open: the stale-token "unauthorized" race after a crash, which needs a crash plus sub-millisecond timing. The CI runs show the leg is stable, but did not land in the new wait; the unit tests prove that path.
