@@ -177,6 +177,65 @@ describe('mama uninstall', () => {
     expect(existsSync(join(tools, 'apps', 'toolkit'))).toBe(true);
   });
 
+  /** The program the install command keeps in the MAMA home, and its startup block. */
+  function managed(home: string, root: string) {
+    for (const path of [
+      'node/bin/node',
+      'npm/lib/node_modules/@jungjaehoon/mama-os/package.json',
+      'bin/mama',
+    ]) {
+      mkdirSync(join(root, path, '..'), { recursive: true });
+      writeFileSync(join(root, path), 'program');
+    }
+    writeFileSync(
+      join(home, '.profile'),
+      'mine\n# >>> mama >>>\nexport PATH="$HOME/.mama/bin:$PATH"\n# <<< mama <<<\n'
+    );
+  }
+
+  it('removes the managed program with --data after the rest of the home, and names the startup block', async () => {
+    const { home, root } = install();
+    managed(home, root);
+    const asked = prompt(root);
+    const out: string[] = [];
+    expect(
+      await runUninstall(['--data'], {
+        ...base(home),
+        prompt: asked,
+        write: (line) => out.push(line),
+      })
+    ).toBe(0);
+    expect(asked.lines.join('\n')).toContain(
+      `removes ${join(root, 'node')} (0.0 MB): the managed program the install command put here`
+    );
+    expect(existsSync(root)).toBe(false);
+    const removed = out.filter((line) => line.startsWith('removed '));
+    expect(removed.slice(-4)).toEqual([
+      `removed ${root}`,
+      `removed ${join(root, 'node')}`,
+      `removed ${join(root, 'npm')}`,
+      `removed ${join(root, 'bin')}`,
+    ]);
+    expect(out.join('\n')).not.toContain('npm uninstall -g');
+    expect(out.at(-1)).toBe(
+      `remove the lines from '# >>> mama >>>' to '# <<< mama <<<' in ${join(home, '.profile')}: the install command wrote them to put ${join(root, 'bin')} on PATH`
+    );
+    // The block is the owner's file to change.
+    expect(readFileSync(join(home, '.profile'), 'utf8')).toContain('# >>> mama >>>');
+  });
+
+  it('keeps and names the managed program without --data', async () => {
+    const { home, root } = install();
+    managed(home, root);
+    const out: string[] = [];
+    expect(await runUninstall([], { ...base(home), write: (line) => out.push(line) })).toBe(0);
+    expect(out).toContain(
+      `the managed program stays: ${join(root, 'node')}, ${join(root, 'npm')}, ${join(root, 'bin')} (mama uninstall --data removes it with the data)`
+    );
+    expect(out.join('\n')).toContain(`in ${join(home, '.profile')}`);
+    expect(existsSync(join(root, 'node', 'bin', 'node'))).toBe(true);
+  });
+
   it("also removes the toolkit's read-only versions with --toolkit, and tools_root once empty", async () => {
     const { home, root, tools } = install();
     rmSync(join(tools, 'apps'), { recursive: true });

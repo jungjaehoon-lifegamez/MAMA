@@ -25,7 +25,7 @@ import { backendEnvironment } from '../../runtime/backend-security.js';
 import { defaultConfigPath, loadConfig } from '../../runtime/config.js';
 import { STANDALONE_MIGRATION_SOURCE } from '../../storage/migrations-source.js';
 import { readDocumentToolkit, TOOLKIT_ASSETS } from '../../tools/toolkit-state.js';
-import { readStartScript, startExports, UPDATE_HOLD_LINE } from '../launch-files.js';
+import { readStartScript, startExports } from '../launch-files.js';
 import { CliInputError } from '../prompt.js';
 import {
   acquireInstallLock,
@@ -38,7 +38,19 @@ import {
   type DaemonControlReply,
   type InstallLock,
 } from '../runtime/daemon-control.js';
-import { defaultTelegramCall, runDiagnostics, type Check } from '../runtime/diagnostics.js';
+import {
+  defaultTelegramCall,
+  nodeCheck,
+  runDiagnostics,
+  type Check,
+} from '../runtime/diagnostics.js';
+import { defaultProbeRun } from '../runtime/backend-probe.js';
+import {
+  INSTALL_COMMAND,
+  managedNodePath,
+  nodeMovePlaces,
+  readNodeMoveJournal,
+} from '../runtime/node-move-journal.js';
 import {
   installKind,
   PACKAGE_NAME,
@@ -46,7 +58,7 @@ import {
   runningPackageRoot,
   updateSteps,
 } from '../runtime/install-kind.js';
-import { compareReleases, npmErrorCode } from '../runtime/release-check.js';
+import { compareReleases, nodeSatisfies, npmErrorCode } from '../runtime/release-check.js';
 import { backupFiles } from '../runtime/backup.js';
 import {
   leftoverStaging,
@@ -69,6 +81,7 @@ import {
   type TelegramCall,
 } from '../runtime/update-progress.js';
 import { runBackup } from './backup.js';
+import { moveNode, requireHoldingService } from './node-move.js';
 import { runStop } from './control.js';
 import { viewerHealth, waitForBoot } from './init.js';
 import { runRestore } from './restore.js';
@@ -90,7 +103,8 @@ import { runTools } from './tools.js';
  * `update --rollback --continue`.
  */
 
-const USAGE = 'Usage: mama update [<version>] [--dry-run] | mama update --rollback';
+const USAGE =
+  'Usage: mama update [<version>] [--dry-run] | mama update --rollback | mama update --node <folder>';
 
 /** How long the new version may take to boot, as `mama init` waits (init.ts). */
 const BOOT_WAIT_MS = 600_000;
@@ -130,6 +144,10 @@ export interface UpdateDeps {
   ): Promise<CliResult>;
   /** `update.lock`, or the continuation's lock; a test drops one to stand for a killed process. */
   lock(paths: LockPaths, command: string): InstallLock;
+  /** A Node's version without the `v`, from `<node> --version`. */
+  nodeVersion(nodePath: string): Promise<string>;
+  /** Doctor's check of start.sh's Node and MAMA command (the Node move's step 4). */
+  nodeCheck(nodePath: string, cliPath: string): Promise<Check>;
   /** This CLI's own version and package, read before anything is renamed. */
   version(): string;
   runningPackage(): string;
@@ -214,6 +232,18 @@ function defaultRunCli(
   });
 }
 
+async function defaultNodeVersion(nodePath: string): Promise<string> {
+  const { stdout } = await promisify(execFile)(nodePath, ['--version'], {
+    timeout: NPM_TIMEOUT_MS,
+    encoding: 'utf8',
+  });
+  const version = /^v(\d+\.\d+\.\d+)$/.exec(stdout.trim())?.[1];
+  if (version === undefined) {
+    throw new Error(`${nodePath} --version printed ${JSON.stringify(stdout.trim().slice(0, 80))}`);
+  }
+  return version;
+}
+
 function defaultDeps(options: UpdateOptions, home: string, configPath: string): UpdateDeps {
   const service: ServiceOptions = { ...options, home, configPath };
   const write = options.write;
@@ -250,6 +280,9 @@ function defaultDeps(options: UpdateOptions, home: string, configPath: string): 
     health: viewerHealth,
     runCli: defaultRunCli,
     lock: takeLock,
+    nodeVersion: defaultNodeVersion,
+    nodeCheck: async (nodePath, cliPath) =>
+      nodeCheck(nodePath, cliPath, defaultProbeRun, dirname(configPath)),
     version: resolvePackageVersion,
     runningPackage: runningPackageRoot,
     telegramCall: defaultTelegramCall,
@@ -263,7 +296,8 @@ type Mode =
   | { kind: 'update'; version: string | null; dryRun: boolean }
   | { kind: 'continue' }
   | { kind: 'rollback' }
-  | { kind: 'rollback-continue' };
+  | { kind: 'rollback-continue' }
+  | { kind: 'node'; folder: string };
 
 function parse(args: readonly string[]): Mode {
   const flags = new Set(args.filter((arg) => arg.startsWith('--')));
@@ -273,6 +307,9 @@ function parse(args: readonly string[]): Mode {
   if (only('--continue')) return { kind: 'continue' };
   if (only('--rollback')) return { kind: 'rollback' };
   if (only('--rollback', '--continue')) return { kind: 'rollback-continue' };
+  if (args.length === 2 && args[0] === '--node' && !args[1].startsWith('--')) {
+    return { kind: 'node', folder: args[1] };
+  }
   if ([...flags].every((flag) => flag === '--dry-run') && flags.size <= 1 && words.length <= 1) {
     const version = words[0] ?? null;
     if (version !== null && !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
@@ -308,6 +345,7 @@ export async function runUpdate(
     if (mode.kind === 'continue') return await continueUpdate(context);
     if (mode.kind === 'rollback-continue') return await finishRollback(context);
     if (mode.kind === 'rollback') return await resolveJournal(context);
+    if (mode.kind === 'node') return await moveNode(context, mode.folder, options);
     return await update(context, mode.version, mode.dryRun, options);
   } catch (error) {
     context.progress.send({ kind: 'error', code: errorCode(error) });
@@ -508,26 +546,9 @@ async function update(
     return 1;
   }
   requireServicePackage(install, deps.runningPackage());
-  // Nothing else would start the daemon again after the stop (decision 7).
-  if (!existsSync(serviceFile(options))) {
-    throw refusal(
-      'service.missing',
-      'mama update starts MAMA again through its service, and none is installed: run mama service install first'
-    );
-  }
-  // Only start.sh reads the hold file. One from before PR 3 (an `npm i -g` without `mama service
-  // install`) would boot an unheld daemon on a reboot mid-update.
-  const startPath = join(root, 'start.sh');
-  if (
-    !readFileSync(startPath, 'utf8')
-      .split('\n')
-      .some((line) => line.trim() === UPDATE_HOLD_LINE)
-  ) {
-    throw refusal(
-      'start_sh.no_hold',
-      `${startPath} does not stop a start while an update holds the install; run mama service install, then mama update`
-    );
-  }
+  // Nothing else would start the daemon again after the stop (decision 7), and only start.sh
+  // reads the hold file.
+  requireHoldingService(root, options);
   refuseWhileRestoring(root);
   const lock = deps.lock(paths.lock, 'update');
   try {
@@ -536,6 +557,13 @@ async function update(
       throw refusal(
         'update.open',
         `An earlier update (${open.from} → ${open.to}) is unfinished; resolve it first: ${rollbackCommand(open)}`
+      );
+    }
+    const move = readNodeMoveJournal(nodeMovePlaces(root).journal);
+    if (move !== null) {
+      throw refusal(
+        'node_move.open',
+        `A move of the managed Node (${move.from} → ${move.to}) is unfinished; run the install command again, which finishes or undoes it: ${INSTALL_COMMAND}`
       );
     }
     // Read now: from step 8 on, this package's own files are elsewhere.
@@ -585,6 +613,44 @@ async function update(
         'update.older',
         `Refused: ${target} is older than ${from}, which runs now; mama update does not go back a version`
       );
+    }
+    // The target runs on start.sh's Node, which the update does not change.
+    let engines: string;
+    try {
+      engines = (
+        await npm([
+          'view',
+          `${PACKAGE_NAME}@${target}`,
+          'engines.node',
+          '--registry',
+          registry,
+          ...prefixArgs,
+        ])
+      ).trim();
+    } catch (error) {
+      throw refusal(
+        `npm.${npmErrorCode(error)}`,
+        `Could not ask ${registry} for ${PACKAGE_NAME}@${target}'s engines: npm ${npmErrorCode(error)}; nothing changed`
+      );
+    }
+    if (engines !== '') {
+      const running = await deps.nodeVersion(install.nodePath);
+      let fits: boolean;
+      try {
+        fits = nodeSatisfies(engines, running);
+      } catch (error) {
+        throw refusal('update.engines', `Refused: ${target}'s ${message(error)}; nothing changed`);
+      }
+      if (!fits) {
+        throw refusal(
+          'update.engines',
+          `Refused: ${target} needs Node.js ${engines} (its engines), and start.sh runs ${running}; nothing changed. ${
+            install.nodePath === managedNodePath(root)
+              ? `Run the install command again, which moves the managed Node: ${INSTALL_COMMAND}`
+              : 'Install a Node in that range, run mama service install with it, then mama update'
+          }`
+        );
+      }
     }
 
     // Step 3: what doctor fails on already is not held against the new version.
@@ -934,6 +1000,21 @@ async function finishCommitted(context: Context, journal: UpdateJournal): Promis
       ? `updated: ${journal.from} → ${journal.to}; it runs and claims again`
       : `updated: ${journal.from} → ${journal.to}; the daemon is not running now (mama service start)`
   );
+  // An install the install command made: the new release's Node pin, which only that command
+  // moves to (install.md, "Moving the managed Node").
+  if (journal.nodePath === managedNodePath(context.root)) {
+    const pin = (
+      JSON.parse(readFileSync(join(places.package, 'install', 'node.json'), 'utf8')) as {
+        version: string;
+      }
+    ).version;
+    const running = await deps.nodeVersion(journal.nodePath);
+    if (pin !== running) {
+      write(
+        `  ${journal.to} pins Node.js ${pin}, and MAMA runs on ${running}: run the install command again to move it: ${INSTALL_COMMAND}`
+      );
+    }
+  }
   return 0;
 }
 

@@ -6,7 +6,8 @@
  * CI leg's (scripts/install-check/run.mjs).
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
@@ -47,7 +48,8 @@ function stub(name: string, body: string): void {
 /** The script on stdin, in its own session (no terminal), with the stand-ins first on PATH. */
 function run(
   args: string[],
-  env: Record<string, string> = {}
+  env: Record<string, string> = {},
+  text: string | Buffer = readFileSync(script)
 ): Promise<{ status: number | null; output: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn('sh', ['-s', '--', ...args], {
@@ -70,7 +72,7 @@ function run(
     child.stderr.on('data', (chunk) => (output += chunk));
     child.on('error', reject);
     child.on('close', (status) => resolve({ status, output }));
-    child.stdin.end(readFileSync(script));
+    child.stdin.end(text);
   });
 }
 
@@ -79,11 +81,30 @@ const root = () => join(home, '.mama');
 const cli = () =>
   join(root(), 'npm', 'lib', 'node_modules', '@jungjaehoon', 'mama-os', 'dist', 'cli', 'index.js');
 
+/**
+ * A Node folder: `bin/node --version` prints the version; any other run is logged with it, and
+ * exits $FAKE_NODE_STATUS (0 by default).
+ */
+function fakeNode(folder: string, nodeVersion: string): void {
+  const bin = join(folder, 'bin');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(
+    join(bin, 'node'),
+    [
+      '#!/bin/sh',
+      `[ "$1" = --version ] && { echo v${nodeVersion}; exit 0; }`,
+      `echo "node v${nodeVersion} $*" >> "$STUB_LOG"`,
+      'exit "${FAKE_NODE_STATUS:-0}"',
+      '',
+    ].join('\n')
+  );
+  chmodSync(join(bin, 'node'), 0o755);
+}
+
 /** The managed Node and MAMA OS a finished install left: the script skips both. */
 function seedInstall(nodeVersion = pin.version): void {
   const bin = join(root(), 'node', 'bin');
-  mkdirSync(bin, { recursive: true });
-  writeFileSync(join(bin, 'node'), `#!/bin/sh\n[ "$1" = --version ] && echo v${nodeVersion}\n`);
+  fakeNode(join(root(), 'node'), nodeVersion);
   writeFileSync(
     join(bin, 'npm'),
     [
@@ -96,7 +117,6 @@ function seedInstall(nodeVersion = pin.version): void {
       '',
     ].join('\n')
   );
-  chmodSync(join(bin, 'node'), 0o755);
   chmodSync(join(bin, 'npm'), 0o755);
   mkdirSync(join(cli(), '..'), { recursive: true });
   writeFileSync(join(cli(), '..', '..', '..', 'package.json'), `{"version":"${version}"}\n`);
@@ -379,26 +399,175 @@ describe('install.sh', () => {
     expect(readdirSync(home)).toEqual(['.mama']);
   });
 
-  it('leaves the Node of a set-up install alone when the pin differs', async () => {
+  /**
+   * The script with its darwin-arm64 hash set to a stand-in Node.js tarball's, and a curl that
+   * serves that tarball: the hash check and the unpack run as written.
+   */
+  function servedNode(): Buffer {
+    const tree = `${home}-tarball`;
+    fakeNode(join(tree, `node-v${pin.version}-darwin-arm64`), pin.version);
+    const tarball = `${tree}.tar.gz`;
+    execFileSync('tar', ['-czf', tarball, '-C', tree, `node-v${pin.version}-darwin-arm64`]);
+    rmSync(tree, { recursive: true });
+    const hash = createHash('sha256').update(readFileSync(tarball)).digest('hex');
+    stub(
+      'curl',
+      [
+        'echo "curl $*" >> "$STUB_LOG"',
+        'while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done',
+        `cp '${tarball}' "$out"`,
+      ].join('\n')
+    );
+    return Buffer.from(
+      readFileSync(script, 'utf8').replace(
+        /^ {2}NODE_SHA256_DARWIN_ARM64=[0-9a-f]+$/m,
+        `  NODE_SHA256_DARWIN_ARM64=${hash}`
+      )
+    );
+  }
+
+  it('moves the Node a set-up install runs to the pin through mama update --node', async () => {
     seedInstall('22.0.0');
     writeFileSync(join(root(), 'config.yaml'), 'version: 1\n');
+    writeFileSync(join(root(), 'start.sh'), '#!/bin/sh\n');
+    const text = servedNode();
+    const result = await run(['--backend', 'codex', '--no-init'], {}, text);
+    expect(result.status, result.output).toBe(0);
+    expect(result.output).toContain(
+      `MAMA runs Node.js 22.0.0 from ${join(root(), 'node')}; this installer pins ${pin.version}, so it moves MAMA to it.`
+    );
+    // Run on the Node it moves away from, with the hash-checked new one staged beside it.
+    expect(calls()).toContain(`node v22.0.0 ${cli()} update --node ${join(root(), 'node.new')}`);
+    expect(
+      readFileSync(join(root(), 'node.new', 'bin', 'node'), 'utf8').includes(`v${pin.version}`)
+    ).toBe(true);
+    expect(calls().filter((call) => call.startsWith('npm install'))).toEqual([]);
+
+    // A move that does not finish stops the script; the move's own report is above it.
+    const failed = await run(['--backend', 'codex', '--no-init'], { FAKE_NODE_STATUS: '1' }, text);
+    expect(failed.status).toBe(1);
+    expect(failed.output).toContain(
+      `moving MAMA to Node.js ${pin.version} did not finish (mama update --node's report is above)`
+    );
+  });
+
+  it('replaces the Node of a setup with no service yet, as a fresh install does', async () => {
+    seedInstall('22.0.0');
+    writeFileSync(join(root(), 'config.yaml'), 'version: 1\n');
+    const result = await run(['--backend', 'codex', '--no-init'], {}, servedNode());
+    expect(result.status, result.output).toBe(0);
+    expect(result.output).toContain(`Node.js ${pin.version} installed: ${join(root(), 'node')}`);
+    expect(calls().filter((call) => call.includes('update --node'))).toEqual([]);
+    expect(existsSync(join(root(), 'node.new'))).toBe(false);
+  });
+
+  /** A journal as mama update --node writes it, one field per line. */
+  function moveJournal(phase: 'prepare' | 'committed', step: number): void {
+    mkdirSync(join(root(), 'runtime'), { recursive: true });
+    writeFileSync(
+      join(root(), 'runtime', 'node-move.json'),
+      `${JSON.stringify(
+        {
+          format: 'mama-node-move',
+          phase,
+          step,
+          from: pin.version,
+          to: '24.11.0',
+          major: true,
+          startedAt: '2026-10-30T00:00:00.000Z',
+        },
+        null,
+        2
+      )}\n`
+    );
+  }
+  const nodeAt = (folder: string) =>
+    /echo v(\S+);/.exec(readFileSync(join(root(), folder, 'bin', 'node'), 'utf8'))?.[1];
+
+  it('finishes a move that had taken effect: the old folders go, and the run goes on', async () => {
+    seedInstall();
+    fakeNode(join(root(), 'node.old'), '22.0.0');
+    mkdirSync(join(root(), 'npm.old'));
+    moveJournal('committed', 4);
     const result = await run(['--backend', 'codex', '--no-init']);
     expect(result.status, result.output).toBe(0);
     expect(result.output).toContain(
-      `MAMA runs Node.js 22.0.0 from ${join(root(), 'node')}; this installer pins ${pin.version}`
+      "The managed Node's move to 24.11.0 had taken effect; its old folders are removed."
     );
-    expect(result.output).toContain('mama update updates it');
-    expect(calls().filter((call) => call.startsWith('npm install'))).toEqual([]);
+    expect(readdirSync(root()).sort()).toEqual(['bin', 'node', 'npm', 'runtime']);
+    expect(readdirSync(join(root(), 'runtime'))).toEqual([]);
   });
 
-  it('refuses an unfinished Node move, before any change', async () => {
+  it.each([
+    // [what the killed run had done, folders beside node and npm, whether MAMA on it is stopped]
+    ['all four renames', ['node.old', 'npm.old'], true],
+    ['the first rename only', ['node.old', 'node.new'], false],
+    [
+      'three renames: npm is set aside, its copy not in place',
+      ['node.old', 'npm.old', 'npm.new'],
+      false,
+    ],
+    ['nothing yet: the copy only', ['node.new', 'npm.new'], false],
+  ] as const)(
+    'undoes a move cut off after %s, starts the old Node, and says to run it again',
+    async (_label, beside, stops) => {
+      seedInstall('24.11.0');
+      // The folders as that run left them: the old Node set aside, the new one where it got to.
+      if (beside.includes('node.old')) fakeNode(join(root(), 'node.old'), pin.version);
+      if (beside.includes('node.new')) {
+        rmSync(join(root(), 'node.new'), { recursive: true, force: true });
+        if (beside.includes('node.old')) {
+          // Between the first two renames: no ~/.mama/node at all.
+          execFileSync('mv', [join(root(), 'node'), join(root(), 'node.new')]);
+        } else {
+          fakeNode(join(root(), 'node.new'), '24.11.0');
+          rmSync(join(root(), 'node'), { recursive: true });
+          fakeNode(join(root(), 'node'), pin.version);
+        }
+      }
+      if (beside.includes('npm.old')) {
+        // The old prefix set aside (marked), and its rebuilt copy in place or not yet.
+        execFileSync('cp', ['-R', join(root(), 'npm'), join(root(), 'npm.old')]);
+        writeFileSync(join(root(), 'npm.old', 'old'), '');
+        if (beside.includes('npm.new')) {
+          execFileSync('mv', [join(root(), 'npm'), join(root(), 'npm.new')]);
+        }
+      } else if (beside.includes('npm.new')) {
+        execFileSync('cp', ['-R', join(root(), 'npm'), join(root(), 'npm.new')]);
+      }
+      moveJournal('prepare', beside.includes('node.old') ? 3 : 2);
+      writeFileSync(join(root(), 'runtime', 'update.hold'), '1\n');
+      const result = await run(['--backend', 'codex', '--no-init']);
+      expect(result.status, result.output).toBe(1);
+      expect(result.output).toContain(
+        `the move of the managed Node from ${pin.version} to 24.11.0 was cut off, and is undone: MAMA runs on Node.js ${pin.version} again. Run this installer again to move it.`
+      );
+      expect(nodeAt('node')).toBe(pin.version);
+      expect(readdirSync(root()).sort()).toEqual(['node', 'npm', 'runtime']);
+      if (beside.includes('npm.old')) expect(existsSync(join(root(), 'npm', 'old'))).toBe(true);
+      expect(readdirSync(join(root(), 'runtime'))).toEqual([]);
+      expect(calls().filter((call) => call.startsWith('node '))).toEqual([
+        ...(stops ? [`node v24.11.0 ${cli()} stop`] : []),
+        `node v${pin.version} ${cli()} service start`,
+      ]);
+    }
+  );
+
+  it('leaves a move alone while the process holding update.lock still runs', async () => {
     seedInstall();
-    mkdirSync(join(root(), 'runtime'));
-    writeFileSync(join(root(), 'runtime', 'node-move.json'), '{}\n');
+    moveJournal('prepare', 3);
+    fakeNode(join(root(), 'node.old'), '22.0.0');
+    writeFileSync(
+      join(root(), 'runtime', 'update.holder.json'),
+      `${JSON.stringify({ pid: process.pid, command: 'update --node', startedAt: 1, nonce: 'n' })}\n`
+    );
     const result = await run(['--backend', 'codex', '--no-init']);
     expect(result.status).toBe(1);
-    expect(result.output).toContain('node-move.json');
-    expect(existsSync(join(root(), 'bin'))).toBe(false);
+    expect(result.output).toContain(
+      `a move of the managed Node or an update runs now (pid ${process.pid}`
+    );
+    expect(existsSync(join(root(), 'node.old'))).toBe(true);
+    expect(existsSync(join(root(), 'runtime', 'node-move.json'))).toBe(true);
   });
 
   it('without a terminal needs --backend, and --non-interactive or --no-init', async () => {

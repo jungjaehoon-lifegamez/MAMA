@@ -21,6 +21,7 @@ import {
 import {
   createReleaseCheck,
   npmBesideNode,
+  nodeSatisfies,
   npmErrorCode,
   readReleaseCheck,
   releaseCheckPath,
@@ -432,4 +433,37 @@ describe('mama status release line', () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(execFile).not.toHaveBeenCalled();
   });
+});
+
+describe('nodeSatisfies (engines.node)', () => {
+  it.each([
+    ['>=22.13.0', '22.23.4', true],
+    ['>=22.13.0', '22.12.9', false],
+    ['>= 22.13.0', '24.11.0', true],
+    ['>=22.13.0 <23', '24.11.0', false],
+    ['^22.13.0', '22.23.4', true],
+    ['^22.13.0', '24.0.0', false],
+    ['^22.13 || ^24', '24.11.0', true],
+    ['^0.2.3', '0.3.0', false],
+    ['~22.13.0', '22.14.0', false],
+    ['~22', '22.99.1', true],
+    ['22.x', '22.23.4', true],
+    ['22', '23.0.0', false],
+    ['>22', '23.0.0', true],
+    ['>22', '22.99.0', false],
+    ['<=22', '22.99.0', true],
+    ['*', '24.11.0', true],
+    ['=22.23.4', '22.23.4', true],
+  ])('%s with %s: %s', (range, version, expected) => {
+    expect(nodeSatisfies(range, version)).toBe(expected);
+  });
+
+  it.each(['22.13.0 - 24', 'node >=22', '>=22 ||', '22.x.4'])(
+    'refuses a form it cannot read: %s',
+    (range) => {
+      expect(() => nodeSatisfies(range, '22.23.4')).toThrow(
+        `cannot read the engines range ${JSON.stringify(range)}`
+      );
+    }
+  );
 });

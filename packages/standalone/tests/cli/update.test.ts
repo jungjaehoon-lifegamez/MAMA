@@ -68,7 +68,7 @@ describe('mama update', () => {
     expect(f.state.journalModes).toEqual([0o600]);
     expect(f.output()).toContain('updated: 1.0.0 → 1.1.0; it runs and claims again');
     // npm and the children get no credential-shaped name.
-    expect(f.npmEnvs).toHaveLength(3);
+    expect(f.npmEnvs).toHaveLength(4);
     for (const env of [...f.npmEnvs, ...f.childEnvs]) {
       expect(Object.keys(env).filter(isCredentialEnvName)).toEqual([]);
       expect(env.PATH).toBe('/usr/bin:/bin');
@@ -480,5 +480,41 @@ describe('mama update', () => {
     );
     expectClean(f, '1.0.0');
     expect(f.state.running).toBe('1.0.0');
+  });
+
+  it("refuses at step 2 a target whose engines exclude start.sh's Node, before any change", async () => {
+    const f = fixture({ releases: { '1.1.0': { engines: '>=24.0.0' } } });
+    await expect(f.run(['--dry-run'])).rejects.toThrow(
+      'Refused: 1.1.0 needs Node.js >=24.0.0 (its engines), and start.sh runs 22.23.4; nothing changed. Install a Node in that range'
+    );
+    const managed = fixture({
+      managed: '22.23.4',
+      releases: { '1.1.0': { engines: '^24 || ^26' } },
+    });
+    await expect(managed.run([])).rejects.toThrow(
+      'start.sh runs 22.23.4; nothing changed. Run the install command again, which moves the managed Node'
+    );
+    const unreadable = fixture({ releases: { '1.1.0': { engines: '22.13.0 - 24' } } });
+    await expect(unreadable.run([])).rejects.toThrow(
+      'Refused: 1.1.0\'s cannot read the engines range "22.13.0 - 24"; nothing changed'
+    );
+    for (const each of [f, managed, unreadable]) {
+      expect(each.calls).toEqual([]);
+      expectClean(each, '1.0.0');
+    }
+    // A range that holds goes on.
+    const fits = fixture({ releases: { '1.1.0': { engines: '>=22.13.0' } } });
+    expect(await fits.run([])).toBe(0);
+  });
+
+  it("ends the report on a managed install with the release's Node pin when it differs", async () => {
+    const f = fixture({ managed: '22.23.4', releases: { '1.1.0': { nodePin: '24.11.0' } } });
+    expect(await f.run([])).toBe(0);
+    expect(f.lines.at(-1)).toBe(
+      '  1.1.0 pins Node.js 24.11.0, and MAMA runs on 22.23.4: run the install command again to move it: curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | sh'
+    );
+    const same = fixture({ managed: '22.23.4' });
+    expect(await same.run([])).toBe(0);
+    expect(same.lines.at(-1)).toBe('updated: 1.0.0 → 1.1.0; it runs and claims again');
   });
 });

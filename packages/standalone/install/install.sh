@@ -90,10 +90,46 @@ mama_install() {
   cli=$package/dist/cli/index.js
   wrapper=$root/bin/mama
 
-  # Node moves are `mama update --node`'s (install.md, "Moving the managed Node"), which this
-  # release does not have yet; a journal of one is not this installer's to finish or undo.
-  if [ -e "$root/runtime/node-move.json" ]; then
-    fail "$root/runtime/node-move.json records an unfinished move of the managed Node; this installer cannot finish or undo it. Nothing was changed."
+  # A move of the managed Node that did not finish (`mama update --node`, install.md, "Moving the
+  # managed Node"), before anything else and in plain sh: ~/.mama/npm may be missing now. At
+  # `committed` the new Node runs, and its old folders go; otherwise each folder set aside goes back
+  # over whatever is in its place, and the service starts on it. The journal has one field per line
+  # (src/cli/runtime/node-move-journal.ts); each step below can be run again after a cut.
+  move_journal=$root/runtime/node-move.json
+  if [ -e "$move_journal" ]; then
+    holder=$root/runtime/update.holder.json
+    holder_pid=''
+    [ -f "$holder" ] && holder_pid=$(sed -n 's/^{"pid":\([0-9][0-9]*\),.*/\1/p' "$holder")
+    if [ -n "$holder_pid" ] && kill -0 "$holder_pid" 2>/dev/null; then
+      fail "a move of the managed Node or an update runs now (pid $holder_pid, $holder); run this again once it ends. If that pid is not MAMA's, remove $holder first."
+    fi
+    move_from=$(sed -n 's/^  "from": "\(.*\)",$/\1/p' "$move_journal")
+    move_to=$(sed -n 's/^  "to": "\(.*\)",$/\1/p' "$move_journal")
+    if grep -q '^  "phase": "committed",$' "$move_journal"; then
+      rm -rf "$root/node.old" "$root/npm.old"
+      rm -f "$move_journal"
+      say "The managed Node's move to $move_to had taken effect; its old folders are removed."
+    else
+      # A daemon the new Node started (a run killed while it waited for the boot) stops first.
+      if { [ -d "$root/node.old" ] || [ -d "$root/npm.old" ]; } &&
+        [ -x "$node_dir/bin/node" ] && [ -f "$cli" ]; then
+        "$node_dir/bin/node" "$cli" stop </dev/null ||
+          fail "the move of the managed Node to $move_to is unfinished, and MAMA on it did not stop (above); nothing was changed"
+      fi
+      for folder in node npm; do
+        if [ -d "$root/$folder.old" ]; then
+          rm -rf "${root:?}/$folder"
+          mv "$root/$folder.old" "$root/$folder"
+        fi
+      done
+      rm -rf "$root/node.new" "$root/npm.new"
+      rm -f "$root/runtime/update.hold"
+      "$node_dir/bin/node" "$cli" service start </dev/null ||
+        fail "Node.js $move_from is back in $node_dir, but MAMA did not start on it (above); run this installer again"
+      # Last: a run cut before here does all of this again.
+      rm -f "$move_journal"
+      fail "the move of the managed Node from $move_from to $move_to was cut off, and is undone: MAMA runs on Node.js $move_from again. Run this installer again to move it."
+    fi
   fi
 
   # Another install owns this account: a setup with no MAMA in the managed prefix.
@@ -180,17 +216,9 @@ mama_install() {
   # What a run killed outright (SIGKILL, a power cut) left behind.
   rm -rf "$root"/node.*.tmp "$root"/node.*.tar.gz "$root"/backend-install.*.sh
 
-  # Node.js: the pinned release, checked against the pinned SHA-256.
-  node_now=''
-  if [ -x "$node_dir/bin/node" ]; then
-    node_now=$("$node_dir/bin/node" --version </dev/null 2>/dev/null || true)
-  fi
-  if [ "$node_now" = "v$NODE_VERSION" ]; then
-    say "Node.js $NODE_VERSION is in place: $node_dir"
-  elif [ "$set_up" = yes ] && [ -n "$node_now" ]; then
-    # Moving the Node a set-up install runs is `mama update --node`'s, not this script's.
-    say "MAMA runs Node.js ${node_now#v} from $node_dir; this installer pins $NODE_VERSION. It is left as it is."
-  else
+  # Node.js: the pinned release, checked against the pinned SHA-256, unpacked beside its place and
+  # renamed into $1.
+  fetch_node() {
     command -v curl >/dev/null 2>&1 || fail 'curl is needed to download Node.js'
     if command -v shasum >/dev/null 2>&1; then
       sha256() { shasum -a 256 "$1" | cut -d ' ' -f 1; }
@@ -214,8 +242,25 @@ mama_install() {
     rm -f "$download"
     [ "$("$unpack/bin/node" --version </dev/null)" = "v$NODE_VERSION" ] ||
       fail "the unpacked $node_file does not run as Node.js $NODE_VERSION"
-    rm -rf "$node_dir"
-    mv "$unpack" "$node_dir"
+    rm -rf "$1"
+    mv "$unpack" "$1"
+  }
+  node_now=''
+  if [ -x "$node_dir/bin/node" ]; then
+    node_now=$("$node_dir/bin/node" --version </dev/null 2>/dev/null || true)
+  fi
+  if [ "$node_now" = "v$NODE_VERSION" ]; then
+    say "Node.js $NODE_VERSION is in place: $node_dir"
+  elif [ -f "$root/start.sh" ] && [ -n "$node_now" ]; then
+    # The service runs this Node: mama update --node moves it with the service stopped, boots
+    # MAMA on the new one and checks it, and puts the old one back on a failure. It runs on the
+    # Node it moves away from.
+    say "MAMA runs Node.js ${node_now#v} from $node_dir; this installer pins $NODE_VERSION, so it moves MAMA to it."
+    fetch_node "$root/node.new"
+    PATH="$node_dir/bin:$PATH" "$node_dir/bin/node" "$cli" update --node "$root/node.new" </dev/null ||
+      fail "moving MAMA to Node.js $NODE_VERSION did not finish (mama update --node's report is above)"
+  else
+    fetch_node "$node_dir"
     say "Node.js $NODE_VERSION installed: $node_dir"
   fi
 

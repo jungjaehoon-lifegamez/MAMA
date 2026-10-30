@@ -51,6 +51,10 @@ export interface Release {
   installFails?: boolean;
   /** `mama tools install` fails (step 12). */
   toolsFail?: boolean;
+  /** Its `engines.node`; none by default. */
+  engines?: string;
+  /** The Node its install/node.json pins (written only on a managed install). */
+  nodePin?: string;
 }
 
 export type Fixture = ReturnType<typeof fixture>;
@@ -67,6 +71,11 @@ export function fixture(
     realNpm?: { nodePath: string; install: (prefix: string) => void };
     /** More of the owner's environment (npm's own settings). */
     env?: NodeJS.ProcessEnv;
+    /**
+     * As the install command lays it out: Node in `<root>/node`, the prefix in `<root>/npm`, at
+     * this Node version.
+     */
+    managed?: string;
   } = {}
 ) {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'mama-update-')));
@@ -76,14 +85,35 @@ export function fixture(
   const root = join(home, '.mama');
   mkdirSync(join(root, 'runtime'), { recursive: true });
   mkdirSync(join(root, 'logs'));
-  const prefix = join(base, 'prefix');
+  const prefix = options.managed === undefined ? join(base, 'prefix') : join(root, 'npm');
   const scope = join(prefix, 'lib', 'node_modules', '@jungjaehoon');
   const packageRoot = join(scope, 'mama-os');
-  const nodePath = options.realNpm?.nodePath ?? join(base, 'node', 'bin', 'node');
-  if (!options.realNpm) {
-    mkdirSync(dirname(nodePath), { recursive: true });
-    writeFileSync(nodePath, '');
-  }
+  const nodePath =
+    options.realNpm?.nodePath ??
+    join(options.managed === undefined ? base : root, 'node', 'bin', 'node');
+  /**
+   * A Node folder: its version file says what `bin/node --version` prints, and any other run of
+   * that node (install.sh's recovery runs `node <cli> stop` and `service start`) is logged beside
+   * the folder in calls.log.
+   */
+  const writeNode = (folder: string, version: string) => {
+    mkdirSync(join(folder, 'bin'), { recursive: true });
+    writeFileSync(
+      join(folder, 'bin', 'node'),
+      [
+        '#!/bin/sh',
+        'here=$(dirname "$0")',
+        '[ "$1" = --version ] && { echo "v$(cat "$here/../version")"; exit 0; }',
+        'shift',
+        'echo "mama $* on $(cat "$here/../version")" >> "$here/../../calls.log"',
+        '',
+      ].join('\n'),
+      { mode: 0o755 }
+    );
+    writeFileSync(join(folder, 'bin', 'npm'), '');
+    writeFileSync(join(folder, 'version'), version);
+  };
+  if (!options.realNpm) writeNode(dirname(dirname(nodePath)), options.managed ?? '22.23.4');
   const releases: Record<string, Release> = { '1.0.0': {}, '1.1.0': {}, ...options.releases };
   const from = options.from ?? '1.0.0';
   const writePackage = (at: string, version: string) => {
@@ -98,6 +128,13 @@ export function fixture(
       })
     );
     writeFileSync(join(at, 'dist', 'cli', 'index.js'), `// mama-os ${version}\n`);
+    if (options.managed !== undefined) {
+      mkdirSync(join(at, 'install'), { recursive: true });
+      writeFileSync(
+        join(at, 'install', 'node.json'),
+        JSON.stringify({ version: releases[version]?.nodePin ?? options.managed })
+      );
+    }
   };
   if (options.realNpm) options.realNpm.install(prefix);
   else writePackage(packageRoot, from);
@@ -196,6 +233,16 @@ export function fixture(
     rollbackChildKilled: false,
     /** npm ls exits 1 for a problem elsewhere in the prefix, and still prints its tree. */
     lsProblems: false,
+    /** `npm rebuild` fails (the Node move's step 2). */
+    rebuildFails: false,
+    /** Prefixes `npm rebuild` ran on, with the Node it ran beside. */
+    rebuilt: [] as Array<{ prefix: string; node: string }>,
+    /** Doctor's Node check fails under a Node of this version. */
+    nodeCheckFailsOn: null as string | null,
+    /** The daemon exits at boot under a Node of this version. */
+    bootFailsOn: null as string | null,
+    /** The Node version the running daemon reports. */
+    runningNode: null as string | null,
     checks: [] as Check[],
     journalModes: [] as number[],
     /**
@@ -240,8 +287,22 @@ export function fixture(
     return Promise.resolve().then(run);
   };
 
+  /** The version of the Node folder a `bin/node` path is in. */
+  const versionOf = (node: string) => readFileSync(join(dirname(dirname(node)), 'version'), 'utf8');
   const fakeNpm: UpdateDeps['npm'] = async (args, node, env) => {
     npmEnvs.push(env);
+    if (args[0] === 'rebuild') {
+      return await step('npm rebuild', () => {
+        if (state.rebuildFails) {
+          throw Object.assign(new Error('npm failed'), { stderr: 'npm error code ELIFECYCLE\n' });
+        }
+        const rebuilt = args[args.indexOf('--prefix') + 1];
+        state.rebuilt.push({ prefix: rebuilt, node });
+        // What the rebuild changed: the prefix it ran on is the one built for that Node.
+        writeFileSync(join(rebuilt, 'built-for'), versionOf(node));
+        return '';
+      });
+    }
     expect(node).toBe(nodePath);
     if (args[0] === 'config') return 'http://registry.fixture.test/\n';
     if (args[0] === 'view') {
@@ -250,6 +311,7 @@ export function fixture(
       if (!(answer in releases)) {
         throw Object.assign(new Error('npm failed'), { stderr: 'npm error code E404\n' });
       }
+      if (args[2] === 'engines.node') return `${releases[answer].engines ?? ''}\n`;
       return `${answer}\n`;
     }
     if (args[0] === 'install') {
@@ -288,6 +350,7 @@ export function fixture(
       step(now ? 'stop --now' : 'stop', () => {
         if (state.stopFails || state.stopFailsWhen?.()) return 1;
         state.running = null;
+        state.runningNode = null;
         state.held = false;
         return 0;
       }),
@@ -301,11 +364,13 @@ export function fixture(
         }
         const booting = packageVersion();
         const release = releases[booting] ?? {};
+        const node = options.managed === undefined ? null : versionOf(nodePath);
         const db = new Database(databasePath);
         try {
           if (release.migrates) db.exec(`INSERT INTO schema_version VALUES (107, 'core')`);
-          if (release.crash) return;
+          if (release.crash || (node !== null && state.bootFailsOn === node)) return;
           state.running = booting;
+          state.runningNode = node;
           state.held = journal?.phase === 'candidate';
           if (state.held) state.heldAtBoot.push(booting);
           // Accepting goes on, held or not: a message arrives.
@@ -376,6 +441,9 @@ export function fixture(
             status: {
               stage: 'running',
               version: state.running,
+              ...(options.managed === undefined
+                ? {}
+                : { node: `v${state.runningNode ?? options.managed}` }),
               update: state.held && !state.unheldStatus ? { since: 1, to: state.running } : null,
             },
           },
@@ -423,6 +491,20 @@ export function fixture(
         },
       };
     },
+    nodeVersion: async (node) => versionOf(node),
+    nodeCheck: (node, cli) =>
+      step('node check', (): Check => {
+        expect(cli).toBe(cliPath);
+        const at = versionOf(node);
+        return state.nodeCheckFailsOn === at
+          ? {
+              name: 'node',
+              status: 'fail',
+              detail:
+                'the Node start.sh runs cannot load the SQLite module MAMA was installed with',
+            }
+          : { name: 'node', status: 'ok', detail: `v${at} loads SQLite` };
+      }),
     version: () => version,
     runningPackage: () => packageRoot,
     telegramCall: async (token, method, params = {}, timeoutMs) => {
@@ -453,6 +535,9 @@ export function fixture(
   return {
     home,
     root,
+    base,
+    writeNode,
+    versionOf,
     prefix,
     scope,
     packageRoot,

@@ -24,6 +24,7 @@ import {
   askSlack,
   askTimezone,
   checkBackend,
+  terminalSignIn,
   checkTelegram,
   collectConnectors,
   gwsConnectorNames,
@@ -89,13 +90,17 @@ export async function runInitSection(section: string, options: InitOptions = {})
       secrets.MAMA_TELEGRAM_TOKEN = token;
     } else if (section === 'model') {
       const locate = options.findExecutable ?? findExecutable;
-      const { backend, model } = await askBackend(prompt, (name) =>
-        checkBackend(
-          name,
-          config.agent.codex_home ?? join(root, '.codex'),
-          locate,
-          options.probeRun
-        )
+      const { backend, model } = await askBackend(
+        prompt,
+        (name) =>
+          checkBackend(
+            name,
+            config.agent.codex_home ?? join(root, '.codex'),
+            locate,
+            options.probeRun,
+            { run: options.signIn ?? terminalSignIn, write }
+          ),
+        locate
       );
       change = (doc) => {
         doc.agent = { ...(doc.agent as Record<string, unknown> | undefined), backend, model };

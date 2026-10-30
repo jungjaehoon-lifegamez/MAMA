@@ -32,7 +32,13 @@ import {
 import { probeBackend, type BackendName, type ProbeRun, defaultProbeRun } from './backend-probe.js';
 import { restoreJournalPath, type DaemonControlReply } from './daemon-control.js';
 import { releaseReport } from './release-check.js';
-import { installKind } from './install-kind.js';
+import { installKind, packageRootOf } from './install-kind.js';
+import {
+  INSTALL_COMMAND,
+  managedNodePath,
+  nodeMovePlaces,
+  readNodeMoveJournal,
+} from './node-move-journal.js';
 import {
   leftoverStaging,
   readUpdateJournal,
@@ -294,7 +300,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
           fix: 'mama service install --replace rewrites it',
         });
       } else {
-        checks.push(nodeCheck(node, cli, run));
+        checks.push(nodeCheck(node, cli, run, root));
       }
     } catch (error) {
       checks.push({
@@ -533,8 +539,12 @@ function schemaCheck(databasePath: string): Check {
   }
 }
 
-/** start.sh's Node: still there, outside one version's folder, and able to load MAMA's SQLite. */
-function nodeCheck(node: string, cli: string, run: ProbeRun): Check {
+/**
+ * start.sh's Node: still there, outside one version's folder, and able to load MAMA's SQLite. On
+ * an install the install command made (its Node in `<root>/node`), also the Node the installed
+ * release pins in its install/node.json: running the install command again moves to that one.
+ */
+export function nodeCheck(node: string, cli: string, run: ProbeRun, root: string): Check {
   const rewrite = 'mama service install rewrites start.sh with a Node path that survives upgrades';
   if (!existsSync(node)) {
     return {
@@ -592,6 +602,33 @@ function nodeCheck(node: string, cli: string, run: ProbeRun): Check {
         ? rewrite
         : 'run mama service install from a shell whose node is not an nvm, volta or fnm version',
     };
+  }
+  if (node === managedNodePath(root)) {
+    const packageRoot = packageRootOf(cli);
+    if (packageRoot === null) {
+      return {
+        name: 'node',
+        status: 'fail',
+        detail: 'the MAMA command start.sh runs is not inside a MAMA OS package',
+        context: cli,
+        fix: 'run the install command again',
+      };
+    }
+    const pin = (
+      JSON.parse(readFileSync(join(packageRoot, 'install', 'node.json'), 'utf8')) as {
+        version: string;
+      }
+    ).version;
+    if (version !== `v${pin}`) {
+      return {
+        name: 'node',
+        status: 'warn',
+        detail: `start.sh runs ${version}; this release pins Node.js ${pin}`,
+        code: 'node.pin',
+        context: node,
+        fix: `run the install command again, which moves it: ${INSTALL_COMMAND}`,
+      };
+    }
   }
   return { name: 'node', status: 'ok', detail: `${version} loads SQLite`, context: node };
 }
@@ -1044,11 +1081,47 @@ async function daemonChecks(
 }
 
 /**
+ * An unfinished `mama update --node` (docs/development/work/install.md, "Moving the managed
+ * Node"): its journal, which the install command finishes or undoes. It holds the install on
+ * update.hold, so it comes before the hold's own check.
+ */
+function nodeMoveCheck(root: string): Check | null {
+  const path = nodeMovePlaces(root).journal;
+  let journal;
+  try {
+    journal = readNodeMoveJournal(path);
+  } catch (error) {
+    return {
+      name: 'update',
+      status: 'fail',
+      detail: 'an unfinished move of the managed Node left a journal that cannot be read',
+      code: 'node_move.open',
+      context: message(error),
+      fix: `read ${path}; the install command's recovery needs it`,
+    };
+  }
+  if (journal === null) return null;
+  return {
+    name: 'update',
+    status: 'fail',
+    detail:
+      journal.phase === 'committed'
+        ? `the move of the managed Node to ${journal.to} took effect, but its old folders are not removed yet`
+        : `the move of the managed Node from ${journal.from} to ${journal.to} is unfinished (step ${journal.step}); the daemon may stay stopped until it is finished or undone`,
+    code: 'node_move.open',
+    context: path,
+    fix: `run the install command again, which finishes or undoes it: ${INSTALL_COMMAND}`,
+  };
+}
+
+/**
  * An unfinished `mama update`: its journal (docs/development/work/update.md, PR 3), with the
  * command that resolves it by absolute paths, or a staging prefix an updater killed before it
  * wrote its journal left behind.
  */
 function updateChecks(root: string, home: string): Check[] {
+  const move = nodeMoveCheck(root);
+  if (move !== null) return [move];
   const path = updatePaths(root).journal;
   let journal;
   try {
