@@ -10,6 +10,8 @@
  *    revision, a lesson and a pending owner message through its own actions.
  * 3. reader.mjs boots this checkout's build on the same home and compares what it reads with what
  *    the writer recorded; `mama doctor --offline` then holds the config and the migrated schema.
+ * 4. update.mjs: on that home, `mama update` from a local registry goes N → N+1 and rolls back
+ *    from an N+2 that exits at boot (docs/development/work/update.md, PR 3).
  *
  * Needs network (npm) and the embedding model; CI runs it as its own job, outside `pnpm test`.
  * Run after `pnpm build`: node packages/standalone/scripts/upgrade-check/run.mjs
@@ -33,6 +35,7 @@ import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { updateLeg } from './update.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const standalone = join(here, '..', '..');
@@ -201,6 +204,9 @@ try {
     throw new Error(`doctor schema is not this build's: ${schema}`);
   }
   console.log(`upgrade check: doctor config ok, schema ${schema}`);
+
+  // The same install, updated by `mama update` from a local registry and rolled back.
+  await updateLeg({ root, home, env });
 } finally {
   rmSync(root, { recursive: true, force: true });
 }

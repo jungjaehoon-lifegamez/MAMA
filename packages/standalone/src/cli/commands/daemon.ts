@@ -80,6 +80,7 @@ import {
   type DrainCounts,
   type InstallLock,
 } from '../runtime/daemon-control.js';
+import { readUpdateJournal, updatePaths } from '../runtime/update-journal.js';
 
 export const OWNER_PRINCIPAL_ID = 'owner';
 const OWNER_AGENT_ID = 'owner-agent';
@@ -487,6 +488,9 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   let controlServer: DaemonControlServer | null = null;
   // One per open drain connection; while any is open, nothing new is claimed.
   const holds = new Set<{ since: number }>();
+  // An update candidate's hold, from boot until the updater's `release` (update.md, steps 13-14).
+  let updateHold: { since: number; to: string } | null = null;
+  const claimsHeld = (): boolean => holds.size > 0 || updateHold !== null;
 
   // What a drain waits for: this process's own work. Runs and claims of an earlier boot are left
   // out: their process is gone, and such a claim (a dispatch the crash cut off) resolves only in
@@ -531,6 +535,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         holds.size === 0
           ? null
           : { holds: holds.size, since: Math.min(...[...holds].map((hold) => hold.since)) },
+      update: updateHold,
     };
     // Stores close during a stop; what it reports then is that it is stopping.
     if (stopped) return report;
@@ -661,6 +666,12 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
           },
         };
       },
+      release: () => {
+        const held = updateHold !== null;
+        if (held) logger.info(`update: ${updateHold!.to} confirmed; claims released`);
+        updateHold = null;
+        return { held };
+      },
     });
     if (options.signal?.aborted) throw new StopDuringBootError();
     config = options.config ?? loadConfig({ path: configPath, home: options.home });
@@ -669,6 +680,13 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
     // on the daemon's own log holds everything, from the first boot stage on.
     options.captureOutput?.(config.logging.file);
     stage(logger, 'config', options.signal);
+    // An update candidate runs nothing until the updater has seen it boot and confirmed it: its
+    // boot recovery claims nothing, so a rollback finds every input as it was (update.md step 13).
+    const update = readUpdateJournal(updatePaths(dirname(configPath)).journal);
+    if (update?.phase === 'candidate') {
+      updateHold = { since: Date.now(), to: update.to };
+      logger.info(`update: booted as the candidate for ${update.to}; claims held until confirmed`);
+    }
     logger.info(
       `document toolkit: ${readDocumentToolkit(config.tools_root, (error) => logger.error(error.message)) ? 'present' : 'absent (run mama tools install)'}`
     );
@@ -875,7 +893,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       },
       ownerPolicyProvider,
       deliveryReady: () => deliveryReady,
-      claimsHeld: () => holds.size > 0,
+      claimsHeld,
       onPersonalJobError: (error) =>
         logger.error(`personal job scheduler failed reason=${stimulusFailureReason(error)}`),
       ...(options.mode === 'replay'

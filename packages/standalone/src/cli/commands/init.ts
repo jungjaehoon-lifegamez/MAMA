@@ -287,27 +287,37 @@ async function environmentAnswers(
   };
 }
 
-/** Wait until the started daemon reports its boot finished, then until the viewer answers. */
-async function waitForBoot(options: {
+/**
+ * Wait until the started daemon reports its boot finished, then until the viewer answers. With a
+ * `version`, the daemon must be that version: `mama update` waits for the one it installed.
+ */
+export async function waitForBoot(options: {
   status: () => Promise<DaemonControlReply>;
   health: () => Promise<boolean>;
   timeoutMs: number;
   pollMs: number;
   write: (line: string) => void;
+  version?: string;
+  /** What to do after a failed wait; init's own next step by default. */
+  next?: string;
 }): Promise<void> {
   const started = Date.now();
   let reported = started;
   let stage = 'not started';
+  const next = options.next ?? 'mama init again continues from here';
   for (;;) {
     // A daemon busy booting may miss one status deadline; that is no answer yet, not a failure.
     const reply = await options.status().catch(() => null);
     if (reply?.state === 'running' && reply.reply.ok === true) {
-      stage = String((reply.reply.status as { stage?: unknown } | undefined)?.stage);
-      if (stage === 'running') break;
+      const status = (reply.reply.status ?? {}) as { stage?: unknown; version?: unknown };
+      stage = String(status.stage);
+      if (options.version !== undefined && status.version !== options.version) {
+        stage = `${stage} at version ${String(status.version)}, not ${options.version}`;
+      } else if (stage === 'running') break;
     }
     if (Date.now() - started >= options.timeoutMs) {
       throw new CliInputError(
-        `MAMA did not finish starting (last stage: ${stage}). mama logs shows why; mama init again continues from here.`
+        `MAMA did not finish starting (last stage: ${stage}). mama logs shows why; ${next}.`
       );
     }
     if (Date.now() - reported >= 30_000) {
@@ -318,7 +328,7 @@ async function waitForBoot(options: {
   }
   if (!(await options.health())) {
     throw new CliInputError(
-      'MAMA started but its viewer does not answer /health; mama doctor checks the install.'
+      `MAMA started but its viewer does not answer /health; mama doctor checks the install${options.next === undefined ? '' : `; ${options.next}`}.`
     );
   }
 }
@@ -335,7 +345,7 @@ async function freeViewerPort(answers: (port: number, host: string) => Promise<b
   );
 }
 
-async function viewerHealth(port: number): Promise<boolean> {
+export async function viewerHealth(port: number): Promise<boolean> {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/health`, {
       signal: AbortSignal.timeout(5_000),

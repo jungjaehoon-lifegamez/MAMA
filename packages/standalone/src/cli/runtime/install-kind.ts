@@ -148,9 +148,14 @@ export function installKind(mamaRoot: string, home: string): InstallKind {
 export function requireServicePackage(
   install: InstallKind,
   running: string = runningPackageRoot()
-): void {
-  if (install.kind === 'other' && install.packageRoot === null) {
-    throw new CliInputError(`Cannot tell which package the service runs: ${install.reason}`);
+): asserts install is Exclude<InstallKind, { kind: 'other' }> {
+  // `other` has no update path whether or not its folder is known (the kinds table).
+  if (install.kind === 'other') {
+    throw new CliInputError(
+      install.packageRoot === null
+        ? `Cannot tell which package the service runs: ${install.reason}`
+        : `The service runs a package mama cannot update: ${install.reason}`
+    );
   }
   if (realpathSync(running) !== install.packageRoot) {
     throw new CliInputError(

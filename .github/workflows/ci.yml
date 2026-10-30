@@ -122,12 +122,15 @@ jobs:
           MAMA_FORCE_TIER_3: true
 
   # The previous published MAMA OS sets up an install and writes to it; this build boots on it and
-  # reads it back (v1.md R5). Outside `pnpm test`: it installs from npm and loads the embedding model.
+  # reads it back (v1.md R5). Then `mama update` takes that install from this build to a renumbered
+  # copy through a local registry and rolls back from one that exits at boot (update.md PR 3; a
+  # stand-in service manager, so launchd and systemd are not part of the proof). Outside
+  # `pnpm test`: it installs from npm and loads the embedding model.
   upgrade-check:
     needs: [changes, setup]
     if: ${{ github.event_name == 'push' || needs.changes.outputs.standalone == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -158,7 +161,7 @@ jobs:
           const v = await generateEmbedding('warm');
           if (!v || v.length !== 1024) throw new Error('embedding model did not load');
           "
-      - name: Upgrade from the previous release
+      - name: Upgrade from the previous release, then mama update and its rollback
         run: node packages/standalone/scripts/upgrade-check/run.mjs
 
   # Test plugin (independent)

@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  rmSync,
   readlinkSync,
   realpathSync,
   renameSync,
@@ -189,6 +190,30 @@ function attachmentPaths(database: string): string[] {
 }
 
 describe('mama restore', () => {
+  it("keeps an update's journal, hold and saved launch files when its rollback restores the snapshot", async () => {
+    const a = source();
+    // The update's snapshot, taken after its journal was written.
+    const runtime = join(a.root, 'runtime');
+    file(join(runtime, 'update.json'), '{"phase":"prepare"}\n', 0o600);
+    const archive = await runBackup(['--include-secrets'], {
+      home: a.home,
+      configPath: a.configPath,
+      write: () => {},
+      archivePrefix: 'mama-update-0.0.1',
+    });
+    // By the rollback: the journal moved on, the hold is in place, start.sh was copied back.
+    file(join(runtime, 'update.json'), '{"phase":"rollback"}\n', 0o600);
+    file(join(runtime, 'update.hold'), '1\n', 0o600);
+    file(join(runtime, 'update', 'start.sh'), '#!/bin/sh\n# saved\n', 0o600);
+    file(join(a.root, 'start.sh'), '#!/bin/sh\n# saved\n', 0o700);
+    // As the update's rollback runs it, under its own open journal.
+    await runRestore([archive], { ...options(a), updateRollback: true });
+    expect(readFileSync(join(runtime, 'update.json'), 'utf8')).toBe('{"phase":"rollback"}\n');
+    expect(existsSync(join(runtime, 'update.hold'))).toBe(true);
+    expect(existsSync(join(runtime, 'update', 'start.sh'))).toBe(true);
+    expect(readFileSync(join(a.root, 'start.sh'), 'utf8')).toBe('#!/bin/sh\n# saved\n');
+  });
+
   it("restores the backup's settings with this install's places, and the files where they say", async () => {
     const a = source();
     const archive = await backupOf(a);
@@ -374,6 +399,27 @@ describe('mama restore', () => {
     const config = yaml.load(readFileSync(b.configPath, 'utf8')) as Record<string, unknown>;
     delete config.wiki;
     writeFileSync(b.configPath, yaml.dump(config));
+    // Nor while an update is unfinished: its own rollback may restore its snapshot.
+    const updateJournal = join(b.root, 'runtime', 'update.json');
+    writeFileSync(
+      updateJournal,
+      JSON.stringify({
+        format: 'mama-update',
+        phase: 'candidate',
+        step: 14,
+        from: '1.0.0',
+        to: '1.1.0',
+        prefix: '/fixture/prefix',
+        nodePath: '/fixture/node',
+        packageCli: 'dist/cli/index.js',
+        previousCli:
+          '/fixture/prefix/lib/node_modules/@jungjaehoon/.mama-os-1.0.0/dist/cli/index.js',
+      })
+    );
+    await expect(runRestore([archive], options(b))).rejects.toThrow(
+      "An update (1.0.0 → 1.1.0) is unfinished; resolve it first: '/fixture/node' '/fixture/prefix/lib/node_modules/@jungjaehoon/mama-os/dist/cli/index.js' update --rollback"
+    );
+    rmSync(updateJournal);
     // The backup has its wiki on; this install has no place for it.
     await expect(runRestore([archive], options(b))).rejects.toThrow(/wiki/);
     expect(readFileSync(join(b.root, 'owner-policy.md'), 'utf8')).toBe('policy from b');

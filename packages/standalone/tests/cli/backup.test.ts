@@ -240,6 +240,22 @@ describe('mama backup', () => {
     expect((await manifestOf(archive)).includesSecrets).toBe(true);
   });
 
+  it("names mama update's snapshot, owner-only like every archive", async () => {
+    const installed = install();
+    const archive = await runBackup(['--include-secrets'], {
+      home: installed.home,
+      configPath: installed.configPath,
+      write: () => {},
+      now: () => new Date('2026-10-16T05:00:00Z'),
+      archivePrefix: 'mama-update-0.78.0',
+    });
+    expect(archive).toBe(
+      join(realpathSync(installed.root), 'backups', 'mama-update-0.78.0-20261016-050000.tar.gz')
+    );
+    expect(statSync(archive).mode & 0o777).toBe(0o600);
+    expect(await entries(archive)).toContain('credentials/auth.env');
+  });
+
   it('treats a config.yaml that holds a credential as one', async () => {
     const installed = install({
       slack: { enabled: false, bot_token: 'fixture-inline-value' },

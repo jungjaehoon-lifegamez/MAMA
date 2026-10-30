@@ -5,7 +5,6 @@ import { promisify } from 'node:util';
 import { backendEnvironment } from '../../runtime/backend-security.js';
 import type { TimeZoneSetting } from '../../runtime/timezone.js';
 import { stableNodePath } from '../launch-files.js';
-import { compareVersions } from './backend-probe.js';
 import { installKind, PACKAGE_NAME, updateSteps, type PackageKind } from './install-kind.js';
 
 /**
@@ -93,6 +92,40 @@ export function npmErrorCode(error: unknown): string {
             ? failure.signal
             : 'UNKNOWN');
   return /^[A-Za-z0-9_]{1,64}$/.test(code) ? code : 'UNKNOWN';
+}
+
+const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+
+/**
+ * Two releases in semver precedence (semver.org, rule 11): major, minor, patch, then a version
+ * without a prerelease above one with it, then the prerelease's identifiers one by one (numbers
+ * numerically and below words, words in ASCII order, a longer list above its prefix). Build
+ * metadata does not count. A version that is not semver throws: there is no order to guess.
+ */
+export function compareReleases(left: string, right: string): number {
+  const parse = (version: string) => {
+    const match = SEMVER.exec(version);
+    if (!match) throw new Error(`${version} is not a semver version`);
+    return {
+      core: [match[1], match[2], match[3]].map(Number),
+      pre: match[4] === undefined ? null : match[4].split('.'),
+    };
+  };
+  const a = parse(left);
+  const b = parse(right);
+  for (let index = 0; index < 3; index += 1) {
+    if (a.core[index] !== b.core[index]) return a.core[index] - b.core[index];
+  }
+  if (a.pre === null || b.pre === null) return a.pre === b.pre ? 0 : a.pre === null ? 1 : -1;
+  for (let index = 0; index < Math.min(a.pre.length, b.pre.length); index += 1) {
+    const [x, y] = [a.pre[index], b.pre[index]];
+    if (x === y) continue;
+    const [xNumber, yNumber] = [/^\d+$/.test(x), /^\d+$/.test(y)];
+    if (xNumber && yNumber) return Number(x) - Number(y);
+    if (xNumber !== yNumber) return xNumber ? -1 : 1;
+    return x < y ? -1 : 1;
+  }
+  return a.pre.length - b.pre.length;
 }
 
 function day(at: Date, timeZone: string): string {
@@ -274,7 +307,7 @@ export function releaseReport(mamaRoot: string, home: string): ReleaseReport | n
   if (state.latest === null) {
     return { status: 'warn', detail: `last check failed at ${at}: ${state.error}`, state };
   }
-  if (compareVersions(state.latest, state.current) > 0) {
+  if (compareReleases(state.latest, state.current) > 0) {
     return {
       status: 'warn',
       detail: `newer release ${state.latest} (checked ${at}); the daemon runs ${state.current}`,

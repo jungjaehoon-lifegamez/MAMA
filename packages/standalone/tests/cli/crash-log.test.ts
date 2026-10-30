@@ -15,7 +15,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { launchAgent, startScript } from '../../src/cli/launch-files.js';
+import { launchAgent, readStartScript, startScript } from '../../src/cli/launch-files.js';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -55,5 +55,38 @@ describe('the crash log', () => {
     expect(spawnSync('sh', ['-c', cap]).status).toBe(0);
     expect(readFileSync(crashLog, 'utf8')).toBe('a crash at load\n');
     expect(statSync(crashLog).mode & 0o777).toBe(0o600);
+  });
+
+  it('exits 0 before anything else while mama update holds the install', () => {
+    const home = mkdtempSync(join(tmpdir(), 'mama-update-hold-'));
+    roots.push(home);
+    const root = join(home, '.mama');
+    mkdirSync(join(root, 'logs'), { recursive: true });
+    mkdirSync(join(root, 'runtime'));
+    // A Node that records that it ran.
+    const node = join(home, 'node');
+    writeFileSync(node, `#!/bin/sh\necho ran > '${join(home, 'ran')}'\n`, { mode: 0o700 });
+    const script = join(root, 'start.sh');
+    const generated = startScript({
+      home,
+      nodePath: node,
+      cliPath: '/fixture/cli.js',
+      executablePaths: [],
+      viewer: {},
+      logLevel: 'info',
+    });
+    writeFileSync(script, generated, { mode: 0o700 });
+    // mama service install reproduces the line, so it never reports it as dropped.
+    expect(readStartScript(generated, home).notReproduced).toEqual([]);
+
+    // Held: a clean exit, before auth.env (absent here) is read and before Node starts.
+    writeFileSync(join(root, 'runtime', 'update.hold'), '1\n');
+    expect(spawnSync(script, [], { env: { PATH: '/usr/bin:/bin' } }).status).toBe(0);
+    expect(() => statSync(join(home, 'ran'))).toThrow();
+
+    rmSync(join(root, 'runtime', 'update.hold'));
+    writeFileSync(join(root, 'auth.env'), '', { mode: 0o600 });
+    expect(spawnSync(script, [], { env: { PATH: '/usr/bin:/bin' } }).status).toBe(0);
+    expect(readFileSync(join(home, 'ran'), 'utf8')).toBe('ran\n');
   });
 });

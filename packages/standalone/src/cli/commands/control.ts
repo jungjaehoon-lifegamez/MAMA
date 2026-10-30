@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import { defaultConfigPath } from '../../runtime/config.js';
 import { CliInputError } from '../prompt.js';
 import { releaseReport } from '../runtime/release-check.js';
+import { unfinishedUpdate } from '../runtime/update-journal.js';
 import {
   drainDaemon,
   lockHolder,
@@ -54,6 +55,12 @@ function statusLines(status: Record<string, unknown>): string[] {
   if (drain) {
     lines.push(
       `claims held for ${drain.holds === 1 ? 'a drain' : `${drain.holds} drains`} since ${localTime(drain.since)}: new inputs wait`
+    );
+  }
+  const update = status.update as { since: number; to: string } | null | undefined;
+  if (update) {
+    lines.push(
+      `claims held since ${localTime(update.since)} for the update to ${update.to}: new inputs wait until mama update confirms it`
     );
   }
   const turns = Array.isArray(status.runningTurns)
@@ -124,6 +131,21 @@ export async function runStatus(
           ...(release.fix === undefined ? [] : [`  fix: ${release.fix}`]),
         ];
   if (reply.state === 'stopped') {
+    // A stopped install may be stopped by an unfinished update: start.sh exits on its hold file.
+    let update: ReturnType<typeof unfinishedUpdate> | { unreadable: string };
+    try {
+      update = unfinishedUpdate(dirname(options.configPath ?? defaultConfigPath(home)));
+    } catch (error) {
+      update = { unreadable: error instanceof Error ? error.message : String(error) };
+    }
+    const updateLine =
+      update === null
+        ? null
+        : 'unreadable' in update
+          ? `update journal cannot be read: ${update.unreadable}; mama doctor names it`
+          : 'journal' in update
+            ? `update unfinished: ${update.journal.from} → ${update.journal.to} (${update.journal.phase}, step ${update.journal.step}); resolve it with: ${update.command}`
+            : `update hold file ${update.hold} is in place with no journal, so start.sh exits at once; remove it, then mama service start`;
     if (json) {
       write(
         JSON.stringify({
@@ -131,10 +153,12 @@ export async function runStatus(
           holder: reply.holder,
           service,
           release: release?.state ?? null,
+          update: updateLine,
         })
       );
     } else {
       write(reply.holder ? `stopped; ${holderLine(reply.holder)}` : 'stopped');
+      if (updateLine) write(updateLine);
       if (service) write(`service: ${service}`);
       for (const line of releaseLines()) write(line);
     }
