@@ -13,8 +13,10 @@ import { unfinishedUpdate } from '../runtime/update-journal.js';
 import {
   drainDaemon,
   lockHolder,
+  type DaemonDrain,
   type DrainCounts,
   type DrainDeadlines,
+  type DrainProgress,
   type LockOwner,
 } from '../runtime/daemon-control.js';
 import {
@@ -28,12 +30,27 @@ import { askDaemon, bootoutLaunchdService, installControlPaths, launchdService }
 /** `mama status` exits 0 while the daemon runs and 3 when nothing serves the install. */
 export const STATUS_STOPPED_EXIT = 3;
 
+/**
+ * How long `mama stop` reads again while the install's holder is half made. A daemon takes the
+ * install's lock, writes its holder file and opens its control socket in one stretch at the start
+ * of its boot, before it reads its config or starts anything that claims work (daemon.ts,
+ * bootDaemon). At its own stop it closes the socket, removes the file and lets go of the lock in
+ * one stretch too (daemon.ts:614-623); before that, while it still shuts down with the socket
+ * open, it refuses a drain at once ("MAMA is stopping"). A stop that reads in either stretch finds
+ * the lock held with no holder file (`unknown`, pid 0), which every stop reads again, or a daemon
+ * that does not answer, which the drained stop tries again. No turn runs then, and the stretch is
+ * a few file operations, so past this bound the holder is not starting or ending.
+ */
+export const CONTROL_WAIT_MS = 5_000;
+
 interface ControlOptions {
   home?: string;
   configPath?: string;
   write?: (line: string) => void;
   /** Milliseconds between checks while waiting for a stop; tests shorten it. */
   pollMs?: number;
+  /** How long a stop waits for a half-made holder (CONTROL_WAIT_MS); tests shorten it. */
+  controlWaitMs?: number;
   /** How long `mama stop` waits for the install to be released. */
   timeoutMs?: number;
   /** How long a released install must stay free before `mama stop` reports it stopped. */
@@ -268,28 +285,36 @@ export async function runStop(
     throw new CliInputError('Usage: mama stop [--now]');
   }
   const write = options.write ?? ((line: string) => console.log(line));
-  const holder = lockHolder(installControlPaths(options));
-  // A replay, backfill or register-owner is left to finish; a stopped install has nothing to drain.
-  if (now || holder?.command !== 'daemon') return await stopNow(options, write);
+  if (now) return await stopNow(options, write);
+  const paths = installControlPaths(options);
   let reported = false;
-  const drain = await drainDaemon(
-    installControlPaths(options),
-    (progress) => {
-      if (progress.idle) return;
-      write(
-        reported
-          ? `still draining: ${waitingFor(progress)}`
-          : `draining: new inputs wait; waiting for ${waitingFor(progress)} (at most ${minutes(progress.bound)})`
-      );
-      reported = true;
-    },
-    options.drainDeadlines
-  );
-  if (drain === null) {
+  const onProgress = (progress: DrainProgress): void => {
+    if (progress.idle) return;
     write(
-      `not stopped: ${holderLine(holder)} does not answer on its control socket; mama stop --now stops it without draining`
+      reported
+        ? `still draining: ${waitingFor(progress)}`
+        : `draining: new inputs wait; waiting for ${waitingFor(progress)} (at most ${minutes(progress.bound)})`
     );
-    return 1;
+    reported = true;
+  };
+  // A daemon still opening its control socket is tried again (CONTROL_WAIT_MS); booting, it has
+  // nothing to drain.
+  const started = Date.now();
+  let drain: DaemonDrain | null = null;
+  while (drain === null) {
+    const holder = await namedHolder(options, started);
+    // A replay, backfill or register-owner is left to finish; a stopped install has nothing to
+    // drain. A holder still unnamed past the bound goes there too, which reports it.
+    if (holder?.command !== 'daemon') return await stopNow(options, write, started);
+    drain = await drainDaemon(paths, onProgress, options.drainDeadlines);
+    if (drain !== null) break;
+    if (Date.now() - started >= (options.controlWaitMs ?? CONTROL_WAIT_MS)) {
+      write(
+        `not stopped: ${holderLine(holder)} does not answer on its control socket; mama stop --now stops it without draining`
+      );
+      return 1;
+    }
+    await new Promise((resolve) => setTimeout(resolve, options.pollMs ?? 500));
   }
   try {
     const outcome = await drain.outcome;
@@ -325,12 +350,33 @@ export async function runStop(
 }
 
 /**
+ * The install's holder, read again while the lock is held with no holder file (`unknown`, pid 0),
+ * until `CONTROL_WAIT_MS` after `started`: such a holder is between its lock and its holder file,
+ * or between removing the file and letting go. The stop then judges the holder it will wait for,
+ * with its own nonce, not a placeholder.
+ */
+async function namedHolder(options: ControlOptions, started: number): Promise<LockOwner | null> {
+  const paths = installControlPaths(options);
+  for (;;) {
+    const holder = lockHolder(paths);
+    if (holder?.command !== 'unknown') return holder;
+    if (Date.now() - started >= (options.controlWaitMs ?? CONTROL_WAIT_MS)) return holder;
+    await new Promise((resolve) => setTimeout(resolve, options.pollMs ?? 500));
+  }
+}
+
+/**
  * Today's stop, also `--now`. A daemon run by a loaded LaunchAgent is unloaded, so KeepAlive does
  * not restart it; any other daemon is asked through the control socket. A replay, backfill or
- * register-owner is left to finish. A running turn is interrupted.
+ * register-owner is left to finish. A running turn is interrupted. `started` is when the stop
+ * began, so a drained stop that comes here has used up part of the wait for an unnamed holder.
  */
-async function stopNow(options: ControlOptions, write: (line: string) => void): Promise<number> {
-  let holder = lockHolder(installControlPaths(options));
+async function stopNow(
+  options: ControlOptions,
+  write: (line: string) => void,
+  started = Date.now()
+): Promise<number> {
+  let holder = await namedHolder(options, started);
   const service = launchdService();
   const run = options.run ?? defaultServiceRun;
   const unit = systemdUnitState(options.home ?? homedir(), run);
