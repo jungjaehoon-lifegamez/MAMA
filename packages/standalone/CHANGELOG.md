@@ -123,6 +123,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the move is cut off, the next run of the install command finishes or undoes it, and
     `mama status` and `mama doctor` say so.
   - `mama doctor` warns when such an install runs another Node.js than its release pins (#539).
+- How to get `gws` when a Google source needs it (Calendar, Gmail, Drive, Sheets). `mama init`,
+  `mama init --section connectors` and `mama doctor` look for it where MAMA's service runs it: on
+  start.sh's PATH, or, before `mama init` has written start.sh, on the PATH it will write, which
+  carries the folder where the terminal finds `gws`. When the service would not find it, they
+  print how to install it and how to sign in. On an install the install command made, both
+  commands use MAMA's own Node and put `gws` where the service finds it:
+  `PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/node/bin/npm install -g --prefix ~/.mama/npm @googleworkspace/cli`,
+  then `PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login`. Other installs get
+  `npm install -g @googleworkspace/cli` or `brew install googleworkspace-cli`, then
+  `gws auth login`. When only the terminal finds `gws`, they say that `mama service install` adds
+  its folder. MAMA's service does not start while such a source is on and `gws` is missing, and
+  they say so: `mama init` says to install it now and run `mama init` again to continue (a run
+  that continues names `gws` again), and `--section` says to start the service once it is
+  installed. Doctor's fix for a source that does not start, or whose sign-in is refused, names
+  the same login command (#543).
 
 ### Changed
 
