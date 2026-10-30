@@ -260,6 +260,83 @@ describe('daemon scheduled reports', () => {
     expect(ctx.logs.some((line) => line.includes('reason=send rejected'))).toBe(true);
   });
 
+  it('keeps an uncertain report send parked in its hour and closes it once a newer full report is sent', async () => {
+    const ctx = await boot();
+    const ledger = () =>
+      (
+        JSON.parse(
+          readFileSync(join(ctx.root, 'runtime', 'owner-message-ledger.json'), 'utf8')
+        ) as {
+          entries: Array<{ idempotencyKey?: string; state: string; deliveryUncertain?: boolean }>;
+        }
+      ).entries.filter((entry) => entry.idempotencyKey === 'report:2026-01-01:13:full');
+    const native = (index: number) => ctx.status(index)?.nativeDelivery?.state;
+    // No error code: Telegram may have shown the message, so the send is never repeated.
+    telegram.sendMessage.mockRejectedValueOnce(new Error('network reset'));
+    ctx.scheduler!.tick(new Date('2026-01-01T04:00:00Z'));
+    await vi.waitFor(() => expect(native(0)).toBe('uncertain'));
+    expect(ledger()).toMatchObject([{ state: 'ready', deliveryUncertain: true }]);
+    // Rows shaped like a re-fired hour: the same payload, a new text under the same delivery key.
+    const payload = ctx.status(0)!.payload!;
+    for (const [index, text] of ['Second wording.', 'Third wording.'].entries()) {
+      ctx.setResponse(text);
+      ctx.daemon.owner.intake.acceptScheduled({
+        id: `report:2026-01-01:13:extra-${index}`,
+        channelKey: 'schedule',
+        occurredAt: Date.parse('2026-01-01T04:02:00Z'),
+        payload,
+      });
+      await vi.waitFor(() => expect(native(index + 1)).toBe('uncertain'));
+    }
+    expect(ctx.logs.some((line) => line.includes('delivery binding mismatch'))).toBe(true);
+    // The saved result goes back to the send, which stays uncertain: no resend, no new turn.
+    const send = ctx.daemon.gateway!.sendToOwner.bind(ctx.daemon.gateway);
+    const resent: string[] = [];
+    const resend = vi
+      .spyOn(ctx.daemon.gateway!, 'sendToOwner')
+      .mockImplementation(async (text, key) => {
+        resent.push(`${key} ${text}`);
+        await send(text, key).catch((error: Error) => {
+          resent.push(error.message);
+          throw error;
+        });
+      });
+    await ctx.daemon.owner.runtime.drainOnce();
+    expect([native(0), native(1), native(2)]).toEqual(['uncertain', 'uncertain', 'uncertain']);
+    expect(resent.slice(0, 2)).toEqual([
+      'report:2026-01-01:13:full Some work needs a check.',
+      'Telegram outbound delivery is uncertain',
+    ]);
+    resend.mockRestore();
+    ctx.scheduler!.tick(new Date('2026-01-01T04:30:00Z'));
+    expect(ctx.rows()).toHaveLength(3);
+    expect(ctx.prompts).toHaveLength(3);
+    expect(telegram.sendMessage).toHaveBeenCalledOnce();
+    // Another hour is not held by them.
+    ctx.setResponse('The evening report.');
+    ctx.scheduler!.tick(new Date('2026-01-01T09:00:00Z'));
+    await vi.waitFor(() => expect(ctx.status(3)?.status).toBe('acked'));
+    expect(telegram.sendMessage).toHaveBeenLastCalledWith(-7, 'The evening report.');
+    const state = readFileSync(ctx.statePath, 'utf8');
+    expect(JSON.parse(state).lastFullKey).toBe('2026-01-01:18');
+    await vi.waitFor(async () => {
+      await ctx.daemon.owner.runtime.drainOnce();
+      expect([0, 1, 2].map((index) => ctx.status(index)?.status)).toEqual([
+        'acked',
+        'acked',
+        'acked',
+      ]);
+    });
+    expect([native(0), native(1), native(2)]).toEqual(['settled', 'settled', 'settled']);
+    expect(ledger()).toEqual([]);
+    expect(readFileSync(ctx.statePath, 'utf8')).toBe(state);
+    expect(telegram.sendMessage).toHaveBeenCalledTimes(2);
+    expect(ctx.prompts).toHaveLength(4);
+    expect(ctx.logs.filter((line) => line.startsWith('scheduled report superseded'))).toHaveLength(
+      3
+    );
+  });
+
   it('holds one pending report through an hour change and drains its send before Telegram stops', async () => {
     const ctx = await boot();
     expect(ctx.scheduler).toBeDefined();
