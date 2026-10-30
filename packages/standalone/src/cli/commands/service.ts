@@ -136,30 +136,33 @@ export function serviceFile(options: ServiceOptions = {}): string {
 
 /**
  * What `service install` writes into start.sh from this shell: the Node and the MAMA command its
- * exec line runs, and the commands whose folders its PATH carries.
+ * exec line runs, and the commands whose folders its PATH carries. `backend` is undefined when
+ * this shell does not find it; `service install` refuses then.
  */
 export function serviceLaunch(
   backendName: string,
   options: Pick<ServiceOptions, 'nodePath' | 'cliPath' | 'findExecutable'>
-): { gws: string | undefined; nodePath: string; cliPath: string; executablePaths: string[] } {
+): {
+  backend: string | undefined;
+  gws: string | undefined;
+  nodePath: string;
+  cliPath: string;
+  executablePaths: string[];
+} {
   const locate = options.findExecutable ?? findExecutable;
   const backend = locate(backendName);
-  if (!backend) {
-    throw new CliInputError(
-      `${backendName} is not on this PATH; install it or add it to PATH, then run mama service install again`
-    );
-  }
   const gws = locate(gwsTool.command);
   const nodePath = options.nodePath ?? stableNodePath(process.execPath);
   const cliPath = options.cliPath ?? join(__dirname, '..', 'index.js');
   // An npm install's prefix holds the commands npm installs beside MAMA (install.md, PR 2).
   const prefix = /^(.*)\/lib\/node_modules\/@jungjaehoon\/mama-os\//.exec(cliPath)?.[1];
   return {
+    backend,
     gws,
     nodePath,
     cliPath,
     executablePaths: [
-      backend,
+      ...(backend ? [backend] : []),
       ...(gws ? [gws] : []),
       ...(prefix === undefined ? [] : [join(prefix, 'bin', 'mama')]),
     ],
@@ -183,7 +186,15 @@ export async function installService(
   const configPath = options.configPath ?? defaultConfigPath(home);
   const config = loadConfig({ home, path: configPath });
   const root = dirname(configPath);
-  const { gws, nodePath, cliPath, executablePaths } = serviceLaunch(config.agent.backend, options);
+  const { backend, gws, nodePath, cliPath, executablePaths } = serviceLaunch(
+    config.agent.backend,
+    options
+  );
+  if (!backend) {
+    throw new CliInputError(
+      `${config.agent.backend} is not on this PATH; install it or add it to PATH, then run mama service install again`
+    );
+  }
   const startPath = join(root, 'start.sh');
   const existing = existsSync(startPath) ? readFileSync(startPath, 'utf8') : null;
   const reading = existing === null ? null : readStartScript(existing, home);

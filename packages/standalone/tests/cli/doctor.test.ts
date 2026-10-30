@@ -789,7 +789,8 @@ describe('mama doctor', () => {
     });
     expect(await check(npm, undefined, '/shell/bin/gws')).toMatchObject({
       status: 'fail',
-      detail: "the gws command is not on the service's PATH; this shell finds /shell/bin/gws",
+      detail: "the gws command is not on the service's PATH",
+      context: 'this shell finds gws at /shell/bin/gws',
       fix: "mama service install adds /shell/bin to start.sh's PATH, mama service restart applies it; then log in: gws auth login",
     });
     // On the service's PATH (start.sh names /opt/homebrew/bin when it exists; here, the system's).

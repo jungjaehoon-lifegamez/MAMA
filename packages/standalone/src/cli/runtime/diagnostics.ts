@@ -829,18 +829,22 @@ async function sourceChecks(
       { inDirs: locate, shell: start.findShell }
     );
     const missing = tools.filter((tool) => tool.servicePath === null);
+    // Paths stay out of `detail`, which --report shares.
+    const context = [
+      ...(secrets.length > 0 ? [secrets.join(', ')] : []),
+      ...missing.flatMap(({ tool, shellPath }) =>
+        shellPath === null ? [] : [`this shell finds ${tool.command} at ${shellPath}`]
+      ),
+    ];
     if (secrets.length > 0 || missing.length > 0) {
       checks.push({
         name: `source ${name}`,
         status: 'fail',
         detail: [
           ...(secrets.length > 0 ? [`${secrets.length} secret(s) it needs are not set`] : []),
-          ...missing.map(
-            ({ tool, shellPath }) =>
-              `the ${tool.command} command is not on the service's PATH${shellPath === null ? '' : `; this shell finds ${shellPath}`}`
-          ),
+          ...missing.map(({ tool }) => `the ${tool.command} command is not on the service's PATH`),
         ].join('; '),
-        ...(secrets.length > 0 ? { context: secrets.join(', ') } : {}),
+        ...(context.length > 0 ? { context: context.join('; ') } : {}),
         fix: [
           ...secrets.map(secretFix),
           ...missing.map(({ shellPath, install, login }) =>

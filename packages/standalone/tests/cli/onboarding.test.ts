@@ -1413,6 +1413,19 @@ describe('tools a source needs (install.md, PR 3)', () => {
     expect(output).not.toContain('Install it');
   });
 
+  it('init --section connectors before start.sh exists reports without the backend on PATH', async () => {
+    await runInit([], options(prompt(minimal(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]).adapter));
+    expect(existsSync(join(root, 'start.sh'))).toBe(false);
+    const p = prompt(['gmail'], []);
+    await runInit(
+      ['--section', 'connectors'],
+      options(p.adapter, { findExecutable: () => undefined })
+    );
+    expect(p.output.join('\n')).toContain(
+      "gmail runs gws, which the service's PATH does not have. Install it with one of:"
+    );
+  });
+
   describe('init --section connectors, against start.sh', () => {
     /** A finished setup whose start.sh's PATH names `folders` (and the system's). */
     async function setUp(folders: string[], node = join(home, 'node', 'bin', 'node')) {
