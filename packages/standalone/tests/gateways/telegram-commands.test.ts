@@ -416,7 +416,7 @@ describe('/update', () => {
 
   it('says what the daemon found: busy, a repeat, a checkout, no cached release', () => {
     expect(updateText({ kind: 'busy', since: '2026-10-30 Fri 09:00' })).toBe(
-      'Already updating since 2026-10-30 Fri 09:00; that update goes on and reports here.'
+      'Already updating since 2026-10-30 Fri 09:00; that update goes on and reports to the chat it was started from.'
     );
     expect(updateText({ kind: 'repeated' })).toContain('already received');
     expect(updateText({ kind: 'checkout', steps: ['step one', 'step two'] })).toBe(

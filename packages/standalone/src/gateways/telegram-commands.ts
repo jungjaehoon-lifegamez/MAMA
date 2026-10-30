@@ -133,7 +133,7 @@ export function stopText(
 
 export function updateText(result: UpdateRequestResult): string {
   if (result.kind === 'busy')
-    return `Already updating since ${result.since}; that update goes on and reports here.`;
+    return `Already updating since ${result.since}; that update goes on and reports to the chat it was started from.`;
   if (result.kind === 'repeated')
     return 'This /update was already received and started an update. Send /update again for another.';
   if (result.kind === 'checkout')
