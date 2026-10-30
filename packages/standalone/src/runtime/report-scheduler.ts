@@ -16,8 +16,8 @@ interface ReportScheduleState {
    * When the report that set each key was queued (epoch ms); absent in files written before.
    * Local hour keys do not order across a time zone change, so superseding compares these.
    */
-  lastFullAt?: number | null;
-  lastReminderAt?: number | null;
+  lastFullAt?: number;
+  lastReminderAt?: number;
   /** The latest day whose daily page was written; absent in files written before daily pages. */
   lastDailyKey?: string | null;
 }
@@ -66,15 +66,21 @@ function loadState(path: string): ReportScheduleState {
     ) ||
     !['lastFullAt', 'lastReminderAt'].every((key) => {
       const value = (state as Record<string, unknown>)[key];
-      return (
-        value === undefined ||
-        value === null ||
-        (Number.isSafeInteger(value) && (value as number) >= 0)
-      );
+      return value === undefined || (Number.isSafeInteger(value) && (value as number) >= 0);
     })
   )
     throw new Error('Invalid report schedule state');
   return state as ReportScheduleState;
+}
+
+/**
+ * When the latest report sent that covers this kind was queued: a reminder is covered by a later
+ * reminder or full report, as tick treats a full report sent in its hour. 0 when nothing covers it.
+ */
+function coveredUntil(state: ReportScheduleState, report: 'full' | 'reminder' | 'daily'): number {
+  if (report === 'full') return state.lastFullAt ?? 0;
+  if (report === 'reminder') return Math.max(state.lastReminderAt ?? 0, state.lastFullAt ?? 0);
+  return 0;
 }
 
 /** Produce scheduled owner turns; the mailbox holds the one-at-a-time boundary. */
@@ -96,16 +102,21 @@ export function createReportScheduler(options: ReportSchedulerOptions) {
     const day = `${part('year')}-${part('month')}-${part('day')}`;
     const hourKey = `${day}:${part('hour')}`;
     const full = options.config.full_report_hours.includes(hour);
-    // A report queued before the latest one sent would only be superseded (onResult).
     const reportDue = full
-      ? state.lastFullKey !== hourKey && now.getTime() >= (state.lastFullAt ?? 0)
+      ? state.lastFullKey !== hourKey
       : hour >= options.config.reminder_start_hour &&
         hour <= options.config.reminder_end_hour &&
         state.lastReminderKey !== hourKey &&
-        now.getTime() >= (state.lastReminderAt ?? 0) &&
         // A full report already sent this hour covers it, even if the hour is no longer a
         // full-report hour after a config change.
         state.lastFullKey !== hourKey;
+    // onResult supersedes a report queued before the latest one that covers it, so a clock behind
+    // that report would queue one turn a minute for nothing; it fails until the clock catches up.
+    const covered = coveredUntil(state, full ? 'full' : 'reminder');
+    if (reportDue && now.getTime() < covered)
+      throw new Error(
+        `The clock is before the latest report sent, queued at ${new Date(covered).toISOString()}; no report is queued until it passes that time`
+      );
     // The day's page is due from its hour on; a day missed while the daemon was down or a report
     // was pending is written at the next tick after midnight. A first start waits for the hour.
     // At hour 0 the page is for the day that just ended, not the one that began.
@@ -163,16 +174,11 @@ export function createReportScheduler(options: ReportSchedulerOptions) {
       const { report, hourKey, day } = scheduledReport(row.payload);
       // The state holds the latest report sent. One queued before it was covered by it, and
       // saving its hour would move the key back; the daily key keeps its latest day the same way.
-      const latestAt =
-        report === 'full'
-          ? state.lastFullAt
-          : report === 'reminder'
-            ? state.lastReminderAt
-            : undefined;
-      if (typeof latestAt === 'number' && row.occurredAt < latestAt) {
+      const covered = coveredUntil(state, report);
+      if (row.occurredAt < covered) {
         options.retireUndelivered(`report:${hourKey}:${report}`);
         options.log(
-          `scheduled report superseded stimulus_id=${row.stimulusId} report=${report} hour=${hourKey} latest=${report === 'full' ? state.lastFullKey : state.lastReminderKey}`
+          `scheduled report superseded stimulus_id=${row.stimulusId} report=${report} hour=${hourKey} covered_by_report_queued_at=${new Date(covered).toISOString()}`
         );
         return;
       }

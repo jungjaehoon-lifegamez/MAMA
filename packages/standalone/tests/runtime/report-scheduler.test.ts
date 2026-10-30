@@ -113,14 +113,42 @@ describe('KST report scheduler', () => {
     expect(ctx.queued).toHaveLength(2);
   });
 
-  it('queues no report the clock places before the latest one sent', async () => {
+  it('fails each due tick while the clock is behind the latest report sent, and queues once it passes', async () => {
     const ctx = setup();
-    ctx.scheduler.tick(new Date('2026-01-01T09:00:00Z')); // 18:00 in Seoul
-    await ctx.scheduler.onResult(ctx.result(), { response: 'evening report' });
-    ctx.setPending(false);
-    // The clock is set back to 08:30 the same morning: that full hour would only be superseded.
-    ctx.scheduler.tick(new Date('2025-12-31T23:30:00Z'));
-    expect(ctx.queued).toHaveLength(1);
+    mkdirSync(join(root, 'runtime'), { recursive: true });
+    // A report sent while the clock ran years ahead.
+    writeFileSync(
+      ctx.statePath,
+      JSON.stringify({
+        lastFullKey: '2030-01-01:13',
+        lastFullAt: Date.parse('2030-01-01T04:00:00Z'),
+        lastReminderKey: null,
+      })
+    );
+    const errors: unknown[] = [];
+    const scheduler = createReportScheduler({
+      ...ctx.options,
+      onError: (error) => errors.push(error),
+    });
+    for (const iso of ['2025-12-31T23:00:00Z', '2026-01-01T04:00:00Z', '2026-01-01T09:00:00Z'])
+      expect(() => scheduler.tick(new Date(iso))).toThrow(
+        'The clock is before the latest report sent, queued at 2030-01-01T04:00:00.000Z'
+      );
+    // A reminder hour is covered by the full report too.
+    expect(() => scheduler.tick(new Date('2026-01-01T01:00:00Z'))).toThrow('2030-01-01T04:00:00');
+    // Outside the report hours nothing is due, so nothing fails.
+    scheduler.tick(new Date('2026-01-01T14:00:00Z'));
+    expect(ctx.queued).toEqual([]);
+    // The timer reports it through onError.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T03:59:30Z'));
+    scheduler.start();
+    await vi.advanceTimersByTimeAsync(60_000);
+    scheduler.stop();
+    expect(errors).toHaveLength(1);
+    expect(String(errors[0])).toContain('2030-01-01T04:00:00.000Z');
+    scheduler.tick(new Date('2030-01-01T09:00:00Z'));
+    expect(ctx.queued.at(-1)!.payload).toMatchObject({ report: 'full', hourKey: '2030-01-01:18' });
   });
 
   it('gives the full report order its data and leaves the steps to the standing prompt', () => {
@@ -282,23 +310,39 @@ describe('KST report scheduler', () => {
   it.each([
     [
       'full',
+      'a later full report',
       {
         lastFullKey: '2026-01-01:18',
         lastFullAt: Date.parse('2026-01-01T09:00:00Z'),
         lastReminderKey: null,
       },
+      '2026-01-01T09:00:00.000Z',
     ],
     [
       'reminder',
+      'a later reminder',
       {
         lastFullKey: null,
         lastReminderKey: '2026-01-01:14',
         lastReminderAt: Date.parse('2026-01-01T05:00:00Z'),
       },
+      '2026-01-01T05:00:00.000Z',
+    ],
+    // A reminder parked across the next full report, after the reminder hours were narrowed.
+    [
+      'reminder',
+      'a later full report',
+      {
+        lastFullKey: '2026-01-01:18',
+        lastFullAt: Date.parse('2026-01-01T09:00:00Z'),
+        lastReminderKey: '2026-01-01:10',
+        lastReminderAt: Date.parse('2026-01-01T01:00:00Z'),
+      },
+      '2026-01-01T09:00:00.000Z',
     ],
   ] as const)(
-    'skips a %s report queued before the latest one sent and retires its receipt',
-    async (report, saved) => {
+    'skips a %s queued before %s and retires its receipt',
+    async (report, _by, saved, coveredAt) => {
       const ctx = setup();
       mkdirSync(join(root, 'runtime'), { recursive: true });
       const stored = JSON.stringify(saved);
@@ -315,7 +359,7 @@ describe('KST report scheduler', () => {
       expect(ctx.sent).toEqual([]);
       expect(ctx.retired).toEqual([`report:2026-01-01:13:${report}`]);
       expect(ctx.logs).toEqual([
-        `scheduled report superseded stimulus_id=report:2026-01-01:13:fixture report=${report} hour=2026-01-01:13 latest=${report === 'full' ? saved.lastFullKey : saved.lastReminderKey}`,
+        `scheduled report superseded stimulus_id=report:2026-01-01:13:fixture report=${report} hour=2026-01-01:13 covered_by_report_queued_at=${coveredAt}`,
       ]);
       expect(readFileSync(ctx.statePath, 'utf8')).toBe(stored);
     }
