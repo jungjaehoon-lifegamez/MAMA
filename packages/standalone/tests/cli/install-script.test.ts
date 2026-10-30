@@ -245,7 +245,7 @@ describe('install.sh', () => {
     expect(broken.status, broken.output).toBe(1);
     expect(broken.output).toContain(`${join(stubs, 'claude')} does not run`);
     expect(broken.output).toContain(
-      `claude's installer finished, but ${installed} does not run (its --version printed no version)`
+      `claude's installer finished, but ${installed} does not run (its --version exited non-zero or printed no version)`
     );
     rmSync(installed);
     vendor('2.1.300 (Claude Code)');

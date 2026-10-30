@@ -120,6 +120,9 @@ async function post(url: string, fields: Record<string, string>): Promise<string
   return await response.text();
 }
 
+/** What a page driver could not do (a refused connection, say); afterEach expects none. */
+const driverFailures: unknown[] = [];
+
 /**
  * The owner at the setup page: the opener stand-in reads the redirect file as the browser would.
  * The owner enters each token in turn, then each code (`sent` is the newest the bot sent them),
@@ -147,7 +150,7 @@ function person(entries: { tokens?: string[]; codes?: string[]; after?: () => vo
         for (const code of entries.codes ?? ['sent'])
           replies.push(await post(url, { code: code === 'sent' ? await telegram.code() : code }));
         entries.after?.();
-      })();
+      })().catch((error: unknown) => driverFailures.push(error));
       return 0;
     },
   };
@@ -256,6 +259,7 @@ beforeEach(() => {
   vi.stubEnv('MAMA_DB_PATH', join(home, 'dev.db'));
 });
 afterEach(() => {
+  expect(driverFailures.splice(0)).toEqual([]);
   vi.unstubAllEnvs();
   for (const path of [home, memberRoot, toolsRoot]) rmSync(path, { recursive: true, force: true });
 });
@@ -928,7 +932,7 @@ describe('the setup page in mama init', () => {
 
   it('expires with nothing written when the code is not entered in time', async () => {
     const owner = person({ codes: [] });
-    const { p, run } = setUp({ openRun: owner.openRun, setupPageMs: 200 });
+    const { p, run } = setUp({ openRun: owner.openRun, setupPageMs: 1000 });
     await expect(run()).rejects.toThrow(
       /^the setup page expired at \d\d:\d\d; nothing was written$/
     );

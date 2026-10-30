@@ -334,7 +334,7 @@ exec $(quote "$node_dir/bin/node") $(quote "$cli") \"\$@\""; then
     say "$backend is installed: $backend_path"
   else
     [ -z "$backend_path" ] ||
-      say "$backend_path does not run (its --version printed no version), so it does not count."
+      say "$backend_path does not run (its --version exited non-zero or printed no version), so it does not count."
     case $backend in
       claude)
         vendor_url=https://claude.ai/install.sh
@@ -368,7 +368,7 @@ exec $(quote "$node_dir/bin/node") $(quote "$cli") \"\$@\""; then
     [ -n "$backend_path" ] ||
       fail "$backend's installer finished, but $backend is not on PATH or in $HOME/.local/bin; see $vendor_page"
     backend_runs "$backend_path" ||
-      fail "$backend's installer finished, but $backend_path does not run (its --version printed no version); see $vendor_page"
+      fail "$backend's installer finished, but $backend_path does not run (its --version exited non-zero or printed no version); see $vendor_page"
     say "$backend installed: $backend_path"
   fi
 
