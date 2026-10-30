@@ -42,10 +42,19 @@ function done(status: number, stdout = '', stderr = ''): SpawnSyncReturns<string
   return { pid: 1, output: [], stdout, stderr, status, signal: null };
 }
 
+/**
+ * The update job as `launchctl print` shows it. `starting`: just bootstrapped, loaded with no pid
+ * and never exited, which a second /update answered at the same moment sees.
+ */
+type Job = 'none' | 'finished' | 'running' | 'starting';
+const PRINTED: Record<Exclude<Job, 'none'>, string> = {
+  running: '\tstate = running\n\tpid = 4242\n\tlast exit code = (never exited)\n',
+  starting: '\tstate = spawn scheduled\n\tlast exit code = (never exited)\n',
+  finished: '\tstate = not running\n\tlast exit code = 0\n',
+};
+
 /** An npm install with auth.env, a carried secret export in start.sh, and a recording runner. */
-function install(
-  options: { job?: 'none' | 'finished' | 'running'; platform?: NodeJS.Platform } = {}
-) {
+function install(options: { job?: Job; platform?: NodeJS.Platform } = {}) {
   const f = fixture();
   vi.stubEnv('HOME', f.home);
   writeFileSync(join(f.root, 'auth.env'), `MAMA_TELEGRAM_TOKEN='${SECRET}'\n`, { mode: 0o600 });
@@ -64,19 +73,17 @@ function install(
     { mode: 0o700 }
   );
   const calls: string[][] = [];
-  let job = options.job ?? 'none';
+  let job: Job = options.job ?? 'none';
+  const logged: string[] = [];
   const run: UpdateJobOptions['run'] = (command, args) => {
     calls.push([command, ...args]);
     if (command === 'launchctl' && args[0] === 'print') {
       if (job === 'none') return done(113);
-      return done(
-        0,
-        job === 'running' ? 'state = running\n\tpid = 4242\n' : 'state = not running\n'
-      );
+      return done(0, PRINTED[job]);
     }
     if (command === 'systemctl')
       return done(job === 'running' ? 0 : 3, job === 'running' ? 'active\n' : 'inactive\n');
-    if (command === 'launchctl' && args[0] === 'bootstrap') job = 'running';
+    if (command === 'launchctl' && args[0] === 'bootstrap') job = 'starting';
     return done(0);
   };
   const request = (messageId: number, chatId = '7101') =>
@@ -88,11 +95,13 @@ function install(
       platform: options.platform ?? 'darwin',
       run,
       uid: 501,
+      log: (line) => logged.push(line),
       now: () => new Date('2026-10-30T00:00:00.000Z'),
     });
   return {
     f,
     calls,
+    logged,
     request,
     finish: () => {
       job = 'finished';
@@ -183,7 +192,7 @@ describe('/update, the daemon side', () => {
     const lock = acquireInstallLock(held.f.paths.lock, 'update');
     try {
       const busy = held.request(31);
-      expect(busy).toEqual({ kind: 'busy', since: lock.owner.startedAt });
+      expect(busy).toEqual({ kind: 'busy', source: 'lock', since: lock.owner.startedAt });
     } finally {
       lock.release();
     }
@@ -195,13 +204,55 @@ describe('/update, the daemon side', () => {
     expect(running.request(31).kind).toBe('started');
     const recorded = readFileSync(updateRequestPath(running.f.root), 'utf8');
     running.calls.length = 0;
-    // A second /update while the job runs (before or after it holds update.lock).
+    // A second /update answered at the same moment: the job is loaded and has no pid yet.
     expect(running.request(32)).toEqual({
       kind: 'busy',
+      source: 'job',
       since: Date.parse('2026-10-30T00:00:00.000Z'),
     });
     expect(running.calls).toEqual([['launchctl', 'print', 'gui/501/com.mama.update']]);
     expect(readFileSync(updateRequestPath(running.f.root), 'utf8')).toBe(recorded);
+  });
+
+  it('boots out only a job that has exited; any other loaded state is a run starting', () => {
+    for (const printed of [
+      PRINTED.starting,
+      // Loaded, never run yet: launchd has not spawned it.
+      '\tstate = not running\n\tlast exit code = (never exited)\n',
+      // No exit code line at all.
+      '\tstate = not running\n',
+      PRINTED.running,
+    ]) {
+      const f = fixture();
+      vi.stubEnv('HOME', f.home);
+      const calls: string[][] = [];
+      const result = requestUpdate({
+        mamaRoot: f.root,
+        home: f.home,
+        origin: { chatId: '7101', messageId: 31 },
+        version: '1.0.0',
+        platform: 'darwin',
+        run: (command, args) => {
+          calls.push([command, ...args]);
+          return done(0, printed);
+        },
+        uid: 501,
+        log: () => {},
+      });
+      expect(result).toMatchObject({ kind: 'busy', source: 'job' });
+      expect(calls).toEqual([['launchctl', 'print', 'gui/501/com.mama.update']]);
+      expect(existsSync(updateRequestPath(f.root))).toBe(false);
+    }
+  });
+
+  it('starts with a release check it cannot read, and logs why the reply names no target', () => {
+    const { f, calls, logged, request } = install();
+    writeFileSync(releaseCheckPath(f.root), '{ not json');
+    expect(request(31)).toEqual({ kind: 'started', from: '1.0.0', to: null });
+    expect(calls.at(-1)?.slice(0, 2)).toEqual(['launchctl', 'bootstrap']);
+    expect(logged).toEqual([
+      expect.stringContaining('update request: the cached release check cannot be read'),
+    ]);
   });
 
   it('refuses a message already recorded, as a restarted daemon receives it again', () => {
@@ -286,6 +337,7 @@ describe('/update, the daemon side', () => {
         run: (_command, args) =>
           args[0] === 'print' ? done(113) : done(5, '', 'Bootstrap failed: 5: Input/output error'),
         uid: 501,
+        log: () => {},
       })
     ).toThrow('launchctl bootstrap gui/501');
     // The request stays recorded: a new /update is a new message, and this one is not retried.

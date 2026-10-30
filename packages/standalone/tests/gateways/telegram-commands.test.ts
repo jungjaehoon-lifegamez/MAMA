@@ -415,8 +415,12 @@ describe('/update', () => {
   });
 
   it('says what the daemon found: busy, a repeat, a checkout, no cached release', () => {
-    expect(updateText({ kind: 'busy', since: '2026-10-30 Fri 09:00' })).toBe(
-      'Already updating since 2026-10-30 Fri 09:00; that update goes on and reports to the chat it was started from.'
+    // A terminal's mama update reports nowhere; only an /update's job reports to a chat.
+    expect(updateText({ kind: 'busy', source: 'lock', since: '2026-10-30 Fri 09:00' })).toBe(
+      'An update has held the install since 2026-10-30 Fri 09:00; this /update starts nothing.'
+    );
+    expect(updateText({ kind: 'busy', source: 'job', since: '2026-10-30 Fri 09:00' })).toContain(
+      'it reports to the chat it was started from'
     );
     expect(updateText({ kind: 'repeated' })).toContain('already received');
     expect(updateText({ kind: 'checkout', steps: ['step one', 'step two'] })).toBe(
@@ -425,6 +429,61 @@ describe('/update', () => {
     expect(updateText({ kind: 'started', from: '1.0.0', to: null })).toBe(
       'Updating 1.0.0 to the latest release; progress follows.'
     );
+  });
+
+  it.each([
+    [{ kind: 'checkout' as const, steps: ['/fixture/checkout/node /fixture/checkout/cli stop'] }],
+    [{ kind: 'not_updatable' as const, reason: '/fixture/install/.mama/start.sh does not parse' }],
+  ])("keeps an answer's paths in the owner's DM, out of the group (%#)", async (result) => {
+    const commands = port({ update: vi.fn(async () => result) });
+    await gateway(commands);
+    await send({
+      ...command('/update'),
+      chat: { id: Number(COMMON), type: 'supergroup' },
+      from: { id: 7101, is_bot: false },
+    });
+    await vi.waitFor(() => expect(seams.api.sendMessage).toHaveBeenCalledTimes(2));
+    const [[dmChat, dmText], [groupChat, groupText]] = seams.api.sendMessage.mock.calls;
+    expect(dmChat).toBe(7101);
+    expect(dmText).toBe(updateText(result));
+    expect(dmText).toContain('/fixture/');
+    expect(groupChat).toBe(Number(COMMON));
+    expect(groupText).toContain('in your DM');
+    // No path: the only slash is the command's own.
+    expect(groupText.replaceAll('/update', '')).not.toContain('/');
+
+    // From the owner's DM the full answer stays there.
+    seams.api.sendMessage.mockClear();
+    await send({
+      ...command('/update', { message_id: 22 }),
+      chat: { id: 7101, type: 'private' },
+      from: { id: 7101, is_bot: false },
+    });
+    const [chat, text] = await reply();
+    expect(chat).toBe(7101);
+    expect(text).toBe(updateText(result));
+    expect(seams.api.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells the group when the DM with the details could not be sent', async () => {
+    seams.api.sendMessage
+      .mockRejectedValueOnce(new Error('Forbidden: bot was blocked by the user'))
+      .mockResolvedValue({ message_id: 101 });
+    const lines: string[] = [];
+    await gateway(
+      port({ update: vi.fn(async () => ({ kind: 'checkout' as const, steps: ['/fixture/x'] })) }),
+      (line) => lines.push(line)
+    );
+    await send({
+      ...command('/update'),
+      chat: { id: Number(COMMON), type: 'supergroup' },
+      from: { id: 7101, is_bot: false },
+    });
+    await vi.waitFor(() => expect(seams.api.sendMessage).toHaveBeenCalledTimes(2));
+    const [, groupText] = seams.api.sendMessage.mock.calls[1];
+    expect(groupText).toContain('could not send the details to your DM');
+    expect(groupText).not.toContain('/fixture/');
+    expect(lines.join('\n')).toContain('details not sent to DM');
   });
 
   it("answers a failed start with a notice and keeps the error in the daemon's log", async () => {

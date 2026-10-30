@@ -1143,11 +1143,13 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
               platform: process.platform,
               run: defaultServiceRun,
               uid: process.getuid!(),
+              log: (line) => logger.info(line),
             });
             logger.info(`update requested result=${result.kind}`);
             if (result.kind !== 'busy') return result;
             return {
               kind: 'busy',
+              source: result.source,
               since:
                 result.since === null ? 'an unknown time' : localNow(result.since, timeZone.get()),
             };

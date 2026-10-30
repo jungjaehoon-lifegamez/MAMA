@@ -52,8 +52,12 @@ function writeStaged(path: string, content: string, mode: number): void {
 
 export type UpdateJobResult =
   | { readonly kind: 'started'; readonly from: string; readonly to: string | null }
-  /** `since`: when the updater took update.lock, or the request's time; null when unknown. */
-  | { readonly kind: 'busy'; readonly since: number | null }
+  /**
+   * `lock`: an updater holds update.lock, a terminal's `mama update` or an /update's; `job`: the
+   * update job runs (it reports to its request's chat). `since`: when the lock was taken, or the
+   * request's time; null when unknown.
+   */
+  | { readonly kind: 'busy'; readonly source: 'lock' | 'job'; readonly since: number | null }
   | { readonly kind: 'repeated' }
   | { readonly kind: 'checkout'; readonly steps: readonly string[] }
   | { readonly kind: 'not_updatable'; readonly reason: string };
@@ -68,19 +72,27 @@ export interface UpdateJobOptions {
   /** launchctl and systemd-run go through it; tests record them. */
   readonly run: ServiceRun;
   readonly uid: number;
+  /** The daemon's log: what the reply leaves out is named there. */
+  readonly log: (line: string) => void;
   readonly now?: () => Date;
 }
 
-/** Whether the update job is loaded and its pid, from `launchctl print`. */
-function launchdJob(run: ServiceRun, uid: number): { loaded: boolean; pid: number | null } {
+/**
+ * The update job as `launchctl print` shows it: not loaded; finished (`state = not running` with
+ * a `last exit code`), which a new /update boots out; or anything else loaded, which runs or is
+ * starting. Two /update messages are answered concurrently, and right after a bootstrap the job
+ * can be loaded with no pid yet; booting that out would kill the update the first one started.
+ */
+function launchdJob(run: ServiceRun, uid: number): 'none' | 'finished' | 'running' {
   const result = run('launchctl', ['print', `gui/${uid}/${UPDATE_JOB_LABEL}`]);
   if (result.error) throw result.error;
-  if (result.status === 113) return { loaded: false, pid: null };
+  if (result.status === 113) return 'none';
   if (result.status !== 0) {
     throw new Error(`launchctl print ${UPDATE_JOB_LABEL} failed: exit ${String(result.status)}`);
   }
-  const pid = /^\s*pid = (\d+)\s*$/m.exec(result.stdout)?.[1];
-  return { loaded: true, pid: pid === undefined ? null : Number(pid) };
+  const state = /^\s*state = (.+?)\s*$/m.exec(result.stdout)?.[1];
+  const exited = /^\s*last exit code = (?!\(never exited\))\S/m.test(result.stdout);
+  return state === 'not running' && exited ? 'finished' : 'running';
 }
 
 /** Run launchctl or systemd-run; a failure throws with the command and its own words. */
@@ -100,7 +112,7 @@ const SYSTEMD_RUNNING = new Set(['active', 'activating', 'deactivating', 'reload
 function jobRuns(options: UpdateJobOptions): { loaded: boolean; running: boolean } {
   if (options.platform === 'darwin') {
     const job = launchdJob(options.run, options.uid);
-    return { loaded: job.loaded, running: job.pid !== null };
+    return { loaded: job !== 'none', running: job === 'running' };
   }
   if (options.platform === 'linux') {
     // `is-active` exits non-zero for a unit that does not run; its word says which state.
@@ -124,12 +136,16 @@ export function requestUpdate(options: UpdateJobOptions): UpdateJobResult {
   if (install.kind === 'other') return { kind: 'not_updatable', reason: install.reason };
 
   const holder = lockHolder(updatePaths(mamaRoot).lock);
-  if (holder !== null) return { kind: 'busy', since: holder.startedAt || null };
+  if (holder !== null) return { kind: 'busy', source: 'lock', since: holder.startedAt || null };
   const requestPath = updateRequestPath(mamaRoot);
   const previous = readUpdateRequest(requestPath);
   const job = jobRuns(options);
   if (job.running) {
-    return { kind: 'busy', since: previous === null ? null : Date.parse(previous.receivedAt) };
+    return {
+      kind: 'busy',
+      source: 'job',
+      since: previous === null ? null : Date.parse(previous.receivedAt),
+    };
   }
   if (previous?.chatId === options.origin.chatId && previous.messageId === options.origin.messageId)
     return { kind: 'repeated' };
@@ -152,6 +168,8 @@ export function requestUpdate(options: UpdateJobOptions): UpdateJobResult {
     }),
     0o700
   );
+  // Before the job starts: nothing that can throw runs after it.
+  const to = cachedNewer(mamaRoot, options.version, options.log);
   const log = join(mamaRoot, 'logs', 'update.log');
   if (options.platform === 'darwin') {
     const plist = join(mamaRoot, 'runtime', 'update.plist');
@@ -170,20 +188,26 @@ export function requestUpdate(options: UpdateJobOptions): UpdateJobResult {
       script,
     ]);
   }
-  return { kind: 'started', from: options.version, to: cachedNewer(mamaRoot, options.version) };
+  return { kind: 'started', from: options.version, to };
 }
 
 /**
  * The cached release check's newer version, for the reply only: the updater asks npm itself
  * (step 2), so a cache that is a day old, failed or unreadable leaves the reply without one.
  */
-function cachedNewer(mamaRoot: string, running: string): string | null {
-  let latest: string | null;
+function cachedNewer(
+  mamaRoot: string,
+  running: string,
+  log: (line: string) => void
+): string | null {
   try {
-    latest = readReleaseCheck(releaseCheckPath(mamaRoot))?.latest ?? null;
-  } catch {
-    // /update repairs installs (R7); doctor's release check names an unreadable file.
+    const latest = readReleaseCheck(releaseCheckPath(mamaRoot))?.latest ?? null;
+    return latest !== null && compareReleases(latest, running) > 0 ? latest : null;
+  } catch (error) {
+    // /update repairs installs (R7): a release check it cannot read leaves only the reply short.
+    log(
+      `update request: the cached release check cannot be read (${error instanceof Error ? error.message : String(error)}); the reply names no target`
+    );
     return null;
   }
-  return latest !== null && compareReleases(latest, running) > 0 ? latest : null;
 }

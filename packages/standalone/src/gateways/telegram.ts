@@ -26,6 +26,7 @@ import {
   statusText,
   stopText,
   UPDATE_REFUSED,
+  updateGroupText,
   updateText,
   whoamiText,
   type TelegramHostCommand,
@@ -848,12 +849,7 @@ export class TelegramGateway extends BaseGateway {
         text = statusText(await this.hostCommands.status(target, owner && privateChat)).join('\n');
       else if (command === 'stop')
         text = stopText(await this.hostCommands.stopTurn(target), target);
-      else if (command === 'update')
-        // An owner in another group is refused too: its members would read the progress.
-        text =
-          owner && (privateChat || chatId === this.config.ownerChatId)
-            ? updateText(await this.hostCommands.update({ chatId, messageId: message.message_id }))
-            : UPDATE_REFUSED;
+      else if (command === 'update') text = await this.answerUpdate(message, owner, privateChat);
       else text = startOverText(await this.hostCommands.startOver(target), target, owner);
     } catch (error) {
       this.log(
@@ -865,6 +861,31 @@ export class TelegramGateway extends BaseGateway {
       reply_parameters: { message_id: message.message_id, allow_sending_without_reply: true },
     });
     this.log(`telegram host command=${command} chat=${privateChat ? 'private' : 'group'}`);
+  }
+
+  /**
+   * /update: an owner in their DM or the common channel; an owner in another group is refused
+   * too, since its members would read the progress. An answer that names paths goes to the
+   * owner's DM, and the group is told so.
+   */
+  private async answerUpdate(
+    message: TelegramMessage,
+    owner: boolean,
+    privateChat: boolean
+  ): Promise<string> {
+    const chatId = String(message.chat.id);
+    if (!owner || (!privateChat && chatId !== this.config.ownerChatId)) return UPDATE_REFUSED;
+    const result = await this.hostCommands.update({ chatId, messageId: message.message_id });
+    if (privateChat || (result.kind !== 'checkout' && result.kind !== 'not_updatable'))
+      return updateText(result);
+    let dm = true;
+    try {
+      await this.bot!.api.sendMessage(message.from!.id, updateText(result));
+    } catch (error) {
+      dm = false;
+      this.log(`telegram /update details not sent to DM error=${telegramErrorMessage(error)}`);
+    }
+    return updateGroupText(result, dm);
   }
 
   private async acceptMessage(

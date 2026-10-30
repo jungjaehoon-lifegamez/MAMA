@@ -135,12 +135,13 @@ export function readAuthEnv(root: string): Record<string, string> {
 export async function defaultTelegramCall(
   token: string,
   method: string,
-  params: Record<string, string> = {}
+  params: Record<string, string> = {},
+  timeoutMs = 8_000
 ): Promise<Record<string, unknown>> {
   const query = new URLSearchParams(params).toString();
   const response = await fetch(
     `https://api.telegram.org/bot${token}/${method}${query ? `?${query}` : ''}`,
-    { signal: AbortSignal.timeout(8_000) }
+    { signal: AbortSignal.timeout(timeoutMs) }
   );
   return (await response.json()) as Record<string, unknown>;
 }

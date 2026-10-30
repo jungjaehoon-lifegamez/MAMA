@@ -37,7 +37,13 @@ export type UpdateProgress =
       readonly step: number;
     }
   | { readonly kind: 'rollback_stopped'; readonly from: string; readonly to: string }
-  | { readonly kind: 'updated'; readonly from: string; readonly to: string }
+  /** `running`: the daemon answered the release; false when it is not running now. */
+  | {
+      readonly kind: 'updated';
+      readonly from: string;
+      readonly to: string;
+      readonly running: boolean;
+    }
   /** The update ended on an error: a refusal before anything changed, or a step that threw. */
   | { readonly kind: 'error'; readonly code: string };
 
@@ -91,7 +97,9 @@ export function progressText(event: UpdateProgress): string {
     case 'rollback_stopped':
       return `the rollback to ${version(event.from)} stopped; MAMA stays stopped until mama update --rollback runs on its machine`;
     case 'updated':
-      return `updated: ${version(event.from)} → ${version(event.to)}; it runs`;
+      return event.running
+        ? `updated: ${version(event.from)} → ${version(event.to)}; it runs`
+        : `updated: ${version(event.from)} → ${version(event.to)}; MAMA is not running now; start it on its machine`;
     case 'error':
       return `update ended: ${progressCode(event.code) ?? 'UNKNOWN'}; the update log on MAMA's machine has the details`;
   }
@@ -99,9 +107,21 @@ export function progressText(event: UpdateProgress): string {
 
 export interface ProgressSink {
   send(event: UpdateProgress): void;
-  /** Wait until every event sent so far has gone out (or failed and been logged). */
+  /**
+   * Wait until every event sent so far has gone out (or failed and been logged), for at most
+   * PROGRESS_FLUSH_DEADLINE_MS; what is still unsent then is dropped and counted in the log.
+   */
   flush(): Promise<void>;
 }
+
+/**
+ * One send's limit. The flushes before a child CLI and at the end run while MAMA is stopped, so
+ * a Bot API that does not answer must not hold the install down; Telegram answers in well under
+ * a second when it answers at all.
+ */
+export const PROGRESS_SEND_TIMEOUT_MS = 3_000;
+/** The whole flush's limit, however many sends wait: the stopped window grows by at most this. */
+export const PROGRESS_FLUSH_DEADLINE_MS = 5_000;
 
 export const NO_PROGRESS: ProgressSink = {
   send: () => {},
@@ -125,6 +145,9 @@ export function telegramProgress(options: {
   const call = options.call ?? defaultTelegramCall;
   let target: { token: string; chatId: string } | null = null;
   let chain = Promise.resolve();
+  /** Sends queued or in flight; a flush past its deadline drops the queued ones. */
+  let pending = 0;
+  let generation = 0;
   let lastStep: number | null = null;
   const deliver = async (text: string): Promise<void> => {
     try {
@@ -136,7 +159,12 @@ export function telegramProgress(options: {
         if (!token?.trim()) throw new Error(`auth.env has no ${name}`);
         target = { token, chatId: request.chatId };
       }
-      const reply = await call(target.token, 'sendMessage', { chat_id: target.chatId, text });
+      const reply = await call(
+        target.token,
+        'sendMessage',
+        { chat_id: target.chatId, text },
+        PROGRESS_SEND_TIMEOUT_MS
+      );
       if (reply.ok !== true) {
         options.log(
           `update progress not sent: Telegram answered ${String(reply.error_code ?? 'not ok')}`
@@ -156,10 +184,31 @@ export function telegramProgress(options: {
         lastStep = event.step;
       }
       const text = progressText(event);
-      chain = chain.then(() => deliver(text));
+      const queuedIn = generation;
+      pending += 1;
+      chain = chain.then(async () => {
+        try {
+          if (queuedIn === generation) await deliver(text);
+        } finally {
+          pending -= 1;
+        }
+      });
     },
     flush: async () => {
-      await chain;
+      let timer: NodeJS.Timeout | undefined;
+      const late = new Promise<'late'>((resolve) => {
+        timer = setTimeout(() => resolve('late'), PROGRESS_FLUSH_DEADLINE_MS);
+      });
+      const outcome = await Promise.race([chain.then(() => 'sent' as const), late]);
+      clearTimeout(timer);
+      if (outcome === 'late') {
+        // The one in flight ends on its own timeout; those queued behind it are not sent.
+        options.log(
+          `update progress: ${pending} message(s) not sent within ${PROGRESS_FLUSH_DEADLINE_MS} ms; dropped`
+        );
+        generation += 1;
+        chain = Promise.resolve();
+      }
     },
   };
 }

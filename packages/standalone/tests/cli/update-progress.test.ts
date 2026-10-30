@@ -8,7 +8,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { updateRequestPath } from '../../src/cli/runtime/update-request.js';
-import { progressText, type UpdateProgress } from '../../src/cli/runtime/update-progress.js';
+import {
+  PROGRESS_FLUSH_DEADLINE_MS,
+  PROGRESS_SEND_TIMEOUT_MS,
+  progressText,
+  telegramProgress,
+  type UpdateProgress,
+} from '../../src/cli/runtime/update-progress.js';
 import { fixture, roots, type Fixture } from '../helpers/update-install.js';
 
 vi.mock('node:child_process', async (original) => {
@@ -125,6 +131,37 @@ describe('/update progress', () => {
     for (const f of [current, older, missing, stop]) expectSafe(f, ['Refused', 'nothing changed']);
   });
 
+  it('says when the new version is not running after its release', async () => {
+    const f = reported();
+    // The daemon stops between its boot check and the release.
+    f.state.pauseAt = 'release#1';
+    const run = f.run([]);
+    await vi.waitFor(() => expect(f.state.resume).not.toBeNull());
+    f.state.running = null;
+    f.state.resume!();
+    expect(await run).toBe(0);
+    expect(texts(f).at(-1)).toBe(
+      'updated: 1.0.0 → 1.1.0; MAMA is not running now; start it on its machine'
+    );
+    expectSafe(f);
+  });
+
+  it('keeps the token out of update.log when a failed send quotes its URL', async () => {
+    const f = reported();
+    f.state.telegramFails = 'url';
+    expect(await f.run([])).toBe(0);
+    expect(f.output()).toContain(
+      'update progress not sent: Error: request to https://api.telegram.org/bot<token>/sendMessage failed'
+    );
+    expect(f.output()).not.toContain(BOT_TOKEN);
+  });
+
+  it('gives each send the short progress timeout', async () => {
+    const current = reported({ from: '1.1.0' });
+    expect(await current.run([])).toBe(0);
+    expect(current.telegram.map((call) => call.timeoutMs)).toEqual([PROGRESS_SEND_TIMEOUT_MS]);
+  });
+
   it('logs a send that fails to update.log and goes on with the update', async () => {
     const unreachable = reported();
     unreachable.state.telegramFails = true;
@@ -144,6 +181,40 @@ describe('/update progress', () => {
     const f = fixture();
     expect(await f.run([])).toBe(0);
     expect(f.telegram).toEqual([]);
+  });
+
+  it('drops what is unsent when the flush passes its deadline, and sends what comes after', async () => {
+    const f = reported();
+    const log: string[] = [];
+    const calls: string[] = [];
+    let hang = true;
+    vi.useFakeTimers();
+    try {
+      const sink = telegramProgress({
+        root: f.root,
+        log: (line) => log.push(line),
+        call: async (_token, _method, params = {}) => {
+          calls.push(params.text);
+          // A Bot API that does not answer; the real call ends on its own timeout.
+          if (hang) await new Promise(() => {});
+          return { ok: true };
+        },
+      });
+      for (const step of [6, 7, 8]) sink.send({ kind: 'step', from: '1.0.0', to: '1.1.0', step });
+      const flushed = sink.flush();
+      await vi.advanceTimersByTimeAsync(PROGRESS_FLUSH_DEADLINE_MS);
+      await flushed;
+      expect(log).toEqual([
+        `update progress: 3 message(s) not sent within ${PROGRESS_FLUSH_DEADLINE_MS} ms; dropped`,
+      ]);
+      expect(calls).toEqual(['update 1.0.0 → 1.1.0: step 6 (drain and stop)']);
+      hang = false;
+      sink.send({ kind: 'step', from: '1.0.0', to: '1.1.0', step: 9 });
+      await sink.flush();
+      expect(calls.at(-1)).toBe('update 1.0.0 → 1.1.0: step 9 (hand over to the new version)');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('builds texts from versions, step numbers and codes alone', () => {

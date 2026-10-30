@@ -42,8 +42,11 @@ export interface UpdateOrigin {
 export type UpdateRequestResult =
   /** `to` is the cached release check's newer version, or null when it names none. */
   | { readonly kind: 'started'; readonly from: string; readonly to: string | null }
-  /** An updater holds update.lock, or the update job still runs; it is left alone. */
-  | { readonly kind: 'busy'; readonly since: string }
+  /**
+   * It is left alone. `lock`: an updater holds update.lock (a terminal's `mama update`, which
+   * reports nowhere, or an /update's); `job`: an /update's job runs, reporting to its own chat.
+   */
+  | { readonly kind: 'busy'; readonly source: 'lock' | 'job'; readonly since: string }
   /** This message already started an update: a daemon killed before it confirmed its offset. */
   | { readonly kind: 'repeated' }
   /** A checkout: it updates by git, with these steps (install-kind.ts `updateSteps`). */
@@ -133,7 +136,9 @@ export function stopText(
 
 export function updateText(result: UpdateRequestResult): string {
   if (result.kind === 'busy')
-    return `Already updating since ${result.since}; that update goes on and reports to the chat it was started from.`;
+    return result.source === 'job'
+      ? `An /update started at ${result.since} still runs; it reports to the chat it was started from. This one starts nothing.`
+      : `An update has held the install since ${result.since}; this /update starts nothing.`;
   if (result.kind === 'repeated')
     return 'This /update was already received and started an update. Send /update again for another.';
   if (result.kind === 'checkout')
@@ -146,6 +151,20 @@ export function updateText(result: UpdateRequestResult): string {
   return result.to === null
     ? `Updating ${result.from} to the latest release; progress follows.`
     : `Updating ${result.from} → ${result.to}; progress follows.`;
+}
+
+/**
+ * What a group is told when the answer names paths (a checkout's steps, why an install cannot be
+ * updated): the full answer goes to the owner's DM, as /status keeps the owner's view there.
+ * `dm`: whether that DM send went out.
+ */
+export function updateGroupText(result: UpdateRequestResult, dm: boolean): string {
+  const where = dm
+    ? 'the details are in your DM'
+    : 'MAMA could not send the details to your DM; send /update there';
+  return result.kind === 'checkout'
+    ? `This install updates by git, not /update; ${where}.`
+    : `/update cannot update this install; ${where}.`;
 }
 
 /** Who may run /update: an owner, in their own DM or the common channel. */

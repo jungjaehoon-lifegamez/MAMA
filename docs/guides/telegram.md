@@ -77,7 +77,8 @@ alone, and any other command goes to MAMA as a message.
 `mama update` as a job of its own, so it works even when the model backend does not, and the
 job's progress comes back to the same chat: versions, step names and error codes, never a path.
 While an update runs, another `/update` only says since when. An install run from a git checkout
-answers with the commands that update it instead.
+answers with the commands that update it instead; asked in the group, those commands go to the
+owner's DM, since they name folders on MAMA's machine.
 
 ## Send originals and receive results
 

@@ -923,7 +923,12 @@ async function finishCommitted(context: Context, journal: UpdateJournal): Promis
   rmSync(paths.hold, { force: true });
   // Last: a cleanup cut off leaves a committed journal, which --rollback finishes.
   removeUpdateJournal(paths.journal);
-  context.progress.send({ kind: 'updated', from: journal.from, to: journal.to });
+  context.progress.send({
+    kind: 'updated',
+    from: journal.from,
+    to: journal.to,
+    running: reply.state === 'running',
+  });
   write(
     reply.state === 'running'
       ? `updated: ${journal.from} → ${journal.to}; it runs and claims again`
