@@ -38,14 +38,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     outside HOME. Those folders default to a folder of the user's (`Shared/mama-<user>/…` in the Shared folder beside the home folders
     on macOS, `/var/lib/mama/<user>/…` on Linux), and init refuses one another account owns or can
     write.
+  - **Sign-in:** on a terminal, a backend that is not signed in runs its own sign-in there
+    (`claude auth login`, or `codex login` in MAMA's Codex home), and init reads the login again.
+    `--non-interactive` names the command and stops. When only one backend is on PATH, it is the
+    default answer (#539).
   - **Then in order:** writes the setup, registers the person running it as the first owner,
     installs the document tools, installs and starts the service through `mama service`, and
     waits until the daemon reports it is running and the viewer answers `/health`. Last, the
     daemon runs one real backend turn in a session of its own, so the login is proven as the
     service runs it; a failure names `mama logs` and `mama doctor`, and `mama init` checks again
     after a fix.
-  - **Repeat-safe:** a failed run continues from its last finished step without asking again,
-    and a finished setup is refused.
+  - **Repeat-safe:** a failed run continues from its last finished step without asking again.
+    On a finished setup, init says so, names `mama doctor`, `mama service restart` and
+    `mama update`, and exits 0 (#538, #539).
   - **No typed Telegram IDs:** as the last question, the bot sends a six-digit code to whoever
     messages it privately, and the code typed at the terminal names the first owner; that owner's
     `/bind` in a group names the common channel. Messages the bot held from before are dropped, a
@@ -64,11 +69,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message it was answering is told it was interrupted and is not run again, and messages sent
   after it still run. In the common group an owner stops the common session's turn and a member
   their own.
+- A daily release check. Once a day the daemon asks npm for the latest MAMA OS release and keeps
+  the answer. `mama status` and `mama doctor` show it without a network call of their own: a newer
+  release and how this install updates (`mama update`, or the git commands for a checkout), that
+  this version is current, or when the last check failed (#534).
+- `mama update` updates an npm install to the latest release, or to the version you name:
+  - **Nothing changes first:** it asks the registry npm uses and shows the plan (`--dry-run`
+    stops there). It installs the new version next to the old one, so a failed download changes
+    nothing. A version older than the running one is refused (#535), and so is a release whose
+    Node.js range (`engines`) leaves out the Node that MAMA runs on (#539).
+  - **Then the swap:** it lets running turns finish as `mama stop` does, stops MAMA, takes a
+    backup with credentials and swaps the two versions. The new version writes `start.sh` and the
+    service file, checks the install, and starts with new work held. Once it runs and its viewer
+    answers, the held work runs, and the backup and the old version are removed (#535).
+  - **A failed step puts the old version back** with its own `start.sh` and service file, and
+    starts it. A check that newly fails under the new version counts as a failed step. The
+    database comes back from the backup only when the new version changed its schema, and the
+    report says how many inputs that arrived after the backup were dropped (#535).
+  - **Cut off:** if `mama update` itself is killed, `mama doctor`, and `mama status` on a stopped
+    install, name the `mama update --rollback` command that resolves it. `mama restore` refuses
+    until then (#535).
+  - **A git checkout** gets the commands that update it instead: stop, `git pull`,
+    `pnpm install`, `pnpm build`, `service install` and `service start` (#535).
+  - **The first update** needs a `start.sh` that this version's `mama service install` wrote, and
+    says so otherwise (#535).
+  - On an install the install command made, the report ends by naming the install command when
+    the new release pins another Node.js (#539).
+- `/update` in Telegram updates MAMA. Only an owner can run it, in their own DM or in the common
+  group. It runs `mama update` as a job of its own, with no model turn, so it works even when the
+  backend does not. Progress comes back to the same chat: versions, steps and error codes, never a
+  path. While an update runs, another `/update` says only since when. A git checkout answers with
+  the commands that update it; asked in the group, those go to the owner's DM, since they name
+  folders on MAMA's machine. `/update` is in the bot's command menu (#536).
+- An install command, `install.sh`, attached to each MAMA OS release starting with the next one
+  (#538):
+  - It runs on macOS and Linux, on x64 or arm64. It asks its one question, the backend (Claude
+    Code or Codex), before it changes anything. `--backend`, `--non-interactive` and `--no-init`
+    let it run without a terminal.
+  - It puts Node.js in `~/.mama/node`, at a version it pins and checks by hash, MAMA OS in
+    `~/.mama/npm`, and a `mama` command in `~/.mama/bin`. The backend is installed with its
+    vendor's installer when it is not on PATH.
+  - It adds `~/.mama/bin` to PATH in a marked block of your shell's startup file (for fish it
+    prints the line instead), then runs `mama init`.
+  - On Linux it shows one `sudo` command and runs it: MAMA's folders under `/var/lib/mama`, and
+    linger, so the service keeps running after you log out. If sudo is refused, it prints the
+    command and goes on.
+  - Run again, it skips what is already in place. It will not take over a MAMA home that another
+    install set up.
+  - When a release pins another Node.js, running it again moves MAMA to that Node with
+    `mama update --node` (#539). That lets running turns finish, stops MAMA, swaps the Node in and
+    checks that MAMA starts on it. A new major version first rebuilds the installed packages for
+    that Node, before anything stops. If a step fails, the old Node is put back and started. If
+    the move is cut off, the next run of the install command finishes or undoes it, and
+    `mama status` and `mama doctor` say so.
+  - `mama doctor` warns when such an install runs another Node.js than its release pins (#539).
 
 ### Changed
 
 - A closing summary, once checked, is not ordered again even if a later write clears or replaces
   it. Before, an order was placed again when that happened within a week.
+- `mama stop` lets running work finish first. MAMA claims nothing new: messages, source changes
+  and reports that arrive wait for the next start, and Telegram commands such as `/stop` still
+  answer. The stop waits until running turns finish and their replies are delivered, and prints
+  what it waits for. It gives up after one `agent.max_turn_ms` for each turn that may still run,
+  plus a minute, or when the daemon stops answering; then nothing changes and it exits 1.
+  `mama stop --now` stops at once, as before. `mama service stop`, `mama service restart`,
+  `mama uninstall` and, on macOS, `mama service uninstall` stop the same way, and `mama status`
+  shows while a stop holds new work. A daemon older than this version refuses to drain, and
+  `mama stop` then names `--now` (#533).
+- `mama backup --restart` stops a running install the same way, backs it up and starts it again
+  through its service, also when the backup fails. Without an installed service it refuses before
+  it stops anything (#533).
+- `mama status` shows the Node.js version the daemon runs (#539).
+- `mama uninstall --data` also removes the program the install command put in the MAMA home
+  (Node.js, MAMA OS and the `mama` command), after everything else. Without `--data` it names that
+  program as staying. Both name the startup files that hold the install command's PATH block, for
+  you to remove. `mama backup` no longer lists that program as left out, since the install command
+  makes it again (#539).
+- `mama service install`, for an npm install, also puts the npm prefix's `bin` folder on
+  `start.sh`'s PATH, where npm puts commands installed beside MAMA (#539).
 
 ### Fixed
 
@@ -76,6 +155,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answer. The turn fails, its message is told it was interrupted, and `daemon.log` names the
   error. Before, the CLI's error text was sent as the reply and the run was recorded as committed
   (mama-core).
+- A scheduled full report or reminder that a newer report already covered is no longer sent.
+  Before, a report whose first send failed stayed queued and kept being retried, so it could still
+  go out days late; one had waited 13 days. Reports already stuck this way close after the next
+  full report is sent (#542).
+- After a report's send fails, MAMA no longer writes the same hour's report again every minute
+  (#542).
+- If the clock is behind the latest report sent, MAMA queues no report and logs an error each
+  minute naming that report's time, until the clock passes it (#542).
 
 ## [0.78.0] - 2026-10-16
 
