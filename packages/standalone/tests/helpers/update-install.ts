@@ -164,6 +164,14 @@ export function fixture(
     held: false,
     heldAtBoot: [] as string[],
     stopFails: false,
+    /** The stop fails while this holds (checked at each stop). */
+    stopFailsWhen: null as (() => boolean) | null,
+    /** The daemon answers before boot read the journal: running, without its hold. */
+    unheldStatus: false,
+    /** The backup writes its archive somewhere other than the name it was given. */
+    backupElsewhere: false,
+    /** npm ls names a version that is not the one in place. */
+    lsWrong: false,
     stagingFails: false,
     backupFails: false,
     /** `name#n`: the n-th call of that dep never returns; the updater was killed there. */
@@ -247,7 +255,9 @@ export function fixture(
     }
     if (args[0] === 'ls') {
       return await step('npm ls', () => {
-        const tree = JSON.stringify({ dependencies: { [NAME]: { version: packageVersion() } } });
+        const tree = JSON.stringify({
+          dependencies: { [NAME]: { version: state.lsWrong ? '9.9.9' : packageVersion() } },
+        });
         if (state.lsProblems) {
           throw Object.assign(new Error('npm failed'), {
             code: 1,
@@ -264,7 +274,7 @@ export function fixture(
     ...(options.realNpm ? {} : { npm: fakeNpm }),
     stop: (now) =>
       step(now ? 'stop --now' : 'stop', () => {
-        if (state.stopFails) return 1;
+        if (state.stopFails || state.stopFailsWhen?.()) return 1;
         state.running = null;
         state.held = false;
         return 0;
@@ -315,8 +325,11 @@ export function fixture(
         state.journalModes.push(statSync(paths.journal).mode & 0o777);
         // The journal names it before it is written.
         expect(readUpdateJournal(paths.journal)?.snapshot).toBe(files.final);
-        copyFileSync(databasePath, files.final);
-        return files.final;
+        const archive = state.backupElsewhere
+          ? join(root, 'backups', 'elsewhere.tar.gz')
+          : files.final;
+        copyFileSync(databasePath, archive);
+        return archive;
       });
     },
     serviceRuns: () => state.running !== null,
@@ -351,7 +364,7 @@ export function fixture(
             status: {
               stage: 'running',
               version: state.running,
-              update: state.held ? { since: 1, to: state.running } : null,
+              update: state.held && !state.unheldStatus ? { since: 1, to: state.running } : null,
             },
           },
         };

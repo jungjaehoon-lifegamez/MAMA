@@ -132,13 +132,20 @@ export async function runStatus(
         ];
   if (reply.state === 'stopped') {
     // A stopped install may be stopped by an unfinished update: start.sh exits on its hold file.
-    const update = unfinishedUpdate(dirname(options.configPath ?? defaultConfigPath(home)));
+    let update: ReturnType<typeof unfinishedUpdate> | { unreadable: string };
+    try {
+      update = unfinishedUpdate(dirname(options.configPath ?? defaultConfigPath(home)));
+    } catch (error) {
+      update = { unreadable: error instanceof Error ? error.message : String(error) };
+    }
     const updateLine =
       update === null
         ? null
-        : 'journal' in update
-          ? `update unfinished: ${update.journal.from} → ${update.journal.to} (${update.journal.phase}, step ${update.journal.step}); resolve it with: ${update.command}`
-          : `update hold file ${update.hold} is in place with no journal, so start.sh exits at once; remove it, then mama service start`;
+        : 'unreadable' in update
+          ? `update journal cannot be read: ${update.unreadable}; mama doctor names it`
+          : 'journal' in update
+            ? `update unfinished: ${update.journal.from} → ${update.journal.to} (${update.journal.phase}, step ${update.journal.step}); resolve it with: ${update.command}`
+            : `update hold file ${update.hold} is in place with no journal, so start.sh exits at once; remove it, then mama service start`;
     if (json) {
       write(
         JSON.stringify({

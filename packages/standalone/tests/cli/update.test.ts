@@ -440,4 +440,45 @@ describe('mama update', () => {
     expect(await f.run(['--rollback'])).toBe(0);
     expectClean(f, '1.0.0');
   });
+
+  it('stops a candidate that answers before its boot read the journal with --now', async () => {
+    const f = fixture();
+    await killedAt(f, 'status#2');
+    expect(f.state.held).toBe(true);
+    // Restarted under KeepAlive, its control socket answers before boot reads the journal.
+    f.state.unheldStatus = true;
+    f.calls.length = 0;
+    expect(await f.run(['--rollback'])).toBe(0);
+    expect(f.calls).toContain('stop --now');
+    expect(f.calls).not.toContain('stop');
+    expectClean(f, '1.0.0');
+  });
+
+  it('says the daemon may still run when the failed rollback cannot stop it', async () => {
+    const f = fixture({ releases: { '1.1.0': { crash: true } } });
+    // The previous version starts, then npm ls disagrees, and the stop after it fails.
+    f.state.lsWrong = true;
+    f.state.stopFailsWhen = () => f.journal()?.phase === 'rollback' && f.state.running === '1.0.0';
+    expect(await f.run([])).toBe(1);
+    expect(f.output()).toContain(
+      'rollback stopped: npm ls -g shows @jungjaehoon/mama-os 9.9.9, not 1.0.0. The hold file is in place, but the daemon did not stop (above) and may still run;'
+    );
+    expect(f.output()).not.toContain('The install stays stopped');
+    expect(f.state.running).toBe('1.0.0');
+    f.state.lsWrong = false;
+    f.state.stopFailsWhen = null;
+    expect(await f.run(['--rollback'])).toBe(0);
+    expectClean(f, '1.0.0');
+  });
+
+  it('fails loud on a snapshot written under another name, and removes it', async () => {
+    const f = fixture();
+    f.state.backupElsewhere = true;
+    expect(await f.run([])).toBe(1);
+    expect(f.output()).toMatch(
+      /not updated: the snapshot was written to \S+elsewhere\.tar\.gz, not \S+mama-update-1\.0\.0-\d{8}-\d{6}\.tar\.gz/
+    );
+    expectClean(f, '1.0.0');
+    expect(f.state.running).toBe('1.0.0');
+  });
 });

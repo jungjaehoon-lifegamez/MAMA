@@ -364,6 +364,20 @@ describe('mama doctor', () => {
     expect(lines).toContain(
       `update hold file ${hold} is in place with no journal, so start.sh exits at once; remove it, then mama service start`
     );
+
+    // A journal that does not parse is named, not a crash of mama status.
+    writeFileSync(journal, '{not json');
+    lines.length = 0;
+    expect(
+      await runStatus([], {
+        home: installed.home,
+        configPath: installed.configPath,
+        write: (line) => lines.push(line),
+      })
+    ).toBe(3);
+    expect(
+      lines.some((line) => /^update journal cannot be read: .+; mama doctor names it$/.test(line))
+    ).toBe(true);
   });
 
   it('passes a healthy install and exits 0', async () => {

@@ -634,8 +634,13 @@ async function update(
     journal.snapshotStaging = planned.staging;
     save(context, journal);
     try {
-      // Named by the same backupFiles as the journal's planned paths.
-      await deps.backup(`mama-update-${from}`, startedBackup);
+      // Named by the same backupFiles as the journal's planned paths; the rollback restores and
+      // removes the journal's path, so any other one is an error, not a snapshot.
+      const archive = await deps.backup(`mama-update-${from}`, startedBackup);
+      if (archive !== planned.final) {
+        rmSync(archive, { force: true });
+        throw new Error(`the snapshot was written to ${archive}, not ${planned.final}`);
+      }
       const config = loadConfig({ home, path: context.configPath, onIgnored: () => {} });
       journal.schemaBefore = schemaStored(config.database.path);
       journal.lastInputId = lastInputId(config.database.path);
@@ -857,9 +862,13 @@ async function stopForRollback(context: Context, journal: UpdateJournal): Promis
   const reply = await context.deps.control('status').catch(() => null);
   const status =
     reply?.state === 'running' && reply.reply.ok === true
-      ? (reply.reply.status as { update?: { to?: unknown } | null })
+      ? (reply.reply.status as { version?: unknown; update?: { to?: unknown } | null })
       : null;
-  const heldCandidate = journal.phase === 'candidate' && status?.update?.to === journal.to;
+  // The control socket answers before boot reads the journal, so a candidate restarted under
+  // KeepAlive can answer without its hold yet: at `candidate`, running at <to> is the candidate.
+  const heldCandidate =
+    journal.phase === 'candidate' &&
+    (status?.update?.to === journal.to || status?.version === journal.to);
   return await context.deps.stop(status === null || heldCandidate);
 }
 
@@ -900,7 +909,7 @@ async function rollBack(context: Context, journal: UpdateJournal): Promise<boole
     writeFileSync(paths.hold, `${process.pid}\n`, { mode: 0o600 });
     const current = readUpdateJournal(paths.journal) ?? journal;
     write(
-      `rollback did not finish: ${journal.from}'s update --rollback --continue ${result.signal === null ? `exited ${String(result.code)}` : `ended on ${result.signal}`}; the update had failed at step ${current.failure?.step ?? current.step}: ${current.failure?.message ?? 'unknown'}. The install stays stopped on its hold file. Resolve it with: ${rollbackCommand(current)}`
+      `rollback did not finish: ${journal.from}'s update --rollback --continue ${result.signal === null ? `exited ${String(result.code)}` : `ended on ${result.signal}`}; the update had failed at step ${current.failure?.step ?? current.step}: ${current.failure?.message ?? 'unknown'}. The hold file is in place. Resolve it with: ${rollbackCommand(current)}`
     );
     return false;
   } catch (error) {
@@ -1010,16 +1019,19 @@ async function finishRollbackHeld(context: Context): Promise<number> {
     return 0;
   } catch (error) {
     // Stopped on the hold file, everything kept, so this can be run again.
-    let stopped = '';
+    let stopped: string;
     try {
       // The previous version may have started and run turns: it drains (stopForRollback).
-      await stopForRollback(context, journal);
+      stopped =
+        (await stopForRollback(context, journal)) === 0
+          ? 'The install stays stopped on its hold file'
+          : 'The hold file is in place, but the daemon did not stop (above) and may still run';
     } catch (stopError) {
-      stopped = `; stopping it failed too: ${message(stopError)}`;
+      stopped = `The hold file is in place, but stopping the daemon failed (${message(stopError)}) and it may still run`;
     }
     writeFileSync(paths.hold, `${process.pid}\n`, { mode: 0o600 });
     write(
-      `rollback stopped: ${message(error)}${stopped}. The install stays stopped on its hold file; the journal, the snapshot and both package folders are kept. Run again: ${rollbackCommand(journal)}`
+      `rollback stopped: ${message(error)}. ${stopped}; the journal, the snapshot and both package folders are kept. Run again: ${rollbackCommand(journal)}`
     );
     return 1;
   }
