@@ -2727,4 +2727,7 @@ The implementation writes raw/index data during import only. Replay is the owner
 ### W2.3 PR 4 live: `/update` from the owner's DM and the common group (2026-10-30 11:44)
 
 - Result: both reached the host-command path. `daemon.log`: `telegram host command=update chat=group` and `chat=private`, each with `update requested result=checkout`. No model run, no mailbox input and no send error followed, and `interrupted` stayed at 3.
-- Still open: what each chat showed is the owner's to confirm. The group should get only the DM pointer; the DM should get the six git steps, once for the group request and once for its own.
+- Delivery, read from the code: the `host command=update` line is logged only after its `sendMessage` succeeds (`telegram.ts:860-863`), and a failed DM would log `details not sent to DM` (`:886`), which is absent. So:
+  - The group got only "This install updates by git, not /update; the details are in your DM." (`telegram-commands.ts:161-167`).
+  - The DM got the checkout text with the six git steps twice, once for each request.
+  - Host-command replies are not stored, by design (`telegram.ts:819`).
