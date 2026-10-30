@@ -2749,3 +2749,19 @@ The implementation writes raw/index data during import only. Replay is the owner
   - CI `install-check` on macOS and Ubuntu: `gpgv` on Node's checksums; 29 shell tests; a verdaccio install; `start.sh` names the managed Node with setup-node first on PATH; `installKind` npm; `update --dry-run` N → N+1; Linux modes 0755/0700 with linger; a re-run changes nothing and exits 0; the vendor installers gave codex 0.166.0 and claude 2.1.314.
   - Deployed at 12:50 with a drained stop; boot was clean and `interrupted` stayed at 3.
 - Still open: real launchd/systemd, init through the script on a terminal, `--non-interactive` init through the script, the release steps (first run at the next release), and the darwin-x64 and linux-arm64 downloads (hash only). Next: W2.4 PR 2 (`mama update --node`, uninstall, init sign-in, the engines refusal).
+
+### W2.4 PR 2: `mama update --node`, uninstall, init sign-in and the engines refusal, merged and deployed (#539, 2026-10-30)
+
+- Result: `mama update --node ~/.mama/node.new` moves the managed Node under `update.lock` and `runtime/node-move.json`. On a major change the prefix is first copied to `npm.new` and rebuilt with the new Node, all before the stop.
+  - Order: drained stop, the hold (fsynced), the renames, doctor's Node check under the new Node, then `~/.mama` is fsynced, the hold removed, and the service started. The daemon must report the new Node before `committed`.
+  - Any earlier failure stops the new daemon, puts both folders back under the hold and starts the old Node. If that stop fails, it writes no hold, keeps the journal and says MAMA may still run on the new Node.
+  - `install.sh` finishes a committed move or undoes an open one in sh. It holds its own renames after its stop, then stages and hands over a pin change.
+  - Also in: the engines refusal at update step 2; the pin note in `finishCommitted`; doctor's `node.pin` and open-move checks; uninstall removing the prefix, then `bin`, then Node; init running a signed-out backend's sign-in on a terminal; start.sh PATH with `<prefix>/bin`; the backup's left-out line removed.
+- Evidence: an Opus review of 310db925d found two FIX-FIRST items, both fixed in 7c6c0a92c, and its re-review said MERGE.
+  - The sh recovery renamed back with no hold, so a cut while it removed the rebuilt prefix left old Node beside a new-ABI prefix. Every rerun then failed opening the lock database, and a reboot crash-looped.
+  - A failed undo stop wrote the hold over a live new-Node daemon, so the rerun reported a false "undone".
+  - Three SHOULD-FIX items were also fixed: fsync ordering, a 15-minute `npm rebuild` timeout, and a loud refusal in place of a silently skipped stop.
+  - CI `install-check` on macOS and Ubuntu: a patch move; kills after each journal write and rename, all recovered; a Node that cannot boot MAMA, put back with exit 1; a 22 → 24 move killed at `service-start` and again inside the recovery as it puts the prefix back, then finished on 22; the 22 → 24 move completed with a real `npm rebuild`.
+  - Merged as f0a4bb776 and deployed at 15:13 with a drained stop. The boot showed the same baseline as before: the three `file:exec` and one `outbound` reconciliations, and the 59 parked rows below. `mama status` now names the daemon's Node.
+- Still open: real launchd/systemd during a move and a reboot mid-move (clean-account run); the pin note and the init sign-in only against fixtures; concurrent `install.sh` runs take no lock; the holder pid is parsed by field order (pinned by a comment only).
+- Found while deploying, not caused by #539: the same 59 scheduled mailbox rows (ids 5669–5727, `claimed`) are logged `parked uncertain` on every boot since 2026-10-19 02:44 UTC (13 boots), and are never closed. `mama status` shows `inputs waiting: claimed 59` and names one of them as the last error. To investigate.
