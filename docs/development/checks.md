@@ -2723,3 +2723,8 @@ The implementation writes raw/index data during import only. Replay is the owner
   2,759 standalone tests. Deployed at 10:39 with a drained stop; boot was clean, `interrupted` stayed at 3, and `mama update --dry-run` from the checkout CLI prints the six git steps and exits 1.
 
 - Still open: `/update` from the owner DM and from the common group on this Mac (the checkout reply) needs an owner message. Real launchd running `update.sh`, a real progress `sendMessage`, and rollback against KeepAlive wait for the clean-account candidate proof. `systemd-run` waits for wave 3. The drained restart during a real owner turn is still unobserved.
+
+### W2.3 PR 4 live: `/update` from the owner's DM and the common group (2026-10-30 11:44)
+
+- Result: both reached the host-command path. `daemon.log`: `telegram host command=update chat=group` and `chat=private`, each with `update requested result=checkout`. No model run, no mailbox input and no send error followed, and `interrupted` stayed at 3.
+- Still open: what each chat showed is the owner's to confirm. The group should get only the DM pointer; the DM should get the six git steps, once for the group request and once for its own.
