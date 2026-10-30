@@ -2731,3 +2731,21 @@ The implementation writes raw/index data during import only. Replay is the owner
   - The group got only "This install updates by git, not /update; the details are in your DM." (`telegram-commands.ts:161-167`).
   - The DM got the checkout text with the six git steps twice, once for each request.
   - Host-command replies are not stored, by design (`telegram.ts:819`).
+
+### W2.4 PR 1: `install.sh` and its CI leg, merged and deployed (#538, 2026-10-30)
+
+- Result: `packages/standalone/install/install.sh` (POSIX sh, one function called on the last line) installs on macOS and Linux:
+  - asks every question before any change;
+  - on Linux, one `sudo sh -c 'umask 022; …'` for `/var/lib/mama/<user>` and linger;
+  - Node 22.23.4 hash-checked into `~/.mama/node`, MAMA OS into the npm prefix `~/.mama/npm`, and the `~/.mama/bin/mama` wrapper;
+  - the chosen backend by its vendor's installer (Codex non-interactive);
+  - a marked PATH block, written through a temp file and rename, CRLF- and symlink-safe;
+  - then `mama init`.
+
+  `mama init` on a set-up install now exits 0. The release checks the script's version before tagging, and attaches it only once npm serves MAMA OS, and only when MAMA OS is released.
+
+- Evidence: one Opus review returned FIX-FIRST. Two must-fix items: a failed write reported as success, and a floating shellcheck download. Two items before release: the version check ran after publish, and a re-run exited 1. Six small items. CodeRabbit added one: the release guard when mama-os is excluded. All are fixed.
+  - The net PR is far smaller after the shellcheck devDependency was dropped (the review round alone removed 709 lines).
+  - CI `install-check` on macOS and Ubuntu: `gpgv` on Node's checksums; 29 shell tests; a verdaccio install; `start.sh` names the managed Node with setup-node first on PATH; `installKind` npm; `update --dry-run` N → N+1; Linux modes 0755/0700 with linger; a re-run changes nothing and exits 0; the vendor installers gave codex 0.166.0 and claude 2.1.314.
+  - Deployed at 12:50 with a drained stop; boot was clean and `interrupted` stayed at 3.
+- Still open: real launchd/systemd, init through the script on a terminal, `--non-interactive` init through the script, the release steps (first run at the next release), and the darwin-x64 and linux-arm64 downloads (hash only). Next: W2.4 PR 2 (`mama update --node`, uninstall, init sign-in, the engines refusal).
