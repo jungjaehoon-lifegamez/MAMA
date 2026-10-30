@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The `mama-install` skill installs MAMA OS through the conversation. It runs the install command
+  in the background, with `--non-interactive`, and passes on its lines; the person enters the bot
+  token and the pairing code only on the setup page MAMA opens in their browser, never in the chat,
+  and the agent neither reads that page's `open.html` nor posts to it. It no longer runs
+  `npm i -g @jungjaehoon/mama-os` or `mama --help`. Sources follow the conversation: the tool's
+  install, its login in the browser, then the source enabled.
+
 ## [2.3.0] - 2026-10-16
 
 ### Changed
