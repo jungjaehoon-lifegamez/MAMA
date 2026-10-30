@@ -183,7 +183,7 @@ running Node is refused at step 2, before any change.
 - CI job `install-check`, macOS and Ubuntu, each with a fresh `HOME`:
   1. `node-pin` (Ubuntu).
   2. verdaccio (moved from `packages/standalone/scripts/upgrade-check/update.mjs` into the shared
-     `scripts/local-registry.mjs`) serves this build. `install.sh --backend codex --no-init` runs with
+     `packages/standalone/scripts/local-registry.mjs`) serves this build. `install.sh --backend codex --no-init` runs with
      `npm_config_registry` and `npm_config_node_gyp=/bin/false`, so the prebuilt native binaries
      must cover the platform. Ubuntu: `/var/lib/mama` is 0755, the user's folder 0700.
   3. The package's init under the managed Node, with `writer.mjs`'s answers and stub backend; then
@@ -222,9 +222,8 @@ running Node is refused at step 2, before any change.
 
 ## PR 3: tools a source needs (I4)
 
-In progress on `feat/source-tools`, by another worker. Follow-up for #543: gws's requirement
-names the OAuth client step before the login, since `gws auth login` needs
-`~/.config/gws/client_secret.json` (W2.4.5e step 2).
+In progress on `feat/source-tools`, by another worker. Its follow-up, naming the OAuth client step
+in gws's requirement, is one of W2.4.5e's changed lines.
 
 - A source names its tool with `type: 'cli'` (`s/connectors/gmail/index.ts:68-77`, and calendar,
   drive, sheets). gws's requirement, with its install methods, moves to one export in
@@ -457,8 +456,9 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
     4. After a sign-in, run the same install command again. Use full paths.
     5. The setup is done when MAMA answers the person's message.
   - Never read `open.html` and never POST to the setup page. The page is the person's.
-  - Sources are chosen in the conversation. The tool is installed with its printed command, the
-    person completes its login in the browser, and only then is the source enabled with the
+  - Sources are chosen in the conversation. The tool is installed with its printed command. For
+    gws, the person creates its OAuth client and the agent moves the JSON into place. The person
+    completes its login in the browser, and only then is the source enabled with the
     non-interactive section (W2.4.5e). The Jev paragraph says Jev is turned on later with
     `mama init --section jev` (W2.4.6).
   - `tests/skills/mama-install-skill.test.js` asserts these; its `:22-23` move from `npm i -g` and
@@ -467,6 +467,7 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
     - the setup-page sentence;
     - no "own terminal" and no token asked for in the chat;
     - `--non-interactive`;
+    - the rule "never read open.html, never POST to the page";
     - the guide link and "MAMA answers" stay.
   - `packages/claude-code-plugin/CHANGELOG.md` `## [Unreleased]`, `### Changed`: the skill installs
     MAMA OS through the conversation. The plugin's `package.json` and `.claude-plugin/plugin.json`
@@ -477,12 +478,20 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
   in the conversation. The agent then:
   1. installs the tool with the command `sourceTools()` gives (on a script-made install, the
      managed-Node `npm install --prefix ~/.mama/npm`);
-  2. for gws, has the person create a Desktop OAuth client in Google Cloud Console (a project, its
-     consent screen with the person as a test user, the APIs the sources use). The agent then moves
-     the downloaded JSON to `~/.config/gws/client_secret.json` (0600). This is the tool's own
-     credential, like a backend login, not a MAMA secret, so it does not go through the setup page.
-     Without it, `gws auth login` exits at once with `401 No OAuth client configured`
-     ([notes](install-notes.md#sources-from-the-conversation-pr-3-and-w245e));
+  2. for gws, has the person create a Desktop OAuth client in Google Cloud Console:
+     - a project, with the APIs its sources use enabled: `gmail.googleapis.com`,
+       `calendar-json.googleapis.com`, `drive.googleapis.com` and `sheets.googleapis.com`. gws
+       names any one still missing with an `enable_url` (`accessNotConfigured`);
+     - its consent screen: External in testing mode, with the person as a test user, or Internal
+       for a Workspace account.
+
+     The agent then moves the downloaded JSON to `~/.config/gws/client_secret.json` (0600). This
+     is the tool's own credential, like a backend login, not a MAMA secret, so it does not go
+     through the setup page. Without it, `gws auth login` exits at once with
+     `401 No OAuth client configured`
+     ([notes](install-notes.md#sources-from-the-conversation-pr-3-and-w245e)). A testing-mode
+     client's refresh token expires after 7 days (Q3);
+
   3. has the person complete the tool's login in the browser;
   4. enables the source.
 
@@ -512,6 +521,8 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
     - The login line is bare `gws auth login` with the scopes in prose. It names them in the
       command, `gws auth login -s <services>`, the flag gws documents for narrowing its scope
       picker. Each Google source's `type: 'cli'` requirement names its gws service.
+    - gws's requirement names the OAuth client step, `~/.config/gws/client_secret.json`, before
+      the login. This is PR 3's follow-up.
     - The whole setup's caller goes (W2.4.5c). PR 3's doctor lines stay.
   - Doctor's token fix is `mama secret set` (`diagnostics.ts:174-178`), which needs a terminal. For
     a source token, the agent runs this section again and the page takes the token; the fix names
@@ -522,10 +533,12 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
       is unchanged;
     - a Notion block's token, entered on the page, lands in `auth.env`;
     - a block boot would refuse is refused;
-    - the terminal form refuses a missing tool too.
+    - the terminal form refuses a missing tool too;
+    - a Google source's lines name the OAuth client file before the login.
   - `packages/standalone/CHANGELOG.md` `## [Unreleased]`, `### Added`:
     `mama init --section connectors --non-interactive` reads `MAMA_INIT_CONNECTORS`, and a source
-    whose tool the service cannot find is no longer enabled (both forms).
+    whose tool the service cannot find is no longer enabled (both forms). A Google source's lines
+    name gws's OAuth client file.
   - Done: `cd packages/standalone && npx vitest run tests/cli/onboarding.test.ts tests/cli/doctor.test.ts`.
 
 ## W2.4.6: later setup changes from the conversation (follow-up, not PR 5)
@@ -543,12 +556,13 @@ The owner, 2026-10-30: the person never touches a terminal after the first reply
 - Answers that are not secret come from the environment, as W2.4.5e's do.
 - Each secret is entered on W2.4.5b's setup page: a new bot token, the Discord and Slack tokens, the
   Jev key, a rotated secret.
-- `uninstall --data` is confirmed by a flag carrying the MAMA home's path, which the agent passes
-  after showing the plan in the conversation. It is the same path the terminal prompt asks the
-  person to type back (`uninstall.ts:306-309`).
-- `packages/standalone/CHANGELOG.md` `## [Unreleased]`, `### Added`: `mama init --section <part>
---non-interactive` for every part, `mama secret set --non-interactive` and
-  `mama uninstall --non-interactive`, with secrets on the setup page.
+- `uninstall --data` takes no secret. It is confirmed by `--confirm-home <MAMA home path>`, which
+  the agent passes after showing the plan in the conversation. That is the same path the terminal
+  prompt asks the person to type back (`uninstall.ts:306-309`).
+- `packages/standalone/CHANGELOG.md` `## [Unreleased]`, `### Added`:
+  - `mama init --section <part> --non-interactive` for every part, and
+    `mama secret set --non-interactive`, with their secrets on the setup page;
+  - `mama uninstall --data --confirm-home <path>`.
 - Done: `cd packages/standalone && npx vitest run tests/cli/onboarding.test.ts tests/cli/uninstall.test.ts`.
   The new cases run each command with stdin and stdout not a TTY: onboarding's `mama init --section`
   and "secret rotation" (`mama secret set`) blocks, and uninstall's `--data` confirmation.
@@ -589,7 +603,8 @@ The owner, 2026-10-30: the person never touches a terminal after the first reply
   - `packages/standalone/README.md`, including `:15,19-22,31`;
   - `docs/reference/configuration.md`;
   - `docs/guides/` `backends`, `connectors`, `messengers`, `people`, `replay`, `security`,
-    `telegram`, `troubleshooting` and `viewer`.
+    `telegram`, `troubleshooting` and `viewer`;
+  - `docs/explanation/architecture.md:62`.
 
 - `docs/guides/viewer.md:26`: the tunnel variables come from the environment. `docs/guides/connectors.md:43-44`:
   PR 3's methods.
@@ -599,7 +614,7 @@ The owner, 2026-10-30: the person never touches a terminal after the first reply
   pass. `grep -rn "MAMA_INIT_OWNER_TELEGRAM_ID\|MAMA_INIT_COMMON_CHAT_ID\|hidden prompt" README.md docs/start docs/reference packages/standalone/README.md`
   prints nothing; this catches `cli.md:84`. `grep -c MAMA_TELEGRAM_TOKEN docs/start/owner-setup.md`
   prints 1, the rotation line; the variable row at `:117` is gone.
-  `grep -rnE 'mama init([^ -]|$| [^-])' README.md docs/start docs/reference docs/guides packages/standalone/README.md`
+  `grep -rnE 'mama init([^ -]|$| [^-])' README.md docs/start docs/reference docs/guides docs/explanation packages/standalone/README.md`
   prints nothing: no bare `mama init`, only `--section` and `--non-interactive`.
 
 ## Live proof
@@ -659,6 +674,7 @@ The steps:
 
    The refusal is proven by W2.4.5e's tests and on the wave 3 host. The checks entry says whether
    the gws login completed from the agent's shell, and how long the client step took a new person.
+   A second entry eight days later records whether the testing-mode client's polls still work.
    The toolkit's `brew install` on this Standard account is recorded (I7).
 
 7. **Leg B.** `mama uninstall --data` is run at a terminal (it needs one until W2.4.6).
@@ -695,7 +711,8 @@ by its vendor's steps, and leg A against npmjs.
   - Enabling a Google source without gws is refused before anything is written, with commands that
     work. The tests and the wave 3 host prove it.
   - On the clean Mac, with gws found, the agent goes from the OAuth client (the person, in Google
-    Cloud Console) and the login to an enabled source that boot starts.
+    Cloud Console) and the login to an enabled source that boot starts. With a testing-mode client
+    this holds for 7 days; the lasting route is Q3.
   - Doctor names the same commands for an enabled source whose tool went missing.
   - The image half is wave 4's.
 - **I5 (Node, backend, macOS rows):** the guide lists them with sources, and the run used those.
@@ -723,6 +740,7 @@ by its vendor's steps, and leg A against npmjs.
 | Moving Node fails to boot                                                                                                      | The old folders back and started, exit 1                                                                                                                                                             |
 | A Node move is killed midway                                                                                                   | The hold keeps it stopped; the next run finishes or undoes the move                                                                                                                                  |
 | A source is enabled while its tool is missing                                                                                  | Refused before any write (W2.4.5e); otherwise boot fails on its `init()` (`daemon.ts:1311-1326`), and doctor names the commands                                                                      |
+| A testing-mode client's refresh token expires after 7 days                                                                     | Polls fail, and doctor names the source's credentials. The person runs `gws auth login -s <services>` again (Q3)                                                                                     |
 | The toolkit cannot install on a fresh Mac                                                                                      | Init goes on without it (`init.ts:610-627`); see I7                                                                                                                                                  |
 
 ## Order of work
@@ -763,9 +781,18 @@ The owner answered Q1 and Q2 on 2026-10-30:
 - Q2: Claude's sign-in under Codex goes through the browser (the [Backend CLI](#backend-cli)
   table, leg C).
 
-- **Q3, a product choice, not a blocker.** Should MAMA later ship its own verified Google OAuth
-  client? A new person then skips the Cloud Console step (W2.4.5e step 2). The cost is that MAMA
-  holds a Google-verified app and its review. Until then the person creates their own client.
+- **Q3. Which lasting Google client does MAMA rely on?** Until there is one, a Gmail, Calendar,
+  Drive or Sheets source needs a re-login every 7 days, because the person's own client sits in
+  testing mode ([notes](install-notes.md#sources-from-the-conversation-pr-3-and-w245e)). The routes:
+  - **(a)** The person publishes their own client "In production" without verification. Google's
+    personal-use exception allows it (verified). Users see the unverified-app warning, and there is
+    a 100-user cap (verified). Whether that lifts the 7-day expiry for Gmail's restricted scopes is
+    not verified: Google states the rule for Testing only.
+  - **(b)** MAMA ships a verified client. Gmail's read scopes are restricted (verified), so it needs
+    Google's verification. The security assessment applies when restricted data passes through a
+    developer's server (verified). Whether a local-only app such as MAMA needs it is not verified.
+  - **(c)** A Workspace account uses Internal, which has neither the test-user step nor the expiry
+    (verified for the user type; not run here).
 
 The clean macOS account and its test bot are owner actions already needed by B2 and W2.3.
 

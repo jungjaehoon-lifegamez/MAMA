@@ -305,10 +305,35 @@ The README (0.22.5, its Prerequisites and "Manual OAuth setup") requires a Googl
 The README lists no APIs to enable up front. It says to enable each one from the `enable_url` of an
 `accessNotConfigured` error.
 
+**A testing-mode client lasts 7 days.** Google's OAuth 2.0 overview, "Refresh token expiration":
+"A Google Cloud Platform project with an OAuth consent screen configured for an external user type
+and a publishing status of 'Testing' is issued a refresh token expiring in 7 days, unless the only
+OAuth scopes requested are a subset of name, email address, and user profile"
+(https://developers.google.com/identity/protocols/oauth2). Gmail's read scopes are not among them:
+`gmail.readonly` and `gmail.metadata` are listed as Restricted
+(https://developers.google.com/workspace/gmail/api/auth/scopes). So step 6 and I4 pass once, and
+polls stop a week later until the person logs in again.
+
+The routes past that are Q3's, from Google's pages:
+
+- Testing allows up to 100 test users. In production, an app that requests sensitive or restricted
+  scopes before verification shows the unverified-app warning and has a lifetime cap of 100 new
+  users (https://support.google.com/cloud/answer/15549945).
+- Restricted scopes need verification "unless your app's use qualifies for an exception". One
+  exception is "if you are the only user of your app or if your app is used by only a few users,
+  all of whom are known personally to you". The security assessment applies to restricted data
+  accessed through, or stored on, a server
+  (https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification).
+- Internal is for projects in a Google Cloud Organization, which a Workspace account has. It limits
+  authorization to members (same support page).
+
+Not measured: whether an In-production unverified app keeps Gmail refresh tokens past 7 days, and
+whether MAMA's local-only use avoids the assessment.
+
 The program's decision: `client_secret.json` is the tool's own credential, like a backend login, so
 the agent moves it into place (0600) and it does not go through the setup page. This is a heavy step
 for a new person, and the earlier view of a printed URL came only from a home that already had a
-client. Whether MAMA should ship its own verified client is Q3.
+client. Which lasting client MAMA relies on is Q3.
 
 gws documents `-s` to narrow its scope picker (`gws auth login -s drive,gmail,sheets`, gws README).
 Whether a scope picker still asks for input in a shell without a terminal is not documented; leg
