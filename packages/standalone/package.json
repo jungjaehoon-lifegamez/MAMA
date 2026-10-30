@@ -43,6 +43,7 @@
     "public",
     "db",
     "toolkit",
+    "install",
     "README.md",
     "CHANGELOG.md"
   ],

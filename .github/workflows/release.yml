@@ -168,7 +168,8 @@ jobs:
             exit 1
           fi
           git add packages/*/package.json packages/claude-code-plugin/.claude-plugin/plugin.json \
-            packages/claude-code-plugin/.mcp.json README.md packages/*/README.md
+            packages/claude-code-plugin/.mcp.json README.md packages/*/README.md \
+            packages/standalone/install/install.sh
           git commit -m "chore: bump versions for ${{ steps.versions.outputs.release_tag }}" || echo "No changes to commit"
 
       - name: Create release tag
@@ -453,6 +454,28 @@ jobs:
         with:
           ref: ${{ needs.prepare-release.outputs.release_tag }}
 
+      # The install command (install.sh) installs the MAMA OS version it names, so it is attached
+      # only when that is this release and npm serves it (docs/development/work/install.md).
+      - name: Check the install script names this release on npm
+        run: |
+          VERSION="${{ needs.prepare-release.outputs.mama_os_version }}"
+          NAMED=$(sed -n 's/^ *MAMA_OS_VERSION=//p' packages/standalone/install/install.sh)
+          if [[ "$NAMED" != "$VERSION" ]]; then
+            echo "::error::install.sh installs mama-os '$NAMED', not $VERSION; node scripts/sync-versions.js writes it"
+            exit 1
+          fi
+          # The registry can show a publish from an earlier job a few minutes late.
+          PUBLISHED=""
+          for attempt in $(seq 1 10); do
+            PUBLISHED=$(npm view "@jungjaehoon/mama-os@$VERSION" version 2>/dev/null || true)
+            [[ -n "$PUBLISHED" ]] && break
+            sleep 30
+          done
+          if [[ "$PUBLISHED" != "$VERSION" ]]; then
+            echo "::error::@jungjaehoon/mama-os@$VERSION is not on npm; install.sh would fail to install it"
+            exit 1
+          fi
+
       - name: Create GitHub Release
         run: |
           cat > release-notes.md <<'EOF'
@@ -490,7 +513,8 @@ jobs:
           gh release create "${{ needs.prepare-release.outputs.release_tag }}" \
             --title "MAMA ${{ needs.prepare-release.outputs.release_tag }}" \
             --notes-file release-notes.md \
-            --verify-tag
+            --verify-tag \
+            packages/standalone/install/install.sh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

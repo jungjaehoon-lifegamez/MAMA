@@ -47,9 +47,11 @@ else
   fi
 fi
 
-# Sync doc versions with package.json (auto-stage if changed)
+# Sync doc versions, and the install script's MAMA OS version and Node pin, with package.json and
+# install/node.json (auto-stage if changed)
 node scripts/sync-versions.js
-git diff --quiet -- README.md packages/*/README.md packages/claude-code-plugin/.mcp.json || git add README.md packages/*/README.md packages/claude-code-plugin/.mcp.json
+git diff --quiet -- README.md packages/*/README.md packages/claude-code-plugin/.mcp.json packages/standalone/install/install.sh ||
+  git add README.md packages/*/README.md packages/claude-code-plugin/.mcp.json packages/standalone/install/install.sh
 
 # Run typecheck for standalone package
 echo "Running typecheck..."
