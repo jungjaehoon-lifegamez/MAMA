@@ -104,9 +104,11 @@ run. `docker compose run --rm mama init` once and `docker compose up -d` are wri
   curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | sh
   ```
 
-  The script names its own MAMA OS version (`MAMA_OS_VERSION=`), kept equal to the package by
-  `scripts/sync-versions.js` and its `--check`, so the script and the package come from one release.
-  The release job runs after the npm publish, so the asset never names an unpublished version.
+  The script names its own MAMA OS version (`MAMA_OS_VERSION=`), written by
+  `scripts/sync-versions.js` as the release and the pre-commit hook already run it
+  (`release.yml:127`, `.husky/pre-commit:51-52`). Nothing in CI runs its `--check` today, so the
+  release job refuses to upload a script whose version is not the tag's. The upload comes after
+  the npm publish (`release.yml:429-449`), so the asset never names an unpublished version.
 
 - Not `npx`, which needs Node first; not the raw file at a tag, whose command changes each release.
 - `curl … | sh` gives the script a pipe as stdin. Its question and init read from `/dev/tty`: init
@@ -136,7 +138,9 @@ run. `docker compose run --rm mama init` once and `docker compose up -d` are wri
   the backend; the startup block; `mama init </dev/tty`.
 - Startup file: `~/.zshrc` for zsh, `~/.bash_profile` for bash on macOS, `~/.bashrc` for bash on
   Linux, else `~/.profile`, between `# >>> mama >>>` and `# <<< mama <<<`.
-- `scripts/sync-versions.js` gains the script's `MAMA_OS_VERSION=` line.
+- `scripts/sync-versions.js` gains the script's `MAMA_OS_VERSION=` line, and the pre-commit hook
+  stages the script with the READMEs. `create-release` checks the version, then passes the script
+  to `gh release create`.
 - CI job `install-check`, macOS and Ubuntu runners, each with a fresh `HOME` under the runner temp:
   1. `node-pin` (Ubuntu only): the hashes against the signed `SHASUMS256.txt.asc`.
   2. verdaccio (the pin and setup of `scripts/upgrade-check/update.mjs:36`, moved into a shared
@@ -148,10 +152,13 @@ run. `docker compose run --rm mama init` once and `docker compose up -d` are wri
      managed Node and the prefix's CLI; `installKind` is `npm` at `~/.mama/npm`; doctor's Node
      check is `ok`; `mama update --dry-run` against verdaccio shows N → N+1.
   4. A second run refuses and changes no file. A run cut off after Node skips Node when run again.
-  5. A Node file with another hash, served locally through `MAMA_INSTALL_NODE_MIRROR` (a mirror
-     setting, always checked against the same hashes), is refused and nothing is unpacked.
-  6. Each vendor installer as the script runs it; `codex --version` and `claude --version` meet
-     `s/cli/runtime/backend-probe.ts:8-11`.
+  5. A Node file with another hash is refused and nothing is unpacked. The script's download and
+     check are a function the test sources and runs on a local file; the script has no mirror
+     setting.
+  6. Each vendor installer as the script runs it, with no terminal; `codex --version` and
+     `claude --version` meet `s/cli/runtime/backend-probe.ts:8-11`. If an installer waits for an
+     answer there, the script sets the vendor's non-interactive variable (Codex:
+     `CODEX_NON_INTERACTIVE=1`) only when it has no terminal, and this step says so.
 - Shell tests (`shellcheck` in lint): the startup block once only; a username outside
   `default-roots.ts:22`'s pattern refused before `sudo`; no `sudo` on macOS.
 
@@ -217,8 +224,10 @@ run. `docker compose run --rm mama init` once and `docker compose up -d` are wri
 ## Live proof
 
 - **The clean macOS account** (the one W2.3's candidate proof and B2 need), one run for both:
-  1. verdaccio serves candidate N. `install.sh`, from the PR's tree with `npm_config_registry` set,
-     installs Node, N and the chosen backend; init signs it in, pairs the test bot and starts the
+  1. verdaccio serves candidate N, and the account's `~/.npmrc` names it as `registry=`: the
+     daemon's `mama update` reads npm's config (`update.ts:553`), not the script's environment.
+     It is removed before the post-release run. `install.sh` from the PR's tree installs Node, N
+     and the chosen backend; init signs it in, pairs the test bot and starts the
      service. The DM gets a reply. Checks entry: steps, minutes, every place the docs were left.
   2. `mama doctor` is clean; `start.sh` names the managed Node; status shows the npm kind.
   3. `mama init --section connectors` with Gmail and no gws names the methods; installing gws as
