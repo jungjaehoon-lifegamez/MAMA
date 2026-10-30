@@ -183,20 +183,60 @@ Stays:
 - `install.sh --no-init`, which the CI leg runs.
 
 Those three commands still need a terminal (`init-section.ts:64`, `secret.ts:18`,
-`uninstall.ts:304`); that is the owner's Q1 in install.md.
+`uninstall.ts:304`). The connectors section gets a form without one (W2.4.5e); the rest is the
+owner's Q1 in install.md.
 
-## PR 3 under the agent-led flow
+## Sources from the conversation (PR 3 and W2.4.5e)
 
-PR 3 (`feat/source-tools`, `cbaf2db70`, `2105446b7`) phrases its lines as commands. The agent can
-run them as printed, so their wording does not change. Who sees them changes:
+The owner, 2026-10-30, after the first revision: "gws는 사용자가 대화를 통해 설치 할지
+결정하는건데 왜 문제가 되지?" ("Whether to install gws is the person's choice in the
+conversation; why is that a problem?") A source and the tool it needs are chosen in the
+conversation. The agent installs the tool, the person completes its login in the browser, and only
+then is the source enabled.
 
-- Under `--non-interactive` the connectors are `{}` (`init.ts:286`), so the whole setup's
-  `writeSourceTools` call prints nothing. That call goes with `askAnswers` (W2.4.5c).
-- `--section connectors` needs a terminal (`init-section.ts:64`).
-- Doctor's fix lines are the ones the agent reads.
+What makes the order matter:
 
-Doctor's fix for a token source is `mama secret set <name>`, which needs a terminal (`secret.ts:18`).
-That predates PR 3 and falls under Q1.
+- A Google source's `init()` runs only `gws --version` (`s/connectors/gmail/index.ts:46-53`). The
+  connector runtime awaits each `init()` (`s/runtime/connectors.ts:236-240`), and boot rethrows the
+  failure (`s/cli/commands/daemon.ts:1308-1323`). So a Google source enabled with gws missing stops
+  MAMA from starting.
+- A missing login does not stop boot. Polls fail, and doctor's online check asks the source's
+  credentials (PR 3's `diagnostics.ts:859-861`). So the host check that enabling needs is the
+  tool's place on the service's PATH, which `sourceTools()` already computes against `start.sh`
+  (`serviceSight`).
+- No path an agent can use enables a source today:
+  - `--section` needs a terminal (`init-section.ts:64`);
+  - `--non-interactive` writes no connectors (`init.ts:286`; `:288` on PR 3's branch).
+- Doctor sees only enabled sources (PR 3's `diagnostics.ts:760-858`). It cannot warn before
+  enabling; the enabling step has to.
+
+Why the non-interactive section takes connector blocks rather than one variable per question:
+
+- `collectConnectors` exists only to turn typed answers into `connectors.json` blocks
+  (`init-questions.ts:62-206`).
+- The section already validates the merged file with boot's own `planConnectors` before renaming
+  it (`init-section.ts:170-192`).
+- Tokens already have names: a block's `auth.tokenName`, which init's secret store keys on.
+
+So the blocks need no new vocabulary. One variable per question would add a name for each field of
+each connector.
+
+PR 3 (`feat/source-tools`, #543, head `8a7dbca7a`) states commands, which an agent can run as
+printed. Three of its lines were written for a person who enables first and installs after, at a
+terminal:
+
+- the section's report, printed after the save;
+- "mama service restart then applies it", while the section runs with MAMA stopped;
+- a bare `gws auth login` with the scopes in prose.
+
+gws documents `-s` to narrow its scope picker (`gws auth login -s drive,gmail,sheets`, gws README).
+Whether a scope picker still asks for input in a shell without a terminal is not documented. The
+same goes for whether `gws auth login` needs an OAuth client set up first (`gws auth setup`, which
+needs `gcloud`). Leg A's step 6 records both.
+
+Doctor's token fix, `mama secret set <name>` (`diagnostics.ts:174-178`), needs a terminal
+(`secret.ts:18`). It predates PR 3. For a source's token, the non-interactive section with the
+variable set replaces it.
 
 ## The clean-account run's findings
 

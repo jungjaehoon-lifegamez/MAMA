@@ -225,7 +225,8 @@ In progress on `feat/source-tools`, by another worker.
 - One helper returns, for the sources being enabled, each tool missing from the service's PATH
   with its methods and login. Callers: `mama init` (`init.ts:578-581`, a fixed name set today,
   `init-questions.ts:42`), `init --section connectors` (`s/cli/commands/init-section.ts:188-189`,
-  login only today) and doctor's fix (`diagnostics.ts:787-811`). It reports and never refuses.
+  login only today) and doctor's fix (`diagnostics.ts:787-811`). It reports and never refuses;
+  the enabling step refuses on its report (W2.4.5e).
 - gws is a Node script (`bin` `run.js`, `postinstall` `node install.js`, 0.22.5), so for a
   script-made install the printed commands carry the managed Node; the command then is on
   `start.sh`'s PATH (PR 2). Other installs get `npm install -g @googleworkspace/cli` or
@@ -238,11 +239,13 @@ In progress on `feat/source-tools`, by another worker.
 
 - Tests: each caller with gws missing, on the shell's PATH only, and on the service's. The CI leg
   runs both commands with no other Node on PATH.
-- Under the agent, its lines are commands the agent runs as printed, so their wording stays.
+- Under the agent (owner, 2026-10-30: a source and its tool are chosen in the conversation):
   - The whole setup's caller goes with `askAnswers` (W2.4.5c), since the connectors are `{}` under
     `--non-interactive` (`init.ts:286`). Whichever of PR 3 and PR 5 lands second drops that call.
-  - `--section connectors` needs a terminal (Q1).
-  - Doctor's lines are what the agent reads.
+  - `--section connectors` uses `sourceTools()` before it writes, and refuses; W2.4.5e lists the
+    lines of this PR that change for that.
+  - Doctor's lines, read from `mama doctor --json`'s `fix`, stay as written. They serve an enabled
+    source whose tool has gone missing since.
 
 ## PR 5: setup through the person's agent
 
@@ -364,7 +367,10 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
        login the agent started on the person's machine.
     5. After a sign-in, run the same install command again. Use full paths.
     6. The setup is done when MAMA answers the person's message.
-  - The Jev paragraph says Jev is turned on later with `mama init --section jev` (Q1).
+  - Sources are chosen in the conversation. The tool is installed with its printed command, the
+    person completes its login in the browser, and only then is the source enabled with the
+    non-interactive section (W2.4.5e). The Jev paragraph says Jev is turned on later with
+    `mama init --section jev` (Q1).
   - `tests/skills/mama-install-skill.test.js:32-39` asserts:
     - the transcript sentence;
     - no "own terminal";
@@ -374,6 +380,52 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
     MAMA OS through the conversation. The plugin's `package.json` and `.claude-plugin/plugin.json`
     move together at the release.
   - Done: `cd packages/claude-code-plugin && npx vitest run tests/skills/mama-install-skill.test.js`.
+
+- **W2.4.5e A source enabled from the conversation** (after PR 3). The person chooses the source
+  in the conversation. The agent then:
+  1. installs the tool with the command `sourceTools()` gives (on a script-made install, the
+     managed-Node `npm install --prefix ~/.mama/npm`);
+  2. has the person complete the tool's login in the browser;
+  3. enables the source.
+
+  Enabling with the tool missing must not be possible: a Google source's `init()` runs
+  `gws --version` (`s/connectors/gmail/index.ts:46-53`), and boot rethrows its failure
+  (`s/runtime/connectors.ts:236-240`, `s/cli/commands/daemon.ts:1308-1323`), so MAMA would not
+  start.
+  - `mama init --section connectors --non-interactive` takes `MAMA_INIT_CONNECTORS`: a JSON object
+    of connector blocks in `connectors.json`'s own shape (`s/connectors/framework/types.ts`), the
+    shape `collectConnectors` builds. It takes each block's token from the variable its
+    `auth.tokenName` names, and Slack's app token from `MAMA_SLACK_APP_TOKEN`.
+    `requireTTY` (`init-section.ts:64`) applies to every other section and form. The staging, boot's
+    `planConnectors` check and the renames (`:170-192`) are reused.
+  - Before anything is written, `sourceTools()` (PR 3, `s/cli/runtime/source-tools.ts`, `gwsTool`)
+    runs over the new blocks against the service's PATH (`serviceSight`). A tool the service
+    cannot find refuses the section, and nothing is saved. The terminal form refuses the same way:
+    one rule for enabling.
+  - PR 3's lines that change for this:
+    - `--section connectors` prints `sourceToolLines` after the save (PR 3's `init-section.ts:194`).
+      They move before the write. The missing-tool form says nothing was saved, then gives the
+      install command, the login, and "then run this again".
+    - The shell-only form ends "mama service install adds it; mama service restart then applies
+      it". The section runs with MAMA stopped, so it becomes "mama service install adds it; then
+      run this again".
+    - The login line is bare `gws auth login` with the scopes in prose. It names them in the
+      command, `gws auth login -s <services>`, the flag gws documents for narrowing its scope
+      picker. Each Google source's `type: 'cli'` requirement names its gws service.
+    - The whole setup's caller goes (W2.4.5c). PR 3's doctor lines stay.
+  - Doctor's token fix is `mama secret set` (`diagnostics.ts:174-178`), which needs a terminal. For
+    a source token, the agent runs this section again with the variable set; the fix names that.
+  - Tests in `onboarding.test.ts`:
+    - Gmail with gws on the service's PATH is enabled;
+    - with gws only on the shell's PATH, or nowhere, the section is refused and `connectors.json`
+      is unchanged;
+    - a Notion block takes `MAMA_NOTION_TOKEN` into `auth.env`;
+    - a block boot would refuse is refused;
+    - the terminal form refuses a missing tool too.
+  - `packages/standalone/CHANGELOG.md` `## [Unreleased]`, `### Added`:
+    `mama init --section connectors --non-interactive` reads `MAMA_INIT_CONNECTORS`, and a source
+    whose tool the service cannot find is no longer enabled (both forms).
+  - Done: `cd packages/standalone && npx vitest run tests/cli/onboarding.test.ts tests/cli/doctor.test.ts`.
 
 ## PR 4: docs (I1, I5)
 
@@ -445,10 +497,15 @@ The steps:
 5. A re-run with another patch pin moves Node, and the service comes back.
    - The agent runs the install command as `mama update` prints it, with no flags.
    - A move killed after its first rename, then a reboot, starts nothing; the next run undoes it.
-6. After PR 3: Gmail is enabled with `mama init --section connectors`, at a terminal until Q1, and
-   with no gws.
-   - Doctor names the commands, and the agent runs them as printed; doctor then passes.
-   - The checks entry says whether `gws auth login` completed from the agent's shell.
+6. After W2.4.5e, the person asks for Gmail in the conversation, with no gws installed.
+   - The agent's first `--section connectors --non-interactive` is refused with the install command
+     and the login, and nothing is saved.
+   - The agent installs gws as printed, and the person completes `gws auth login -s gmail` in the
+     browser.
+   - The section then enables Gmail, `mama doctor --json` passes, and `mama service start` boots
+     with the source.
+   - The checks entry says whether the gws login completed from the agent's shell, and whether gws
+     needed an OAuth client set up first (`gws auth setup`).
    - The toolkit's `brew install` on this Standard account is recorded (I7).
 7. **Leg B.** `mama uninstall --data` is run at a terminal (it needs one, `uninstall.ts:304`).
    Claude Code then installs with the `codex` backend. The managed home is signed in from the
@@ -476,8 +533,10 @@ by its vendor's steps, and leg A against npmjs.
   `start.sh` pins `~/.mama/node/bin/node`. Legs B and C reach the same reply, or leg C's result goes
   to Q2. Linux closes with wave 3, Docker with wave 4.
 
-- **I4 (the command part):** enabling a Google source without gws prints commands that work, in
-  `--section` and doctor, and the agent runs doctor's as printed. The image half is wave 4's.
+- **I4 (the command part):** enabling a Google source without gws is refused before anything is
+  written, with commands that work. The agent runs them, the person logs in, and the section then
+  enables the source and boot starts it. Doctor names the same commands for an enabled source whose
+  tool went missing. The image half is wave 4's.
 - **I5 (Node, backend, macOS rows):** the guide lists them with sources, and the run used those.
 
 ## Failure modes
@@ -499,12 +558,13 @@ by its vendor's steps, and leg A against npmjs.
 | `sudo` needs a password in an agent's shell (Linux)                          | The command printed; init refuses the default folders until it runs, or takes the two `MAMA_INIT_*_ROOT` folders; wave 3 settles it     |
 | Moving Node fails to boot                                                    | The old folders back and started, exit 1                                                                                                |
 | A Node move is killed midway                                                 | The hold keeps it stopped; the next run finishes or undoes the move                                                                     |
+| A source is enabled while its tool is missing                                | Refused before any write (W2.4.5e); otherwise boot fails on its `init()` (`daemon.ts:1308-1323`), and doctor names the commands         |
 | The toolkit cannot install on a fresh Mac                                    | Init goes on without it (`init.ts:610-627`); see I7                                                                                     |
 
 ## Order of work
 
 PR 1 → PR 2 → PR 5, with PR 3 in parallel → leg A, steps 1–5 (W2.3's candidate proof among them)
-→ PR 3 merged → step 6 → legs B and C → PR 4 → the wave 2 release → the post-release runs → I1, I4
+→ PR 3 merged → W2.4.5e → step 6 → legs B and C → PR 4 → the wave 2 release → the post-release runs → I1, I4
 and I5 marked for macOS in v1.md, evidence in checks.md.
 
 ## Plan corrections
@@ -520,7 +580,7 @@ and I5 marked for macOS in v1.md, evidence in checks.md.
 - v1.md's wording, edited when the rows close:
   - B1's "the install command" becomes "install MAMA" said to the agent.
   - B2's "confirming it in the terminal" becomes relaying it to the agent, which hands it to init.
-  - I4's "in init" becomes `--section` and doctor.
+  - I4's "in init" becomes the enabling section, which refuses, and doctor.
 - New row I7: the macOS toolkit runs `brew install` and needs python3 3.10 or newer
   (`s/tools/document-toolkit.ts:292-300,397-405`). An account without its own Homebrew cannot
   install it. The script does not install Homebrew, a machine-wide manager; the clean-account run
@@ -531,9 +591,11 @@ and I5 marked for macOS in v1.md, evidence in checks.md.
 
 ## Open owner decisions
 
-- **Q1.** Does "the person never touches a terminal" also cover what comes after the first reply?
-  `mama init --section` (sources, Discord, Slack, Jev, a new bot token), `mama secret set` and
-  `mama uninstall` each need a terminal (`init-section.ts:64`, `secret.ts:18`, `uninstall.ts:304`).
+- **Q1.** Sources are settled: the owner said they are chosen in the conversation (W2.4.5e). Does
+  "the person never touches a terminal" also cover the rest of what comes after the first reply?
+  The other `mama init --section` parts (Discord, Slack, Jev, a new bot token, model, timezone),
+  `mama secret set` and `mama uninstall` each need a terminal (`init-section.ts:64`, `secret.ts:18`,
+  `uninstall.ts:304`).
   - If yes, they take the agent's input as init does: a new row, not W2.4.
   - If no, the guide sends the person to a terminal for those.
 - **Q2, only if leg C fails.** Should the person run one terminal step to sign Claude in, or should
