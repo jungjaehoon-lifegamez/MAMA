@@ -360,7 +360,13 @@ try {
     scriptEnv(home)
   );
   expect(second.status === 0, `the second run exited ${second.status}`);
-  const changed = sameSnapshot(before, Object.assign({}, ...watched.map(snapshot)));
+  // The script runs the backend it finds (`--version`, finding A), and Codex makes new arg0 links
+  // under its own home's tmp/ each time it starts. That is the backend's scratch, not a file the
+  // install command writes.
+  const codexScratch = join(home, '.codex', 'tmp');
+  const changed = sameSnapshot(before, Object.assign({}, ...watched.map(snapshot))).filter(
+    (path) => path !== codexScratch && !path.startsWith(`${codexScratch}/`)
+  );
   expect(changed.length === 0, `the second run changed ${changed.join(', ')}`);
 
   // A run on a finished install ends at init's status and exits 0. Init's service step is
