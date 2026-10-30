@@ -212,6 +212,24 @@ describe('mama service install on macOS', () => {
     expect(script.match(/^export MAMA_API_PORT=/gm)).toHaveLength(1);
   });
 
+  it("names an npm install's <prefix>/bin on start.sh's PATH, where npm puts commands beside MAMA", async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    launchd('unloaded');
+    const { home, root } = install();
+    const lines: string[] = [];
+    await installService(
+      [],
+      options(home, lines, {
+        platform: 'darwin',
+        nodePath: '/fixture/.mama/node/bin/node',
+        cliPath: '/fixture/.mama/npm/lib/node_modules/@jungjaehoon/mama-os/dist/cli/index.js',
+      })
+    );
+    expect(readFileSync(join(root, 'start.sh'), 'utf8')).toContain(
+      "export PATH='/fixture/.mama/node/bin:/fixture/bin:/fixture/.mama/npm/bin:/usr/bin:/bin:/usr/sbin:/sbin'"
+    );
+  });
+
   it('refuses before writing anything when the backend cannot be found', async () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     const { home, root } = install();

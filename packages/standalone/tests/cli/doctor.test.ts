@@ -395,6 +395,90 @@ describe('mama doctor', () => {
     expect(await runDoctor([], { ...base(installed), write: () => {} })).toBe(0);
   });
 
+  it("names the release's Node pin on an install the install command made, and an open Node move", async () => {
+    const installed = install({ node: '.mama/node/bin/node' });
+    const packageRoot = join(
+      installed.root,
+      'npm',
+      'lib',
+      'node_modules',
+      '@jungjaehoon',
+      'mama-os'
+    );
+    mkdirSync(join(packageRoot, 'dist', 'cli'), { recursive: true });
+    mkdirSync(join(packageRoot, 'install'));
+    writeFileSync(
+      join(packageRoot, 'package.json'),
+      JSON.stringify({ name: '@jungjaehoon/mama-os', version: '1.0.0' })
+    );
+    writeFileSync(join(packageRoot, 'dist', 'cli', 'index.js'), '');
+    // This package's own SQLite, which the check loads.
+    symlinkSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'node_modules'),
+      join(packageRoot, 'node_modules')
+    );
+    writeFileSync(
+      join(installed.root, 'start.sh'),
+      startScript({
+        home: installed.home,
+        nodePath: installed.node,
+        cliPath: join(packageRoot, 'dist', 'cli', 'index.js'),
+        executablePaths: ['/fixture/bin/claude'],
+        viewer: {},
+        logLevel: 'info',
+      }),
+      { mode: 0o700 }
+    );
+    const pin = (version: string) =>
+      writeFileSync(join(packageRoot, 'install', 'node.json'), JSON.stringify({ version }));
+    // The host's Node answers v22.13.0.
+    pin('22.13.0');
+    expect(byName(await runDiagnostics(base(installed))).node).toMatchObject({
+      status: 'ok',
+      detail: 'v22.13.0 loads SQLite',
+    });
+    pin('24.11.0');
+    expect(byName(await runDiagnostics(base(installed))).node).toEqual({
+      name: 'node',
+      status: 'warn',
+      detail: 'start.sh runs v22.13.0; this release pins Node.js 24.11.0',
+      code: 'node.pin',
+      context: installed.node,
+      fix: 'run the install command again, which moves it: curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | sh',
+    });
+
+    // A move killed midway: its journal and the hold it left; the journal is what is named.
+    mkdirSync(join(installed.root, 'runtime'), { recursive: true });
+    writeFileSync(updatePaths(installed.root).hold, '1\n');
+    writeFileSync(
+      join(installed.root, 'runtime', 'node-move.json'),
+      JSON.stringify({
+        format: 'mama-node-move',
+        phase: 'prepare',
+        step: 3,
+        from: '22.13.0',
+        to: '24.11.0',
+        major: true,
+      })
+    );
+    expect(byName(await runDiagnostics(base(installed))).update).toMatchObject({
+      status: 'fail',
+      detail:
+        'the move of the managed Node from 22.13.0 to 24.11.0 is unfinished (step 3); the daemon may stay stopped until it is finished or undone',
+      code: 'node_move.open',
+      fix: 'run the install command again, which finishes or undoes it: curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | sh',
+    });
+    const status: string[] = [];
+    await runStatus([], {
+      home: installed.home,
+      platform: 'darwin',
+      write: (line) => status.push(line),
+    });
+    expect(status).toContain(
+      'Node move unfinished: 22.13.0 → 24.11.0 (prepare, step 3); run the install command again, which finishes or undoes it: curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | sh'
+    );
+  });
+
   it('fails on an old or signed-out backend, a gone Node, or one that cannot load SQLite', async () => {
     let by = byName(
       await runDiagnostics({ ...base(install()), run: host({ version: '2.1.200' }) })

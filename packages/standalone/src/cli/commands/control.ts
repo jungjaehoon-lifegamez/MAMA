@@ -3,6 +3,12 @@ import { dirname } from 'node:path';
 import { defaultConfigPath } from '../../runtime/config.js';
 import { CliInputError } from '../prompt.js';
 import { releaseReport } from '../runtime/release-check.js';
+import {
+  INSTALL_COMMAND,
+  nodeMovePlaces,
+  readNodeMoveJournal,
+  type NodeMoveJournal,
+} from '../runtime/node-move-journal.js';
 import { unfinishedUpdate } from '../runtime/update-journal.js';
 import {
   drainDaemon,
@@ -48,7 +54,7 @@ function holderLine(holder: LockOwner): string {
 
 function statusLines(status: Record<string, unknown>): string[] {
   const lines = [
-    `running: ${String(status.command)} (pid ${String(status.pid)}, version ${String(status.version)}, since ${localTime(status.startedAt)})`,
+    `running: ${String(status.command)} (pid ${String(status.pid)}, version ${String(status.version)}${typeof status.node === 'string' ? `, Node.js ${status.node}` : ''}, since ${localTime(status.startedAt)})`,
   ];
   if (status.stage !== 'running') lines.push(`boot stage: ${String(status.stage)}`);
   const drain = status.drain as { holds: number; since: number } | null | undefined;
@@ -132,9 +138,15 @@ export async function runStatus(
         ];
   if (reply.state === 'stopped') {
     // A stopped install may be stopped by an unfinished update: start.sh exits on its hold file.
-    let update: ReturnType<typeof unfinishedUpdate> | { unreadable: string };
+    // So may a move of the managed Node, which holds it on the same file.
+    let update:
+      | ReturnType<typeof unfinishedUpdate>
+      | { move: NodeMoveJournal }
+      | { unreadable: string };
     try {
-      update = unfinishedUpdate(dirname(options.configPath ?? defaultConfigPath(home)));
+      const root = dirname(options.configPath ?? defaultConfigPath(home));
+      const move = readNodeMoveJournal(nodeMovePlaces(root).journal);
+      update = move === null ? unfinishedUpdate(root) : { move };
     } catch (error) {
       update = { unreadable: error instanceof Error ? error.message : String(error) };
     }
@@ -143,9 +155,11 @@ export async function runStatus(
         ? null
         : 'unreadable' in update
           ? `update journal cannot be read: ${update.unreadable}; mama doctor names it`
-          : 'journal' in update
-            ? `update unfinished: ${update.journal.from} → ${update.journal.to} (${update.journal.phase}, step ${update.journal.step}); resolve it with: ${update.command}`
-            : `update hold file ${update.hold} is in place with no journal, so start.sh exits at once; remove it, then mama service start`;
+          : 'move' in update
+            ? `Node move unfinished: ${update.move.from} → ${update.move.to} (${update.move.phase}, step ${update.move.step}); run the install command again, which finishes or undoes it: ${INSTALL_COMMAND}`
+            : 'journal' in update
+              ? `update unfinished: ${update.journal.from} → ${update.journal.to} (${update.journal.phase}, step ${update.journal.step}); resolve it with: ${update.command}`
+              : `update hold file ${update.hold} is in place with no journal, so start.sh exits at once; remove it, then mama service start`;
     if (json) {
       write(
         JSON.stringify({

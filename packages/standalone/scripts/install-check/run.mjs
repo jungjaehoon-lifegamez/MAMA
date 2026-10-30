@@ -15,6 +15,9 @@
  * 4. With --vendor-installers (CI only): codex in step 1 and claude here come from their vendors'
  *    installers as the script runs them, with no terminal, at or above backend-probe.ts's minimums.
  *    Without it a stub codex is first on PATH, so the script finds a backend and installs none.
+ * 5. The Node move (move.mjs, PR 2): the daemon booted on the managed Node, then the script run
+ *    again with other pins: a patch move, the move back killed after each step and recovered, a
+ *    Node that cannot boot MAMA put back, and a major move with its rebuilt prefix.
  *
  * Run after `pnpm build`: node packages/standalone/scripts/install-check/run.mjs [--vendor-installers]
  * It downloads Node.js from nodejs.org twice (two fresh homes) and the dependencies through the
@@ -40,6 +43,7 @@ import { homedir, userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { NAME, freePort, serveThisBuild } from '../local-registry.mjs';
+import { moveLeg } from './move.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const standalone = join(here, '..', '..');
@@ -435,10 +439,34 @@ try {
   } else {
     console.log('install check: vendor installers not run (no --vendor-installers); CI runs them');
   }
+
+  // 5. The Node move.
+  await moveLeg({
+    root,
+    home,
+    text,
+    pin,
+    scriptEnv,
+    runScript,
+    serviceEnv,
+    track: (child) => children.push(child),
+  });
   console.log('install check: passed');
 } finally {
   for (const child of children) {
     child.kill();
   }
+  // A daemon a failed step left running.
+  spawnSync(
+    process.execPath,
+    [
+      join(standalone, 'scripts', 'upgrade-check', 'fake-service.cjs'),
+      'systemctl',
+      '--user',
+      'stop',
+      'mama.service',
+    ],
+    { env: { ...process.env, HOME: join(root, 'home') } }
+  );
   rmSync(root, { recursive: true, force: true });
 }

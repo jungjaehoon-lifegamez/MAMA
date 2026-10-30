@@ -324,7 +324,7 @@ describe('mama init', () => {
             ...probeOk(_c, args),
             stdout: args[0] === '--version' ? '9.9.9' : '{"loggedIn":false}',
           }) as never,
-        /not signed in.*claude auth login/,
+        /claude auth login exited 1; sign in with it yourself/,
       ],
     ] as const) {
       const p = prompt(minimal('claude'), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
@@ -335,11 +335,103 @@ describe('mama init', () => {
             ...(probe === undefined
               ? { findExecutable: () => undefined }
               : { probeRun: probe as InitOptions['probeRun'] }),
+            // The person's own login on the terminal, which they gave up on.
+            signIn: () => 1,
           })
         )
       ).rejects.toThrow(message);
       expect(existsSync(root)).toBe(false);
     }
+  });
+
+  it.each(['claude', 'codex'] as const)(
+    "runs a signed-out %s's own login on the terminal, then reads the login again",
+    async (backend) => {
+      let signedIn = false;
+      const ran: Array<{ command: string; args: string[]; codexHome: string | undefined }> = [];
+      const probe = (command: string, args: string[]) =>
+        ({
+          ...probeOk(command, args),
+          stdout:
+            args[0] === '--version'
+              ? '9.9.9'
+              : args[0] === 'auth' && signedIn
+                ? '{"loggedIn":true}'
+                : '{"loggedIn":false}',
+          status: backend === 'codex' && args[0] === 'login' && !signedIn ? 1 : 0,
+        }) as never;
+      const p = prompt(minimal(backend), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+      const o = options(p.adapter, {
+        probeRun: probe as InitOptions['probeRun'],
+        signIn: (command, args, env) => {
+          ran.push({ command, args, codexHome: env.CODEX_HOME });
+          signedIn = true;
+          return 0;
+        },
+      });
+      await runInit([], o);
+      expect(ran).toEqual([
+        backend === 'claude'
+          ? { command: join(home, 'bin', 'claude'), args: ['auth', 'login'], codexHome: undefined }
+          : {
+              command: join(home, 'bin', 'codex'),
+              args: ['login'],
+              codexHome: join(root, '.codex'),
+            },
+      ]);
+      expect(p.output.join('\n')).toContain(`${backend} is not signed in; running: `);
+      expect(readInitState(root)?.done).toContain('config');
+    }
+  );
+
+  it('names the login and runs none with --non-interactive', async () => {
+    const ran: string[] = [];
+    await expect(
+      runInit(
+        ['--non-interactive'],
+        options(prompt([], [], [false, false]).adapter, {
+          probeRun: ((command: string, args: string[]) =>
+            ({
+              ...probeOk(command, args),
+              stdout: args[0] === '--version' ? '9.9.9' : '{"loggedIn":false}',
+            }) as never) as InitOptions['probeRun'],
+          signIn: (command) => {
+            ran.push(command);
+            return 0;
+          },
+          env: {
+            MAMA_INIT_BACKEND: 'claude',
+            MAMA_TELEGRAM_TOKEN: fixtureSecrets.MAMA_TELEGRAM_TOKEN,
+            MAMA_INIT_COMMON_CHAT_ID: '-100',
+            MAMA_INIT_OWNER_TELEGRAM_ID: OWNER_ID,
+            MAMA_INIT_MODEL: 'fixture-model',
+            MAMA_INIT_MEMBER_ROOT: memberRoot,
+            MAMA_INIT_TOOLS_ROOT: toolsRoot,
+          },
+        })
+      )
+    ).rejects.toThrow('claude is not signed in. Run: claude auth login, then mama init again.');
+    expect(ran).toEqual([]);
+  });
+
+  it('offers the only backend on PATH as the answer Enter keeps', async () => {
+    const labels: string[] = [];
+    const p = prompt(['', ...minimal('codex').slice(1)], [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    const text = p.adapter.text;
+    p.adapter.text = async (label) => {
+      labels.push(label);
+      return await text(label);
+    };
+    await runInit(
+      [],
+      options(p.adapter, {
+        findExecutable: (name) => (name === 'codex' ? join(home, 'bin', name) : undefined),
+      })
+    );
+    expect(labels[0]).toBe('Backend (claude|codex) [codex]');
+    expect(yaml.load(readFileSync(join(root, 'config.yaml'), 'utf8'))).toMatchObject({
+      agent: { backend: 'codex' },
+    });
   });
 
   it('refuses a token Telegram rejects before writing anything', async () => {
@@ -569,7 +661,9 @@ describe('mama init', () => {
     const finished = prompt([], []);
     const o = options(finished.adapter);
     await runInit([], o);
-    expect(finished.output.join('\n')).toContain('MAMA is already set up here');
+    expect(finished.output.join('\n')).toContain(
+      'MAMA is already set up here; mama doctor checks it, mama service restart restarts it and mama update updates it.'
+    );
     expect(o.started).toEqual([]);
     expect(readInitState(root)?.done).toEqual(['config', 'owner', 'toolkit', 'service']);
   });

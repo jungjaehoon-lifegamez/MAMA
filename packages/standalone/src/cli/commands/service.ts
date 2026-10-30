@@ -160,7 +160,13 @@ export async function installService(
   const gws = locate('gws');
   const nodePath = options.nodePath ?? stableNodePath(process.execPath);
   const cliPath = options.cliPath ?? join(__dirname, '..', 'index.js');
-  const executablePaths = [backend, ...(gws ? [gws] : [])];
+  // An npm install's prefix holds the commands npm installs beside MAMA (install.md, PR 2).
+  const prefix = /^(.*)\/lib\/node_modules\/@jungjaehoon\/mama-os\//.exec(cliPath)?.[1];
+  const executablePaths = [
+    backend,
+    ...(gws ? [gws] : []),
+    ...(prefix === undefined ? [] : [join(prefix, 'bin', 'mama')]),
+  ];
   const startPath = join(root, 'start.sh');
   const existing = existsSync(startPath) ? readFileSync(startPath, 'utf8') : null;
   const reading = existing === null ? null : readStartScript(existing, home);

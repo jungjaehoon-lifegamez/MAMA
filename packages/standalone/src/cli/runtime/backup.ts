@@ -102,6 +102,20 @@ const EPHEMERAL_NAMES = new Set(['session-credential', 'web-fetch-turn.json']);
 const BACKEND_STATE = new Set(['.codex', 'codex-runtime']);
 /** Re-created at boot. */
 const REBUILT_AT_BOOT = new Set(['.empty-plugins']);
+/**
+ * The program the install command keeps in the MAMA home (install.md): Node, the npm prefix, the
+ * `mama` command, and the folders a Node move puts beside them. The program is not data: the
+ * install command makes it again, so a backup never archived it and does not list it as left out.
+ */
+export const MANAGED_PROGRAM = new Set([
+  'node',
+  'npm',
+  'bin',
+  'node.new',
+  'node.old',
+  'npm.new',
+  'npm.old',
+]);
 const SECRET_NAME =
   /(^|[_-])(token|secret|password|passwd|credential|credentials|api[_-]?key|app[_-]?key|private[_-]?key)s?($|[_-])/i;
 /** A name that holds where a secret lives, or what it is called, not the secret. */
@@ -344,7 +358,7 @@ export function planBackup(
 
   const leftOut = readdirSync(root)
     .filter((name) => !keptByRoot(name) && name !== 'backups' && !REBUILT_AT_BOOT.has(name))
-    .filter((name) => name !== 'logs' && !BACKEND_STATE.has(name))
+    .filter((name) => name !== 'logs' && !BACKEND_STATE.has(name) && !MANAGED_PROGRAM.has(name))
     .filter((name) => !separate.has(join(root, name)))
     .filter((name) => physical(join(root, name)) !== workspace)
     .filter((name) =>

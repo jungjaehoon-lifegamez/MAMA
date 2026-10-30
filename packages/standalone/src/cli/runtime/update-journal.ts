@@ -171,7 +171,8 @@ export function readUpdateJournal(path: string): UpdateJournal | null {
   return value as UpdateJournal;
 }
 
-function syncFile(path: string): void {
+/** fsync a file or a folder (a folder's entries: a rename or a removal in it). */
+export function syncFile(path: string): void {
   const fd = openSync(path, 'r');
   try {
     fsyncSync(fd);
@@ -186,13 +187,19 @@ function syncFile(path: string): void {
  * the candidate is released (step 14).
  */
 export function writeUpdateJournal(path: string, journal: UpdateJournal): void {
+  writeJournalFile(path, journal);
+}
+
+/** The durable write both journals use (the Node move's is read by install.sh, line by line). */
+export function writeJournalFile(path: string, value: object): void {
   const staged = `${path}.${process.pid}.tmp`;
-  writeFileSync(staged, `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
+  writeFileSync(staged, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   syncFile(staged);
   renameSync(staged, path);
   syncFile(dirname(path));
 }
 
+/** Remove a journal, and sync its folder so the removal is on disk. */
 export function removeUpdateJournal(path: string): void {
   rmSync(path, { force: true });
   syncFile(dirname(path));

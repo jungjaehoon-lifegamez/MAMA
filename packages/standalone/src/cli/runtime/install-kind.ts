@@ -30,7 +30,7 @@ export type InstallKind =
     });
 
 /** The nearest folder at or above `from` whose package.json is MAMA OS's, after realpath. */
-function packageRootOf(from: string): string | null {
+export function packageRootOf(from: string): string | null {
   let directory = realpathSync(from);
   for (;;) {
     const manifest = join(directory, 'package.json');

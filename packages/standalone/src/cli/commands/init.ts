@@ -50,6 +50,8 @@ import {
   askSlack,
   askTimezone,
   checkBackend,
+  terminalSignIn,
+  type BackendSignIn,
   checkTelegram,
   collectConnectors,
   gwsConnectorNames,
@@ -79,6 +81,8 @@ export interface InitOptions {
   telegramCall?: Parameters<typeof telegramCheck>[2];
   /** Runs the backend CLI to read its version and login; tests replace it. */
   probeRun?: ProbeRun;
+  /** Runs a signed-out backend's login on the terminal; tests replace it. */
+  signIn?: BackendSignIn;
   /** Runs launchctl or systemctl for the service step; tests replace it. */
   serviceRun?: ServiceRun;
   /** Installs and starts the service with the viewer's settings; tests replace it. */
@@ -140,6 +144,7 @@ async function askAnswers(
   defaults: DefaultRoots | undefined,
   checks: {
     backend(name: 'claude' | 'codex'): void;
+    locate(name: string): string | undefined;
     telegram(token: string, chat?: string): Promise<void>;
     roots(
       memberRoot: string,
@@ -149,7 +154,7 @@ async function askAnswers(
     pair(token: string): Promise<{ ownerId: string; chatId: string }>;
   }
 ): Promise<InitAnswers> {
-  const { backend, model } = await askBackend(prompt, checks.backend);
+  const { backend, model } = await askBackend(prompt, checks.backend, checks.locate);
   const timezone = await askTimezone(prompt);
   const secrets: Partial<Record<SecretName, string>> = {
     MAMA_TELEGRAM_TOKEN: nonblankLine(await prompt.secret('Telegram bot token')),
@@ -419,7 +424,7 @@ export async function runInit(
       // A status, not a refusal: running the install command again on a set-up install ends here.
       if (initComplete(state)) {
         write(
-          'MAMA is already set up here; mama doctor checks it and mama service restart restarts it.'
+          'MAMA is already set up here; mama doctor checks it, mama service restart restarts it and mama update updates it.'
         );
         return;
       }
@@ -446,8 +451,16 @@ export async function runInit(
       });
       const call = options.telegramCall ?? defaultTelegramCall;
       const checks = {
+        // On a terminal a signed-out backend's own login runs here; --non-interactive names it.
         backend: (name: 'claude' | 'codex') =>
-          checkBackend(name, join(root, '.codex'), locate, options.probeRun),
+          checkBackend(
+            name,
+            join(root, '.codex'),
+            locate,
+            options.probeRun,
+            nonInteractive ? undefined : { run: options.signIn ?? terminalSignIn, write }
+          ),
+        locate,
         telegram: (token: string, chat?: string) => checkTelegram(token, chat, call, write),
         roots: (
           memberAnswer: string,

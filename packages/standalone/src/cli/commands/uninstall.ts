@@ -5,10 +5,15 @@
  * and the common skills under `tools_root` (with --toolkit, the toolkit's versions too). A folder
  * MAMA did not create is never removed whole: `member_root` and `tools_root` go only once empty, so
  * a misconfigured root (a volume, a shared folder) loses nothing but MAMA's own entries.
- * `--dry-run` lists what would go and what stays, and changes nothing. The program itself is an npm
- * package, which npm removes.
+ * `--dry-run` lists what would go and what stays, and changes nothing.
+ *
+ * The program: an `npm install -g` is npm's to remove. The install command keeps it in the MAMA
+ * home instead (Node, the npm prefix and the `mama` command, docs/development/work/install.md):
+ * --data removes it with the home, last, so a removal that fails part-way leaves a `mama` to run
+ * again; without --data it stays and is named. Either way the startup block the install command
+ * wrote is named for the owner to remove: it is the owner's file.
  */
-import { existsSync, lstatSync, readdirSync, rmdirSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
 import Database from 'better-sqlite3';
@@ -17,6 +22,7 @@ import { physicalReadPath } from '../../runtime/backend-security.js';
 import { memberClaudeTmpDir, memberRoomTmpRoot } from '../../runtime/member-paths.js';
 import { removeVersion } from '../../tools/document-toolkit.js';
 import { CliInputError, createTerminalPrompt, requireTTY, type PromptAdapter } from '../prompt.js';
+import { MANAGED_PROGRAM } from '../runtime/backup.js';
 import { acquireInstallLock, daemonControlPaths, lockHolder } from '../runtime/daemon-control.js';
 import { runStop } from './control.js';
 import { serviceFile, uninstallService, type ServiceOptions } from './service.js';
@@ -33,6 +39,8 @@ interface Entry {
   what: string;
   /** How it is removed when a plain recursive removal cannot be (a read-only toolkit version). */
   remove?: (path: string) => void;
+  /** Part of the managed program: kept when anything before it could not be removed. */
+  program?: boolean;
 }
 
 interface DataPlan {
@@ -43,6 +51,34 @@ interface DataPlan {
   emptied: string[];
   /** MAMA's settings point here, outside the MAMA home; not removed. */
   stays: Entry[];
+}
+
+/**
+ * The program the install command keeps in the MAMA home, as far as it is there, in the order it
+ * is removed: Node last, and the prefix before the `mama` command, so a removal that fails part-way
+ * keeps what `mama uninstall --data` needs to run again for as long as it can.
+ */
+function managedProgram(root: string): string[] {
+  const order = ['node.new', 'node.old', 'npm.new', 'npm.old', 'npm', 'bin', 'node'];
+  return existsSync(join(root, 'npm', 'lib', 'node_modules', '@jungjaehoon', 'mama-os'))
+    ? order.map((name) => join(root, name)).filter((path) => existsSync(path))
+    : [];
+}
+
+/** The startup files whose marked block the install command wrote (install.sh, "Startup block"). */
+function startupBlocks(home: string): string[] {
+  return [
+    join(process.env.ZDOTDIR ?? home, '.zshrc'),
+    join(home, '.bashrc'),
+    join(home, '.bash_profile'),
+    join(home, '.profile'),
+  ].filter(
+    (path) =>
+      existsSync(path) &&
+      readFileSync(path, 'utf8')
+        .split('\n')
+        .some((line) => line.replace(/\r$/, '') === '# >>> mama >>>')
+  );
 }
 
 function parseArgs(args: readonly string[]): { dryRun: boolean; data: boolean; toolkit: boolean } {
@@ -184,10 +220,38 @@ function dataPlan(home: string, configPath: string, toolkit: boolean): DataPlan 
       }
     }
   }
+  const program = managedProgram(root);
   plan.remove.push({
     path: root,
     what: 'the MAMA home: config, credentials, workspace, logs, backups and, by default, the database',
+    // The program goes after the rest of the home, and the home with it (below).
+    ...(program.length === 0
+      ? {}
+      : {
+          remove: (path: string) => {
+            for (const name of readdirSync(path)) {
+              if (!MANAGED_PROGRAM.has(name))
+                rmSync(join(path, name), { recursive: true, force: true });
+            }
+          },
+        }),
   });
+  program.forEach((path, index) =>
+    plan.remove.push({
+      path,
+      what: 'the managed program the install command put here (Node.js, MAMA OS and the mama command)',
+      program: true,
+      // The last one takes the emptied home with it.
+      ...(index === program.length - 1
+        ? {
+            remove: (folder: string) => {
+              rmSync(folder, { recursive: true, force: true });
+              rmdirSync(root);
+            },
+          }
+        : {}),
+    })
+  );
   return plan;
 }
 
@@ -200,6 +264,22 @@ export async function runUninstall(
   const configPath = options.configPath ?? defaultConfigPath(home);
   const write = options.write ?? ((line: string) => console.log(line));
   const plan = data ? dataPlan(home, configPath, toolkit) : null;
+  const program = managedProgram(dirname(configPath));
+  /** What stays of the program, and the startup block, after the rest. */
+  const programNotes = (): void => {
+    if (program.length === 0) {
+      if (plan) write('npm uninstall -g @jungjaehoon/mama-os removes the program itself');
+    } else if (!plan) {
+      write(
+        `the managed program stays: ${program.join(', ')} (mama uninstall --data removes it with the data)`
+      );
+    }
+    for (const file of startupBlocks(home)) {
+      write(
+        `remove the lines from '# >>> mama >>>' to '# <<< mama <<<' in ${file}: the install command wrote them to put ${join(dirname(configPath), 'bin')} on PATH`
+      );
+    }
+  };
   const notes = (prefix: string, say: (line: string) => void): void => {
     if (!plan) return;
     for (const entry of plan.remove)
@@ -215,6 +295,7 @@ export async function runUninstall(
     write(`would stop MAMA and remove its service: ${serviceFile(options)}`);
     notes('would remove', write);
     if (!data) write('the data stays; --data also removes it');
+    programNotes();
     return 0;
   }
 
@@ -237,7 +318,7 @@ export async function runUninstall(
   }
   const removed = await uninstallService(options);
   if (removed !== 0 || !plan || !existsSync(plan.root)) {
-    if (plan) write('npm uninstall -g @jungjaehoon/mama-os removes the program itself');
+    programNotes();
     return removed;
   }
 
@@ -246,6 +327,10 @@ export async function runUninstall(
   const lock = acquireInstallLock(control, 'uninstall');
   try {
     for (const entry of plan.remove) {
+      if (entry.program && failed.length > 0) {
+        write(`kept ${entry.path}: run mama uninstall --data again once the above is removed`);
+        continue;
+      }
       try {
         if (entry.remove) entry.remove(entry.path);
         else rmSync(entry.path, { recursive: true, force: true });
@@ -267,6 +352,6 @@ export async function runUninstall(
     lock.release();
   }
   for (const failure of failed) write(`could not remove ${failure}`);
-  write('npm uninstall -g @jungjaehoon/mama-os removes the program itself');
+  programNotes();
   return failed.length > 0 ? 1 : 0;
 }

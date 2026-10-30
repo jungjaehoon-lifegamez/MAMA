@@ -128,6 +128,80 @@ export function compareReleases(left: string, right: string): number {
   return a.pre.length - b.pre.length;
 }
 
+/**
+ * Whether a Node version (no `v`) is inside a package's `engines.node` range: comparators
+ * (`>=`, `>`, `<=`, `<`, `=`, bare), `^` and `~` on full or partial versions, `*` and `x`, joined
+ * by spaces (all hold) and `||` (any holds). Any other form throws with the range, so a target
+ * whose range cannot be read is refused rather than passed.
+ */
+export function nodeSatisfies(range: string, version: string): boolean {
+  const cannot = (): never => {
+    throw new Error(`cannot read the engines range ${JSON.stringify(range)}`);
+  };
+  const at = (core: number[]) => core.join('.');
+  const compare = (op: string, core: number[]) => {
+    const order = compareReleases(version, at(core));
+    return op === '>='
+      ? order >= 0
+      : op === '>'
+        ? order > 0
+        : op === '<='
+          ? order <= 0
+          : op === '<'
+            ? order < 0
+            : order === 0;
+  };
+  /** Whether `version` meets one comparator. */
+  const holds = (token: string): boolean => {
+    if (token === '*' || token === 'x' || token === 'X') return true;
+    const match = /^(>=|<=|>|<|=|\^|~)?v?(\d+|[xX*])(?:\.(\d+|[xX*]))?(?:\.(\d+|[xX*]))?$/.exec(
+      token
+    );
+    if (!match) return cannot();
+    const [, op = '', ...raw] = match;
+    const parts = raw.filter((part) => part !== undefined && !/^[xX*]$/.test(part)).map(Number);
+    // A wildcard is the end of the version: 22.x.5 is not a range.
+    const given = raw.findIndex((part) => part === undefined || /^[xX*]$/.test(part));
+    if (given !== -1 && raw.slice(given).some((part) => part !== undefined && /^\d+$/.test(part)))
+      return cannot();
+    const full = [...parts, 0, 0, 0].slice(0, 3);
+    const bump = (index: number) =>
+      full.map((part, at) => (at < index ? part : at === index ? part + 1 : 0));
+    if (op === '^') {
+      if (parts.length === 0) return true;
+      // The first part given that is not 0 may not change; with none, the last part given.
+      const first = parts.findIndex((part) => part !== 0);
+      return compare('>=', full) && compare('<', bump(first === -1 ? parts.length - 1 : first));
+    }
+    if (op === '~') {
+      if (parts.length === 0) return true;
+      return compare('>=', full) && compare('<', bump(parts.length === 1 ? 0 : 1));
+    }
+    if (parts.length === 3) return compare(op === '' ? '=' : op, full);
+    // A partial version: bare and = mean any version under it; the others compare its bounds.
+    if (parts.length === 0) return op === '' || op === '=' || op === '>=' || op === '<=';
+    const next = bump(parts.length - 1);
+    if (op === '' || op === '=') return compare('>=', full) && compare('<', next);
+    if (op === '>=') return compare('>=', full);
+    if (op === '<') return compare('<', full);
+    if (op === '>') return compare('>=', next);
+    return compare('<', next);
+  };
+  const alternatives = range.split('||').map((part) => part.trim());
+  if (alternatives.some((part) => part === '')) return cannot();
+  // Every comparator is read, so a form this cannot read refuses even beside one that fails.
+  return alternatives
+    .map((part) =>
+      part
+        // `>= 22.13.0` is one comparator.
+        .replace(/(>=|<=|>|<|=|\^|~)\s+/g, '$1')
+        .split(/\s+/)
+        .map((token) => holds(token))
+        .every(Boolean)
+    )
+    .some(Boolean);
+}
+
 function day(at: Date, timeZone: string): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone,

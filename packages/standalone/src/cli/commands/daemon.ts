@@ -530,6 +530,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       pid: process.pid,
       command,
       version: resolvePackageVersion(),
+      // What `mama update --node` confirms after it moves the managed Node.
+      node: process.version,
       startedAt,
       stage: stopped ? 'stopping' : booted ? 'running' : currentStage,
       lastError,

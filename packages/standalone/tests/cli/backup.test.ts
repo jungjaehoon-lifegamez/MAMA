@@ -122,6 +122,11 @@ async function manifestOf(archive: string): Promise<BackupManifest> {
 describe('mama backup', () => {
   it('writes one verified archive of what the install reads, 0600 under backups/', async () => {
     const installed = install();
+    // The program the install command keeps in the MAMA home is neither archived nor left out.
+    for (const path of ['node/bin/node', 'npm/lib/node_modules/x/index.js', 'bin/mama']) {
+      mkdirSync(dirname(join(installed.root, path)), { recursive: true });
+      writeFileSync(join(installed.root, path), 'program');
+    }
     const lines: string[] = [];
     const archive = await runBackup([], {
       home: installed.home,
@@ -197,7 +202,8 @@ describe('mama backup', () => {
       member_root: { physical: realpathSync(installed.members) },
       tools_root: { physical: realpathSync(installed.tools) },
     });
-    expect(lines.join('\n')).toContain('left out, not read by this version: legacy-notes');
+    expect(lines).toContain('  left out, not read by this version: legacy-notes');
+    expect(names.filter((name) => /^root\/(node|npm|bin)(\/|$)/.test(name))).toEqual([]);
     expect(lines.join('\n')).toContain('left out as credentials: auth.env');
 
     // Extracted, modes, symlinks and the database come back as they were.

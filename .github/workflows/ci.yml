@@ -169,7 +169,9 @@ jobs:
   # Node's signed hashes. On both, the script's own tests run on that platform's shell tools, and
   # run.mjs installs this build from a local registry with the real Node download and the vendors'
   # backend installers, then inits it, writes the service files through a stand-in service manager
-  # and checks what they run.
+  # and checks what they run. Then it boots that install's daemon and moves its Node (PR 2): a
+  # patch pin, the move killed after each step and recovered, a Node that cannot boot put back, and
+  # a major pin with the npm prefix rebuilt.
   install-check:
     needs: [changes, setup]
     if: ${{ github.event_name == 'push' || needs.changes.outputs.standalone == 'true' }}

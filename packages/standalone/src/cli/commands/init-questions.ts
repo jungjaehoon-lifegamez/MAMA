@@ -1,4 +1,5 @@
-import { existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync } from 'node:fs';
 import type { ConnectorsConfig } from '../../connectors/framework/types.js';
 import { backendEnvironment } from '../../runtime/backend-security.js';
 import { CliInputError, nonblankLine, type PromptAdapter } from '../prompt.js';
@@ -216,15 +217,30 @@ export function validTimezone(timezone: string): string {
 }
 
 /**
+ * Run a backend's own sign-in attached to the terminal (install.md, "Backend CLI"): init names the
+ * command and runs it for the person, then reads the login again. Its exit status.
+ */
+export type BackendSignIn = (command: string, args: string[], env: NodeJS.ProcessEnv) => number;
+
+export const terminalSignIn: BackendSignIn = (command, args, env) => {
+  const result = spawnSync(command, args, { stdio: 'inherit', env });
+  if (result.error) throw result.error;
+  return result.status ?? 1;
+};
+
+/**
  * The backend this install will run must be installed, at least the version a release was
  * verified on, and signed in, before anything is written: the daemon would otherwise fail its
- * first turn. Codex is asked about the managed home MAMA gives it.
+ * first turn. Codex is asked about the managed home MAMA gives it. With `signIn` (a terminal), a
+ * signed-out backend's login runs here, and the login is read again; without it, the command is
+ * named and init stops.
  */
 export function checkBackend(
   backend: 'claude' | 'codex',
   codexHome: string,
   locate: (name: string) => string | undefined,
-  run: ProbeRun | undefined
+  run: ProbeRun | undefined,
+  signIn?: { run: BackendSignIn; write: (line: string) => void }
 ): void {
   const executable = locate(backend);
   const login =
@@ -236,11 +252,14 @@ export function checkBackend(
   }
   // The daemon starts the backend without secret-shaped variables; a login that only this
   // shell's API key gives would pass here and fail every turn.
-  const probe = probeBackend(backend, executable, {
-    env: backendEnvironment(),
-    ...(backend === 'codex' ? { codexHome } : {}),
-    ...(run ? { run } : {}),
-  });
+  const env = backendEnvironment();
+  const read = () =>
+    probeBackend(backend, executable, {
+      env,
+      ...(backend === 'codex' ? { codexHome } : {}),
+      ...(run ? { run } : {}),
+    });
+  let probe = read();
   if (probe.version === null) throw new CliInputError(`${probe.problem}; check ${executable}`);
   // An old CLI is the more useful answer even when its login could not be read.
   if (!probe.versionOk) {
@@ -249,6 +268,24 @@ export function checkBackend(
     );
   }
   if (probe.problem) throw new CliInputError(`${probe.problem}; check ${executable}`);
+  if (!probe.loggedIn && signIn) {
+    signIn.write(`${backend} is not signed in; running: ${login}`);
+    let status: number;
+    if (backend === 'codex') {
+      // Codex refuses a CODEX_HOME that does not exist; this one is MAMA's own.
+      mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+      status = signIn.run(executable, ['login'], { ...env, CODEX_HOME: codexHome });
+    } else {
+      status = signIn.run(executable, ['auth', 'login'], env);
+    }
+    if (status !== 0) {
+      throw new CliInputError(
+        `${login} exited ${status}; sign in with it yourself, then run mama init again.`
+      );
+    }
+    probe = read();
+    if (probe.problem) throw new CliInputError(`${probe.problem}; check ${executable}`);
+  }
   if (!probe.loggedIn) {
     throw new CliInputError(`${backend} is not signed in. Run: ${login}, then mama init again.`);
   }
@@ -338,11 +375,18 @@ export async function askJev(
   return { enabled, key: nonblankLine(await prompt.secret('Jev API key')) };
 }
 
+/** The only backend on PATH is the answer Enter keeps; with both or neither, one is typed. */
 export async function askBackend(
   prompt: PromptAdapter,
-  check: (name: 'claude' | 'codex') => void
+  check: (name: 'claude' | 'codex') => void,
+  locate: (name: string) => string | undefined
 ): Promise<{ backend: 'claude' | 'codex'; model: string }> {
-  const backend = await text(prompt, 'Backend (claude|codex)');
+  const found = (['claude', 'codex'] as const).filter((name) => locate(name) !== undefined);
+  const shown = found.length === 1 ? found[0] : undefined;
+  const backend =
+    (await optionalText(prompt, `Backend (claude|codex)${shown ? ` [${shown}]` : ''}`)) ??
+    shown ??
+    '';
   if (backend !== 'claude' && backend !== 'codex')
     throw new CliInputError('Backend must be claude or codex.');
   check(backend);
