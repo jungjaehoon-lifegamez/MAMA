@@ -1,8 +1,9 @@
 # Install command (1.0 W2.4)
 
 Rows I1, I4 and I5 of [v1.md](v1.md); plan [W2.4](v1-plan.md#w24-install-command-i1-i4-i5). Code
-read at `17dcbcafb`. `s/` is `packages/standalone/src`. Vendor pages were read on 2026-10-30
-([Sources](#sources)).
+read at `17dcbcafb`, revised at `4b25f4b45` for the owner decision of 2026-10-30. `s/` is
+`packages/standalone/src`. Vendor pages were read on 2026-10-30 ([Sources](#sources)).
+Measurements and reasons: [install-notes.md](install-notes.md).
 
 ## Why
 
@@ -10,6 +11,10 @@ A person installs Node, runs `npm install -g`, installs and signs in a backend, 
 `mama init` (I1). `start.sh` pins whatever Node ran init (`s/cli/commands/service.ts:161`), so an
 upgrade or an nvm switch can still break the service. Nothing says how to get `gws` (I4) or which
 versions are supported (I5).
+
+Owner, 2026-10-30: the person's agent (Claude Code or Codex) installs MAMA through conversation,
+and the person never touches a terminal. The bot token goes the existing way: as
+`MAMA_TELEGRAM_TOKEN` into init's environment, then into `~/.mama/auth.env` (0600).
 
 ## What the script makes
 
@@ -85,9 +90,9 @@ running Node is refused at step 2, before any change.
 
 ## Backend CLI
 
-- The script asks for `claude` or `codex`, or takes `--backend`. When `command -v` finds it,
-  nothing is installed; init checks its version and login (`s/cli/commands/init-questions.ts:223-255`).
-- Otherwise it runs the vendor's documented installer, into `~/.local/bin`:
+- The script takes `--backend claude|codex` and asks nothing. A backend that `command -v` finds
+  counts only when `<path> --version </dev/null` exits 0 and prints a version (finding A). Otherwise
+  the vendor's documented installer runs, into `~/.local/bin`:
   - Claude Code: `curl -fsSL https://claude.ai/install.sh | bash`.
   - Codex: `curl -fsSL https://chatgpt.com/codex/install.sh | sh`, always with
     `CODEX_NON_INTERACTIVE=1` and `CODEX_HOME` unset. On a terminal its "Start Codex now?" prompt
@@ -95,9 +100,17 @@ running Node is refused at step 2, before any change.
 - `~/.local/bin` joins PATH before init: init and `service install` find the backend there
   (`init-questions.ts:229`, `service.ts:154-159`), and `start.sh` carries its folder
   (`launch-files.ts:102-118`).
-- Init refuses a signed-out backend today (`init-questions.ts:252-254`). On a terminal it now runs
-  the login it names (`:231`), attached to the terminal, then probes again; `--non-interactive`
-  still refuses. Sign-in is then init's only backend step (B1).
+- Init signs nothing in. It refuses a missing, old or signed-out backend before writing anything
+  (`init-questions.ts:238-292`), naming the login with the backend's full path. The agent runs that
+  login in the background, gives the person its URL and code, then runs the install command
+  again.
+
+| Installing agent | Backend | Sign-in                                                                                                                                                                                                     |
+| ---------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code      | claude  | None: the account's Claude login is the one the installer uses; `claude auth status --json` reads it from an agent's shell ([notes](install-notes.md#backend-sign-in-measured))                             |
+| Claude Code      | codex   | The managed home: `CODEX_HOME=~/.mama/.codex <codex> login` (opens the browser on this machine) or `login --device-auth` (prints a page and a code; the person turns on device code login in ChatGPT first) |
+| Codex            | codex   | The same: Codex's own `~/.codex` login is not MAMA's (`init-questions.ts:234`)                                                                                                                              |
+| Codex            | claude  | `claude auth login` from Codex's shell; it starts and prints its URL without a terminal, and whether it completes is measured in leg C ([Live proof](#live-proof)); if it does not, Q2                      |
 
 ## Linux
 
@@ -108,16 +121,19 @@ running Node is refused at step 2, before any change.
   `assertRootAncestors` (`s/runtime/tools-paths.ts:25-42`); init makes `members/` and `tools/`
   (`default-roots.ts:27`). Linger is what init tries and only reports (`init.ts:634-644`). The
   member temp roots sit under `/tmp` (`s/runtime/backend-security.ts:35,37`).
+- In an agent's shell `sudo` has no terminal to ask the password on (`install.sh:210` runs it
+  `</dev/null`), so it runs only where no password is asked; otherwise the script prints the
+  command. How a person runs it without a terminal is wave 3's (L5).
 - W2.4 assumes Ubuntu 24.04: glibc, systemd user units, a writable `/var`, `sudo` for the person.
   Wave 3 measures SteamOS (L5) and confirms each, and owns `bwrap`, `socat` and LibreOffice (L2,
   I3); the script installs no system packages.
 
 ## How it is delivered and run
 
-- `create-release` attaches `install.sh` (`release.yml:490`). The documented command:
+- `create-release` attaches `install.sh` (`release.yml:490`). The command, which the agent runs:
 
   ```sh
-  curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | sh
+  curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | sh -s -- --backend claude --non-interactive
   ```
 
 - `MAMA_OS_VERSION=` and the pin are written by `sync-versions.js`, which the release and the
@@ -125,26 +141,29 @@ running Node is refused at step 2, before any change.
   So `create-release` refuses a script whose version is not the tag's, and waits until
   `npm view @jungjaehoon/mama-os@<version> version` answers before it uploads.
 - The body is one function called on the last line, so a cut-off download runs nothing.
-- The question and init read `/dev/tty` (init requires a terminal, `init.ts:376`). Without one
-  the script needs `--backend` and `--non-interactive` (init reads `MAMA_INIT_*`, `init.ts:240-288`)
-  or `--no-init`, which prints the init command. No secret goes through the script or its flags.
+- No terminal is read. A new install needs `--backend` and either `--non-interactive` (init reads
+  `MAMA_INIT_*` and `MAMA_TELEGRAM_TOKEN`) or `--no-init`, which prints the init command. A set-up
+  install needs no flag, so the bare command that `mama update`, doctor and status print
+  (`s/cli/runtime/node-move-journal.ts:61-62`) runs as is.
+- Init gets `MAMA_INIT_BACKEND` from `--backend`. `MAMA_TELEGRAM_TOKEN` reaches init through the
+  environment only, never a flag, and npm and the vendor installers run without it.
 - npm and init run by full path with `~/.mama/node/bin` first on PATH, as `npmEnvironment` does
   (`update.ts:181-186`). npm honours `npm_config_registry`; the script has no registry flag.
 - Startup block, by `$SHELL`: zsh `~/.zshrc`; bash `~/.bashrc` on Linux, `~/.bash_profile` on macOS
   (or `~/.profile` when only that exists); fish: the `fish_add_path` line is printed, nothing
   written; other `~/.profile`. Each run rewrites the text between `# >>> mama >>>` and
-  `# <<< mama <<<`.
+  `# <<< mama <<<`. The agent's shell does not read it, so the agent uses full paths.
 
-| On a run, when                                                             | The script                                                                                                   |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `~/.mama/runtime/node-move.json` exists                                    | Finishes or undoes that move first, as above                                                                 |
-| `~/.mama/config.yaml` or `start.sh` exists and `~/.mama/npm` holds no MAMA | Refuses before any change: another install owns this account; `mama update --dry-run` shows how it updates   |
-| `~/.mama/config.yaml` exists and `~/.mama/npm` holds MAMA                  | Moves Node if the pin differs, then runs `mama init`, which resumes (`init.ts:415-423`) or says it is set up |
-| No setup yet, `~/.mama/node` has the pinned version                        | Skips Node                                                                                                   |
-| No setup yet, `npm ls -g --prefix ~/.mama/npm` shows the script's version  | Skips the package; another version is reinstalled                                                            |
-| `command -v mama` names another program                                    | Names it, and says the startup block puts the wrapper first                                                  |
+| On a run, when                                                             | The script                                                                                                                                    |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.mama/runtime/node-move.json` exists                                    | Finishes or undoes that move first, as above                                                                                                  |
+| `~/.mama/config.yaml` or `start.sh` exists and `~/.mama/npm` holds no MAMA | Refuses before any change: another install owns this account; `mama update --dry-run` shows how it updates                                    |
+| `~/.mama/config.yaml` exists and `~/.mama/npm` holds MAMA                  | Takes no flag; moves Node if the pin differs, then runs `mama init --non-interactive`, which resumes (`init.ts:415-423`) or says it is set up |
+| No setup yet, `~/.mama/node` has the pinned version                        | Skips Node                                                                                                                                    |
+| No setup yet, `npm ls -g --prefix ~/.mama/npm` shows the script's version  | Skips the package; another version is reinstalled                                                                                             |
+| `command -v mama` names another program                                    | Names it, and says the startup block puts the wrapper first                                                                                   |
 
-## PR 1: `install.sh` and its CI leg
+## PR 1: `install.sh` and its CI leg (merged, #538)
 
 - `packages/standalone/install/install.sh`, POSIX `sh`, `set -eu`: an unfinished Node move;
   refusal checks; platform
@@ -172,7 +191,7 @@ running Node is refused at step 2, before any change.
 - `shellcheck` in lint; shell tests: each shell's block, rewritten in place; a username outside
   `default-roots.ts:22`'s pattern refused before `sudo`; no `sudo` on macOS.
 
-## PR 2: `mama` around the managed program
+## PR 2: `mama` around the managed program (merged, #539)
 
 - [Moving the managed Node](#moving-the-managed-node): `mama update --node <folder>`, the
   script's recovery, and two changes to `mama update` itself (the pin note and the `engines`
@@ -187,12 +206,15 @@ running Node is refused at step 2, before any change.
 - `mama uninstall` (`s/cli/commands/uninstall.ts:1-9`, "the program is an npm package, which npm
   removes"): with `--data` the plan lists the managed program and removes it with the home, last;
   without it the program stays and is named. Both print the startup block to remove.
-- Init: the only backend on PATH is the default answer (`init-questions.ts:345`); the login run of
-  [Backend CLI](#backend-cli); "already set up" also names `mama update` (`init.ts:419-422`).
+- Init: the only backend on PATH is the default answer (`init-questions.ts:345`); the terminal
+  sign-in, which PR 5 takes out of the whole setup again; "already set up" also names
+  `mama update` (`init.ts:419-422`).
 - `service install`: for an npm install, `start.sh`'s PATH also names `<prefix>/bin`
   (`launch-files.ts:102-118`), where npm puts commands installed beside MAMA.
 
 ## PR 3: tools a source needs (I4)
+
+In progress on `feat/source-tools`, by another worker.
 
 - A source names its tool with `type: 'cli'` (`s/connectors/gmail/index.ts:68-77`, and calendar,
   drive, sheets). gws's requirement, with its install methods, moves to one export in
@@ -213,11 +235,144 @@ running Node is refused at step 2, before any change.
 
 - Tests: each caller with gws missing, on the shell's PATH only, and on the service's. The CI leg
   runs both commands with no other Node on PATH.
+- Under the agent, its lines are commands the agent runs as printed, so their wording stays.
+  - The whole setup's caller goes with `askAnswers` (W2.4.5c), since the connectors are `{}` under
+    `--non-interactive` (`init.ts:286`). Whichever of PR 3 and PR 5 lands second drops that call.
+  - `--section connectors` needs a terminal (Q1).
+  - Doctor's lines are what the agent reads.
+
+## PR 5: setup through the person's agent
+
+Each item ends with its done command. Each names its `## [Unreleased]` entry; the release
+(release-process.md, step 2) relies on them.
+
+- **W2.4.5a `install.sh` from an agent's shell.**
+  - Remove the terminal mode: the `/dev/tty` probe, the backend question and
+    `init </dev/tty >/dev/tty` (`install.sh:76-83,175-187,440-444`).
+    - A new install needs `--backend` and `--non-interactive` or `--no-init`.
+    - A set-up install (`config.yaml` present) takes no flag. It skips the backend step, keeps
+      `~/.local/bin` in the startup block when a backend is there, and runs
+      `mama init --non-interactive`.
+  - A backend `command -v` finds counts only when `"$backend_path" --version </dev/null` exits 0
+    and prints a version; otherwise the vendor installer runs, and the installed one must pass the
+    same check (`install.sh:334-371`).
+  - Init gets `MAMA_INIT_BACKEND=$backend` (`install.sh:438`). A different `MAMA_INIT_BACKEND`
+    already in the environment is refused.
+  - npm and the vendor installers run with `MAMA_TELEGRAM_TOKEN` unset.
+  - The Linux lines that say init asks for or offers other folders (`install.sh:201,213`) name
+    `MAMA_INIT_MEMBER_ROOT` and `MAMA_INIT_TOOLS_ROOT` instead, since no question is left.
+  - Tests in `tests/cli/install-script.test.ts`:
+    - a `claude` first on PATH that exits 127 makes the vendor installer run;
+    - a set-up install with no flags runs init;
+    - the token is absent from a stub vendor installer's environment;
+    - `--backend codex` with `MAMA_INIT_BACKEND=claude` is refused;
+    - the "without a terminal" case is rewritten.
+  - `packages/standalone/CHANGELOG.md` `## [Unreleased]`, `### Changed`: the install script asks
+    nothing and runs from an agent's shell. A found backend must run before the installer is
+    skipped. A set-up install needs no flags.
+  - Done: `cd packages/standalone && npx vitest run tests/cli/install-script.test.ts && cd ../.. && pnpm lint:sh`.
+
+- **W2.4.5b Pairing from the conversation.** Only `ask`'s input and three lines of text change in
+  `telegram-pairing.ts`.
+  - `environmentAnswers` (`init.ts:245-293`) drops `MAMA_INIT_COMMON_CHAT_ID` and
+    `MAMA_INIT_OWNER_TELEGRAM_ID` (`:263`, `:283`). It follows `askAnswers`' order:
+    - the backend;
+    - `checks.telegram(token)` with no chat (`:264`);
+    - the folders;
+    - `checks.pair(token)` last (`:215-218`).
+  - `checks.pair` (`init.ts:490-513`) is reused; its `ask` (`:497`) becomes a file reader.
+    - Init makes a folder with `mkdtemp` under the OS temp folder (0700) and prints the file to
+      write, `<folder>/code`.
+    - Every second, `ask` treats a missing or empty file as not yet. It reads and unlinks a
+      non-empty one and returns its trimmed text.
+    - `ask` rejects once the signal aborts (`telegram-pairing.ts:98-99`). The folder is removed when
+      init ends.
+    - A wrong code gets `:163`'s line, and init waits for the file again.
+  - `telegram-pairing.ts` text: `:106` names the file and says that a `/bind` sent early counts
+    (`:110-121`); `:134` says "Give this code to the agent setting up MAMA."; `:163` drops "type".
+  - Tests:
+    - `tests/cli/onboarding.test.ts` runs `--non-interactive` pairing through the file:
+      - a wrong code, then the right one;
+      - `/bind` before the code, and after it;
+      - a code the bot never sent does not count, and the owner is the sender whose code was
+        written;
+      - an abort while waiting;
+      - no folder left afterwards.
+    - `tests/cli/telegram-pairing.test.ts` keeps its cases, with the new text.
+  - CI: `scripts/install-check/run.mjs:276-277` drops the two IDs. `managed.mjs`'s Telegram
+    stand-in serves `getUpdates` (a private message, then `/bind` from the same sender) and
+    `sendMessage`, takes the code from the DM it was asked to send and writes it to the file init
+    printed.
+  - `packages/standalone/CHANGELOG.md` `## [Unreleased]`:
+    - `### Changed`: `mama init --non-interactive` pairs the first owner and the common group
+      through the bot. The code the bot sends is written to the file init names.
+    - `### Removed`: `MAMA_INIT_OWNER_TELEGRAM_ID` and `MAMA_INIT_COMMON_CHAT_ID`.
+  - Done: `cd packages/standalone && npx vitest run tests/cli/onboarding.test.ts tests/cli/telegram-pairing.test.ts`, and CI `install-check` green on macOS and Ubuntu.
+
+- **W2.4.5c The terminal setup goes** ([why, and the count](install-notes.md#the-terminal-setup-why-it-goes)).
+  - Delete:
+    - `askAnswers` (`init.ts:141-237`);
+    - the whole setup's `requireTTY` and terminal prompt (`:380-381`);
+    - its `signIn` option (`:85`, `:461`).
+
+    Bare `mama init` then fails the usage check (`:367`, `:377-378`), which names `--non-interactive`
+    and `--section`. The flag keeps its name, which the owner's decision, `install.sh` and the Docker
+    plan use.
+
+  - Relocate, each before its deletion:
+    - The tunnel (`:186-214`): `--non-interactive` reads `MAMA_CF_ACCESS_ISSUER`,
+      `MAMA_CF_ACCESS_AUD`, `MAMA_VIEWER_HOSTNAMES` and `MAMA_VIEWER_OWNER_EMAILS`, the names
+      `start.sh` uses, with the same checks moved into one function.
+    - Sources, Discord, Slack and Jev: `mama init --section` (B5, unchanged).
+    - The sign-in: the agent runs the login that init names (`init-questions.ts:289-291`). The
+      message carries the located binary's full path (`:245-247`).
+    - Codex's managed home: `mkdirSync(codexHome)` (`:275-276`) moves out of the deleted branch, to
+      just before that refusal, so the named login works.
+    - The setup guide: `docs/start/owner-setup.md` gets "Set up through your agent" in place of "Run
+      onboarding in your terminal" and the ID rows (`:36-62`, `:109-122`). This is the procedure
+      both agents follow (Codex has no plugin):
+      - what the person makes (a BotFather bot, a group);
+      - the command and its variables, and how the token is handed over;
+      - the sign-in table above;
+      - running in the background, the pairing relay, and running again;
+      - done when MAMA answers. It lands here because the live run's agent reads it from `main`.
+  - `terminalSignIn` stays for `--section model` (`init-section.ts:96-101`).
+  - Tests: the `runInit([])` cases in `onboarding.test.ts` (35 calls) move to the environment
+    answers. A case that tests a question only the deleted path asked goes. A tunnel case is added.
+    The `--section` cases stay.
+  - `packages/standalone/CHANGELOG.md` `## [Unreleased]`, `### Removed`: the interactive whole
+    setup. `mama init --non-interactive` is the setup, run by the person's agent (owner-setup.md).
+    The tunnel settings are read from the environment.
+  - Done: `cd packages/standalone && npx vitest run tests/cli/onboarding.test.ts && pnpm typecheck`;
+    `grep -n "askAnswers\|requireTTY" src/cli/commands/init.ts` prints nothing.
+
+- **W2.4.5d The mama-install skill and its test.**
+  - `packages/claude-code-plugin/skills/mama-install/SKILL.md` drops "Never ask for a token, key or
+    password in the conversation" and "the owner runs it in their own terminal". It says plainly:
+    a token given in this conversation reaches the model provider and this agent's transcript.
+  - Then, briefly, with owner-setup.md as the procedure:
+    1. Ask which backend (yourself unless the person picks the other) and which model.
+    2. Take the token. Write it into a 0600 file with a short command; the install command loads
+       it, because a long command's text stays in `ps` ([notes](install-notes.md#the-agents-shell)).
+    3. Start the install in the background, with its output in a file.
+    4. Pass on the sign-in and pairing lines, and write the code where init says.
+    5. After a sign-in, run the same install command again. Use full paths.
+    6. The setup is done when MAMA answers the person's message.
+  - The Jev paragraph says Jev is turned on later with `mama init --section jev` (Q1).
+  - `tests/skills/mama-install-skill.test.js:32-39` asserts:
+    - the transcript sentence;
+    - no "own terminal";
+    - `--non-interactive`;
+    - the guide link and "MAMA answers" stay.
+  - `packages/claude-code-plugin/CHANGELOG.md` `## [Unreleased]`, `### Changed`: the skill installs
+    MAMA OS through the conversation. The plugin's `package.json` and `.claude-plugin/plugin.json`
+    move together at the release.
+  - Done: `cd packages/claude-code-plugin && npx vitest run tests/skills/mama-install-skill.test.js`.
 
 ## PR 4: docs (I1, I5)
 
-- `docs/start/owner-setup.md`: the command, what it makes and asks, Linux's `sudo`, moving Node,
-  and **Supported versions**:
+- `docs/start/owner-setup.md`, beside PR 5's setup section: what the script makes, Linux's `sudo`,
+  moving Node, and **Supported versions**:
 
   | What        | Supported                              | Source                                         |
   | ----------- | -------------------------------------- | ---------------------------------------------- |
@@ -229,87 +384,168 @@ running Node is refused at step 2, before any change.
   | Linux       | set by wave 3 (L5)                     | wave 3's checks entry                          |
   | Docker      | set by wave 4                          | wave 4's checks entry                          |
 
-- README "Getting started", `docs/start/tutorial.md:19`, `docs/reference/cli.md:30,173`,
-  `packages/standalone/README.md:8,14`, the release notes (`release.yml:469-481`): the command
-  first, `npm install -g` for a person who keeps their own Node. `docs/guides/connectors.md:43-44`:
+- Each of these says what to tell the agent first, then `npm install -g` for a person who keeps
+  their own Node:
+  - README "Getting started";
+  - `docs/start/tutorial.md:19`;
+  - `docs/reference/cli.md:15,30,83-84,173`, with the init variables, without the IDs and with the
+    four viewer names;
+  - `packages/standalone/README.md:8,14,20`;
+  - the release notes (`release.yml:469-481`).
+- `docs/guides/viewer.md:26`: the tunnel variables come from the environment. `docs/guides/connectors.md:43-44`:
   PR 3's methods.
-- The `mama-install` skill runs the command with `--backend <choice> --no-init` (Claude Code's Bash
-  has no terminal), then the owner runs `mama init` in their own. Its test moves with it
-  (`packages/claude-code-plugin/tests/skills/mama-install-skill.test.js:22`).
+- `packages/standalone/CHANGELOG.md` `## [Unreleased]`, `### Changed`: the package README and the
+  install guide describe setup through the person's agent and list the supported versions.
+- Done: `pnpm lint` and `pnpm exec prettier --check README.md docs packages/standalone/README.md`
+  pass; `grep -rn "MAMA_INIT_OWNER_TELEGRAM_ID\|hidden prompt" README.md docs/start docs/reference packages/standalone/README.md`
+  prints nothing.
 
 ## Live proof
 
-- **The clean macOS account** (W2.3's candidate proof and B2 need it too):
-  1. verdaccio serves candidate N, named in the account's `~/.npmrc` (removed after), because
-     `mama update` reads npm's config (`update.ts:553`). `install.sh` from the PR installs Node, N
-     and the backend; init signs in, pairs the test bot and starts the service; the DM gets a reply.
-     Checks entry: steps, minutes, every place the docs were left.
-  2. `mama doctor` is clean; `start.sh` names the managed Node; status shows the npm kind.
-  3. A member session's shell runs `node --version`. Members are denied HOME
-     (`s/runtime/backend-security.ts:75`) and take the daemon's PATH
-     (`s/runtime/native-session.ts:231`), so the managed Node may be unreadable there; a refusal
-     becomes a new row.
-  4. W2.3's candidate proof, which needs only PR 1–2: N → N+1; the backend signed out, then
-     `/update` (R7); N+2 rolls back.
-  5. A re-run with another patch pin moves Node, and the service comes back. A move killed after
-     its first rename, then a reboot, starts nothing; the next run undoes it.
-  6. After PR 3: Gmail enabled without gws names the commands; run as printed, doctor passes.
-- **After the release:** W2.3's registry update; then `mama uninstall --data`, the backend removed
-  by its vendor's steps, and the published command against npmjs to a DM reply.
-- **Wave 3:** the same run on the Linux host L5 settles.
+**The clean macOS account**, a Standard account (W2.3's candidate proof and B2 need it too). Start
+state:
+
+- Claude Code is installed by its vendor and signed in by the person.
+- The MAMA plugin comes from the candidate's marketplace.
+- verdaccio serves candidate N, named in the account's `~/.npmrc` (removed afterwards), because
+  `mama update` reads npm's config (`update.ts:583`).
+- The test bot and its group exist.
+- Homebrew's `node`, `codex` and an old `mama` are on this account's PATH, through
+  `/etc/paths.d/homebrew`.
+
+The steps:
+
+1. **Leg A.**
+   1. The person says "install MAMA" to Claude Code.
+   2. The agent asks for the backend (`claude`, itself), the model and the bot token, then runs
+      `install.sh` from the candidate in the background.
+   3. The agent passes on the pairing lines. The person messages the bot, gives the agent the code,
+      adds the bot to the group and sends `/bind`.
+   4. Init starts the service, and the person's DM gets a reply.
+
+   Checks entry: what the person typed, and where (conversation, Telegram, browser, terminal; the
+   terminal count must be 0), the minutes taken, and every place the agent left the docs.
+
+2. `mama doctor` is clean, and `start.sh` names the managed Node.
+   - `start.sh`'s PATH has no per-terminal folder, such as a cmux shim's (finding A).
+   - `mama update --dry-run` prints "(npm install, prefix ~/.mama/npm)" (`update.ts:664`).
+   - The checks entry records which `claude` the run used.
+3. A member session's shell runs `node --version`. Members are denied HOME
+   (`s/runtime/backend-security.ts:75`) and take the daemon's PATH
+   (`s/runtime/native-session.ts:231`), so the managed Node may be unreadable there; a refusal
+   becomes a new row.
+4. W2.3's candidate proof, which needs PR 1, PR 2 and PR 5: N → N+1; the backend signed out, then
+   `/update` (R7); N+2 rolls back.
+5. A re-run with another patch pin moves Node, and the service comes back.
+   - The agent runs the install command as `mama update` prints it, with no flags.
+   - A move killed after its first rename, then a reboot, starts nothing; the next run undoes it.
+6. After PR 3: Gmail is enabled with `mama init --section connectors`, at a terminal until Q1, and
+   with no gws.
+   - Doctor names the commands, and the agent runs them as printed; doctor then passes.
+   - The checks entry says whether `gws auth login` completed from the agent's shell.
+   - The toolkit's `brew install` on this Standard account is recorded (I7).
+7. **Leg B.** `mama uninstall --data` is run at a terminal (it needs one, `uninstall.ts:304`).
+   Claude Code then installs with the `codex` backend. The managed home is signed in from the
+   agent's background shell with `codex login`, or with `--device-auth` and device code login on.
+8. **Leg C.** `mama uninstall --data` and `claude auth logout` are run. Codex then installs with the
+   `claude` backend:
+   - `claude auth login` from Codex's shell (Q2 if it cannot complete);
+   - whether Codex's background run survives the turns of the pairing relay.
+
+**After the release:** W2.3's registry update. Then `mama uninstall --data`, the backend removed
+by its vendor's steps, and leg A against npmjs.
+
+**Wave 3:** the same run on the Linux host that L5 settles, with the `sudo` step.
 
 ## Done when
 
-- **I1 (macOS):** on the clean account, the published command takes a person from no MAMA and no
-  backend to a DM reply with only the sign-in, the bot token and pairing typed; `start.sh` pins
-  `~/.mama/node/bin/node`. Linux closes with wave 3, Docker with wave 4.
+- **I1 (macOS):** on the clean account, from "install MAMA" said to Claude Code, the person reaches
+  a DM reply without typing anything in a terminal.
+  - In the conversation they choose the backend and model, and give the bot token and the bot's
+    pairing code.
+  - In Telegram they make the bot and the group, message the bot, and send `/bind`.
+  - In a browser they sign in a backend that is not the installing agent's.
+
+  `start.sh` pins `~/.mama/node/bin/node`. Legs B and C reach the same reply, or leg C's result goes
+  to Q2. Linux closes with wave 3, Docker with wave 4.
+
 - **I4 (the command part):** enabling a Google source without gws prints commands that work, in
-  init, `--section` and doctor; the image half is wave 4's.
+  `--section` and doctor, and the agent runs doctor's as printed. The image half is wave 4's.
 - **I5 (Node, backend, macOS rows):** the guide lists them with sources, and the run used those.
 
 ## Failure modes
 
-| Failure                                        | Handling                                                              |
-| ---------------------------------------------- | --------------------------------------------------------------------- |
-| npm install fails (network, registry, a build) | npm's code shown; `~/.mama/npm` left for the re-run, which reinstalls |
-| The vendor installer fails                     | Its output shown, exit 1; the vendor's page named                     |
-| `sudo` refused or missing (Linux)              | The command printed; init then offers other folders                   |
-| Moving Node fails to boot                      | The old folders back and started, exit 1                              |
-| A Node move is killed midway                   | The hold keeps it stopped; the next run finishes or undoes the move   |
-| The toolkit cannot install on a fresh Mac      | Init goes on without it (`init.ts:605-611`); see I7                   |
+| Failure                                                                      | Handling                                                                                                                                |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| npm install fails (network, registry, a build)                               | npm's code shown; `~/.mama/npm` left for the re-run, which reinstalls                                                                   |
+| The vendor installer fails                                                   | Its output shown, exit 1; the vendor's page named                                                                                       |
+| The backend `command -v` finds does not run (a shim, no real one)            | The vendor installer runs; the installed one must run, or exit 1                                                                        |
+| A shim that forwards to a real backend elsewhere wins `command -v`           | `start.sh` names the shim's folder; init's real turn fails if the service cannot run it (`init.ts:706-709`); the live proof checks PATH |
+| The backend is signed out                                                    | Init refuses before any write and names the login with the binary's path; the agent runs it, then the install command again             |
+| Device code login is off, or its code expires (15 min)                       | `codex login --device-auth` exits 1 and says so; the browser login, or the setting turned on and the command run again                  |
+| Init sees a login the service lacks (`CLAUDE_CONFIG_DIR`, an API key in env) | The daemon's real turn fails and init says so (`init.ts:706-709`); fixed, the install command again                                     |
+| The install run in the foreground                                            | Claude Code stops it at 10 min at most, mid-pairing or boot; the skill runs it in the background, and a rerun resumes                   |
+| The token on the install command's own line                                  | It stays in `ps` for the run; the skill hands it over through a 0600 file                                                               |
+| No pairing code arrives                                                      | Init waits, as the terminal prompt did; stopping it writes nothing, since pairing comes before every write                              |
+| A wrong code is written                                                      | "That is not a code the bot sent"; init waits for the file again                                                                        |
+| No `/bind` within 15 minutes                                                 | Init stops without writing; the install command again pairs again                                                                       |
+| `sudo` needs a password in an agent's shell (Linux)                          | The command printed; init refuses the default folders until it runs, or takes the two `MAMA_INIT_*_ROOT` folders; wave 3 settles it     |
+| Moving Node fails to boot                                                    | The old folders back and started, exit 1                                                                                                |
+| A Node move is killed midway                                                 | The hold keeps it stopped; the next run finishes or undoes the move                                                                     |
+| The toolkit cannot install on a fresh Mac                                    | Init goes on without it (`init.ts:610-627`); see I7                                                                                     |
 
 ## Order of work
 
-PR 1 → PR 2 → the clean-account run's steps 1–5 (W2.3's candidate proof among them) → PR 3 → PR 4
-→ step 6 → the wave 2 release → the post-release runs → I1, I4 and I5 marked for macOS in v1.md,
-evidence in checks.md.
+PR 1 → PR 2 → PR 5, with PR 3 in parallel → leg A, steps 1–5 (W2.3's candidate proof among them)
+→ PR 3 merged → step 6 → legs B and C → PR 4 → the wave 2 release → the post-release runs → I1, I4
+and I5 marked for macOS in v1.md, evidence in checks.md.
 
 ## Plan corrections
 
 - W2.4's Docker sentence belongs to wave 4: no image exists (D1) and G4 forbids offering a command
-  that has not run. I1's and I4's Docker halves close there, on `mama init --non-interactive`.
+  that has not run. I1's and I4's Docker halves close there, on `mama init --non-interactive`
+  pairing through the code file. This replaces I1's `docker compose run --rm mama init`.
 - I5 closes with waves 3 and 4, which fill the Linux and Docker rows.
 - W2.3's `mama update` changes in PR 2: it has no `engines` check today, and it gains the
   `--node` move and the pin note.
-- "So `mama init` only signs it in" is not true today (`init-questions.ts:252-254`); PR 2 makes it.
+- v1-plan W2.4's "so `mama init` only signs it in": PR 2 made init run the sign-in on a terminal.
+  PR 5 leaves init signing nothing in: it names the login, and the agent runs it.
+- v1.md's wording, edited when the rows close:
+  - B1's "the install command" becomes "install MAMA" said to the agent.
+  - B2's "confirming it in the terminal" becomes relaying it to the agent, which hands it to init.
+  - I4's "in init" becomes `--section` and doctor.
 - New row I7: the macOS toolkit runs `brew install` and needs python3 3.10 or newer
   (`s/tools/document-toolkit.ts:292-300,397-405`). An account without its own Homebrew cannot
   install it. The script does not install Homebrew, a machine-wide manager; the clean-account run
   records what happens.
+- This file's own lines, corrected: `update.ts:553` is `:583`; "status shows the npm kind" was never
+  true (`s/cli/commands/control.ts` prints no kind), and `mama update --dry-run` shows it
+  (`update.ts:664`).
 
 ## Open owner decisions
 
-None: the code, the plan and the rules settle each choice. The clean macOS account and its test bot
-are owner actions already needed by B2 and W2.3.
+- **Q1.** Does "the person never touches a terminal" also cover what comes after the first reply?
+  `mama init --section` (sources, Discord, Slack, Jev, a new bot token), `mama secret set` and
+  `mama uninstall` each need a terminal (`init-section.ts:64`, `secret.ts:18`, `uninstall.ts:304`).
+  - If yes, they take the agent's input as init does: a new row, not W2.4.
+  - If no, the guide sends the person to a terminal for those.
+- **Q2, only if leg C fails.** Should the person run one terminal step to sign Claude in, or should
+  a Claude backend be installed by Claude Code only? This applies when Codex installs MAMA with the
+  `claude` backend and `claude auth login` cannot complete from Codex's shell.
+
+The clean macOS account and its test bot are owner actions already needed by B2 and W2.3.
 
 ## Sources
 
 All read 2026-10-30.
 
 - https://code.claude.com/docs/en/setup
+- https://code.claude.com/docs/en/authentication
 - https://learn.chatgpt.com/docs/codex/cli
+- https://learn.chatgpt.com/docs/auth.md (device code login, the fallbacks, `cli_auth_credentials_store`)
 - https://learn.chatgpt.com/docs/config-file/environment-variables
-- https://github.com/openai/codex
+- https://github.com/openai/codex (`codex-rs/login/src/device_code_auth.rs`, `codex-rs/cli/src/login.rs`,
+  `codex-rs/core/src/unified_exec/mod.rs`)
 - https://chatgpt.com/codex/install.sh (`prompt_yes_no`, `CODEX_NON_INTERACTIVE`, `CODEX_HOME`)
 - https://github.com/googleworkspace/cli; https://registry.npmjs.org/@googleworkspace/cli/latest
 - https://nodejs.org/dist/latest-v22.x/
