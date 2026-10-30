@@ -179,6 +179,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#542).
 - If the clock is behind the latest report sent, MAMA queues no report and logs an error each
   minute naming that report's time, until the clock passes it (#542).
+- `mama stop` no longer refuses a MAMA that is just starting. In its first moments MAMA holds the
+  install before it can answer the stop, and the stop used to report "does not answer on its
+  control socket" or "unknown (pid 0) holds the install" and leave it running. It now waits up to
+  5 seconds for MAMA to answer, then lets it finish what runs and stops it as usual. Running the
+  install command again right after a Node move was cut off hit this: the install command stopped
+  with "MAMA on it did not stop" and changed nothing.
 
 ## [0.78.0] - 2026-10-16
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -415,11 +415,111 @@ describe('mama stop', () => {
     const { home: root, configPath } = home('mama-stop-silent-');
     const lock = acquireInstallLock(daemonControlPaths(root), 'daemon');
     const lines: string[] = [];
-    expect(await runStop([], { configPath, write: (line) => lines.push(line) })).toBe(1);
+    // Past the wait for a booting daemon's socket.
+    expect(
+      await runStop([], {
+        configPath,
+        write: (line) => lines.push(line),
+        pollMs: 5,
+        controlWaitMs: 30,
+      })
+    ).toBe(1);
     expect(lines).toEqual([
       expect.stringMatching(
         /^not stopped: daemon \(pid \d+\) holds the install does not answer on its control socket; mama stop --now stops it without draining$/
       ),
+    ]);
+    lock.release();
+  });
+
+  /**
+   * A daemon booting as the stop reads: it takes the install's lock, writes its holder file and
+   * opens its control socket in that order (daemon.ts, bootDaemon). The stop's first read comes
+   * before the socket, and the boot finishes before its next one. As the install command's
+   * recovery meets a daemon a cut Node move started, on macOS.
+   */
+  async function bootingDaemon(root: string, holderFile: boolean) {
+    const paths = daemonControlPaths(root);
+    const lock = acquireInstallLock(paths, 'daemon');
+    const holder = readFileSync(paths.holderPath, 'utf8');
+    if (!holderFile) rmSync(paths.holderPath);
+    const drain = drainFixture();
+    launchdRuns(lock, drain.events);
+    return {
+      drain,
+      finishBoot: async () => {
+        if (!holderFile) writeFileSync(paths.holderPath, holder);
+        return await startDaemonControl(
+          paths,
+          { status: () => ({}), stop: () => {}, hold: drain.hold },
+          5_000,
+          5
+        );
+      },
+    };
+  }
+
+  it('drains a daemon that holds the install before its control socket opens', async () => {
+    onPlatform('darwin');
+    const { home: root, configPath } = home('mama-stop-booting-');
+    const daemon = await bootingDaemon(root, true);
+    const lines: string[] = [];
+    const stopping = runStop([], {
+      configPath,
+      write: (line) => lines.push(line),
+      pollMs: 5,
+      settleMs: 5,
+    });
+    // The stop's first read is done: it found the daemon with no socket.
+    await new Promise((resolve) => setImmediate(resolve));
+    const server = await daemon.finishBoot();
+    expect(await stopping).toBe(0);
+    expect(lines).toEqual([
+      'drained: nothing runs; stopping',
+      'stopped (launchd service unloaded); mama service start starts it again',
+    ]);
+    await vi.waitFor(() => expect(daemon.drain.events).toEqual(['hold', 'bootout', 'release']));
+    await server.close();
+  });
+
+  it('reads again while the lock is held before its holder file is written (pid 0)', async () => {
+    onPlatform('darwin');
+    const { home: root, configPath } = home('mama-stop-unnamed-');
+    const daemon = await bootingDaemon(root, false);
+    const lines: string[] = [];
+    const stopping = runStop([], {
+      configPath,
+      write: (line) => lines.push(line),
+      pollMs: 5,
+      settleMs: 5,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    const server = await daemon.finishBoot();
+    expect(await stopping).toBe(0);
+    expect(lines).toEqual([
+      'drained: nothing runs; stopping',
+      'stopped (launchd service unloaded); mama service start starts it again',
+    ]);
+    await server.close();
+  });
+
+  it('names a holder that never writes its holder file once the wait is over', async () => {
+    onPlatform('linux');
+    const { home: root, configPath } = home('mama-stop-unnamed-bound-');
+    const paths = daemonControlPaths(root);
+    const lock = acquireInstallLock(paths, 'daemon');
+    rmSync(paths.holderPath);
+    const lines: string[] = [];
+    expect(
+      await runStop([], {
+        configPath,
+        write: (line) => lines.push(line),
+        pollMs: 5,
+        controlWaitMs: 30,
+      })
+    ).toBe(1);
+    expect(lines).toEqual([
+      'not stopped: unknown (pid 0) holds the install and stops when it finishes',
     ]);
     lock.release();
   });

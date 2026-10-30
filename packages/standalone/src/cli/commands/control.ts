@@ -13,8 +13,10 @@ import { unfinishedUpdate } from '../runtime/update-journal.js';
 import {
   drainDaemon,
   lockHolder,
+  type DaemonDrain,
   type DrainCounts,
   type DrainDeadlines,
+  type DrainProgress,
   type LockOwner,
 } from '../runtime/daemon-control.js';
 import {
@@ -28,12 +30,25 @@ import { askDaemon, bootoutLaunchdService, installControlPaths, launchdService }
 /** `mama status` exits 0 while the daemon runs and 3 when nothing serves the install. */
 export const STATUS_STOPPED_EXIT = 3;
 
+/**
+ * How long a drained `mama stop` reads again while a daemon holds the install without answering
+ * on its control socket. A daemon takes the install's lock, writes its holder file and opens the
+ * socket in one stretch at the start of its boot, before it reads its config or starts anything
+ * that claims work (daemon.ts, bootDaemon), and at its own stop closes the socket just before it
+ * lets go. A stop that reads in either stretch finds the lock held with no holder file
+ * (`unknown`, pid 0) or a daemon that does not answer. No turn runs then, and the stretch is a few
+ * file operations, so past this bound the daemon is not starting or ending: it does not answer.
+ */
+export const CONTROL_WAIT_MS = 5_000;
+
 interface ControlOptions {
   home?: string;
   configPath?: string;
   write?: (line: string) => void;
   /** Milliseconds between checks while waiting for a stop; tests shorten it. */
   pollMs?: number;
+  /** How long a drained stop waits for a daemon's control socket (CONTROL_WAIT_MS). */
+  controlWaitMs?: number;
   /** How long `mama stop` waits for the install to be released. */
   timeoutMs?: number;
   /** How long a released install must stay free before `mama stop` reports it stopped. */
@@ -268,28 +283,43 @@ export async function runStop(
     throw new CliInputError('Usage: mama stop [--now]');
   }
   const write = options.write ?? ((line: string) => console.log(line));
-  const holder = lockHolder(installControlPaths(options));
-  // A replay, backfill or register-owner is left to finish; a stopped install has nothing to drain.
-  if (now || holder?.command !== 'daemon') return await stopNow(options, write);
+  if (now) return await stopNow(options, write);
+  const paths = installControlPaths(options);
   let reported = false;
-  const drain = await drainDaemon(
-    installControlPaths(options),
-    (progress) => {
-      if (progress.idle) return;
-      write(
-        reported
-          ? `still draining: ${waitingFor(progress)}`
-          : `draining: new inputs wait; waiting for ${waitingFor(progress)} (at most ${minutes(progress.bound)})`
-      );
-      reported = true;
-    },
-    options.drainDeadlines
-  );
-  if (drain === null) {
+  const onProgress = (progress: DrainProgress): void => {
+    if (progress.idle) return;
     write(
-      `not stopped: ${holderLine(holder)} does not answer on its control socket; mama stop --now stops it without draining`
+      reported
+        ? `still draining: ${waitingFor(progress)}`
+        : `draining: new inputs wait; waiting for ${waitingFor(progress)} (at most ${minutes(progress.bound)})`
     );
-    return 1;
+    reported = true;
+  };
+  // A daemon still opening its control socket is read again (CONTROL_WAIT_MS); booting, it has
+  // nothing to drain.
+  const waitMs = options.controlWaitMs ?? CONTROL_WAIT_MS;
+  const started = Date.now();
+  let drain: DaemonDrain | null = null;
+  while (drain === null) {
+    const holder = lockHolder(paths);
+    // A replay, backfill or register-owner is left to finish; a stopped install has nothing to
+    // drain.
+    if (holder === null || (holder.command !== 'daemon' && holder.command !== 'unknown')) {
+      return await stopNow(options, write);
+    }
+    if (holder.command === 'daemon') {
+      drain = await drainDaemon(paths, onProgress, options.drainDeadlines);
+      if (drain !== null) break;
+    }
+    if (Date.now() - started >= waitMs) {
+      // Still no holder file: the stop without a drain reports the holder as it finds it.
+      if (holder.command !== 'daemon') return await stopNow(options, write);
+      write(
+        `not stopped: ${holderLine(holder)} does not answer on its control socket; mama stop --now stops it without draining`
+      );
+      return 1;
+    }
+    await new Promise((resolve) => setTimeout(resolve, options.pollMs ?? 500));
   }
   try {
     const outcome = await drain.outcome;
