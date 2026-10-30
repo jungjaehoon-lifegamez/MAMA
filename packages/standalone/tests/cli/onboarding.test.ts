@@ -1425,6 +1425,30 @@ describe('tools a source needs (install.md, PR 3)', () => {
     expect(output).toContain('running mama init again continues it.');
   });
 
+  it('mama init run again reads a hand-edited connectors.json as boot does', async () => {
+    const first = prompt(gmail(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    await expect(
+      runInit(
+        [],
+        options(first.adapter, {
+          findExecutable: shell(),
+          startService: async () => {
+            throw new Error('fixture: MAMA did not finish starting');
+          },
+        })
+      )
+    ).rejects.toThrow(/did not finish starting/);
+    // Boot reads names in any case and ignores the ones it does not know, whatever their value.
+    const file = join(root, 'connectors.json');
+    const { gmail: entry } = JSON.parse(readFileSync(file, 'utf8'));
+    writeFileSync(file, JSON.stringify({ Gmail: entry, nonsense: { enabled: true }, other: null }));
+    const again = prompt([], []);
+    await runInit([], options(again.adapter, { findExecutable: shell() }));
+    expect(again.output.join('\n')).toContain(
+      "gmail runs gws, which the service's PATH does not have."
+    );
+  });
+
   it("mama init: gws on the shell's PATH only is carried into start.sh, so only its login is named", async () => {
     const output = await init({ findExecutable: shell(gwsIn('shell-bin')) });
     expect(output).toContain('Log in to gws with the scopes gmail needs: gws auth login');
@@ -1511,6 +1535,18 @@ describe('tools a source needs (install.md, PR 3)', () => {
       ).rejects.toThrow(
         `${join(root, 'start.sh')} does not parse (unterminated single quote); mama service install --replace rewrites it`
       );
+    });
+
+    it('a start.sh that cannot be read keeps its own error', async () => {
+      await setUp([]);
+      chmodSync(join(root, 'start.sh'), 0o000);
+      try {
+        await expect(
+          runInit(['--section', 'connectors'], options(prompt(['gmail'], []).adapter))
+        ).rejects.toThrow(/EACCES/);
+      } finally {
+        chmodSync(join(root, 'start.sh'), 0o700);
+      }
     });
 
     it("gws on the service's PATH", async () => {

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import * as yaml from 'js-yaml';
@@ -42,7 +42,7 @@ import {
   type DaemonControlReply,
 } from '../runtime/daemon-control.js';
 import { defaultServiceRun, type ServiceRun } from '../runtime/systemd-service.js';
-import { askDaemon, pathsFor } from './daemon.js';
+import { askDaemon } from './daemon.js';
 import {
   askBackend,
   askDiscord,
@@ -599,7 +599,7 @@ export async function runInit(
         );
       // start.sh does not exist yet: the service step writes it from this shell.
       await writeSourceTools(
-        answers.connectors,
+        Object.keys(answers.connectors),
         { root, home, platform, configPath },
         config,
         options,
@@ -610,16 +610,14 @@ export async function runInit(
       config = loadConfig({ home, path: configPath });
       // A setup that stopped (often at the boot wait, when a source's tool is missing) names the
       // tools again: the service does not start until they are installed.
-      const connectorsPath = pathsFor(configPath, config).connectorsConfigPath;
-      if (existsSync(connectorsPath))
-        await writeSourceTools(
-          JSON.parse(readFileSync(connectorsPath, 'utf8')) as ConnectorsConfig,
-          { root, home, platform, configPath },
-          config,
-          options,
-          write,
-          SOURCE_TOOL_NEXT
-        );
+      await writeSourceTools(
+        undefined,
+        { root, home, platform, configPath },
+        config,
+        options,
+        write,
+        SOURCE_TOOL_NEXT
+      );
     }
     if (!done('owner')) {
       const owner = progress.pendingOwner;

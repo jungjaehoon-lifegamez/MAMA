@@ -38,8 +38,10 @@ export function serviceSight(
 ): ServiceSight {
   const startPath = join(root, 'start.sh');
   if (existsSync(startPath)) {
+    // A read error (EACCES) is its own; only the parse is named as one.
+    const text = readFileSync(startPath, 'utf8');
     try {
-      const reading = readStartScript(readFileSync(startPath, 'utf8'), home);
+      const reading = readStartScript(text, home);
       return {
         path: startScriptPath(reading, home, platform),
         nodePath: (reading.exec === null ? undefined : shellWords(reading.exec)[1]) ?? null,

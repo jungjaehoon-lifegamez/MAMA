@@ -12,7 +12,7 @@ import type {
   NormalizedItem,
 } from '../framework/types.js';
 import { cliAuth } from '../framework/types.js';
-import { execGwsAsync, execGwsTextAsync, gwsMissing, gwsTool } from '../framework/gws-utils.js';
+import { execGwsAsync, execGwsTextAsync, gwsTool, gwsUnavailable } from '../framework/gws-utils.js';
 import { readConnectorState, writeConnectorState } from '../framework/connector-state.js';
 
 interface SheetValues {
@@ -43,8 +43,8 @@ export class SheetsConnector implements IConnector {
   async init(): Promise<void> {
     try {
       await execGwsTextAsync(['--version']);
-    } catch {
-      throw new Error(gwsMissing);
+    } catch (error) {
+      throw new Error(gwsUnavailable(error), { cause: error });
     }
     this.loadSnapshot();
   }

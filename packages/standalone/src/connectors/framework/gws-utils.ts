@@ -19,6 +19,13 @@ export const gwsLogin = `mama doctor names the ${gwsTool.command} ${gwsTool.logi
 /** A source's error when the service cannot run gws; doctor names how to install it here. */
 export const gwsMissing = `${gwsTool.command} is not on the service's PATH; mama doctor names how to install it, and ${gwsLogin}`;
 
+/** A source's error when `gws --version` fails: not found (ENOENT), or found but not running. */
+export function gwsUnavailable(error: unknown): string {
+  return (error as NodeJS.ErrnoException).code === 'ENOENT'
+    ? gwsMissing
+    : `${gwsTool.command} is on the service's PATH but ${gwsTool.command} --version failed (${error instanceof Error ? error.message : String(error)})`;
+}
+
 export interface GwsCallOptions {
   maxBuffer?: number;
   /** Defaults to 60 s; a download names its own. */

@@ -192,7 +192,7 @@ export async function runInitSection(section: string, options: InitOptions = {})
       for (const { temporary, path } of staged) renameSync(temporary, path);
       if (connectors)
         await writeSourceTools(
-          connectors,
+          Object.keys(connectors),
           { root, home, platform: options.platform ?? process.platform, configPath },
           config,
           options,

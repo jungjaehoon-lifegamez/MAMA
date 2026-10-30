@@ -1,13 +1,15 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   cliAuth,
   type AuthRequirement,
   type ConnectorsConfig,
+  type IConnector,
 } from '../../connectors/framework/types.js';
 import { loadConnector } from '../../connectors/index.js';
 import type { W1Config } from '../../runtime/config.js';
-import { connectorLoadPaths } from '../../runtime/connectors.js';
+import { connectorLoadPaths, planConnectors } from '../../runtime/connectors.js';
 import { createTimeZoneSetting } from '../../runtime/timezone.js';
 import { gwsTool } from '../../connectors/framework/gws-utils.js';
 import { backendEnvironment } from '../../runtime/backend-security.js';
@@ -220,12 +222,13 @@ export async function collectConnectors(
 
 /**
  * For the sources just set up, each tool they run that the service cannot find, with how to
- * install it, and each one's login (install.md, PR 3). A source names its tool in its own
- * requirements, as doctor reads them (connectors.json's `auth` is not what the source runs). It
- * reports; the setup is already saved.
+ * install it, and each one's login (install.md, PR 3). connectors.json is read as boot and doctor
+ * read it (planConnectors), and each source names its tool in its own requirements, since
+ * connectors.json's `auth` is not what the source runs. `only` limits it to the sources just
+ * set up. It reports; the setup is already saved, and what boot refuses doctor names in full.
  */
 export async function writeSourceTools(
-  connectors: ConnectorsConfig,
+  only: readonly string[] | undefined,
   install: { root: string; home: string; platform: NodeJS.Platform; configPath: string },
   config: W1Config,
   options: Pick<ServiceOptions, 'findExecutable' | 'nodePath' | 'cliPath' | 'toolDirectoryExists'>,
@@ -235,19 +238,42 @@ export async function writeSourceTools(
 ): Promise<void> {
   const { root, home, platform, configPath } = install;
   const paths = pathsFor(configPath, config);
+  let plan: ReturnType<typeof planConnectors>;
+  try {
+    plan = planConnectors({
+      configPath: paths.connectorsConfigPath,
+      onIgnored: () => {},
+      ...(config.wiki?.enabled
+        ? { wikiRoot: resolve(config.wiki.vaultPath!, config.wiki.wikiDir!) }
+        : {}),
+    });
+  } catch (error) {
+    write(
+      `connectors.json does not load as boot reads it (${(error as Error).message}); mama doctor names what to correct.`
+    );
+    return;
+  }
   const timeZone = createTimeZoneSetting(config.timezone);
   const sources: { name: string; needs: AuthRequirement[] }[] = [];
-  for (const [name, connector] of Object.entries(connectors)) {
-    if (!connector.enabled) continue;
-    const source = await loadConnector(
-      name,
-      connector,
-      connectorLoadPaths(name, {
-        statePath: paths.connectorsRoot,
-        kagemushaDbPath: paths.kagemushaDbPath,
-        timeZone,
-      })
-    );
+  for (const name of plan.enabledConnectorNames) {
+    if (only !== undefined && !only.includes(name)) continue;
+    let source: IConnector;
+    try {
+      source = await loadConnector(
+        name,
+        plan.config.config[name],
+        connectorLoadPaths(name, {
+          statePath: paths.connectorsRoot,
+          kagemushaDbPath: paths.kagemushaDbPath,
+          timeZone,
+        })
+      );
+    } catch (error) {
+      write(
+        `${name} cannot be built from connectors.json (${(error as Error).message}); mama doctor names it.`
+      );
+      continue;
+    }
     sources.push({ name, needs: source.getAuthRequirements() });
   }
   // start.sh is read only when a source runs a tool.
