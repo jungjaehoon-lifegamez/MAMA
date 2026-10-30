@@ -107,12 +107,12 @@ running Node is refused at step 2, before any change.
   login in the background, gives the person its URL and code, then runs the install command
   again.
 
-| Installing agent | Backend | Sign-in                                                                                                                                                                                                     |
-| ---------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude Code      | claude  | None: the account's Claude login is the one the installer uses; `claude auth status --json` reads it from an agent's shell ([notes](install-notes.md#backend-sign-in-measured))                             |
-| Claude Code      | codex   | The managed home: `CODEX_HOME=~/.mama/.codex <codex> login` (opens the browser on this machine) or `login --device-auth` (prints a page and a code; the person turns on device code login in ChatGPT first) |
-| Codex            | codex   | The same: Codex's own `~/.codex` login is not MAMA's (`init-questions.ts:234`)                                                                                                                              |
-| Codex            | claude  | `claude auth login` from Codex's shell; it starts and prints its URL without a terminal, and whether it completes is measured in leg C ([Live proof](#live-proof)); if it does not, Q2                      |
+| Installing agent | Backend | Sign-in                                                                                                                                                                                                                               |
+| ---------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code      | claude  | None: the account's Claude login is the one the installer uses; `claude auth status --json` reads it from an agent's shell ([notes](install-notes.md#backend-sign-in-measured))                                                       |
+| Claude Code      | codex   | The managed home: `CODEX_HOME=~/.mama/.codex <codex> login` (opens the browser on this machine) or `login --device-auth` (prints a page and a code; the person turns on device code login in ChatGPT first)                           |
+| Codex            | codex   | The same: Codex's own `~/.codex` login is not MAMA's (`init-questions.ts:234`)                                                                                                                                                        |
+| Codex            | claude  | `claude auth login` in the background; the person signs in in the browser, and the localhost callback completes it. If the CLI asks for a code, the person relays it and the agent writes it to the login's stdin (owner, 2026-10-30) |
 
 ## Linux
 
@@ -370,7 +370,7 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
   - Sources are chosen in the conversation. The tool is installed with its printed command, the
     person completes its login in the browser, and only then is the source enabled with the
     non-interactive section (W2.4.5e). The Jev paragraph says Jev is turned on later with
-    `mama init --section jev` (Q1).
+    `mama init --section jev` (W2.4.6).
   - `tests/skills/mama-install-skill.test.js:32-39` asserts:
     - the transcript sentence;
     - no "own terminal";
@@ -426,6 +426,27 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
     `mama init --section connectors --non-interactive` reads `MAMA_INIT_CONNECTORS`, and a source
     whose tool the service cannot find is no longer enabled (both forms).
   - Done: `cd packages/standalone && npx vitest run tests/cli/onboarding.test.ts tests/cli/doctor.test.ts`.
+
+## W2.4.6: later setup changes from the conversation (follow-up, not PR 5)
+
+The owner, 2026-10-30: the person never touches a terminal after the first reply either.
+
+- These need a form without a terminal:
+  - the other `mama init --section` parts: `telegram`, `model`, `timezone`, `discord`, `slack`
+    and `jev`;
+  - `mama secret set`;
+  - `mama uninstall`.
+
+  Each needs a terminal today (`init-section.ts:64`, `secret.ts:18`, `uninstall.ts:304`).
+
+- Answers come from the environment, as W2.4.5e's connectors form does.
+- Each secret is handed over the same way as the bot token: a 0600 file the command loads. This
+  covers the bot token, the Discord and Slack tokens, the Jev key and a rotated secret.
+- `uninstall` confirms its plan by a flag the agent passes after showing the plan in the
+  conversation.
+- Each part names its `## [Unreleased]` entry in `packages/standalone/CHANGELOG.md`.
+- Done: each command runs from an agent's shell without a terminal. Its test runs it with stdin
+  and stdout not a TTY.
 
 ## PR 4: docs (I1, I5)
 
@@ -507,13 +528,14 @@ The steps:
    - The checks entry says whether the gws login completed from the agent's shell, and whether gws
      needed an OAuth client set up first (`gws auth setup`).
    - The toolkit's `brew install` on this Standard account is recorded (I7).
-7. **Leg B.** `mama uninstall --data` is run at a terminal (it needs one, `uninstall.ts:304`).
+7. **Leg B.** `mama uninstall --data` is run at a terminal (it needs one until W2.4.6).
    Claude Code then installs with the `codex` backend. The managed home is signed in from the
    agent's background shell with `codex login`, or with `--device-auth` and device code login on.
 8. **Leg C.** `mama uninstall --data` and `claude auth logout` are run. The person asks Codex to
    install MAMA by following owner-setup.md on `main` (W2.4.5c; Codex has no plugin), with the
    `claude` backend:
-   - `claude auth login` from Codex's shell (Q2 if it cannot complete);
+   - `claude auth login` from Codex's shell: the browser sign-in, and a code written to its stdin
+     if the CLI asks for one;
    - whether Codex's background run survives the turns of the pairing relay.
 
 **After the release:** W2.3's registry update. Then `mama uninstall --data`, the backend removed
@@ -525,13 +547,13 @@ by its vendor's steps, and leg A against npmjs.
 
 - **I1 (macOS):** on the clean account, from "install MAMA" said to Claude Code, the person reaches
   a DM reply without typing anything in a terminal.
-  - In the conversation they choose the backend and model, and give the bot token and the bot's
-    pairing code.
+  - In the conversation they choose the backend and model, and give the bot token, the bot's
+    pairing code and any code a backend's sign-in asks for.
   - In Telegram they make the bot and the group, message the bot, and send `/bind`.
   - In a browser they sign in a backend that is not the installing agent's.
 
-  `start.sh` pins `~/.mama/node/bin/node`. Legs B and C reach the same reply, or leg C's result goes
-  to Q2. Linux closes with wave 3, Docker with wave 4.
+  `start.sh` pins `~/.mama/node/bin/node`. Legs B and C reach the same reply. Linux closes with
+  wave 3, Docker with wave 4.
 
 - **I4 (the command part):** enabling a Google source without gws is refused before anything is
   written, with commands that work. The agent runs them, the person logs in, and the section then
@@ -591,16 +613,9 @@ and I5 marked for macOS in v1.md, evidence in checks.md.
 
 ## Open owner decisions
 
-- **Q1.** Sources are settled: the owner said they are chosen in the conversation (W2.4.5e). Does
-  "the person never touches a terminal" also cover the rest of what comes after the first reply?
-  The other `mama init --section` parts (Discord, Slack, Jev, a new bot token, model, timezone),
-  `mama secret set` and `mama uninstall` each need a terminal (`init-section.ts:64`, `secret.ts:18`,
-  `uninstall.ts:304`).
-  - If yes, they take the agent's input as init does: a new row, not W2.4.
-  - If no, the guide sends the person to a terminal for those.
-- **Q2, only if leg C fails.** Should the person run one terminal step to sign Claude in, or should
-  a Claude backend be installed by Claude Code only? This applies when Codex installs MAMA with the
-  `claude` backend and `claude auth login` cannot complete from Codex's shell.
+None. The owner answered both on 2026-10-30. Q1: setup changes after the first reply are made
+without a terminal too (W2.4.6). Q2: Claude's sign-in under Codex goes through the browser (the
+[Backend CLI](#backend-cli) table, leg C).
 
 The clean macOS account and its test bot are owner actions already needed by B2 and W2.3.
 

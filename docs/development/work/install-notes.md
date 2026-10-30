@@ -57,8 +57,11 @@ stays the existing one: `MAMA_TELEGRAM_TOKEN` in init's environment, stored in `
   sign in…", a sign-in URL whose `redirect_uri` is `platform.claude.com/oauth/code/callback`, and
   "Paste code here if prompted >". It was still running at 10 s. There was no `kqueue` error, so
   finding B belongs to `/dev/tty` itself.
-  - Whether the browser's own redirect completes the sign-in with no input was not tried.
-  - The pasted-code route needs stdin, which Claude Code's background Bash cannot write.
+  - On the clean account the sign-in completed through the browser's localhost callback with no
+    code pasted ("Paste code here if prompted > Login successful."). That is the coordinator's
+    report of the owner's run.
+  - The pasted-code route needs the login's stdin. Codex can write a running process's stdin.
+    Another agent starts the login reading a pipe it can write later.
   - The docs give no device flag for Claude ([Claude Code authentication][cc-auth]).
 - **`codex login --device-auth` runs without a terminal.** The run used codex-cli 0.160.1, a
   scratch `CODEX_HOME`, stdin `/dev/null` and stdout to a file, and was stopped after 12 s. It
@@ -183,8 +186,8 @@ Stays:
 - `install.sh --no-init`, which the CI leg runs.
 
 Those three commands still need a terminal (`init-section.ts:64`, `secret.ts:18`,
-`uninstall.ts:304`). The connectors section gets a form without one (W2.4.5e); the rest is the
-owner's Q1 in install.md.
+`uninstall.ts:304`). The connectors section gets a form without one (W2.4.5e); the rest follows in
+W2.4.6, by the owner's answer to Q1.
 
 ## Sources from the conversation (PR 3 and W2.4.5e)
 
