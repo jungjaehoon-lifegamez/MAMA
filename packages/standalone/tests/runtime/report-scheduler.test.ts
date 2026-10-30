@@ -96,6 +96,33 @@ describe('KST report scheduler', () => {
     expect(ctx.queued).toHaveLength(2);
   });
 
+  it('sends the next full report after the zone moves back, so a later hour with a smaller key is not superseded', async () => {
+    const ctx = setup();
+    ctx.scheduler.tick(new Date('2026-01-01T04:00:00Z')); // 13:00 in Seoul
+    await ctx.scheduler.onResult(ctx.result(), { response: 'Seoul report' });
+    ctx.setPending(false);
+    ctx.options.timeZone.set('America/Los_Angeles');
+    const later = new Date('2026-01-01T16:00:00Z'); // 08:00 the same day in Los Angeles
+    ctx.scheduler.tick(later);
+    expect(ctx.queued.at(-1)!.payload).toMatchObject({ report: 'full', hourKey: '2026-01-01:08' });
+    await ctx.scheduler.onResult(ctx.result(), { response: 'Los Angeles report' });
+    expect(ctx.sent).toEqual(['Seoul report', 'Los Angeles report']);
+    expect(ctx.retired).toEqual([]);
+    ctx.setPending(false);
+    ctx.scheduler.tick(new Date(later.getTime() + 60_000));
+    expect(ctx.queued).toHaveLength(2);
+  });
+
+  it('queues no report the clock places before the latest one sent', async () => {
+    const ctx = setup();
+    ctx.scheduler.tick(new Date('2026-01-01T09:00:00Z')); // 18:00 in Seoul
+    await ctx.scheduler.onResult(ctx.result(), { response: 'evening report' });
+    ctx.setPending(false);
+    // The clock is set back to 08:30 the same morning: that full hour would only be superseded.
+    ctx.scheduler.tick(new Date('2025-12-31T23:30:00Z'));
+    expect(ctx.queued).toHaveLength(1);
+  });
+
   it('gives the full report order its data and leaves the steps to the standing prompt', () => {
     const order = scheduledReportOrder(
       { report: 'full', hourKey: '2026-01-01:08' },
@@ -220,6 +247,7 @@ describe('KST report scheduler', () => {
     await result;
     expect(JSON.parse(readFileSync(ctx.statePath, 'utf8'))).toEqual({
       lastFullKey: '2026-01-02:08',
+      lastFullAt: now.getTime(),
       lastReminderKey: null,
     });
     ctx.setPending(false);
@@ -252,10 +280,24 @@ describe('KST report scheduler', () => {
   });
 
   it.each([
-    ['full', { lastFullKey: '2026-01-01:18', lastReminderKey: null }],
-    ['reminder', { lastFullKey: null, lastReminderKey: '2026-01-01:14' }],
+    [
+      'full',
+      {
+        lastFullKey: '2026-01-01:18',
+        lastFullAt: Date.parse('2026-01-01T09:00:00Z'),
+        lastReminderKey: null,
+      },
+    ],
+    [
+      'reminder',
+      {
+        lastFullKey: null,
+        lastReminderKey: '2026-01-01:14',
+        lastReminderAt: Date.parse('2026-01-01T05:00:00Z'),
+      },
+    ],
   ] as const)(
-    'skips a %s report older than the latest sent hour and retires its receipt',
+    'skips a %s report queued before the latest one sent and retires its receipt',
     async (report, saved) => {
       const ctx = setup();
       mkdirSync(join(root, 'runtime'), { recursive: true });
@@ -266,7 +308,7 @@ describe('KST report scheduler', () => {
         {
           stimulusId: 'report:2026-01-01:13:fixture',
           payload: { report, hourKey: '2026-01-01:13', previousFullReportAt: '2026-01-01:08' },
-          occurredAt: 0,
+          occurredAt: Date.parse('2026-01-01T04:00:00Z'),
         },
         { response: 'an old report' }
       );
@@ -278,6 +320,39 @@ describe('KST report scheduler', () => {
       expect(readFileSync(ctx.statePath, 'utf8')).toBe(stored);
     }
   );
+
+  it('closes a report parked under a state written before queue times once the next full report is saved', async () => {
+    const ctx = setup();
+    mkdirSync(join(root, 'runtime'), { recursive: true });
+    writeFileSync(
+      ctx.statePath,
+      JSON.stringify({ lastFullKey: '2026-01-01:08', lastReminderKey: null })
+    );
+    const scheduler = createReportScheduler(ctx.options);
+    const parked = {
+      stimulusId: 'report:2025-12-31:18:fixture',
+      payload: { report: 'full', hourKey: '2025-12-31:18', previousFullReportAt: '2025-12-31:13' },
+      occurredAt: Date.parse('2025-12-31T09:00:00Z'),
+    };
+    // Without a queue time nothing is superseded; the stored send is still uncertain.
+    ctx.setSend(async () => {
+      throw new Error('Telegram outbound delivery is uncertain');
+    });
+    await expect(scheduler.onResult(parked, { response: 'old report' })).rejects.toThrow(
+      'uncertain'
+    );
+    expect(ctx.retired).toEqual([]);
+    ctx.setSend(async (text) => {
+      ctx.sent.push(text);
+    });
+    scheduler.tick(new Date('2026-01-01T04:00:00Z'));
+    await scheduler.onResult(ctx.result(), { response: 'next report' });
+    const state = readFileSync(ctx.statePath, 'utf8');
+    await scheduler.onResult(parked, { response: 'old report' });
+    expect(ctx.sent).toEqual(['next report']);
+    expect(ctx.retired).toEqual(['report:2025-12-31:18:full']);
+    expect(readFileSync(ctx.statePath, 'utf8')).toBe(state);
+  });
 
   it.each([
     ['2026-01-01T00:00:00Z', 'reminder', '2026-01-01:09'],

@@ -12,6 +12,12 @@ import type { TimeZoneSetting } from './timezone.js';
 interface ReportScheduleState {
   lastFullKey: string | null;
   lastReminderKey: string | null;
+  /**
+   * When the report that set each key was queued (epoch ms); absent in files written before.
+   * Local hour keys do not order across a time zone change, so superseding compares these.
+   */
+  lastFullAt?: number | null;
+  lastReminderAt?: number | null;
   /** The latest day whose daily page was written; absent in files written before daily pages. */
   lastDailyKey?: string | null;
 }
@@ -57,7 +63,15 @@ function loadState(path: string): ReportScheduleState {
       (state as Record<string, unknown>).lastDailyKey === null ||
       (typeof (state as Record<string, unknown>).lastDailyKey === 'string' &&
         /^\d{4}-\d{2}-\d{2}$/.test((state as Record<string, unknown>).lastDailyKey as string))
-    )
+    ) ||
+    !['lastFullAt', 'lastReminderAt'].every((key) => {
+      const value = (state as Record<string, unknown>)[key];
+      return (
+        value === undefined ||
+        value === null ||
+        (Number.isSafeInteger(value) && (value as number) >= 0)
+      );
+    })
   )
     throw new Error('Invalid report schedule state');
   return state as ReportScheduleState;
@@ -82,11 +96,13 @@ export function createReportScheduler(options: ReportSchedulerOptions) {
     const day = `${part('year')}-${part('month')}-${part('day')}`;
     const hourKey = `${day}:${part('hour')}`;
     const full = options.config.full_report_hours.includes(hour);
+    // A report queued before the latest one sent would only be superseded (onResult).
     const reportDue = full
-      ? state.lastFullKey !== hourKey
+      ? state.lastFullKey !== hourKey && now.getTime() >= (state.lastFullAt ?? 0)
       : hour >= options.config.reminder_start_hour &&
         hour <= options.config.reminder_end_hour &&
         state.lastReminderKey !== hourKey &&
+        now.getTime() >= (state.lastReminderAt ?? 0) &&
         // A full report already sent this hour covers it, even if the hour is no longer a
         // full-report hour after a config change.
         state.lastFullKey !== hourKey;
@@ -145,18 +161,18 @@ export function createReportScheduler(options: ReportSchedulerOptions) {
       result: Pick<NativeTurnResult, 'response'>
     ): Promise<void> => {
       const { report, hourKey, day } = scheduledReport(row.payload);
-      // The state key is the latest hour sent. A report older than it was covered by a newer one,
-      // and saving its hour would move the key back; the daily key keeps its latest day the same way.
-      const latest =
+      // The state holds the latest report sent. One queued before it was covered by it, and
+      // saving its hour would move the key back; the daily key keeps its latest day the same way.
+      const latestAt =
         report === 'full'
-          ? state.lastFullKey
+          ? state.lastFullAt
           : report === 'reminder'
-            ? state.lastReminderKey
-            : null;
-      if (latest && hourKey < latest) {
+            ? state.lastReminderAt
+            : undefined;
+      if (typeof latestAt === 'number' && row.occurredAt < latestAt) {
         options.retireUndelivered(`report:${hourKey}:${report}`);
         options.log(
-          `scheduled report superseded stimulus_id=${row.stimulusId} report=${report} hour=${hourKey} latest=${latest}`
+          `scheduled report superseded stimulus_id=${row.stimulusId} report=${report} hour=${hourKey} latest=${report === 'full' ? state.lastFullKey : state.lastReminderKey}`
         );
         return;
       }
@@ -176,7 +192,9 @@ export function createReportScheduler(options: ReportSchedulerOptions) {
       const next =
         report === 'daily'
           ? { ...state, lastDailyKey: [state.lastDailyKey ?? '', day!].sort().at(-1)! }
-          : { ...state, [report === 'full' ? 'lastFullKey' : 'lastReminderKey']: hourKey };
+          : report === 'full'
+            ? { ...state, lastFullKey: hourKey, lastFullAt: row.occurredAt }
+            : { ...state, lastReminderKey: hourKey, lastReminderAt: row.occurredAt };
       mkdirSync(dirname(options.statePath), { recursive: true });
       const temporary = `${options.statePath}.tmp`;
       writeFileSync(temporary, JSON.stringify(next, null, 2), 'utf8');
