@@ -466,8 +466,10 @@ jobs:
           ref: ${{ needs.prepare-release.outputs.release_tag }}
 
       # The install command (install.sh, its version checked in prepare-release) installs this
-      # MAMA OS from npm, so it is attached only once npm serves it.
+      # MAMA OS from npm, so it is attached only once npm serves it, and only to a release that
+      # publishes MAMA OS (publish-mama-os's condition): without it this version may not be on npm.
       - name: Wait for npm to serve this MAMA OS
+        if: ${{ inputs.packages == 'all' || contains(inputs.packages, 'mama-os') }}
         run: |
           VERSION="${{ needs.prepare-release.outputs.mama_os_version }}"
           # The registry can show a publish from an earlier job a few minutes late.
@@ -520,9 +522,11 @@ jobs:
             --title "MAMA ${{ needs.prepare-release.outputs.release_tag }}" \
             --notes-file release-notes.md \
             --verify-tag \
-            packages/standalone/install/install.sh
+            ${INSTALL_SCRIPT:+"$INSTALL_SCRIPT"}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Attached only when this release publishes MAMA OS, as the wait above.
+          INSTALL_SCRIPT: ${{ (inputs.packages == 'all' || contains(inputs.packages, 'mama-os')) && 'packages/standalone/install/install.sh' || '' }}
 
   # Summary job
   summary:
