@@ -1411,6 +1411,12 @@ describe('tools a source needs (install.md, PR 3)', () => {
         })
       )
     ).rejects.toThrow(/did not finish starting/);
+    // The source names its tool in its own requirements; connectors.json's auth, here edited by
+    // hand to a command MAMA has no methods for, is not what it runs.
+    const file = join(root, 'connectors.json');
+    const edited = JSON.parse(readFileSync(file, 'utf8'));
+    edited.gmail.auth = { type: 'cli', cli: 'some-other-tool' };
+    writeFileSync(file, JSON.stringify(edited));
     const again = prompt([], []);
     await runInit([], options(again.adapter, { findExecutable: shell() }));
     const output = again.output.join('\n');

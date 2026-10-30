@@ -191,14 +191,10 @@ export async function runInitSection(section: string, options: InitOptions = {})
         writeFileSync(jevKeyFile, `${jevKey}\n`, { flag: 'wx', mode: 0o600 });
       for (const { temporary, path } of staged) renameSync(temporary, path);
       if (connectors)
-        writeSourceTools(
+        await writeSourceTools(
           connectors,
-          {
-            root,
-            home,
-            platform: options.platform ?? process.platform,
-            backend: config.agent.backend,
-          },
+          { root, home, platform: options.platform ?? process.platform, configPath },
+          config,
           options,
           write,
           'Once it is installed, start MAMA: mama service start'

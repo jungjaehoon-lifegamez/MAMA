@@ -1,6 +1,14 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
-import { cliAuth, type ConnectorsConfig } from '../../connectors/framework/types.js';
+import {
+  cliAuth,
+  type AuthRequirement,
+  type ConnectorsConfig,
+} from '../../connectors/framework/types.js';
+import { loadConnector } from '../../connectors/index.js';
+import type { W1Config } from '../../runtime/config.js';
+import { connectorLoadPaths } from '../../runtime/connectors.js';
+import { createTimeZoneSetting } from '../../runtime/timezone.js';
 import { gwsTool } from '../../connectors/framework/gws-utils.js';
 import { backendEnvironment } from '../../runtime/backend-security.js';
 import { CliInputError, nonblankLine, type PromptAdapter } from '../prompt.js';
@@ -9,6 +17,7 @@ import { probeBackend, type ProbeRun } from '../runtime/backend-probe.js';
 import { telegramCheck } from '../runtime/diagnostics.js';
 import { serviceSight, sourceToolLines, sourceTools } from '../runtime/source-tools.js';
 import { findExecutable, findIn } from '../launch-files.js';
+import { pathsFor } from './daemon.js';
 import { serviceLaunch, type ServiceOptions } from './service.js';
 
 /** The questions and checks `mama init` asks, shared by a whole setup and by `--section`. */
@@ -211,27 +220,43 @@ export async function collectConnectors(
 
 /**
  * For the sources just set up, each tool they run that the service cannot find, with how to
- * install it, and each one's login (install.md, PR 3). It reports; the setup is already saved.
+ * install it, and each one's login (install.md, PR 3). A source names its tool in its own
+ * requirements, as doctor reads them (connectors.json's `auth` is not what the source runs). It
+ * reports; the setup is already saved.
  */
-export function writeSourceTools(
+export async function writeSourceTools(
   connectors: ConnectorsConfig,
-  install: { root: string; home: string; platform: NodeJS.Platform; backend: string },
+  install: { root: string; home: string; platform: NodeJS.Platform; configPath: string },
+  config: W1Config,
   options: Pick<ServiceOptions, 'findExecutable' | 'nodePath' | 'cliPath' | 'toolDirectoryExists'>,
   write: (line: string) => void,
   /** What to do once a missing tool is installed. */
   next: string
-): void {
-  const { root, home, platform, backend } = install;
-  const sources = Object.entries(connectors)
-    .filter(([, connector]) => connector.enabled)
-    .map(([name, connector]) => ({ name, needs: [connector.auth] }));
+): Promise<void> {
+  const { root, home, platform, configPath } = install;
+  const paths = pathsFor(configPath, config);
+  const timeZone = createTimeZoneSetting(config.timezone);
+  const sources: { name: string; needs: AuthRequirement[] }[] = [];
+  for (const [name, connector] of Object.entries(connectors)) {
+    if (!connector.enabled) continue;
+    const source = await loadConnector(
+      name,
+      connector,
+      connectorLoadPaths(name, {
+        statePath: paths.connectorsRoot,
+        kagemushaDbPath: paths.kagemushaDbPath,
+        timeZone,
+      })
+    );
+    sources.push({ name, needs: source.getAuthRequirements() });
+  }
   // start.sh is read only when a source runs a tool.
   if (!sources.some(({ needs }) => needs.some((need) => need.type === 'cli'))) return;
   const service = serviceSight(
     root,
     home,
     platform,
-    () => serviceLaunch(backend, options),
+    () => serviceLaunch(config.agent.backend, options),
     options.toolDirectoryExists
   );
   const reports = sourceTools(

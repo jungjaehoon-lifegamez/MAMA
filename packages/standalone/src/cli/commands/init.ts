@@ -598,9 +598,10 @@ export async function runInit(
           `Jev is on (jev.enabled in config.yaml); its key is ${shellQuote(join(root, 'jev-key'))} (0600). Turn it off by removing jev.enabled.`
         );
       // start.sh does not exist yet: the service step writes it from this shell.
-      writeSourceTools(
+      await writeSourceTools(
         answers.connectors,
-        { root, home, platform, backend: answers.backend },
+        { root, home, platform, configPath },
+        config,
         options,
         write,
         SOURCE_TOOL_NEXT
@@ -611,9 +612,10 @@ export async function runInit(
       // tools again: the service does not start until they are installed.
       const connectorsPath = pathsFor(configPath, config).connectorsConfigPath;
       if (existsSync(connectorsPath))
-        writeSourceTools(
+        await writeSourceTools(
           JSON.parse(readFileSync(connectorsPath, 'utf8')) as ConnectorsConfig,
-          { root, home, platform, backend: config.agent.backend },
+          { root, home, platform, configPath },
+          config,
           options,
           write,
           SOURCE_TOOL_NEXT
