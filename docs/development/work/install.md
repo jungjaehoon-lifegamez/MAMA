@@ -50,21 +50,38 @@ versions are supported (I5).
 ## Moving the managed Node
 
 `mama update` runs npm only, and Node 22 ends on 2027-04-30. Running the install command again on a
-script-made install moves Node when the script's pin differs:
+script-made install moves Node when the script's pin differs. The script downloads and checks the
+new Node into `~/.mama/node.new`, then runs `~/.mama/bin/mama update --node ~/.mama/node.new`,
+because the boot wait and doctor's Node check are TypeScript. That command, like the update's
+parent, uses only code it has loaded once the folders move:
 
-1. Stage the new Node and check its hash. On a major change, copy `~/.mama/npm` and run the new
-   npm's `rebuild -g --prefix` on the copy: the SQLite module is built for one major
-   (`s/cli/runtime/diagnostics.ts:557-583`), and a rebuild keeps the installed versions where a
-   reinstall could bring a newer core.
-2. `mama stop` (it drains, #533); the old folders aside, the staged ones in place. `start.sh` is
-   unchanged, since the path stays `~/.mama/node`.
-3. Doctor's Node check, `mama service start`, `waitForBoot` (`init.ts:294`). A failure puts the old
-   folders back, starts them and exits 1.
+1. `runtime/update.lock` (`acquireInstallLock`, `s/cli/runtime/daemon-control.ts:118`), so no
+   update or second move runs beside it. Journal `runtime/node-move.json` (0600): phase, old and
+   new Node versions, and the step last begun. The update journal does not fit: its fields are a
+   package's versions, snapshot and schema (`s/cli/runtime/update-journal.ts:30-69`).
+2. On a major change, copy `~/.mama/npm` to `~/.mama/npm.new` and run the new npm's
+   `rebuild -g --prefix` on it, before any stop. The SQLite module is built for one major
+   (`s/cli/runtime/diagnostics.ts:557-583`). A copy, because a rollback needs the old prefix
+   untouched; a rebuild, not a reinstall, because the published core range is a caret
+   (`release.yml:285`; 0.78.0 depends on `^8.8.0`), so a reinstall could bring a newer core.
+3. `mama stop` (it drains, #533), then `runtime/update.hold`, which `start.sh` honours
+   (`s/cli/launch-files.ts:54`), so a reboot mid-move starts nothing. Renames, in this order:
+   `node` → `node.old`, `node.new` → `node`, then (major only) `npm` → `npm.old`,
+   `npm.new` → `npm`. `start.sh` is unchanged, since the paths stay.
+4. Doctor's Node check under the new Node; remove the hold; `mama service start`; `waitForBoot`
+   (`init.ts:294`). Then `phase: committed`, the `.old` folders deleted, the journal closed. A
+   failure before `committed` renames back, removes the hold, starts the old Node and exits 1.
 
-`mama update` reads the new package's `install/node.json` and, when it differs from the running
-Node, ends its report with "run the install command again" (`update.ts:596`); doctor's Node check
-(`diagnostics.ts:537`) warns the same. A target whose `engines` excludes the running Node is
-refused at step 2, before any change.
+A run killed midway leaves the journal and the hold. The script checks for them before anything
+else, in plain `sh`, since `~/.mama/npm` may be missing then: at `committed` it deletes the `.old`
+folders; otherwise it renames each `.old` back over whatever is in its place, removes the hold
+and starts the service. It then says the move was undone, and a further run tries again. Doctor
+reports an open `node-move.json` and says to run the install command again.
+
+`mama update` reads the new package's `install/node.json`; when it differs from the running Node,
+`finishCommitted` (`update.ts:910`) ends the report with "run the install command again", and
+doctor's Node check (`diagnostics.ts:537`) warns the same. A target whose `engines` excludes the
+running Node is refused at step 2, before any change.
 
 ## Backend CLI
 
@@ -120,6 +137,7 @@ refused at step 2, before any change.
 
 | On a run, when                                                             | The script                                                                                                   |
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `~/.mama/runtime/node-move.json` exists                                    | Finishes or undoes that move first, as above                                                                 |
 | `~/.mama/config.yaml` or `start.sh` exists and `~/.mama/npm` holds no MAMA | Refuses before any change: another install owns this account; `mama update --dry-run` shows how it updates   |
 | `~/.mama/config.yaml` exists and `~/.mama/npm` holds MAMA                  | Moves Node if the pin differs, then runs `mama init`, which resumes (`init.ts:415-423`) or says it is set up |
 | No setup yet, `~/.mama/node` has the pinned version                        | Skips Node                                                                                                   |
@@ -128,7 +146,8 @@ refused at step 2, before any change.
 
 ## PR 1: `install.sh` and its CI leg
 
-- `packages/standalone/install/install.sh`, POSIX `sh`, `set -eu`: refusal checks; platform
+- `packages/standalone/install/install.sh`, POSIX `sh`, `set -eu`: an unfinished Node move;
+  refusal checks; platform
   (macOS or Linux, x64 or arm64, else exit 1); the Linux `sudo` call; Node;
   `npm install -g --prefix ~/.mama/npm @jungjaehoon/mama-os@<version>`; the wrapper; the backend;
   the startup block; `mama init </dev/tty`.
@@ -146,7 +165,8 @@ refused at step 2, before any change.
      Node check is `ok`; `mama update --dry-run` shows N → N+1.
   4. A second run changes no file; a run cut off after Node skips it next time; a truncated
      script runs nothing.
-  5. The sourced download-and-check function refuses a local file with another hash.
+  5. The whole script, with a `curl` stub first on PATH that serves a Node file with another
+     hash, exits 1 and unpacks nothing.
   6. Each vendor installer as the script runs it, with no terminal, meets
      `s/cli/runtime/backend-probe.ts:8-11`.
 - `shellcheck` in lint; shell tests: each shell's block, rewritten in place; a username outside
@@ -154,9 +174,13 @@ refused at step 2, before any change.
 
 ## PR 2: `mama` around the managed program
 
-- [Moving the managed Node](#moving-the-managed-node), with tests: a patch pin swaps Node only; a
-  major pin rebuilds the copy; a failed boot puts both back; `mama update` and doctor name the pin;
-  a target whose `engines` excludes the Node is refused.
+- [Moving the managed Node](#moving-the-managed-node): `mama update --node <folder>`, the
+  script's recovery, and two changes to `mama update` itself (the pin note and the `engines`
+  refusal at step 2). Tests: a patch pin swaps Node only; a major pin rebuilds the copy; a failed
+  boot puts both back; the command killed after each step leaves a journal and a hold that a
+  re-run of the script finishes or undoes, and `start.sh` exits at once meanwhile; a second move
+  or an update beside it is refused by the lock; `mama update` and doctor name the pin; a target
+  whose `engines` excludes the Node is refused.
 - Backup keeps an allowlist (`s/cli/runtime/backup.ts:76,84`), so the program was never archived;
   only its "left out" line goes (`backup.ts:345-358`, `s/cli/commands/backup.ts:200-201`). Restore
   switches only archived entries (`s/cli/runtime/restore.ts:702-745`).
@@ -227,7 +251,8 @@ refused at step 2, before any change.
      becomes a new row.
   4. W2.3's candidate proof, which needs only PR 1–2: N → N+1; the backend signed out, then
      `/update` (R7); N+2 rolls back.
-  5. A re-run with another patch pin moves Node, and the service comes back.
+  5. A re-run with another patch pin moves Node, and the service comes back. A move killed after
+     its first rename, then a reboot, starts nothing; the next run undoes it.
   6. After PR 3: Gmail enabled without gws names the commands; run as printed, doctor passes.
 - **After the release:** W2.3's registry update; then `mama uninstall --data`, the backend removed
   by its vendor's steps, and the published command against npmjs to a DM reply.
@@ -250,6 +275,7 @@ refused at step 2, before any change.
 | The vendor installer fails                     | Its output shown, exit 1; the vendor's page named                     |
 | `sudo` refused or missing (Linux)              | The command printed; init then offers other folders                   |
 | Moving Node fails to boot                      | The old folders back and started, exit 1                              |
+| A Node move is killed midway                   | The hold keeps it stopped; the next run finishes or undoes the move   |
 | The toolkit cannot install on a fresh Mac      | Init goes on without it (`init.ts:605-611`); see I7                   |
 
 ## Order of work
@@ -263,6 +289,8 @@ evidence in checks.md.
 - W2.4's Docker sentence belongs to wave 4: no image exists (D1) and G4 forbids offering a command
   that has not run. I1's and I4's Docker halves close there, on `mama init --non-interactive`.
 - I5 closes with waves 3 and 4, which fill the Linux and Docker rows.
+- W2.3's `mama update` changes in PR 2: it has no `engines` check today, and it gains the
+  `--node` move and the pin note.
 - "So `mama init` only signs it in" is not true today (`init-questions.ts:252-254`); PR 2 makes it.
 - New row I7: the macOS toolkit runs `brew install` and needs python3 3.10 or newer
   (`s/tools/document-toolkit.ts:292-300,397-405`). An account without its own Homebrew cannot
