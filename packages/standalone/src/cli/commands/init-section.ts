@@ -197,7 +197,7 @@ export async function runInitSection(section: string, options: InitOptions = {})
           config,
           options,
           write,
-          'Once it is installed, start MAMA: mama service start'
+          'Once it is installed, run mama service install (it adds the folder gws went to), then start MAMA: mama service start'
         );
       if (reshaped)
         write(

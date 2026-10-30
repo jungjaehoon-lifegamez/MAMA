@@ -1485,7 +1485,7 @@ describe('tools a source needs (install.md, PR 3)', () => {
         "gmail runs gws, which the service's PATH does not have. Install it with one of:\n  npm install -g @googleworkspace/cli"
       );
       expect(output).toContain(
-        "MAMA's service does not start with gmail until gws is on its PATH. Once it is installed, start MAMA: mama service start"
+        "MAMA's service does not start with gmail until gws is on its PATH. Once it is installed, run mama service install (it adds the folder gws went to), then start MAMA: mama service start"
       );
     });
 
