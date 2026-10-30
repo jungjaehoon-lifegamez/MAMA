@@ -3,6 +3,7 @@ import {
   existsSync,
   lstatSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -128,7 +129,8 @@ export async function moveNode(
   if (
     install.kind !== 'npm' ||
     install.nodePath !== managedNodePath(root) ||
-    install.prefix !== places.prefix
+    // installKind reads the package's real path.
+    install.prefix !== realpathSync(places.prefix)
   ) {
     throw refusal(
       'node_move.unmanaged',
@@ -290,7 +292,7 @@ export async function moveNode(
         throw new Error(`the daemon runs Node.js ${String(running)}, not ${to}`);
       }
     } catch (error) {
-      return await undo(context, journal, places, error);
+      return await undo(context, journal, places, version, error);
     }
     // On disk before the cleanup: from here a killed run is finished, never undone.
     journal.phase = 'committed';
@@ -313,6 +315,8 @@ async function undo(
   context: MoveContext,
   journal: NodeMoveJournal,
   places: NodeMovePlaces,
+  /** The package's version, read before the renames. */
+  version: string,
   failure: unknown
 ): Promise<number> {
   const { write, deps, paths } = context;
@@ -342,7 +346,7 @@ async function undo(
       timeoutMs: deps.bootWaitMs,
       pollMs: deps.pollMs,
       write,
-      version: deps.version(),
+      version,
       next: 'mama doctor checks the install',
     });
   } catch (error) {
