@@ -63,6 +63,8 @@ import {
   type ReleaseCheck,
 } from '../runtime/release-check.js';
 import { packageKind, runningPackageRoot } from '../runtime/install-kind.js';
+import { requestUpdate } from '../runtime/update-request.js';
+import { defaultServiceRun } from '../runtime/systemd-service.js';
 import type { UpkeepEvent } from '../../runtime/upkeep-orders.js';
 import { findDailyPages } from '../../wiki/wiki-read.js';
 import { createTimeZoneSetting, localNow } from '../../runtime/timezone.js';
@@ -1132,6 +1134,26 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
           },
           startOver: (target) => owner!.startOver(target),
           stopTurn: (target) => owner!.stopTurn(target),
+          update: async (origin) => {
+            const result = requestUpdate({
+              mamaRoot: paths.mamaRoot,
+              home: options.home ?? homedir(),
+              origin,
+              version: resolvePackageVersion(),
+              platform: process.platform,
+              run: defaultServiceRun,
+              uid: process.getuid!(),
+              log: (line) => logger.info(line),
+            });
+            logger.info(`update requested result=${result.kind}`);
+            if (result.kind !== 'busy') return result;
+            return {
+              kind: 'busy',
+              source: result.source,
+              since:
+                result.since === null ? 'an unknown time' : localNow(result.since, timeZone.get()),
+            };
+          },
         },
         config: {
           enabled: true,

@@ -12,6 +12,7 @@ export const TELEGRAM_HOST_COMMANDS = [
   { command: 'status', description: 'Whether MAMA is working, and on what' },
   { command: 'stop', description: 'Stop the turn running in this conversation' },
   { command: 'new', description: 'Start this conversation over' },
+  { command: 'update', description: 'Update MAMA to the latest release (owners)' },
   { command: 'help', description: 'The commands MAMA answers itself' },
 ] as const;
 
@@ -25,7 +26,33 @@ export interface TelegramHostCommandPort {
   startOver(target: ConversationTarget): Promise<'started_over' | 'busy'>;
   /** Stop the turn running in this conversation, or say none runs or one is only starting. */
   stopTurn(target: ConversationTarget): Promise<'stopped' | 'starting' | 'idle'>;
+  /**
+   * Start `mama update` as a job of its own, which reports to the origin chat; an owner asks, in
+   * their DM or the common channel. Refusals are results, so their text reaches the chat.
+   */
+  update(origin: UpdateOrigin): Promise<UpdateRequestResult>;
 }
+
+/** The chat and message an /update came from: the updater's progress goes back there. */
+export interface UpdateOrigin {
+  readonly chatId: string;
+  readonly messageId: number;
+}
+
+export type UpdateRequestResult =
+  /** `to` is the cached release check's newer version, or null when it names none. */
+  | { readonly kind: 'started'; readonly from: string; readonly to: string | null }
+  /**
+   * It is left alone. `lock`: an updater holds update.lock (a terminal's `mama update`, which
+   * reports nowhere, or an /update's); `job`: an /update's job runs, reporting to its own chat.
+   */
+  | { readonly kind: 'busy'; readonly source: 'lock' | 'job'; readonly since: string }
+  /** This message already started an update: a daemon killed before it confirmed its offset. */
+  | { readonly kind: 'repeated' }
+  /** A checkout: it updates by git, with these steps (install-kind.ts `updateSteps`). */
+  | { readonly kind: 'checkout'; readonly steps: readonly string[] }
+  /** Neither an npm install nor a checkout. */
+  | { readonly kind: 'not_updatable'; readonly reason: string };
 
 /**
  * The host command a message opens with; `other_bot` for a command addressed to another bot
@@ -106,6 +133,43 @@ export function stopText(
     ? "Stopped the common session's running turn. A message it was answering is told it was interrupted; anything waiting still runs."
     : 'Stopped the turn running in this conversation. Its message is told it was interrupted; messages sent after it still run.';
 }
+
+export function updateText(result: UpdateRequestResult): string {
+  if (result.kind === 'busy')
+    return result.source === 'job'
+      ? `An /update started at ${result.since} still runs; it reports to the chat it was started from. This one starts nothing.`
+      : `An update has held the install since ${result.since}; this /update starts nothing.`;
+  if (result.kind === 'repeated')
+    return 'This /update was already received and started an update. Send /update again for another.';
+  if (result.kind === 'checkout')
+    return [
+      '/update serves npm installs. This install is a checkout, which updates by git:',
+      ...result.steps,
+    ].join('\n');
+  if (result.kind === 'not_updatable')
+    return `/update cannot update this install: ${result.reason}`;
+  return result.to === null
+    ? `Updating ${result.from} to the latest release; progress follows.`
+    : `Updating ${result.from} → ${result.to}; progress follows.`;
+}
+
+/**
+ * What a group is told when the answer names paths (a checkout's steps, why an install cannot be
+ * updated): the full answer goes to the owner's DM, as /status keeps the owner's view there.
+ * `dm`: whether that DM send went out.
+ */
+export function updateGroupText(result: UpdateRequestResult, dm: boolean): string {
+  const where = dm
+    ? 'the details are in your DM'
+    : 'MAMA could not send the details to your DM; send /update there';
+  return result.kind === 'checkout'
+    ? `This install updates by git, not /update; ${where}.`
+    : `/update cannot update this install; ${where}.`;
+}
+
+/** Who may run /update: an owner, in their own DM or the common channel. */
+export const UPDATE_REFUSED =
+  'Only an owner can run /update, in their own DM with MAMA or in the common group.';
 
 /** What /status reports; counts beyond the asker's own appear only for owners. */
 export interface ChatStatus {

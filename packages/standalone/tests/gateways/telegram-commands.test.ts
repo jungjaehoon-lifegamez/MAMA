@@ -26,11 +26,13 @@ vi.mock('grammy', () => ({
   })),
 }));
 
+import { Bot } from 'grammy';
 import { TelegramGateway } from '../../src/gateways/telegram.js';
 import {
   hostCommand,
   startOverText,
   statusText,
+  updateText,
   type TelegramHostCommandPort,
 } from '../../src/gateways/telegram-commands.js';
 import type { OwnerMessageInput, TurnIntake } from '../../src/gateways/turn-contract.js';
@@ -101,7 +103,7 @@ async function gateway(port: TelegramHostCommandPort, log: (line: string) => voi
     log,
   });
   await active.start();
-  return { owner, member, received, registry };
+  return { owner, member, received, registry, gateway: active };
 }
 
 async function send(message: Record<string, unknown>) {
@@ -124,6 +126,7 @@ function port(overrides: Partial<TelegramHostCommandPort> = {}): TelegramHostCom
     })),
     startOver: vi.fn(async () => 'started_over' as const),
     stopTurn: vi.fn(async () => 'stopped' as const),
+    update: vi.fn(async () => ({ kind: 'started' as const, from: '1.0.0', to: '1.1.0' })),
     ...overrides,
   };
 }
@@ -157,7 +160,7 @@ describe('Telegram host commands', () => {
     expect(scopes).toEqual(['all_private_chats', 'all_group_chats']);
     expect(
       seams.api.setMyCommands.mock.calls[0][0].map((entry: { command: string }) => entry.command)
-    ).toEqual(['whoami', 'status', 'stop', 'new', 'help']);
+    ).toEqual(['whoami', 'status', 'stop', 'new', 'update', 'help']);
   });
 
   it('starts even when the menu cannot be registered', async () => {
@@ -377,6 +380,143 @@ describe('Telegram host commands', () => {
     });
     expect(received).toHaveLength(1);
     expect(received[0].text).toBe('/report today');
+  });
+});
+
+describe('/update', () => {
+  const origins = [
+    ['an owner in their DM', 7101, 'private', 7101, true],
+    ['an owner in the common group', Number(COMMON), 'supergroup', 7101, true],
+    ['an owner in another group', Number(OTHER_GROUP), 'supergroup', 7101, false],
+    ['a member in their DM', 7102, 'private', 7102, false],
+    ['a member in the common group', Number(COMMON), 'supergroup', 7102, false],
+  ] as const;
+
+  it.each(origins)('%s', async (_who, chat, type, from, allowed) => {
+    const commands = port();
+    const { received } = await gateway(commands);
+    await send({
+      ...command('/update', { message_id: 31 }),
+      chat: { id: chat, type },
+      from: { id: from, is_bot: false },
+    });
+    const [chatId, text, options] = await reply();
+    expect(chatId).toBe(chat);
+    expect(options.reply_parameters.message_id).toBe(31);
+    // A host command: no message is accepted, so no model run opens.
+    expect(received).toHaveLength(0);
+    if (allowed) {
+      expect(commands.update).toHaveBeenCalledWith({ chatId: String(chat), messageId: 31 });
+      expect(text).toBe('Updating 1.0.0 → 1.1.0; progress follows.');
+    } else {
+      expect(commands.update).not.toHaveBeenCalled();
+      expect(text).toContain('Only an owner can run /update');
+    }
+  });
+
+  it('says what the daemon found: busy, a repeat, a checkout, no cached release', () => {
+    // A terminal's mama update reports nowhere; only an /update's job reports to a chat.
+    expect(updateText({ kind: 'busy', source: 'lock', since: '2026-10-30 Fri 09:00' })).toBe(
+      'An update has held the install since 2026-10-30 Fri 09:00; this /update starts nothing.'
+    );
+    expect(updateText({ kind: 'busy', source: 'job', since: '2026-10-30 Fri 09:00' })).toContain(
+      'it reports to the chat it was started from'
+    );
+    expect(updateText({ kind: 'repeated' })).toContain('already received');
+    expect(updateText({ kind: 'checkout', steps: ['step one', 'step two'] })).toBe(
+      '/update serves npm installs. This install is a checkout, which updates by git:\nstep one\nstep two'
+    );
+    expect(updateText({ kind: 'started', from: '1.0.0', to: null })).toBe(
+      'Updating 1.0.0 to the latest release; progress follows.'
+    );
+  });
+
+  it.each([
+    [{ kind: 'checkout' as const, steps: ['/fixture/checkout/node /fixture/checkout/cli stop'] }],
+    [{ kind: 'not_updatable' as const, reason: '/fixture/install/.mama/start.sh does not parse' }],
+  ])("keeps an answer's paths in the owner's DM, out of the group (%#)", async (result) => {
+    const commands = port({ update: vi.fn(async () => result) });
+    await gateway(commands);
+    await send({
+      ...command('/update'),
+      chat: { id: Number(COMMON), type: 'supergroup' },
+      from: { id: 7101, is_bot: false },
+    });
+    await vi.waitFor(() => expect(seams.api.sendMessage).toHaveBeenCalledTimes(2));
+    const [[dmChat, dmText], [groupChat, groupText]] = seams.api.sendMessage.mock.calls;
+    expect(dmChat).toBe(7101);
+    expect(dmText).toBe(updateText(result));
+    expect(dmText).toContain('/fixture/');
+    expect(groupChat).toBe(Number(COMMON));
+    expect(groupText).toContain('in your DM');
+    // No path: the only slash is the command's own.
+    expect(groupText.replaceAll('/update', '')).not.toContain('/');
+
+    // From the owner's DM the full answer stays there.
+    seams.api.sendMessage.mockClear();
+    await send({
+      ...command('/update', { message_id: 22 }),
+      chat: { id: 7101, type: 'private' },
+      from: { id: 7101, is_bot: false },
+    });
+    const [chat, text] = await reply();
+    expect(chat).toBe(7101);
+    expect(text).toBe(updateText(result));
+    expect(seams.api.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells the group when the DM with the details could not be sent', async () => {
+    seams.api.sendMessage
+      .mockRejectedValueOnce(new Error('Forbidden: bot was blocked by the user'))
+      .mockResolvedValue({ message_id: 101 });
+    const lines: string[] = [];
+    await gateway(
+      port({ update: vi.fn(async () => ({ kind: 'checkout' as const, steps: ['/fixture/x'] })) }),
+      (line) => lines.push(line)
+    );
+    await send({
+      ...command('/update'),
+      chat: { id: Number(COMMON), type: 'supergroup' },
+      from: { id: 7101, is_bot: false },
+    });
+    await vi.waitFor(() => expect(seams.api.sendMessage).toHaveBeenCalledTimes(2));
+    const [, groupText] = seams.api.sendMessage.mock.calls[1];
+    expect(groupText).toContain('could not send the details to your DM');
+    expect(groupText).not.toContain('/fixture/');
+    expect(lines.join('\n')).toContain('details not sent to DM');
+  });
+
+  it("answers a failed start with a notice and keeps the error in the daemon's log", async () => {
+    const lines: string[] = [];
+    const commands = port({
+      update: vi.fn(async () => {
+        throw new Error('launchctl bootstrap failed: fixture');
+      }),
+    });
+    await gateway(commands, (line) => lines.push(line));
+    await send({
+      ...command('/update'),
+      chat: { id: 7101, type: 'private' },
+      from: { id: 7101, is_bot: false },
+    });
+    const [, text] = await reply();
+    expect(text).toBe('MAMA could not answer /update; its log has the error.');
+    expect(lines.join('\n')).toContain('launchctl bootstrap failed: fixture');
+  });
+
+  it("confirms the offset on stop, so the stopped daemon's /update is not received again", async () => {
+    const { gateway: active } = await gateway(port());
+    await send({
+      ...command('/update'),
+      chat: { id: 7101, type: 'private' },
+      from: { id: 7101, is_bot: false },
+    });
+    await reply();
+    const bot = vi.mocked(Bot).mock.results.at(-1)!.value as { stop: ReturnType<typeof vi.fn> };
+    expect(bot.stop).not.toHaveBeenCalled();
+    await active.stop();
+    // grammY's stop() confirms the offset past the last update it handled (telegram-offset.test.ts).
+    expect(bot.stop).toHaveBeenCalledTimes(1);
   });
 });
 

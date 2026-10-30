@@ -38,7 +38,7 @@ import {
   type DaemonControlReply,
   type InstallLock,
 } from '../runtime/daemon-control.js';
-import { runDiagnostics, type Check } from '../runtime/diagnostics.js';
+import { defaultTelegramCall, runDiagnostics, type Check } from '../runtime/diagnostics.js';
 import {
   installKind,
   PACKAGE_NAME,
@@ -61,6 +61,13 @@ import {
   type UpdateJournal,
   type UpdatePaths,
 } from '../runtime/update-journal.js';
+import {
+  NO_PROGRESS,
+  progressCode,
+  telegramProgress,
+  type ProgressSink,
+  type TelegramCall,
+} from '../runtime/update-progress.js';
 import { runBackup } from './backup.js';
 import { runStop } from './control.js';
 import { viewerHealth, waitForBoot } from './init.js';
@@ -126,6 +133,8 @@ export interface UpdateDeps {
   /** This CLI's own version and package, read before anything is renamed. */
   version(): string;
   runningPackage(): string;
+  /** The Bot API call the /update progress sends through. */
+  telegramCall: TelegramCall;
   bootWaitMs: number;
   pollMs: number;
 }
@@ -145,6 +154,8 @@ interface Context {
   readonly deps: UpdateDeps;
   /** Without credential-shaped names: start.sh exports auth.env, and the owner's shell has its own. */
   readonly env: NodeJS.ProcessEnv;
+  /** Where an /update's progress goes; nowhere for an owner's `mama update`. */
+  readonly progress: ProgressSink;
 }
 
 function message(error: unknown): string {
@@ -241,6 +252,7 @@ function defaultDeps(options: UpdateOptions, home: string, configPath: string): 
     lock: takeLock,
     version: resolvePackageVersion,
     runningPackage: runningPackageRoot,
+    telegramCall: defaultTelegramCall,
     // The release checks shorten the wait so a candidate that never boots fails in minutes.
     bootWaitMs: wait,
     pollMs: 1_000,
@@ -279,19 +291,63 @@ export async function runUpdate(
   const home = options.home ?? homedir();
   const configPath = options.configPath ?? defaultConfigPath(home);
   const root = dirname(configPath);
+  const write = options.write ?? ((line: string) => console.log(line));
+  const deps = { ...defaultDeps(options, home, configPath), ...options.deps };
+  const env = backendEnvironment(options.env ?? process.env);
   const context: Context = {
     home,
     configPath,
     root,
     paths: updatePaths(root),
-    write: options.write ?? ((line: string) => console.log(line)),
-    deps: { ...defaultDeps(options, home, configPath), ...options.deps },
-    env: backendEnvironment(options.env ?? process.env),
+    write,
+    deps,
+    env,
+    progress: progressSink(env, root, write, deps.telegramCall),
   };
-  if (mode.kind === 'continue') return await continueUpdate(context);
-  if (mode.kind === 'rollback-continue') return await finishRollback(context);
-  if (mode.kind === 'rollback') return await resolveJournal(context);
-  return await update(context, mode.version, mode.dryRun, options);
+  try {
+    if (mode.kind === 'continue') return await continueUpdate(context);
+    if (mode.kind === 'rollback-continue') return await finishRollback(context);
+    if (mode.kind === 'rollback') return await resolveJournal(context);
+    return await update(context, mode.version, mode.dryRun, options);
+  } catch (error) {
+    context.progress.send({ kind: 'error', code: errorCode(error) });
+    throw error;
+  } finally {
+    await context.progress.flush();
+  }
+}
+
+/**
+ * An /update's job sets `MAMA_UPDATE_PROGRESS=telegram` (runtime/update.sh); the children it runs
+ * inherit it, so the new version's steps and a rollback report to the same chat.
+ */
+function progressSink(
+  env: NodeJS.ProcessEnv,
+  root: string,
+  write: (line: string) => void,
+  call: TelegramCall
+): ProgressSink {
+  const setting = env.MAMA_UPDATE_PROGRESS;
+  if (setting === undefined) return NO_PROGRESS;
+  if (setting !== 'telegram') {
+    throw new CliInputError(
+      `MAMA_UPDATE_PROGRESS must be telegram or unset, not ${JSON.stringify(setting)}`
+    );
+  }
+  return telegramProgress({ root, log: write, call });
+}
+
+/** A refusal with the stable code an /update's progress carries instead of its text. */
+function refusal(code: string, text: string): CliInputError {
+  return Object.assign(new CliInputError(text), { code });
+}
+
+/** What the chat is told of an error: its code, or whether it was a refusal. */
+function errorCode(error: unknown): string {
+  return (
+    progressCode((error as { code?: unknown } | null)?.code) ??
+    (error instanceof CliInputError ? 'refused' : 'error')
+  );
 }
 
 /**
@@ -304,7 +360,8 @@ export function takeLock(paths: LockPaths, command: string): InstallLock {
   } catch (error) {
     if (!(error instanceof InstallBusyError)) throw error;
     const holder = error.holder;
-    throw new CliInputError(
+    throw refusal(
+      'update.busy',
       holder === null
         ? `Another mama update holds ${paths.lockPath}`
         : `Already updating since ${new Date(holder.startedAt).toLocaleString('sv-SE')} (${holder.command}, pid ${holder.pid})`
@@ -410,8 +467,12 @@ function copyOver(from: string, to: string): void {
   renameSync(staged, to);
 }
 
+/** Write the journal; a step it begins is the step an /update's progress reports. */
 function save(context: Context, journal: UpdateJournal): void {
   writeUpdateJournal(context.paths.journal, journal);
+  if (journal.phase === 'prepare' || journal.phase === 'candidate') {
+    context.progress.send({ kind: 'step', from: journal.from, to: journal.to, step: journal.step });
+  }
 }
 
 function statusSummary(reply: DaemonControlReply | null): string {
@@ -449,7 +510,8 @@ async function update(
   requireServicePackage(install, deps.runningPackage());
   // Nothing else would start the daemon again after the stop (decision 7).
   if (!existsSync(serviceFile(options))) {
-    throw new CliInputError(
+    throw refusal(
+      'service.missing',
       'mama update starts MAMA again through its service, and none is installed: run mama service install first'
     );
   }
@@ -461,7 +523,8 @@ async function update(
       .split('\n')
       .some((line) => line.trim() === UPDATE_HOLD_LINE)
   ) {
-    throw new CliInputError(
+    throw refusal(
+      'start_sh.no_hold',
       `${startPath} does not stop a start while an update holds the install; run mama service install, then mama update`
     );
   }
@@ -470,7 +533,8 @@ async function update(
   try {
     const open = readUpdateJournal(paths.journal);
     if (open !== null) {
-      throw new CliInputError(
+      throw refusal(
+        'update.open',
         `An earlier update (${open.from} → ${open.to}) is unfinished; resolve it first: ${rollbackCommand(open)}`
       );
     }
@@ -498,23 +562,27 @@ async function update(
         ])
       ).trim();
     } catch (error) {
-      throw new CliInputError(
+      throw refusal(
+        `npm.${npmErrorCode(error)}`,
         `Could not ask ${registry || 'the registry'} for ${PACKAGE_NAME}@${version ?? 'latest'}: npm ${npmErrorCode(error)}; nothing changed`
       );
     }
     if (!/^\d+\.\d+\.\d+\S*$/.test(target)) {
-      throw new CliInputError(
+      throw refusal(
+        'npm.no_version',
         `${registry} has no single ${PACKAGE_NAME}@${version ?? 'latest'} (npm printed ${JSON.stringify(target.slice(0, 80))}); nothing changed`
       );
     }
     const order = compareReleases(target, from);
     if (order === 0) {
       write(`already on ${from}`);
+      context.progress.send({ kind: 'current', version: from });
       return 0;
     }
     if (order < 0) {
       // R5: the newer version may have migrated the database past what the older one reads.
-      throw new CliInputError(
+      throw refusal(
+        'update.older',
         `Refused: ${target} is older than ${from}, which runs now; mama update does not go back a version`
       );
     }
@@ -548,10 +616,12 @@ async function update(
       write(`  ${line}`);
     }
     if (dryRun) return 0;
+    context.progress.send({ kind: 'plan', from, to: target });
     for (const leftover of leftovers) rmSync(leftover, { recursive: true, force: true });
 
     // Step 5: stage.
     write(`staging ${target}`);
+    context.progress.send({ kind: 'step', from, to: target, step: 5 });
     try {
       await npm([
         'install',
@@ -567,7 +637,8 @@ async function update(
       ]);
     } catch (error) {
       rmSync(places.staging, { recursive: true, force: true });
-      throw new CliInputError(
+      throw refusal(
+        `npm.${npmErrorCode(error)}`,
         `Staging ${target} failed: npm ${npmErrorCode(error)}; nothing else changed`
       );
     }
@@ -575,7 +646,8 @@ async function update(
     // The links in <prefix>/bin name the old package's commands, and the swap keeps them.
     if (staged?.version !== target || staged.bin.join(' ') !== old.bin.join(' ')) {
       rmSync(places.staging, { recursive: true, force: true });
-      throw new CliInputError(
+      throw refusal(
+        staged === null || staged.version !== target ? 'update.not_staged' : 'update.bin_changed',
         staged === null || staged.version !== target
           ? `npm did not stage ${target} at ${places.staged}; nothing else changed`
           : `${target}'s commands (${staged.bin.join(', ')}) are not ${from}'s (${old.bin.join(', ')}); the swap would leave its links wrong, so install it with npm install -g ${PACKAGE_NAME}@${target}`
@@ -609,6 +681,13 @@ async function update(
     if ((await deps.stop(false)) !== 0) {
       removeUpdateJournal(paths.journal);
       rmSync(places.staging, { recursive: true, force: true });
+      context.progress.send({
+        kind: 'not_updated',
+        from,
+        to: target,
+        step: 6,
+        code: 'stop.failed',
+      });
       // A stop can fail after the service manager took it (a release that took too long), so the
       // install may be down now; this names which, as mama backup --restart does.
       write(
@@ -654,6 +733,13 @@ async function update(
       save(context, journal);
     } catch (error) {
       write(`not updated: ${message(error)}`);
+      context.progress.send({
+        kind: 'not_updated',
+        from,
+        to: target,
+        step: 7,
+        code: progressCode((error as { code?: unknown }).code) ?? 'snapshot.failed',
+      });
       removeSnapshot(journal);
       rmSync(paths.copies, { recursive: true, force: true });
       rmSync(places.staging, { recursive: true, force: true });
@@ -684,6 +770,8 @@ async function update(
     // Step 9: the new version carries on.
     journal.step = 9;
     save(context, journal);
+    // The new version's own reports come after this one's.
+    await context.progress.flush();
     let result: CliResult;
     try {
       result = await deps.runCli(
@@ -763,8 +851,12 @@ async function continueUpdateHeld(context: Context): Promise<number> {
         )
     );
     if (fresh.length > 0) {
-      throw new Error(
-        `mama doctor --offline fails where it did not before: ${fresh.map((failure) => `${failure.name} (${failure.code})`).join(', ')}`
+      throw Object.assign(
+        new Error(
+          `mama doctor --offline fails where it did not before: ${fresh.map((failure) => `${failure.name} (${failure.code})`).join(', ')}`
+        ),
+        // The first new failure's stable code, for an /update's chat; a detail is not a code.
+        { code: progressCode(fresh[0].code) ?? 'doctor.failed' }
       );
     }
     // Step 12: the toolkit, when this version locks other requirements.
@@ -799,6 +891,13 @@ async function continueUpdateHeld(context: Context): Promise<number> {
     journal.failure = { step: journal.step, message: message(error) };
     save(context, journal);
     write(`update step ${journal.step} failed: ${message(error)}${orphanNote(context, journal)}`);
+    context.progress.send({
+      kind: 'failed',
+      from: journal.from,
+      to: journal.to,
+      step: journal.step,
+      code: progressCode((error as { code?: unknown } | null)?.code),
+    });
     return 1;
   }
   // On disk before the release: from here the candidate claims, and nothing rolls it back.
@@ -824,6 +923,12 @@ async function finishCommitted(context: Context, journal: UpdateJournal): Promis
   rmSync(paths.hold, { force: true });
   // Last: a cleanup cut off leaves a committed journal, which --rollback finishes.
   removeUpdateJournal(paths.journal);
+  context.progress.send({
+    kind: 'updated',
+    from: journal.from,
+    to: journal.to,
+    running: reply.state === 'running',
+  });
   write(
     reply.state === 'running'
       ? `updated: ${journal.from} → ${journal.to}; it runs and claims again`
@@ -883,6 +988,7 @@ async function rollBack(context: Context, journal: UpdateJournal): Promise<boole
   write(
     `rolling back to ${journal.from}: step ${journal.failure?.step ?? journal.step} failed: ${journal.failure?.message ?? 'unknown'}`
   );
+  context.progress.send({ kind: 'rolling_back', from: journal.from, to: journal.to });
   try {
     if ((await stopForRollback(context, journal)) !== 0)
       throw new Error('the service did not stop');
@@ -898,6 +1004,7 @@ async function rollBack(context: Context, journal: UpdateJournal): Promise<boole
       }
       renameSync(places.aside, places.package);
     }
+    await context.progress.flush();
     const result = await deps.runCli(
       journal.nodePath,
       join(places.package, journal.packageCli),
@@ -905,6 +1012,7 @@ async function rollBack(context: Context, journal: UpdateJournal): Promise<boole
       env
     );
     if (result.code === 0) return true;
+    context.progress.send({ kind: 'rollback_stopped', from: journal.from, to: journal.to });
     // What it printed may be cut off (a signal); the failed step and the command are said here.
     writeFileSync(paths.hold, `${process.pid}\n`, { mode: 0o600 });
     const current = readUpdateJournal(paths.journal) ?? journal;
@@ -914,6 +1022,7 @@ async function rollBack(context: Context, journal: UpdateJournal): Promise<boole
     return false;
   } catch (error) {
     writeFileSync(paths.hold, `${process.pid}\n`, { mode: 0o600 });
+    context.progress.send({ kind: 'rollback_stopped', from: journal.from, to: journal.to });
     const current = readUpdateJournal(paths.journal) ?? journal;
     write(
       `rollback stopped: ${message(error)}. The install stays stopped on its hold file; the journal, the snapshot and both package folders are kept. Resolve it with: ${rollbackCommand(current)}`
@@ -1008,6 +1117,12 @@ async function finishRollbackHeld(context: Context): Promise<number> {
     rmSync(paths.copies, { recursive: true, force: true });
     rmSync(places.staging, { recursive: true, force: true });
     removeUpdateJournal(paths.journal);
+    context.progress.send({
+      kind: 'rolled_back',
+      from: journal.from,
+      to: journal.to,
+      step: journal.failure?.step ?? journal.step,
+    });
     write(
       `rolled back: ${journal.from} runs again; step ${journal.failure?.step ?? journal.step} of the update to ${journal.to} failed: ${journal.failure?.message ?? 'unknown'}`
     );
@@ -1030,6 +1145,7 @@ async function finishRollbackHeld(context: Context): Promise<number> {
       stopped = `The hold file is in place, but stopping the daemon failed (${message(stopError)}) and it may still run`;
     }
     writeFileSync(paths.hold, `${process.pid}\n`, { mode: 0o600 });
+    context.progress.send({ kind: 'rollback_stopped', from: journal.from, to: journal.to });
     write(
       `rollback stopped: ${message(error)}. ${stopped}; the journal, the snapshot and both package folders are kept. Run again: ${rollbackCommand(journal)}`
     );

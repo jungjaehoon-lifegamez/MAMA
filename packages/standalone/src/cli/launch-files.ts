@@ -172,6 +172,64 @@ export function launchAgent(home: string): string {
 `;
 }
 
+/** The update job /update starts (docs/development/work/update.md, PR 4). */
+export const UPDATE_JOB_LABEL = 'com.mama.update';
+
+/**
+ * The update job's LaunchAgent: launchd's own job, so stopping the daemon's service does not end
+ * it (checks.md, W2.3 Step 0). It runs once: no KeepAlive, and it is loaded from runtime/, not
+ * ~/Library/LaunchAgents, so a login does not start it again.
+ */
+export function updateAgent(home: string): string {
+  const root = join(home, '.mama');
+  const log = xml(join(root, 'logs', 'update.log'));
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>${UPDATE_JOB_LABEL}</string>
+  <key>ProgramArguments</key><array><string>${xml(join(root, 'runtime', 'update.sh'))}</string></array>
+  <key>WorkingDirectory</key><string>${xml(root)}</string>
+  <key>EnvironmentVariables</key><dict><key>HOME</key><string>${xml(home)}</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>${log}</string>
+  <key>StandardErrorPath</key><string>${log}</string>
+</dict></plist>
+`;
+}
+
+/**
+ * The update job's script: start.sh's PATH and `cd` and its pinned Node and MAMA command, and
+ * nothing of auth.env, so the job holds no credential; the progress sink reads the bot token
+ * alone from auth.env when it sends. `MAMA_UPDATE_PROGRESS` reaches the new version's
+ * `update --continue` and a rollback's CLI through the environment they inherit.
+ */
+export function updateScript(options: {
+  home: string;
+  /** start.sh's text. */
+  start: string;
+  nodePath: string;
+  cliPath: string;
+}): string {
+  const root = join(options.home, '.mama');
+  const reading = readStartScript(options.start, options.home);
+  if (reading.path === null)
+    throw new Error('start.sh sets no PATH; mama service install rewrites it');
+  const log = join('logs', 'update.log');
+  return [
+    '#!/bin/sh',
+    "# Written by MAMA's /update for the update job it starts; each /update rewrites it.",
+    'set -eu',
+    'umask 077',
+    `export PATH=${reading.path}`,
+    `cd ${shellQuote(root)}`,
+    // launchd creates the file it redirects to before this script's umask applies.
+    `if [ -f ${log} ]; then chmod 600 ${log}; fi`,
+    'export MAMA_UPDATE_PROGRESS=telegram',
+    `exec ${shellQuote(options.nodePath)} ${shellQuote(options.cliPath)} update`,
+    '',
+  ].join('\n');
+}
+
 /**
  * The systemd user unit, with the same restart policy as the LaunchAgent. `%h` is the home folder,
  * expanded by systemd per argument, so a path with spaces stays one argument. KillMode=mixed sends
