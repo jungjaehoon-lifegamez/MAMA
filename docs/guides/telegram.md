@@ -59,6 +59,7 @@ menu in DMs and groups, and only registered people get an answer.
 | `/status` | MAMA's version, whether a turn is running in this conversation, what waits   |
 | `/stop`   | Stops the turn running in this conversation; the conversation itself goes on |
 | `/new`    | Starts this conversation over; what MAMA saved stays                         |
+| `/update` | Owners: updates MAMA to the latest release and reports each step here        |
 | `/help`   | Lists these commands                                                         |
 
 The conversation is the one your messages in that chat go to. In the common group that is the
@@ -71,6 +72,12 @@ over; an owner's group messages go to the common session, which only `/new` in t
 over. In their own DM, owners see every conversation's count and the sources in `/status`; in a
 group everyone sees only their own. A command for another bot (`/status@other_bot`) is left
 alone, and any other command goes to MAMA as a message.
+
+`/update` works for an owner in their own DM or in the common group, and nowhere else. It runs
+`mama update` as a job of its own, so it works even when the model backend does not, and the
+job's progress comes back to the same chat: versions, step names and error codes, never a path.
+While an update runs, another `/update` only says since when. An install run from a git checkout
+answers with the commands that update it instead.
 
 ## Send originals and receive results
 

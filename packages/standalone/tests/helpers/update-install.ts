@@ -156,6 +156,8 @@ export function fixture(
   const calls: string[] = [];
   const counts = new Map<string, number>();
   const npmEnvs: NodeJS.ProcessEnv[] = [];
+  /** Bot API calls the /update progress made: method and parameters. */
+  const telegram: Array<{ token: string; method: string; params: Record<string, string> }> = [];
   const childEnvs: NodeJS.ProcessEnv[] = [];
   const state = {
     /** The version the daemon runs, or null. */
@@ -191,6 +193,8 @@ export function fixture(
     lsProblems: false,
     checks: [] as Check[],
     journalModes: [] as number[],
+    /** The Bot API refuses (a number: that error code) or cannot be reached (true). */
+    telegramFails: null as number | true | null,
   };
   const paths = updatePaths(root);
   const locks: Array<{ path: string; lock: { release(): void } }> = [];
@@ -413,6 +417,12 @@ export function fixture(
     },
     version: () => version,
     runningPackage: () => packageRoot,
+    telegramCall: async (token, method, params = {}) => {
+      telegram.push({ token, method, params });
+      if (state.telegramFails === true) throw new TypeError('fetch failed');
+      if (state.telegramFails !== null) return { ok: false, error_code: state.telegramFails };
+      return { ok: true, result: { message_id: telegram.length } };
+    },
     bootWaitMs: 50,
     pollMs: 5,
   });
@@ -446,6 +456,7 @@ export function fixture(
     calls,
     npmEnvs,
     childEnvs,
+    telegram,
     run: async (args: string[]) => await runUpdate(args, settings(packageVersion())),
     /** Run the CLI at the given package folder, as the owner runs a printed command. */
     runAt: async (packageAt: string, args: string[]) =>

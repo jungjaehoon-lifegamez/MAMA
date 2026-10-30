@@ -112,7 +112,7 @@ function message(error: unknown): string {
 }
 
 /** auth.env's assignments, unquoted as sh reads them; values are never printed. */
-function readAuthEnv(root: string): Record<string, string> {
+export function readAuthEnv(root: string): Record<string, string> {
   const path = join(root, 'auth.env');
   if (!existsSync(path)) return {};
   const values: Record<string, string> = {};

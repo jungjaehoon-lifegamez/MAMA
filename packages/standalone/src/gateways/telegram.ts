@@ -25,6 +25,8 @@ import {
   startOverText,
   statusText,
   stopText,
+  UPDATE_REFUSED,
+  updateText,
   whoamiText,
   type TelegramHostCommand,
   type TelegramHostCommandPort,
@@ -846,6 +848,12 @@ export class TelegramGateway extends BaseGateway {
         text = statusText(await this.hostCommands.status(target, owner && privateChat)).join('\n');
       else if (command === 'stop')
         text = stopText(await this.hostCommands.stopTurn(target), target);
+      else if (command === 'update')
+        // An owner in another group is refused too: its members would read the progress.
+        text =
+          owner && (privateChat || chatId === this.config.ownerChatId)
+            ? updateText(await this.hostCommands.update({ chatId, messageId: message.message_id }))
+            : UPDATE_REFUSED;
       else text = startOverText(await this.hostCommands.startOver(target), target, owner);
     } catch (error) {
       this.log(

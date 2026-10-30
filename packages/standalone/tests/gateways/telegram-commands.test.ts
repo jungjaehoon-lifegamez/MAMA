@@ -26,11 +26,13 @@ vi.mock('grammy', () => ({
   })),
 }));
 
+import { Bot } from 'grammy';
 import { TelegramGateway } from '../../src/gateways/telegram.js';
 import {
   hostCommand,
   startOverText,
   statusText,
+  updateText,
   type TelegramHostCommandPort,
 } from '../../src/gateways/telegram-commands.js';
 import type { OwnerMessageInput, TurnIntake } from '../../src/gateways/turn-contract.js';
@@ -101,7 +103,7 @@ async function gateway(port: TelegramHostCommandPort, log: (line: string) => voi
     log,
   });
   await active.start();
-  return { owner, member, received, registry };
+  return { owner, member, received, registry, gateway: active };
 }
 
 async function send(message: Record<string, unknown>) {
@@ -124,6 +126,7 @@ function port(overrides: Partial<TelegramHostCommandPort> = {}): TelegramHostCom
     })),
     startOver: vi.fn(async () => 'started_over' as const),
     stopTurn: vi.fn(async () => 'stopped' as const),
+    update: vi.fn(async () => ({ kind: 'started' as const, from: '1.0.0', to: '1.1.0' })),
     ...overrides,
   };
 }
@@ -157,7 +160,7 @@ describe('Telegram host commands', () => {
     expect(scopes).toEqual(['all_private_chats', 'all_group_chats']);
     expect(
       seams.api.setMyCommands.mock.calls[0][0].map((entry: { command: string }) => entry.command)
-    ).toEqual(['whoami', 'status', 'stop', 'new', 'help']);
+    ).toEqual(['whoami', 'status', 'stop', 'new', 'update', 'help']);
   });
 
   it('starts even when the menu cannot be registered', async () => {
@@ -377,6 +380,84 @@ describe('Telegram host commands', () => {
     });
     expect(received).toHaveLength(1);
     expect(received[0].text).toBe('/report today');
+  });
+});
+
+describe('/update', () => {
+  const origins = [
+    ['an owner in their DM', 7101, 'private', 7101, true],
+    ['an owner in the common group', Number(COMMON), 'supergroup', 7101, true],
+    ['an owner in another group', Number(OTHER_GROUP), 'supergroup', 7101, false],
+    ['a member in their DM', 7102, 'private', 7102, false],
+    ['a member in the common group', Number(COMMON), 'supergroup', 7102, false],
+  ] as const;
+
+  it.each(origins)('%s', async (_who, chat, type, from, allowed) => {
+    const commands = port();
+    const { received } = await gateway(commands);
+    await send({
+      ...command('/update', { message_id: 31 }),
+      chat: { id: chat, type },
+      from: { id: from, is_bot: false },
+    });
+    const [chatId, text, options] = await reply();
+    expect(chatId).toBe(chat);
+    expect(options.reply_parameters.message_id).toBe(31);
+    // A host command: no message is accepted, so no model run opens.
+    expect(received).toHaveLength(0);
+    if (allowed) {
+      expect(commands.update).toHaveBeenCalledWith({ chatId: String(chat), messageId: 31 });
+      expect(text).toBe('Updating 1.0.0 → 1.1.0; progress follows.');
+    } else {
+      expect(commands.update).not.toHaveBeenCalled();
+      expect(text).toContain('Only an owner can run /update');
+    }
+  });
+
+  it('says what the daemon found: busy, a repeat, a checkout, no cached release', () => {
+    expect(updateText({ kind: 'busy', since: '2026-10-30 Fri 09:00' })).toBe(
+      'Already updating since 2026-10-30 Fri 09:00; that update goes on and reports here.'
+    );
+    expect(updateText({ kind: 'repeated' })).toContain('already received');
+    expect(updateText({ kind: 'checkout', steps: ['step one', 'step two'] })).toBe(
+      '/update serves npm installs. This install is a checkout, which updates by git:\nstep one\nstep two'
+    );
+    expect(updateText({ kind: 'started', from: '1.0.0', to: null })).toBe(
+      'Updating 1.0.0 to the latest release; progress follows.'
+    );
+  });
+
+  it("answers a failed start with a notice and keeps the error in the daemon's log", async () => {
+    const lines: string[] = [];
+    const commands = port({
+      update: vi.fn(async () => {
+        throw new Error('launchctl bootstrap failed: fixture');
+      }),
+    });
+    await gateway(commands, (line) => lines.push(line));
+    await send({
+      ...command('/update'),
+      chat: { id: 7101, type: 'private' },
+      from: { id: 7101, is_bot: false },
+    });
+    const [, text] = await reply();
+    expect(text).toBe('MAMA could not answer /update; its log has the error.');
+    expect(lines.join('\n')).toContain('launchctl bootstrap failed: fixture');
+  });
+
+  it("confirms the offset on stop, so the stopped daemon's /update is not received again", async () => {
+    const { gateway: active } = await gateway(port());
+    await send({
+      ...command('/update'),
+      chat: { id: 7101, type: 'private' },
+      from: { id: 7101, is_bot: false },
+    });
+    await reply();
+    const bot = vi.mocked(Bot).mock.results.at(-1)!.value as { stop: ReturnType<typeof vi.fn> };
+    expect(bot.stop).not.toHaveBeenCalled();
+    await active.stop();
+    // grammY's stop() confirms the offset past the last update it handled (telegram-offset.test.ts).
+    expect(bot.stop).toHaveBeenCalledTimes(1);
   });
 });
 
