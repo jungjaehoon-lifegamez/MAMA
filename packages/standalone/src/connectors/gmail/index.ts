@@ -12,7 +12,7 @@ import type {
   NormalizedItem,
 } from '../framework/types.js';
 import { cliAuth } from '../framework/types.js';
-import { execGwsAsync, execGwsTextAsync, gwsTool } from '../framework/gws-utils.js';
+import { execGwsAsync, execGwsTextAsync, gwsMissing, gwsTool } from '../framework/gws-utils.js';
 
 interface GmailMessage {
   id: string;
@@ -49,7 +49,7 @@ export class GmailConnector implements IConnector {
     try {
       await execGwsTextAsync(['--version']);
     } catch {
-      throw new Error('gws CLI not found. Install it and run: gws auth login');
+      throw new Error(gwsMissing);
     }
   }
 

@@ -137,7 +137,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   they say so: `mama init` says to install it now and run `mama init` again to continue (a run
   that continues names `gws` again), and `--section` says to start the service once it is
   installed. Doctor's fix for a source that does not start, or whose sign-in is refused, names
-  the same login command (#543).
+  the same login command, and the sources' own errors point to `mama doctor` for those commands
+  instead of a bare `gws auth login` (#543).
 
 ### Changed
 

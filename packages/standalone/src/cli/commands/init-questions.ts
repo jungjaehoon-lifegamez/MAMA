@@ -217,9 +217,16 @@ export function writeSourceTools(
   connectors: ConnectorsConfig,
   install: { root: string; home: string; platform: NodeJS.Platform; backend: string },
   options: Pick<ServiceOptions, 'findExecutable' | 'nodePath' | 'cliPath' | 'toolDirectoryExists'>,
-  write: (line: string) => void
+  write: (line: string) => void,
+  /** What to do once a missing tool is installed. */
+  next: string
 ): void {
   const { root, home, platform, backend } = install;
+  const sources = Object.entries(connectors)
+    .filter(([, connector]) => connector.enabled)
+    .map(([name, connector]) => ({ name, needs: [connector.auth] }));
+  // start.sh is read only when a source runs a tool.
+  if (!sources.some(({ needs }) => needs.some((need) => need.type === 'cli'))) return;
   const service = serviceSight(
     root,
     home,
@@ -228,12 +235,12 @@ export function writeSourceTools(
     options.toolDirectoryExists
   );
   const reports = sourceTools(
-    Object.entries(connectors).map(([name, connector]) => ({ name, needs: [connector.auth] })),
+    sources,
     service,
     { root, home },
     { inDirs: findIn, shell: options.findExecutable ?? findExecutable }
   );
-  for (const line of sourceToolLines(reports)) write(line);
+  for (const line of sourceToolLines(reports, next)) write(line);
 }
 
 export type TelegramCall = Parameters<typeof telegramCheck>[2];

@@ -13,6 +13,12 @@ export const gwsTool: SourceTool = {
   brewFormula: 'googleworkspace-cli',
 };
 
+/** The login, for a source's own error: doctor prints the command that runs it on this install. */
+export const gwsLogin = `mama doctor names the ${gwsTool.command} ${gwsTool.loginArgs} command for this install`;
+
+/** A source's error when the service cannot run gws; doctor names how to install it here. */
+export const gwsMissing = `${gwsTool.command} is not on the service's PATH; mama doctor names how to install it, and ${gwsLogin}`;
+
 export interface GwsCallOptions {
   maxBuffer?: number;
   /** Defaults to 60 s; a download names its own. */

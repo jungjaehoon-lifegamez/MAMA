@@ -871,6 +871,9 @@ async function sourceChecks(
               status: 'fail',
               detail: 'does not start; boot stops at the connectors stage',
               context: message(error),
+              // The tool is on the service's PATH here, so a source that runs one most often
+              // lacks its sign-in or a scope (Calendar's read check).
+              ...(tools.length > 0 ? { fix: tools.map(({ login }) => login).join('; ') } : {}),
             };
             return;
           }

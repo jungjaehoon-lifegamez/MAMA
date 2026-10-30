@@ -70,6 +70,8 @@ interface InstallOptions {
   connectors?: unknown;
   auth?: Record<string, string>;
   carried?: string[];
+  /** Commands start.sh's PATH carries the folders of, relative to the temp home. */
+  bins?: string[];
 }
 
 /** An install whose start.sh runs `node` (relative to the temp home, created unless `gone`). */
@@ -117,7 +119,7 @@ function install(options: InstallOptions = {}) {
       home,
       nodePath: node,
       cliPath: CLI,
-      executablePaths: ['/fixture/bin/claude'],
+      executablePaths: ['/fixture/bin/claude', ...(options.bins ?? []).map((b) => join(home, b))],
       viewer: {},
       logLevel: 'info',
       carried: options.carried ?? [],
@@ -796,10 +798,21 @@ describe('mama doctor', () => {
     // On the service's PATH (start.sh names /opt/homebrew/bin when it exists; here, the system's).
     expect(await check(npm, '/usr/bin/gws', undefined)).toBeUndefined();
 
-    // The install command's layout: start.sh runs ~/.mama/node, gws is a Node script.
-    const script = install({ connectors: gmail, node: '.mama/node/bin/node' });
+    // The install command's layout: start.sh runs ~/.mama/node and its PATH names ~/.mama/npm/bin;
+    // gws is a Node script.
+    const script = install({
+      connectors: gmail,
+      node: '.mama/node/bin/node',
+      bins: ['.mama/npm/bin/mama'],
+    });
     expect((await check(script, undefined, undefined)).fix).toBe(
       'install it: PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/node/bin/npm install -g --prefix ~/.mama/npm @googleworkspace/cli; then log in: PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login'
+    );
+    // The managed Node on another package (a checkout): ~/.mama/npm/bin is not on its PATH, so
+    // installing there would not reach the service.
+    const checkout = install({ connectors: gmail, node: '.mama/node/bin/node' });
+    expect((await check(checkout, undefined, undefined)).fix).toBe(
+      'install it: npm install -g @googleworkspace/cli or brew install googleworkspace-cli; then log in: gws auth login'
     );
     // Found there, it starts; a refused sign-in names the same login.
     const found = join(script.root, 'npm', 'bin', 'gws');
@@ -821,6 +834,29 @@ describe('mama doctor', () => {
     );
     expect(by['source gmail']).toMatchObject({
       detail: 'starts, but its credentials or sign-in are refused, so its polls fail',
+      fix: 'PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login',
+    });
+    // A start that fails with gws found (Calendar's read check without the scope) names it too.
+    const refused = byName(
+      await runDiagnostics({
+        ...base(script),
+        findIn: (name: string) => (name === 'gws' ? found : `/fixture/bin/${name}`),
+        findExecutable: () => undefined,
+        loadSource: async () =>
+          ({
+            getAuthRequirements: () => [
+              { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login', description: '' },
+            ],
+            init: async () => {
+              throw new Error('gws cannot read the primary calendar');
+            },
+            authenticate: async () => false,
+            dispose: async () => {},
+          }) as never,
+      })
+    );
+    expect(refused['source gmail']).toMatchObject({
+      detail: 'does not start; boot stops at the connectors stage',
       fix: 'PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login',
     });
   });

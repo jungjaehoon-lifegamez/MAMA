@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import * as yaml from 'js-yaml';
@@ -42,7 +42,7 @@ import {
   type DaemonControlReply,
 } from '../runtime/daemon-control.js';
 import { defaultServiceRun, type ServiceRun } from '../runtime/systemd-service.js';
-import { askDaemon } from './daemon.js';
+import { askDaemon, pathsFor } from './daemon.js';
 import {
   askBackend,
   askDiscord,
@@ -100,6 +100,10 @@ export interface InitOptions {
   bootTimeoutMs?: number;
   pollMs?: number;
 }
+
+/** What init says to do once a source's missing tool is installed. */
+const SOURCE_TOOL_NEXT =
+  'Install it now; if setup stops waiting for MAMA to start, running mama init again continues it.';
 
 /** The answers `mama init` asks for, from a person at a terminal or from MAMA_INIT_* variables. */
 interface InitAnswers {
@@ -598,10 +602,22 @@ export async function runInit(
         answers.connectors,
         { root, home, platform, backend: answers.backend },
         options,
-        write
+        write,
+        SOURCE_TOOL_NEXT
       );
     } else {
       config = loadConfig({ home, path: configPath });
+      // A setup that stopped (often at the boot wait, when a source's tool is missing) names the
+      // tools again: the service does not start until they are installed.
+      const connectorsPath = pathsFor(configPath, config).connectorsConfigPath;
+      if (existsSync(connectorsPath))
+        writeSourceTools(
+          JSON.parse(readFileSync(connectorsPath, 'utf8')) as ConnectorsConfig,
+          { root, home, platform, backend: config.agent.backend },
+          options,
+          write,
+          SOURCE_TOOL_NEXT
+        );
     }
     if (!done('owner')) {
       const owner = progress.pendingOwner;

@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import type { AuthConfig, SourceTool } from '../../connectors/framework/types.js';
 import { gwsTool } from '../../connectors/framework/gws-utils.js';
 import { readStartScript, shellWords, startPathEntries, startScriptPath } from '../launch-files.js';
+import { CliInputError } from '../prompt.js';
 import { shellQuote } from '../secrets.js';
 import { managedNodePath, nodeMovePlaces } from './node-move-journal.js';
 
@@ -37,11 +38,18 @@ export function serviceSight(
 ): ServiceSight {
   const startPath = join(root, 'start.sh');
   if (existsSync(startPath)) {
-    const reading = readStartScript(readFileSync(startPath, 'utf8'), home);
-    return {
-      path: startScriptPath(reading, home, platform),
-      nodePath: (reading.exec === null ? undefined : shellWords(reading.exec)[1]) ?? null,
-    };
+    try {
+      const reading = readStartScript(readFileSync(startPath, 'utf8'), home);
+      return {
+        path: startScriptPath(reading, home, platform),
+        nodePath: (reading.exec === null ? undefined : shellWords(reading.exec)[1]) ?? null,
+      };
+    } catch (error) {
+      throw new CliInputError(
+        `${startPath} does not parse (${error instanceof Error ? error.message : String(error)}); mama service install --replace rewrites it`,
+        { cause: error }
+      );
+    }
   }
   const launch = planned();
   return {
@@ -110,9 +118,10 @@ export function sourceTools(
   const { root, home } = install;
   // An install the install command made (PR 2): start.sh runs ~/.mama/node, and its PATH names
   // ~/.mama/npm/bin. A tool that is a Node script installs there with that Node.
-  const managed = service.nodePath === managedNodePath(root);
   const nodeBin = dirname(managedNodePath(root));
   const prefix = nodeMovePlaces(root).prefix;
+  const managed =
+    service.nodePath === managedNodePath(root) && service.path.includes(join(prefix, 'bin'));
   return [...used].map(([tool, names]) => {
     const onService = find.inDirs(tool.command, service.path) ?? null;
     const onShell = find.shell(tool.command) ?? null;
@@ -142,17 +151,23 @@ export function sourceTools(
   });
 }
 
-/** What `mama init` and `init --section connectors` print for each report. */
-export function sourceToolLines(reports: readonly SourceToolReport[]): string[] {
+/**
+ * What `mama init` and `init --section connectors` print for each report. The service does not
+ * start while a source's tool is missing from its PATH (the source's start fails boot), so a
+ * missing tool's lines end with `next`: what to do once it is installed.
+ */
+export function sourceToolLines(reports: readonly SourceToolReport[], next: string): string[] {
   return reports.flatMap((report) => {
     const { tool, sources } = report;
     const who = sources.join(', ');
     const s = sources.length > 1 ? '' : 's';
     const scopes = `${tool.command} with the scopes ${who} need${s}:`;
+    const stops = `MAMA's service does not start with ${who} until ${tool.command} is on its PATH.`;
     if (report.servicePath !== null) return [`Log in to ${scopes} ${report.login}`];
     if (report.shellPath !== null)
       return [
         `${who} run${s} ${tool.command}; this shell finds ${report.shellPath}, but the service's PATH does not name ${dirname(report.shellPath)}. mama service install adds it; mama service restart then applies it.`,
+        stops,
         `Log in to ${scopes} ${report.login}`,
       ];
     return [
@@ -160,6 +175,7 @@ export function sourceToolLines(reports: readonly SourceToolReport[]): string[] 
       ...report.install.map((command) => `  ${command}`),
       `Then log in to ${scopes}`,
       `  ${report.login}`,
+      `${stops} ${next}`,
     ];
   });
 }

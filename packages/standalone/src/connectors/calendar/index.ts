@@ -9,7 +9,7 @@ import type {
   ConnectorPollCursor,
 } from '../framework/types.js';
 import { cliAuth } from '../framework/types.js';
-import { execGwsAsync, gwsTool } from '../framework/gws-utils.js';
+import { execGwsAsync, gwsLogin, gwsMissing, gwsTool } from '../framework/gws-utils.js';
 import { readConnectorState, writeConnectorState } from '../framework/connector-state.js';
 
 interface CalendarEvent {
@@ -114,8 +114,8 @@ export class CalendarConnector implements IConnector {
     } catch (error) {
       this.lastError =
         (error as NodeJS.ErrnoException).code === 'ENOENT'
-          ? 'Calendar: install gws and add its bin directory to the daemon PATH in ~/.mama/start.sh; then run: gws auth login'
-          : 'Calendar: gws cannot read the primary calendar. Run: gws auth login with Google Calendar read access, then retry.';
+          ? `Calendar: ${gwsMissing}`
+          : `Calendar: ${gwsTool.command} cannot read the primary calendar. Sign in with Google Calendar read access (${gwsLogin}), then retry.`;
       throw new Error(this.lastError, { cause: error });
     }
   }

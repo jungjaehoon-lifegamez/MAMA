@@ -1383,6 +1383,7 @@ describe('tools a source needs (install.md, PR 3)', () => {
         '  brew install googleworkspace-cli',
         'Then log in to gws with the scopes gmail needs:',
         '  gws auth login',
+        "MAMA's service does not start with gmail until gws is on its PATH. Install it now; if setup stops waiting for MAMA to start, running mama init again continues it.",
       ].join('\n')
     );
     rmSync(root, { recursive: true, force: true });
@@ -1395,6 +1396,27 @@ describe('tools a source needs (install.md, PR 3)', () => {
         '  PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login',
       ].join('\n')
     );
+  });
+
+  it('mama init run again after the service did not start names gws again', async () => {
+    const first = prompt(gmail(), [fixtureSecrets.MAMA_TELEGRAM_TOKEN]);
+    await expect(
+      runInit(
+        [],
+        options(first.adapter, {
+          findExecutable: shell(),
+          startService: async () => {
+            throw new Error('fixture: MAMA did not finish starting');
+          },
+        })
+      )
+    ).rejects.toThrow(/did not finish starting/);
+    const again = prompt([], []);
+    await runInit([], options(again.adapter, { findExecutable: shell() }));
+    const output = again.output.join('\n');
+    expect(output).toContain('continuing setup');
+    expect(output).toContain("gmail runs gws, which the service's PATH does not have.");
+    expect(output).toContain('running mama init again continues it.');
   });
 
   it("mama init: gws on the shell's PATH only is carried into start.sh, so only its login is named", async () => {
@@ -1452,8 +1474,12 @@ describe('tools a source needs (install.md, PR 3)', () => {
 
     it('gws missing', async () => {
       await setUp([]);
-      expect(await section(shell())).toContain(
+      const output = await section(shell());
+      expect(output).toContain(
         "gmail runs gws, which the service's PATH does not have. Install it with one of:\n  npm install -g @googleworkspace/cli"
+      );
+      expect(output).toContain(
+        "MAMA's service does not start with gmail until gws is on its PATH. Once it is installed, start MAMA: mama service start"
       );
     });
 
@@ -1464,8 +1490,21 @@ describe('tools a source needs (install.md, PR 3)', () => {
       expect(output).toContain(
         `gmail runs gws; this shell finds ${found}, but the service's PATH does not name ${dirname(found)}. mama service install adds it; mama service restart then applies it.`
       );
+      expect(output).toContain(
+        "MAMA's service does not start with gmail until gws is on its PATH."
+      );
       expect(output).toContain('Log in to gws with the scopes gmail needs: gws auth login');
       expect(output).not.toContain('Install it');
+    });
+
+    it('a start.sh that does not parse is named, with the command that rewrites it', async () => {
+      await setUp([]);
+      writeFileSync(join(root, 'start.sh'), "#!/bin/sh\nexport PATH='/usr/bin\n", { mode: 0o700 });
+      await expect(
+        runInit(['--section', 'connectors'], options(prompt(['gmail'], []).adapter))
+      ).rejects.toThrow(
+        `${join(root, 'start.sh')} does not parse (unterminated single quote); mama service install --replace rewrites it`
+      );
     });
 
     it("gws on the service's PATH", async () => {

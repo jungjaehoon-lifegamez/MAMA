@@ -200,7 +200,8 @@ export async function runInitSection(section: string, options: InitOptions = {})
             backend: config.agent.backend,
           },
           options,
-          write
+          write,
+          'Once it is installed, start MAMA: mama service start'
         );
       if (reshaped)
         write(
