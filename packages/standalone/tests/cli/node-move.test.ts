@@ -250,6 +250,26 @@ describe('mama update --node', () => {
     }
   );
 
+  it('writes no hold when its undo cannot stop the new Node, and says MAMA may still run on it', async () => {
+    const f = managed();
+    // The new Node boots MAMA, but its viewer does not answer; the undo's drained stop fails.
+    f.state.healthFails = true;
+    f.state.stopFailsWhen = () => f.state.runningNode === '22.24.0';
+    expect(await f.run(['--node', stage(f, '22.24.0')])).toBe(1);
+    expect(f.output()).toContain(
+      'the move was not undone: the stop did not finish (above), so MAMA may still run on Node.js 22.24.0. Run mama stop --now, then the install command again'
+    );
+    expect(existsSync(f.paths.hold)).toBe(false);
+    expect(journal(f)).toMatchObject({ phase: 'prepare', step: 4 });
+    expect(f.versionOf(node(f))).toBe('22.24.0');
+    expect(f.state.runningNode).toBe('22.24.0');
+    // The install command, unheld, stops it first, then holds and renames back.
+    const recovered = await installer(f);
+    expect(recovered.status, recovered.output).toBe(1);
+    expectSettled(f, '22.23.4');
+    expect(shellCalls(f)).toEqual(['mama stop on 22.24.0', 'mama service start on 22.23.4']);
+  });
+
   it('killed during its own undo, the install command finishes the undo', async () => {
     const f = managed();
     f.state.bootFailsOn = '22.24.0';

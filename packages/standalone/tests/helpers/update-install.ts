@@ -241,6 +241,8 @@ export function fixture(
     nodeCheckFailsOn: null as string | null,
     /** The daemon exits at boot under a Node of this version. */
     bootFailsOn: null as string | null,
+    /** The viewer does not answer /health. */
+    healthFails: false,
     /** The Node version the running daemon reports. */
     runningNode: null as string | null,
     checks: [] as Check[],
@@ -451,7 +453,7 @@ export function fixture(
       }),
     health: async (port) => {
       expect(port).toBe(3999);
-      return true;
+      return !state.healthFails;
     },
     runCli: async (node, cli, args, env) => {
       childEnvs.push(env);

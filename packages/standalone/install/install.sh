@@ -110,16 +110,22 @@ mama_install() {
       rm -f "$move_journal"
       say "The managed Node's move to $move_to had taken effect; its old folders are removed."
     else
-      # A daemon the new Node started (a run killed while it waited for the boot) stops first.
-      # Only without the hold: with it start.sh runs nothing, and the folders may be half renamed
-      # (a new Node beside the old prefix, whose native modules it cannot load). Without it every
-      # rename is done, so the new Node runs on its own prefix.
-      if [ ! -e "$root/runtime/update.hold" ] &&
-        { [ -d "$root/node.old" ] || [ -d "$root/npm.old" ]; } &&
-        [ -x "$node_dir/bin/node" ] && [ -f "$cli" ]; then
+      # The hold is the recovery's invariant: with it, start.sh runs nothing and the folders may be
+      # half renamed; without it every rename was done (the move and this recovery write and sync it
+      # before their first rename, and sync the renames before they remove it).
+      hold=$root/runtime/update.hold
+      if [ ! -e "$hold" ] && { [ -d "$root/node.old" ] || [ -d "$root/npm.old" ]; }; then
+        # Every rename done: the new Node runs on its own prefix, and may run MAMA (a move killed
+        # while it waited for the boot), which stops before its folders move back.
+        [ -x "$node_dir/bin/node" ] && [ -f "$cli" ] ||
+          fail "the move of the managed Node to $move_to is unfinished, with no hold file and no runnable $node_dir/bin/node or $cli; nothing was changed. Stop MAMA, create $hold, then run this installer again."
         "$node_dir/bin/node" "$cli" stop </dev/null ||
-          fail "the move of the managed Node to $move_to is unfinished, and MAMA on it did not stop (above); nothing was changed"
+          fail "the move of the managed Node to $move_to is unfinished, and MAMA on it did not stop (above); nothing was changed. Run $wrapper stop --now, then this installer again."
       fi
+      # Held before the first rename, so a cut midway leaves the hold: the next run stops nothing,
+      # and a start meanwhile (a reboot) runs nothing on a half-renamed pair.
+      : >"$hold"
+      sync
       for folder in node npm; do
         if [ -d "$root/$folder.old" ]; then
           rm -rf "${root:?}/$folder"
@@ -127,7 +133,8 @@ mama_install() {
         fi
       done
       rm -rf "$root/node.new" "$root/npm.new"
-      rm -f "$root/runtime/update.hold"
+      sync
+      rm -f "$hold"
       "$node_dir/bin/node" "$cli" service start </dev/null ||
         fail "Node.js $move_from is back in $node_dir, but MAMA did not start on it (above); run this installer again"
       # Last: a run cut before here does all of this again.

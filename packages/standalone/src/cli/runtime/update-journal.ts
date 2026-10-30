@@ -171,7 +171,8 @@ export function readUpdateJournal(path: string): UpdateJournal | null {
   return value as UpdateJournal;
 }
 
-function syncFile(path: string): void {
+/** fsync a file or a folder (a folder's entries: a rename or a removal in it). */
+export function syncFile(path: string): void {
   const fd = openSync(path, 'r');
   try {
     fsyncSync(fd);

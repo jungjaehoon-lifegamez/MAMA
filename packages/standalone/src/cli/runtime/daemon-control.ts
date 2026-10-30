@@ -131,6 +131,7 @@ export function acquireInstallLock(
     if (isBusy(error)) throw new InstallBusyError(readHolder(paths.holderPath), paths.lockPath);
     throw error;
   }
+  // `pid` first: install/install.sh's Node move recovery reads it from the holder file with sed.
   const owner: LockOwner = {
     pid: process.pid,
     command,

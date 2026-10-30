@@ -9,7 +9,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { resolveApiPort } from '../../api/viewer-server.js';
 import { readStartScript, startExports, UPDATE_HOLD_LINE } from '../launch-files.js';
 import { CliInputError } from '../prompt.js';
@@ -26,7 +26,12 @@ import {
   type NodeMovePlaces,
 } from '../runtime/node-move-journal.js';
 import { npmErrorCode } from '../runtime/release-check.js';
-import { readUpdateJournal, rollbackCommand, type UpdatePaths } from '../runtime/update-journal.js';
+import {
+  readUpdateJournal,
+  rollbackCommand,
+  syncFile,
+  type UpdatePaths,
+} from '../runtime/update-journal.js';
 import { waitForBoot } from './init.js';
 import { serviceFile, type ServiceOptions } from './service.js';
 import type { UpdateDeps } from './update.js';
@@ -109,6 +114,24 @@ function putBack(places: NodeMovePlaces): void {
   rmSync(places.prefixCopy, { recursive: true, force: true });
 }
 
+/**
+ * The hold is install.sh's recovery invariant: with it the folders may be half renamed, without
+ * it every rename is done. So it is on disk before the first rename, and the renames are on disk
+ * before it is removed.
+ */
+function hold(context: MoveContext): void {
+  const { paths } = context;
+  writeFileSync(paths.hold, `${process.pid}\n`, { mode: 0o600 });
+  syncFile(paths.hold);
+  syncFile(dirname(paths.hold));
+}
+
+function release(context: MoveContext): void {
+  syncFile(context.root);
+  rmSync(context.paths.hold, { force: true });
+  syncFile(dirname(context.paths.hold));
+}
+
 function viewerPort(context: MoveContext): number {
   return resolveApiPort(
     startExports(
@@ -178,7 +201,8 @@ export async function moveNode(
     const from = await deps.nodeVersion(install.nodePath);
     const to = await deps.nodeVersion(newNode);
     if (from === to) {
-      write(`Node.js ${from} runs MAMA already; nothing to move`);
+      rmSync(places.staged, { recursive: true, force: true });
+      write(`Node.js ${from} runs MAMA already; nothing to move, and ${places.staged} is removed`);
       return 0;
     }
     const major = from.split('.')[0] !== to.split('.')[0];
@@ -220,7 +244,6 @@ export async function moveNode(
       step(2);
       write(`rebuilding a copy of ${places.prefix} for Node.js ${to}`);
       try {
-        rmSync(places.prefixCopy, { recursive: true, force: true });
         cpSync(places.prefix, places.prefixCopy, {
           recursive: true,
           verbatimSymlinks: true,
@@ -254,7 +277,7 @@ export async function moveNode(
       return 1;
     }
     // From here a start (a reboot, an owner's mama service start) finds the hold and exits.
-    writeFileSync(paths.hold, `${process.pid}\n`, { mode: 0o600 });
+    hold(context);
     try {
       renameSync(places.node, places.aside);
       renameSync(places.staged, places.node);
@@ -271,7 +294,7 @@ export async function moveNode(
           `doctor's Node check fails on Node.js ${to}: ${check.detail}${check.context === undefined ? '' : ` (${check.context})`}`
         );
       }
-      rmSync(paths.hold, { force: true });
+      release(context);
       await deps.start();
       const port = viewerPort(context);
       await waitForBoot({
@@ -319,23 +342,37 @@ async function undo(
   version: string,
   failure: unknown
 ): Promise<number> {
-  const { write, deps, paths } = context;
+  const { write, deps } = context;
   write(`moving back to Node.js ${journal.from}: step ${journal.step} failed: ${message(failure)}`);
+  // A stop that did not finish (a drain past its limit, a refusal) may leave the new Node's daemon
+  // running: no hold then, since the install is not stopped and a held recovery would rename under
+  // it. The journal stays for the install command, which stops a daemon it finds unheld.
+  let stopped: number;
   try {
     const reply = await deps.control('status').catch(() => null);
     const answers = reply?.state === 'running' && reply.reply.ok === true;
-    if ((await deps.stop(!answers)) !== 0) throw new Error('the service did not stop');
-    writeFileSync(paths.hold, `${process.pid}\n`, { mode: 0o600 });
+    stopped = await deps.stop(!answers);
+  } catch (error) {
+    write(`the stop failed: ${message(error)}`);
+    stopped = 1;
+  }
+  if (stopped !== 0) {
+    write(
+      `the move was not undone: the stop did not finish (above), so MAMA may still run on Node.js ${journal.to}. Run mama stop --now, then the install command again, which undoes the move: ${INSTALL_COMMAND}`
+    );
+    return 1;
+  }
+  try {
+    hold(context);
     putBack(places);
   } catch (error) {
-    writeFileSync(paths.hold, `${process.pid}\n`, { mode: 0o600 });
     write(
       `the move was not undone: ${message(error)}. The install stays stopped on its hold file, with ${places.journal}; run the install command again, which undoes it: ${INSTALL_COMMAND}`
     );
     return 1;
   }
   // The folders are back: the move is undone, whatever the start below says.
-  rmSync(paths.hold, { force: true });
+  release(context);
   removeNodeMoveJournal(places.journal);
   try {
     await deps.start();

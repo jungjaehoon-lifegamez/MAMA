@@ -11,7 +11,8 @@
  *    daemon runs on the Node it says.
  * 3. A pin whose Node cannot boot MAMA (it loads SQLite, so doctor's check passes, and exits at
  *    `daemon`): the move puts the old Node back and starts it; the script exits 1.
- * 4. A major pin (22 → 24): killed with the new Node beside the old prefix and undone; then the
+ * 4. A major pin (22 → 24): killed with the new Node beside the old prefix and undone; killed
+ *    once it booted, with the recovery itself cut midway and finished by the next run; then the
  *    npm prefix is copied and rebuilt with the new Node's npm (no node-gyp: the prebuilt binaries
  *    must cover that ABI), and the daemon runs on it.
  *
@@ -146,6 +147,18 @@ export async function moveLeg({ root, home, text, pin, scriptEnv, runScript, ser
     ].join('\n')
   );
   chmodSync(join(shim, 'curl'), 0o755);
+  // The mv install.sh finds first: with MOVE_LEG_CUT_MV, a move of that folder kills the script.
+  const realMv = spawnSync('sh', ['-c', 'command -v mv'], { encoding: 'utf8' }).stdout.trim();
+  writeFileSync(
+    join(shim, 'mv'),
+    [
+      '#!/bin/sh',
+      'case "$1" in */"${MOVE_LEG_CUT_MV:-none}") kill -9 $PPID; exit 1 ;; esac',
+      `exec '${realMv}' "$@"`,
+      '',
+    ].join('\n')
+  );
+  chmodSync(join(shim, 'mv'), 0o755);
   /** install.sh as a release pinning `version` would ship it. */
   const pinned = (version) =>
     text
@@ -342,6 +355,32 @@ export async function moveLeg({ root, home, text, pin, scriptEnv, runScript, ser
         `the move of the managed Node from ${N} to ${M} was cut off, and is undone`
       ),
     `the run after ${M}'s node#1 exited ${undone.status}`
+  );
+  settled(N);
+  await runsOn(N);
+  // Killed once MAMA boots on 24 (no hold, every rename done); the recovery stops it, holds, and
+  // is cut (SIGKILL) as it puts the old prefix back, leaving the old Node beside no prefix; the
+  // next run, held, runs nothing on that pair and finishes the undo.
+  const booting = await install(`pin ${M}, killed once it starts`, M, {
+    NODE_OPTIONS: `--require ${killer}`,
+    MAMA_KILL_AT: 'service-start#1',
+  });
+  expect(
+    booting.status === 1 && !existsSync(hold) && existsSync(journal),
+    `the major move killed at its start exited ${booting.status}`
+  );
+  const cut = await install(`recovery of ${M} cut at npm.old`, M, { MOVE_LEG_CUT_MV: 'npm.old' });
+  expect(
+    cut.status !== 0 && existsSync(hold) && !existsSync(join(mama, 'npm')),
+    `the cut recovery exited ${cut.status}`
+  );
+  const finished = await install(`recovered from the cut`, M);
+  expect(
+    finished.status === 1 &&
+      finished.output.includes(
+        `the move of the managed Node from ${N} to ${M} was cut off, and is undone`
+      ),
+    `the run after the cut exited ${finished.status}`
   );
   settled(N);
   await runsOn(N);

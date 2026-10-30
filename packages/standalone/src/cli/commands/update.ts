@@ -108,7 +108,7 @@ const USAGE =
 
 /** How long the new version may take to boot, as `mama init` waits (init.ts). */
 const BOOT_WAIT_MS = 600_000;
-/** `npm install` downloads and builds the native modules; the other npm calls answer quickly. */
+/** `npm install` and `npm rebuild` download or build the native modules; the rest answer quickly. */
 const NPM_INSTALL_TIMEOUT_MS = 15 * 60_000;
 const NPM_TIMEOUT_MS = 60_000;
 
@@ -189,7 +189,9 @@ async function defaultNpm(
 ): Promise<string> {
   const { stdout } = await promisify(execFile)(join(dirname(nodePath), 'npm'), args, {
     env: npmEnvironment(env, nodePath),
-    timeout: args[0] === 'install' ? NPM_INSTALL_TIMEOUT_MS : NPM_TIMEOUT_MS,
+    // A rebuild (the Node move's step 2) downloads or builds the native modules as an install does.
+    timeout:
+      args[0] === 'install' || args[0] === 'rebuild' ? NPM_INSTALL_TIMEOUT_MS : NPM_TIMEOUT_MS,
     maxBuffer: 16 * 1024 * 1024,
     encoding: 'utf8',
   });

@@ -558,6 +558,52 @@ describe('install.sh', () => {
     }
   );
 
+  it('holds its own renames: cut midway, the next run stops nothing and finishes the undo', async () => {
+    // A major move killed while MAMA booted on 24: every rename done, no hold.
+    seedInstall('24.11.0');
+    fakeNode(join(root(), 'node.old'), pin.version);
+    execFileSync('cp', ['-R', join(root(), 'npm'), join(root(), 'npm.old')]);
+    writeFileSync(join(root(), 'npm.old', 'old'), '');
+    moveJournal('prepare', 4);
+    // The recovery is cut (SIGKILL) as it puts the old prefix back.
+    stub(
+      'mv',
+      `case "$1" in *npm.old) echo "cut" >> "$STUB_LOG"; kill -9 $PPID; exit 1 ;; esac; exec /bin/mv "$@"`
+    );
+    const cut = await run(['--backend', 'codex', '--no-init']);
+    expect(cut.status).not.toBe(0);
+    // Old Node back, the new prefix gone, the old one beside: the hold is what says so.
+    expect(nodeAt('node')).toBe(pin.version);
+    expect(existsSync(join(root(), 'npm'))).toBe(false);
+    expect(existsSync(join(root(), 'runtime', 'update.hold'))).toBe(true);
+    rmSync(join(stubs, 'mv'));
+    const before = calls().length;
+    const result = await run(['--backend', 'codex', '--no-init']);
+    expect(result.status, result.output).toBe(1);
+    expect(result.output).toContain('was cut off, and is undone');
+    expect(existsSync(join(root(), 'npm', 'old'))).toBe(true);
+    expect(readdirSync(root()).sort()).toEqual(['node', 'npm', 'runtime']);
+    // No command ran on a Node beside a prefix of another ABI.
+    expect(
+      calls()
+        .slice(before)
+        .filter((call) => call.startsWith('node '))
+    ).toEqual([`node v${pin.version} ${cli()} service start`]);
+  });
+
+  it('refuses an unheld move whose Node or command cannot run, changing nothing', async () => {
+    seedInstall('24.11.0');
+    fakeNode(join(root(), 'node.old'), pin.version);
+    rmSync(cli());
+    moveJournal('prepare', 4);
+    const result = await run(['--backend', 'codex', '--no-init']);
+    expect(result.status).toBe(1);
+    expect(result.output).toContain('with no hold file and no runnable');
+    expect(existsSync(join(root(), 'node.old'))).toBe(true);
+    expect(existsSync(join(root(), 'runtime', 'update.hold'))).toBe(false);
+    expect(calls().filter((call) => call.startsWith('node '))).toEqual([]);
+  });
+
   it('leaves a move alone while the process holding update.lock still runs', async () => {
     seedInstall();
     moveJournal('prepare', 3);
