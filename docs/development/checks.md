@@ -2707,3 +2707,19 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Result: `mama update [<version>] [--dry-run]` and `mama update --rollback` for npm installs; a checkout gets its git steps and exit 1. The new version is staged beside the old one. Then: journal, drain stop, hold file, snapshot, two renames, and `update --continue` from the new CLI. The candidate boots with claims held; `committed` is written before `release`. Any earlier failure rolls back: the old package, `start.sh` and the service file come back, and the DB snapshot is restored only if a schema moved (the dropped inputs are reported). The continuation child holds its own lock, so `--rollback` refuses while it lives. Step 1 refuses a `start.sh` without the hold line, and doctor reports `update.open`, `update.hold` and `update.staging`.
 - Evidence: the bots found 5 issues (Codex P1 orphaned child, P2 prerelease order, P2 retried rollback; CodeRabbit start.sh hold, failed stop), and one Opus review returned FIX-FIRST with 3 must-fix and 9 more. All fixed in two commits; the re-review said SHIP. 2,724 standalone tests pass. CI's verdaccio leg passed on Linux: N → N+1 released clean, and N+1 → a crashing N+2 rolled back to N+1 with the input count unchanged. Deployed at 09:18 with a drained stop (4.3 s, nothing running); boot was clean and `interrupted` stayed at 3.
 - Still open: this Mac is a checkout, so `mama update` itself never ran here. Real launchd behaviour (KeepAlive with a crashing candidate), the schema-move restore and the toolkit reinstall are proven only by vitest or the CI stand-in, until the candidate proof on a clean macOS account. A kill between the two renames is covered by reading only. Follow-ups: `bin` target comparison, macOS F_FULLFSYNC. Next: PR 4 (`/update`).
+
+### W2.3 PR 4: `/update` from Telegram, merged and deployed (#536, 2026-10-30)
+
+- Result: `/update` is a host command, so no model run opens and nothing enters the mailbox. Only an owner, in their DM or in the common channel, can run it.
+  - It checks first: a checkout or an install that cannot update; `update.lock` held; the job still loaded; a repeated message id (in `runtime/update-request.json`, 0600).
+  - It then writes `runtime/update.sh`, which holds no secret, and the `com.mama.update` plist (no KeepAlive), and bootstraps the job.
+  - Progress goes to the origin chat by `sendMessage` only: versions, step numbers and codes. Sends time out after 3 s; a flush waits at most 5 s, and past that only step messages are dropped, never the outcome.
+  - In a group, a checkout's or a not-updatable install's reply goes to the owner's DM, because it contains paths. The group gets a pointer.
+- Evidence: one Opus review returned FIX-FIRST (the wrong "it runs" on a stopped daemon, paths in the group, the double-send race, flush downtime and three small items), then SHIP. The bots found four issues: Codex P2, CodeRabbit ×2 (resolved), and Codex P1 (checks.md is main-only). `launchctl print` was checked here on scratch jobs:
+  - just bootstrapped: `state = xpcproxy`, `(never exited)`
+  - exited: `not running`, `last exit code = 0`
+  - `kill -9`: `not running`, `last terminating signal = Killed: 9`, no exit-code line. Found by the re-review and fixed before merge.
+
+  2,759 standalone tests. Deployed at 10:39 with a drained stop; boot was clean, `interrupted` stayed at 3, and `mama update --dry-run` from the checkout CLI prints the six git steps and exits 1.
+
+- Still open: `/update` from the owner DM and from the common group on this Mac (the checkout reply) needs an owner message. Real launchd running `update.sh`, a real progress `sendMessage`, and rollback against KeepAlive wait for the clean-account candidate proof. `systemd-run` waits for wave 3. The drained restart during a real owner turn is still unobserved.
