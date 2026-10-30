@@ -111,7 +111,11 @@ mama_install() {
       say "The managed Node's move to $move_to had taken effect; its old folders are removed."
     else
       # A daemon the new Node started (a run killed while it waited for the boot) stops first.
-      if { [ -d "$root/node.old" ] || [ -d "$root/npm.old" ]; } &&
+      # Only without the hold: with it start.sh runs nothing, and the folders may be half renamed
+      # (a new Node beside the old prefix, whose native modules it cannot load). Without it every
+      # rename is done, so the new Node runs on its own prefix.
+      if [ ! -e "$root/runtime/update.hold" ] &&
+        { [ -d "$root/node.old" ] || [ -d "$root/npm.old" ]; } &&
         [ -x "$node_dir/bin/node" ] && [ -f "$cli" ]; then
         "$node_dir/bin/node" "$cli" stop </dev/null ||
           fail "the move of the managed Node to $move_to is unfinished, and MAMA on it did not stop (above); nothing was changed"

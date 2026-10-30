@@ -11,8 +11,9 @@
  *    daemon runs on the Node it says.
  * 3. A pin whose Node cannot boot MAMA (it loads SQLite, so doctor's check passes, and exits at
  *    `daemon`): the move puts the old Node back and starts it; the script exits 1.
- * 4. A major pin (22 → 24): the npm prefix is copied and rebuilt with the new Node's npm (no
- *    node-gyp: the prebuilt binaries must cover that ABI), and the daemon runs on it.
+ * 4. A major pin (22 → 24): killed with the new Node beside the old prefix and undone; then the
+ *    npm prefix is copied and rebuilt with the new Node's npm (no node-gyp: the prebuilt binaries
+ *    must cover that ABI), and the daemon runs on it.
  *
  * Node.js tarballs come from nodejs.org once each, checked against its SHASUMS256.txt; the script
  * then gets them from a curl that serves that cache (the real download is run.mjs's first step).
@@ -324,7 +325,26 @@ export async function moveLeg({ root, home, text, pin, scriptEnv, runScript, ser
   settled(N);
   await runsOn(N);
 
-  // 4. A major pin.
+  // 4. A major pin: first killed with the new Node in place beside the old prefix, whose native
+  // modules it cannot load (the recovery runs no command on that Node), then moved.
+  const between = await install(`pin ${M}, killed at node#1`, M, {
+    NODE_OPTIONS: `--require ${killer}`,
+    MAMA_KILL_AT: 'node#1',
+  });
+  expect(
+    between.status === 1 && existsSync(hold),
+    `the major move killed at node#1 exited ${between.status}`
+  );
+  const undone = await install(`recovered from ${M}'s node#1`, M);
+  expect(
+    undone.status === 1 &&
+      undone.output.includes(
+        `the move of the managed Node from ${N} to ${M} was cut off, and is undone`
+      ),
+    `the run after ${M}'s node#1 exited ${undone.status}`
+  );
+  settled(N);
+  await runsOn(N);
   const major = await install(`pin ${M}`, M);
   expect(
     major.status === 0 && major.output.includes(`moved: MAMA runs on Node.js ${M} (was ${N})`),

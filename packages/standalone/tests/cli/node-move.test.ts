@@ -241,7 +241,8 @@ describe('mama update --node', () => {
       expectSettled(f, '22.23.4');
       expect(existsSync(join(f.prefix, 'built-for'))).toBe(false);
       // A daemon the new Node may have started is stopped before its folders move back.
-      const renamed = step === 4;
+      // Only with every rename done and no hold can the new Node run a daemon.
+      const renamed = step === 4 && !held;
       expect(shellCalls(f)).toEqual([
         ...(renamed ? [`mama stop on ${major ? '24.11.0' : '22.24.0'}`] : []),
         `mama service start on 22.23.4`,

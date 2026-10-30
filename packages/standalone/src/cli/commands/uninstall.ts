@@ -53,10 +53,15 @@ interface DataPlan {
   stays: Entry[];
 }
 
-/** The program the install command keeps in the MAMA home, as far as it is there. */
+/**
+ * The program the install command keeps in the MAMA home, as far as it is there, in the order it
+ * is removed: Node last, and the prefix before the `mama` command, so a removal that fails part-way
+ * keeps what `mama uninstall --data` needs to run again for as long as it can.
+ */
 function managedProgram(root: string): string[] {
+  const order = ['node.new', 'node.old', 'npm.new', 'npm.old', 'npm', 'bin', 'node'];
   return existsSync(join(root, 'npm', 'lib', 'node_modules', '@jungjaehoon', 'mama-os'))
-    ? [...MANAGED_PROGRAM].map((name) => join(root, name)).filter((path) => existsSync(path))
+    ? order.map((name) => join(root, name)).filter((path) => existsSync(path))
     : [];
 }
 

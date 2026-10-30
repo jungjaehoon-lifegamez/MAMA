@@ -206,15 +206,15 @@ describe('mama uninstall', () => {
       })
     ).toBe(0);
     expect(asked.lines.join('\n')).toContain(
-      `removes ${join(root, 'node')} (0.0 MB): the managed program the install command put here`
+      `removes ${join(root, 'npm')} (0.0 MB): the managed program the install command put here`
     );
     expect(existsSync(root)).toBe(false);
     const removed = out.filter((line) => line.startsWith('removed '));
     expect(removed.slice(-4)).toEqual([
       `removed ${root}`,
-      `removed ${join(root, 'node')}`,
       `removed ${join(root, 'npm')}`,
       `removed ${join(root, 'bin')}`,
+      `removed ${join(root, 'node')}`,
     ]);
     expect(out.join('\n')).not.toContain('npm uninstall -g');
     expect(out.at(-1)).toBe(
@@ -224,13 +224,39 @@ describe('mama uninstall', () => {
     expect(readFileSync(join(home, '.profile'), 'utf8')).toContain('# >>> mama >>>');
   });
 
+  it('keeps the Node and the mama command when the prefix cannot be removed', async () => {
+    const { home, root } = install();
+    managed(home, root);
+    const locked = join(root, 'npm', 'lib', 'locked');
+    mkdirSync(locked);
+    writeFileSync(join(locked, 'file'), '');
+    chmodSync(locked, 0o500);
+    const out: string[] = [];
+    try {
+      expect(
+        await runUninstall(['--data'], {
+          ...base(home),
+          prompt: prompt(root),
+          write: (line) => out.push(line),
+        })
+      ).toBe(1);
+    } finally {
+      chmodSync(locked, 0o700);
+    }
+    expect(out).toContain(
+      `kept ${join(root, 'node')}: run mama uninstall --data again once the above is removed`
+    );
+    expect(existsSync(join(root, 'node', 'bin', 'node'))).toBe(true);
+    expect(existsSync(join(root, 'bin', 'mama'))).toBe(true);
+  });
+
   it('keeps and names the managed program without --data', async () => {
     const { home, root } = install();
     managed(home, root);
     const out: string[] = [];
     expect(await runUninstall([], { ...base(home), write: (line) => out.push(line) })).toBe(0);
     expect(out).toContain(
-      `the managed program stays: ${join(root, 'node')}, ${join(root, 'npm')}, ${join(root, 'bin')} (mama uninstall --data removes it with the data)`
+      `the managed program stays: ${join(root, 'npm')}, ${join(root, 'bin')}, ${join(root, 'node')} (mama uninstall --data removes it with the data)`
     );
     expect(out.join('\n')).toContain(`in ${join(home, '.profile')}`);
     expect(existsSync(join(root, 'node', 'bin', 'node'))).toBe(true);

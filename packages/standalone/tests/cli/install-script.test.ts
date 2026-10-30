@@ -499,18 +499,23 @@ describe('install.sh', () => {
   });
 
   it.each([
-    // [what the killed run had done, folders beside node and npm, whether MAMA on it is stopped]
-    ['all four renames', ['node.old', 'npm.old'], true],
-    ['the first rename only', ['node.old', 'node.new'], false],
+    // [what the killed run had done, folders beside node and npm, whether the hold is in place]
+    // MAMA on the new Node is stopped first only without the hold: with it nothing was started,
+    // and the new Node may sit beside the old prefix, which it cannot load.
+    ['all four renames, waiting for the boot', ['node.old', 'npm.old'], false],
+    ['all four renames, before the boot', ['node.old', 'npm.old'], true],
+    ['the first rename only', ['node.old', 'node.new'], true],
+    ['two renames: the new Node beside the old prefix', ['node.old'], true],
     [
       'three renames: npm is set aside, its copy not in place',
       ['node.old', 'npm.old', 'npm.new'],
-      false,
+      true,
     ],
     ['nothing yet: the copy only', ['node.new', 'npm.new'], false],
   ] as const)(
     'undoes a move cut off after %s, starts the old Node, and says to run it again',
-    async (_label, beside, stops) => {
+    async (_label, beside, held) => {
+      const stops = !held && beside.includes('node.old');
       seedInstall('24.11.0');
       // The folders as that run left them: the old Node set aside, the new one where it got to.
       if (beside.includes('node.old')) fakeNode(join(root(), 'node.old'), pin.version);
@@ -536,7 +541,7 @@ describe('install.sh', () => {
         execFileSync('cp', ['-R', join(root(), 'npm'), join(root(), 'npm.new')]);
       }
       moveJournal('prepare', beside.includes('node.old') ? 3 : 2);
-      writeFileSync(join(root(), 'runtime', 'update.hold'), '1\n');
+      if (held) writeFileSync(join(root(), 'runtime', 'update.hold'), '1\n');
       const result = await run(['--backend', 'codex', '--no-init']);
       expect(result.status, result.output).toBe(1);
       expect(result.output).toContain(
