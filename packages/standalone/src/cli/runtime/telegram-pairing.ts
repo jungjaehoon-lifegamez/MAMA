@@ -43,7 +43,7 @@ async function request(
     const cause = (error as { cause?: { code?: unknown } }).cause?.code;
     const name = error instanceof Error ? error.name : 'Error';
     throw new CliInputError(
-      `Could not reach Telegram (${typeof cause === 'string' ? cause : name}); check the network and run mama init again.`
+      `Could not reach Telegram (${typeof cause === 'string' ? cause : name}); check the network and run the install command again.`
     );
   }
 }
@@ -64,7 +64,7 @@ async function updates(
   // stopping each other.
   if (reply.error_code === 409)
     throw new CliInputError(
-      "Another program is reading this bot's messages (another MAMA install?). Use a bot only this install uses, then run mama init again."
+      "Another program is reading this bot's messages (another MAMA install?). Use a bot only this install uses, then run the install command again."
     );
   throw new CliInputError(
     `Telegram refused to hand over the bot's messages (${String(reply.error_code ?? 'no code')}).`
@@ -228,7 +228,9 @@ export async function bindCommonGroup(
       );
     }
     if (now() >= deadline)
-      throw new CliInputError('No /bind arrived in the group; run mama init again to pair again.');
+      throw new CliInputError(
+        'No /bind arrived in the group; run the install command again to pair again.'
+      );
     batch = await updates(options, offset);
   }
 }

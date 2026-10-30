@@ -38,10 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     outside HOME. Those folders default to a folder of the user's (`Shared/mama-<user>/…` in the Shared folder beside the home folders
     on macOS, `/var/lib/mama/<user>/…` on Linux), and init refuses one another account owns or can
     write.
-  - **Sign-in:** on a terminal, a backend that is not signed in runs its own sign-in there
-    (`claude auth login`, or `codex login` in MAMA's Codex home), and init reads the login again.
-    `--non-interactive` names the command and stops. When only one backend is on PATH, it is the
-    default answer (#539).
+  - **Sign-in:** init signs nothing in. A backend that is not signed in stops it before anything
+    is written, and init names the login with the backend's full path (`claude auth login`, or
+    `codex login` in MAMA's Codex home, which init creates), for the person's agent to run.
+    `mama init --section model` runs that login on its terminal, and offers the only backend on
+    PATH as the default answer (#539).
   - **Then in order:** writes the setup, registers the person running it as the first owner,
     installs the document tools, installs and starts the service through `mama service`, and
     waits until the daemon reports it is running and the viewer answers `/health`. Last, the
@@ -51,8 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Repeat-safe:** a failed run continues from its last finished step without asking again.
     On a finished setup, init says so, names `mama doctor`, `mama service restart` and
     `mama update`, and exits 0 (#538, #539).
-  - **No typed Telegram IDs:** as the last question, the bot sends a six-digit code to whoever
-    messages it privately, and the code typed at the terminal names the first owner; that owner's
+  - **No typed Telegram IDs:** last, the bot sends a six-digit code to whoever messages it
+    privately, and the code entered on the setup page names the first owner; that owner's
     `/bind` in a group names the common channel. Messages the bot held from before are dropped, a
     bot another program already reads is refused, and no `/bind` within 15 minutes stops setup
     with the way to continue.
@@ -133,9 +134,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `npm install -g @googleworkspace/cli` or `brew install googleworkspace-cli`, then
   `gws auth login`. When only the terminal finds `gws`, they say that `mama service install` adds
   its folder. MAMA's service does not start while such a source is on and `gws` is missing, and
-  they say so: `mama init` says to install it now and run `mama init` again to continue (a run
-  that continues names `gws` again), and `--section` says to run `mama service install` and
-  start the service once it is installed. Doctor's fix for a source that does not start, or
+  they say so: `mama init`, continuing a setup that stopped, names `gws` again and says to
+  install it now and run the install command again, and `--section` says to run
+  `mama service install` and start the service once it is installed. Doctor's fix for a source that does not start, or
   whose sign-in is refused, names the same login command, and the sources' own errors point to
   `mama doctor` for those commands instead of a bare `gws auth login` (#543).
 - `mama init --non-interactive` opens a setup page on this machine for the bot token and the
@@ -181,6 +182,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- The interactive whole setup: bare `mama init` is now a usage error. `mama init --non-interactive`
+  is the setup, run by the person's agent ("Set up through your agent" in
+  `docs/start/owner-setup.md`), and its messages say to run the install command again. The tunnel
+  settings are read from the environment: `MAMA_CF_ACCESS_ISSUER`, `MAMA_CF_ACCESS_AUD` and
+  `MAMA_VIEWER_HOSTNAMES` together, and optionally `MAMA_VIEWER_OWNER_EMAILS`. Sources, Discord,
+  Slack and Jev are set up with `mama init --section`.
 - The init variables `MAMA_INIT_OWNER_TELEGRAM_ID` and `MAMA_INIT_COMMON_CHAT_ID`, and
   `MAMA_TELEGRAM_TOKEN` as an init variable (the secret name stays): the setup page takes the token,
   and the bot's pairing code and `/bind` name the owner and the common group.
