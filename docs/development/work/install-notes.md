@@ -147,8 +147,12 @@ own code first (review of `906d72b7c`). The URL must therefore reach no other ac
   world-readable.
 
 The redirect file solves both. It is 0600 in a 0700 folder, and `open` gets only its path, as
-Jupyter's `use_redirect_file` does. So only this account's browser learns the nonce. The code
-entered on the page then proves that the person using this account's browser read the bot's DM.
+Jupyter's `use_redirect_file` does. So no other account learns the nonce.
+
+The code entered on the page then proves that a process of this account, given the DM's code,
+entered it. That is not proof that the person did: the agent runs as the same account and could
+read the file and POST, as CI's `managed.mjs` does on purpose. The skill forbids it, and nothing
+else inside one account can.
 
 The Host rule is the viewer's (`s/api/viewer-request-security.ts:11-52`) without its configured
 names: `localhost`, `127.0.0.1` or `[::1]` on any port, one Host header. A rebinding site still
@@ -200,8 +204,8 @@ From the code and the owner's direction:
 
 - Every MAMA backend is one of the two agents (`init.ts:258-260`), so every person running MAMA has
   an agent that can install it.
-- SSH and headless Linux run Claude Code or Codex in the remote shell. The flow is the same; only
-  sign-in differs, as above.
+- SSH and headless Linux have no setup path until wave 3 (L5). The setup page needs a browser on
+  this machine, or a forwarded port. Linux is not in wave 2's supported versions.
 - The Docker plan already closes on `--non-interactive` (install.md, Plan corrections). With the
   setup page, Docker pairs the same way; wave 4 decides how the host's browser reaches it.
 - What only the terminal setup asked has another home. See the relocations in
@@ -281,10 +285,34 @@ terminal:
 - "mama service restart then applies it", while the section runs with MAMA stopped;
 - a bare `gws auth login` with the scopes in prose.
 
+**The OAuth client comes before the login.** Measured: Homebrew's `gws` 0.11.1, run with a scratch
+`HOME` and no terminal, ran `gws auth login`. It exited 1 at once with `401 "No OAuth client
+configured"` and named three ways out:
+
+- `gws auth setup`;
+- `client_secret.json` saved to `~/.config/gws/client_secret.json`;
+- `GOOGLE_WORKSPACE_CLI_CLIENT_ID` and `GOOGLE_WORKSPACE_CLI_CLIENT_SECRET`.
+
+The README (0.22.5, its Prerequisites and "Manual OAuth setup") requires a Google Cloud project, and
+`gws auth setup` needs `gcloud`, which the clean account lacks. The manual route, in the browser:
+
+1. create a project;
+2. configure its OAuth consent screen as External, in testing mode;
+3. add the person as a test user;
+4. create an OAuth client of type Desktop app (another type gives `redirect_uri_mismatch`);
+5. download its JSON.
+
+The README lists no APIs to enable up front. It says to enable each one from the `enable_url` of an
+`accessNotConfigured` error.
+
+The program's decision: `client_secret.json` is the tool's own credential, like a backend login, so
+the agent moves it into place (0600) and it does not go through the setup page. This is a heavy step
+for a new person, and the earlier view of a printed URL came only from a home that already had a
+client. Whether MAMA should ship its own verified client is Q3.
+
 gws documents `-s` to narrow its scope picker (`gws auth login -s drive,gmail,sheets`, gws README).
-Whether a scope picker still asks for input in a shell without a terminal is not documented. The
-same goes for whether `gws auth login` needs an OAuth client set up first (`gws auth setup`, which
-needs `gcloud`). Leg A's step 6 records both.
+Whether a scope picker still asks for input in a shell without a terminal is not documented; leg
+A's step 6 records it.
 
 Doctor's token fix, `mama secret set <name>` (`diagnostics.ts:174-178`), needs a terminal
 (`secret.ts:18`). It predates PR 3. For a source's token, the non-interactive section replaces it,

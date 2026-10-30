@@ -222,7 +222,9 @@ running Node is refused at step 2, before any change.
 
 ## PR 3: tools a source needs (I4)
 
-In progress on `feat/source-tools`, by another worker.
+In progress on `feat/source-tools`, by another worker. Follow-up for #543: gws's requirement
+names the OAuth client step before the login, since `gws auth login` needs
+`~/.config/gws/client_secret.json` (W2.4.5e step 2).
 
 - A source names its tool with `type: 'cli'` (`s/connectors/gmail/index.ts:68-77`, and calendar,
   drive, sheets). gws's requirement, with its install methods, moves to one export in
@@ -264,7 +266,7 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
     - A set-up install (`config.yaml` present) needs no flag. Without `--backend` it skips the
       backend step and keeps `~/.local/bin` in the startup block when a backend is there; with it,
       the backend step runs as today. It runs `mama init --non-interactive` unless `--no-init` is
-      given (`scripts/install-check/run.mjs:369` passes both flags).
+      given (`packages/standalone/scripts/install-check/run.mjs:369` passes both flags).
   - A backend `command -v` finds counts only when `"$backend_path" --version </dev/null` exits 0
     and prints a version; otherwise the vendor installer runs, and the installed one must pass the
     same check (`install.sh:334-371`).
@@ -294,13 +296,17 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
     - It binds `127.0.0.1` on a random port, at the path `/<nonce>`, where the nonce is 32 random
       bytes.
     - It is opened through a redirect file, as Jupyter's `use_redirect_file` does:
-      - Init writes `open.html` (0600) into a `mkdtemp` folder (0700). The file sends the browser to
-        the page.
+      - Init writes `open.html` (0600) into a `mkdtemp` folder (0700) under `os.tmpdir()`. On
+        macOS that is the per-user `$TMPDIR`, measured at 0700; on Linux, `mkdtemp` makes its own
+        folder in `/tmp`. The file sends the browser to the page.
       - Init runs `open` (macOS) or `xdg-open` (Linux) on the file's path. MAMA has no opener today.
       - The URL with its nonce goes nowhere else: not on stdout, and not in any process's
         arguments.
-      - A failed open is reported, and the file's printed path stays the way in. The folder is
-        removed when init exits.
+      - A failed open is reported, and the file's printed path stays the way in.
+      - The folder is removed when the page closes. A killed init leaves the folder behind, which
+        is harmless, since the nonce dies with the server.
+      - Ubuntu's snap Firefox cannot read `/tmp` (Launchpad 1959417, jupyter/notebook#4500); that is
+        wave 3's.
     - GET `/<nonce>` shows the current field's form. POST `/<nonce>` (form-encoded) takes that
       field.
     - **The bot token.** Init runs `checkTelegram` (`init-questions.ts:295-317`). A refused token
@@ -342,15 +348,18 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
       on another local port.
     - POST only, for the token and the code: a GET would put them in history and logs.
     - `Cache-Control: no-store`: the browser keeps no copy once the server stops.
+    - `Referrer-Policy: no-referrer`, and no external resources on the page: the URL and its nonce
+      are not sent to another host.
     - One token and one code are accepted, then the page closes: a later submission cannot change
       the owner.
     - Nothing secret is logged or echoed: the page and stdout name the bot, never the token.
     - A fixed lifetime: a forgotten background init does not keep a page that accepts a token.
   - Proof of person: a code reaches only the chat it was sent to (`telegram-pairing.ts:88-94`).
-    Being reachable only from this machine is not being reachable only by this person. Only this
-    account can read the redirect file, so the code entered on the page proves that the person using
-    this account's browser read the bot's DM. Neither the code nor the token passes through the
-    conversation.
+    Being reachable only from this machine is not being reachable only by this person, and only this
+    account can read the redirect file. So the code entered on the page proves that a process of
+    this account, given the DM's code, entered it. Nothing inside one account stops that account's
+    agent from doing so: CI's `managed.mjs` does it on purpose. The skill forbids it (W2.4.5d).
+    Neither the code nor the token passes through the conversation.
   - `telegram-pairing.ts` text: `:106` and `:134` say "enter it on the setup page"; `:163` drops
     "type".
   - Tests in `tests/cli/setup-page.test.ts` (new) and `onboarding.test.ts`. The ID cases are
@@ -366,7 +375,7 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
     - the redirect file is 0600 in a 0700 folder;
     - the URL is in no stdout line and no `open` argument, and the token is in no stdout line and
       no response body.
-  - CI: `scripts/install-check/run.mjs:275-277` drops the token and the two IDs. `managed.mjs`
+  - CI: `packages/standalone/scripts/install-check/run.mjs:275-277` drops the token and the two IDs. `managed.mjs`
     reads the redirect file's path from init's output, takes the URL from the file and POSTs the
     token. Its Telegram stand-in serves `getUpdates` and `sendMessage`, and the check POSTs the code
     from the DM it was asked to send.
@@ -383,8 +392,9 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
     - the whole setup's `requireTTY` and terminal prompt (`:380-381`);
     - its `signIn` option (`:85`, `:461`).
 
-    Bare `mama init` then fails the usage check (`:367`, `:377-378`), which names `--non-interactive`
-    and `--section`. The flag keeps its name, which the owner's decision, `install.sh` and the Docker
+    Bare `mama init` then fails the usage check (`:377-378`). Both usage strings, `init.ts:367` and
+    `cli/index.ts:120`, drop `[--non-interactive]`'s brackets and name `--non-interactive` and
+    `--section`. The flag keeps its name, which the owner's decision, `install.sh` and the Docker
     plan use.
 
   - Relocate, each before its deletion:
@@ -405,12 +415,17 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
       - running in the background, passing on init's lines, and running again;
       - done when MAMA answers. It lands here because the live run's agent reads it from `main`.
   - `terminalSignIn` stays for `--section model` (`init-section.ts:96-101`).
-  - With bare `mama init` a usage error, and `mama` in the agent's shell possibly another program
-    (finding D), these say "run the install command again" in place of "run mama init again":
-    - `init.ts:312,349,525,604,699,704,708`;
-    - `init-questions.ts:250,267,283,290,308`;
+  - Bare `mama init` becomes a usage error, and `mama` in the agent's shell may be another program
+    (finding D). These messages change "run mama init again" to "run the install command again":
+    - `init.ts:312,349,525,604,699,704,708`, and the comment at `:690`;
     - `telegram-pairing.ts:46,67,231`;
-    - `init-section.ts:70`, "run the install command first".
+    - `init-section.ts:70`, which says "run the install command first".
+
+  - `init-questions.ts:250,267,283,290,308` are shared with `--section model` and
+    `--section telegram` (`init-section.ts:84-101`). On a set-up install the install command stops
+    at "already set up" (`init.ts:425-429`). So the caller passes its next step: the whole setup's
+    "run the install command again", or a section's "run this again".
+
   - Tests: the `runInit([])` cases in `onboarding.test.ts` (35 calls) move to the environment
     answers. A case that tests a question only the deleted path asked goes. A tunnel case is added.
     The `--section` cases stay.
@@ -429,8 +444,9 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
     says plainly: the person enters secrets and the pairing code only in the page MAMA opens, never
     in the chat. The conversation reaches the model provider and this agent's transcript.
   - It drops its step 1, `npm i -g @jungjaehoon/mama-os` and `mama --help` (`SKILL.md:13-14`). On
-    the clean account that would pin Homebrew's Node 25, and `mama --help` would run Homebrew's
-    `mama` 0.53.2 (finding D).
+    the clean account Homebrew's npm cannot write its prefix from a Standard account (EACCES:
+    `/opt/homebrew/lib/node_modules` is 0755, owned by another account). `mama --help` would also run
+    Homebrew's `mama` 0.53.2 (finding D).
   - Then, briefly, with owner-setup.md as the procedure:
     1. Ask which backend (yourself unless the person picks the other) and which model.
     2. Run the install command in the background, with its output in a file. Tell the person the
@@ -440,6 +456,7 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
        person's machine.
     4. After a sign-in, run the same install command again. Use full paths.
     5. The setup is done when MAMA answers the person's message.
+  - Never read `open.html` and never POST to the setup page. The page is the person's.
   - Sources are chosen in the conversation. The tool is installed with its printed command, the
     person completes its login in the browser, and only then is the source enabled with the
     non-interactive section (W2.4.5e). The Jev paragraph says Jev is turned on later with
@@ -460,8 +477,14 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
   in the conversation. The agent then:
   1. installs the tool with the command `sourceTools()` gives (on a script-made install, the
      managed-Node `npm install --prefix ~/.mama/npm`);
-  2. has the person complete the tool's login in the browser;
-  3. enables the source.
+  2. for gws, has the person create a Desktop OAuth client in Google Cloud Console (a project, its
+     consent screen with the person as a test user, the APIs the sources use). The agent then moves
+     the downloaded JSON to `~/.config/gws/client_secret.json` (0600). This is the tool's own
+     credential, like a backend login, not a MAMA secret, so it does not go through the setup page.
+     Without it, `gws auth login` exits at once with `401 No OAuth client configured`
+     ([notes](install-notes.md#sources-from-the-conversation-pr-3-and-w245e));
+  3. has the person complete the tool's login in the browser;
+  4. enables the source.
 
   Enabling with the tool missing must not be possible: a Google source's `init()` runs
   `gws --version` (`s/connectors/gmail/index.ts:46-53`), and boot rethrows its failure
@@ -523,9 +546,12 @@ The owner, 2026-10-30: the person never touches a terminal after the first reply
 - `uninstall --data` is confirmed by a flag carrying the MAMA home's path, which the agent passes
   after showing the plan in the conversation. It is the same path the terminal prompt asks the
   person to type back (`uninstall.ts:306-309`).
-- Each part names its `## [Unreleased]` entry in `packages/standalone/CHANGELOG.md`.
-- Done: each command runs from an agent's shell without a terminal. Its test runs it with stdin
-  and stdout not a TTY.
+- `packages/standalone/CHANGELOG.md` `## [Unreleased]`, `### Added`: `mama init --section <part>
+--non-interactive` for every part, `mama secret set --non-interactive` and
+  `mama uninstall --non-interactive`, with secrets on the setup page.
+- Done: `cd packages/standalone && npx vitest run tests/cli/onboarding.test.ts tests/cli/uninstall.test.ts`.
+  The new cases run each command with stdin and stdout not a TTY: onboarding's `mama init --section`
+  and "secret rotation" (`mama secret set`) blocks, and uninstall's `--data` confirmation.
 
 ## PR 4: docs (I1, I5)
 
@@ -554,6 +580,17 @@ The owner, 2026-10-30: the person never touches a terminal after the first reply
   The release notes and owner-setup.md also say there is no setup path for SSH or headless Linux
   until wave 3.
 
+- Bare `mama init` in the docs becomes the install command, `mama init --non-interactive`, or
+  "setup". The grep below finds 36 lines on `main`:
+  - `README.md`;
+  - `docs/reference/cli.md`, including `:36-71`;
+  - `docs/start/tutorial.md`, including `:42,84`;
+  - the parts of `docs/start/owner-setup.md` that W2.4.5c leaves, including `:105`;
+  - `packages/standalone/README.md`, including `:15,19-22,31`;
+  - `docs/reference/configuration.md`;
+  - `docs/guides/` `backends`, `connectors`, `messengers`, `people`, `replay`, `security`,
+    `telegram`, `troubleshooting` and `viewer`.
+
 - `docs/guides/viewer.md:26`: the tunnel variables come from the environment. `docs/guides/connectors.md:43-44`:
   PR 3's methods.
 - `packages/standalone/CHANGELOG.md` `## [Unreleased]`, `### Changed`: the package README and the
@@ -562,6 +599,8 @@ The owner, 2026-10-30: the person never touches a terminal after the first reply
   pass. `grep -rn "MAMA_INIT_OWNER_TELEGRAM_ID\|MAMA_INIT_COMMON_CHAT_ID\|hidden prompt" README.md docs/start docs/reference packages/standalone/README.md`
   prints nothing; this catches `cli.md:84`. `grep -c MAMA_TELEGRAM_TOKEN docs/start/owner-setup.md`
   prints 1, the rotation line; the variable row at `:117` is gone.
+  `grep -rnE 'mama init([^ -]|$| [^-])' README.md docs/start docs/reference docs/guides packages/standalone/README.md`
+  prints nothing: no bare `mama init`, only `--section` and `--non-interactive`.
 
 ## Live proof
 
@@ -587,9 +626,11 @@ The steps:
    4. Init starts the service, and the person's DM gets a reply.
 
    Checks entry: what the person typed, and where (conversation, Telegram, browser, terminal; the
-   terminal count must be 0), the minutes taken, and every place the agent left the docs. The
-   token appears nowhere in the agent's transcript file, and neither the token nor the page's nonce
-   appears in `ps -axww` taken from another account during the run.
+   terminal count must be 0), the minutes taken, and every place the agent left the docs.
+   - The token, the page's nonce and the pairing code appear nowhere in the agent's transcript file.
+   - Neither the token nor the nonce appears in `ps -axww`, run in a loop from another account
+     during the run. A single snapshot is evidence only; W2.4.5b's unit test is the proof.
+   - The checks entry records the installing agent's own sandbox.
 
 2. `mama doctor` is clean, and `start.sh` names the managed Node.
    - `start.sh`'s PATH has no per-terminal folder, such as a cmux shim's (finding A).
@@ -609,14 +650,16 @@ The steps:
    - `start.sh`'s PATH names `/opt/homebrew/bin` (`launch-files.ts:96`), so the service finds it
      and the section's refusal cannot fire on this Mac.
 
-   The live path here is the found tool, then the login, then enabling:
+   The live path here is the found tool, then the client, then the login, then enabling:
+   - the person creates the Desktop OAuth client in Google Cloud Console, and the agent moves its
+     JSON to `~/.config/gws/client_secret.json` (0600);
    - the person completes `gws auth login -s gmail` with the found gws, in the browser;
    - the agent then runs the section, which enables Gmail; `mama doctor --json` passes, and
      `mama service start` boots with the source.
 
    The refusal is proven by W2.4.5e's tests and on the wave 3 host. The checks entry says whether
-   the gws login completed from the agent's shell, and whether gws needed an OAuth client set up
-   first (`gws auth setup`). The toolkit's `brew install` on this Standard account is recorded (I7).
+   the gws login completed from the agent's shell, and how long the client step took a new person.
+   The toolkit's `brew install` on this Standard account is recorded (I7).
 
 7. **Leg B.** `mama uninstall --data` is run at a terminal (it needs one until W2.4.6).
    Claude Code then installs with the `codex` backend. The managed home is signed in from the
@@ -651,35 +694,36 @@ by its vendor's steps, and leg A against npmjs.
 - **I4 (the command part):**
   - Enabling a Google source without gws is refused before anything is written, with commands that
     work. The tests and the wave 3 host prove it.
-  - On the clean Mac, with gws found, the agent goes from the printed login to an enabled source
-    that boot starts.
+  - On the clean Mac, with gws found, the agent goes from the OAuth client (the person, in Google
+    Cloud Console) and the login to an enabled source that boot starts.
   - Doctor names the same commands for an enabled source whose tool went missing.
   - The image half is wave 4's.
 - **I5 (Node, backend, macOS rows):** the guide lists them with sources, and the run used those.
 
 ## Failure modes
 
-| Failure                                                                                        | Handling                                                                                                                                                                                             |
-| ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| npm install fails (network, registry, a build)                                                 | npm's code shown; `~/.mama/npm` left for the re-run, which reinstalls                                                                                                                                |
-| The vendor installer fails                                                                     | Its output shown, exit 1; the vendor's page named                                                                                                                                                    |
-| The backend `command -v` finds does not run (a shim, no real one)                              | The vendor installer runs; the installed one must run, or exit 1                                                                                                                                     |
-| A shim that forwards to a real backend elsewhere wins `command -v`                             | `start.sh` names the shim's folder; init's real turn fails if the service cannot run it (`init.ts:706-709`); the live proof checks PATH                                                              |
-| The backend is signed out                                                                      | Init refuses before any write and names the login with the binary's path; the agent runs it, then the install command again                                                                          |
-| A found backend runs but is older than the minimum (Homebrew's codex is exactly 0.160.1 today) | The script keeps it, and init refuses "older than …; update it" before writing. The agent puts the vendor's build in `~/.local/bin`, which the script puts first, and runs the install command again |
-| Device code login is off, or its code expires (15 min)                                         | `codex login --device-auth` exits 1 and says so; the browser login, or the setting turned on and the command run again                                                                               |
-| Init sees a login the service lacks (`CLAUDE_CONFIG_DIR`, an API key in env)                   | The daemon's real turn fails and init says so (`init.ts:706-709`); fixed, the install command again                                                                                                  |
-| The install run in the foreground                                                              | Claude Code stops it at 10 min at most, mid-pairing or boot; the skill runs it in the background, and a rerun resumes                                                                                |
-| Nothing is entered on the setup page                                                           | It closes after its 15 minutes; init exits 1 with nothing written; the install command again opens a new one                                                                                         |
-| Telegram refuses the token, or a wrong code is entered                                         | The page shows the refusal, or "That is not a code the bot sent", and its form again                                                                                                                 |
-| The browser does not open (no `open` or `xdg-open`, no display)                                | Init says so; the printed URL is the way in                                                                                                                                                          |
-| The person's browser is on another machine (SSH)                                               | `127.0.0.1` there is out of reach; a forwarded port is wave 3's (L5)                                                                                                                                 |
-| No `/bind` within 15 minutes                                                                   | Init stops without writing; the install command again pairs again                                                                                                                                    |
-| `sudo` needs a password in an agent's shell (Linux)                                            | The command printed; init refuses the default folders until it runs, or takes the two `MAMA_INIT_*_ROOT` folders; wave 3 settles it                                                                  |
-| Moving Node fails to boot                                                                      | The old folders back and started, exit 1                                                                                                                                                             |
-| A Node move is killed midway                                                                   | The hold keeps it stopped; the next run finishes or undoes the move                                                                                                                                  |
-| A source is enabled while its tool is missing                                                  | Refused before any write (W2.4.5e); otherwise boot fails on its `init()` (`daemon.ts:1311-1326`), and doctor names the commands                                                                      |
-| The toolkit cannot install on a fresh Mac                                                      | Init goes on without it (`init.ts:610-627`); see I7                                                                                                                                                  |
+| Failure                                                                                                                        | Handling                                                                                                                                                                                             |
+| ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| npm install fails (network, registry, a build)                                                                                 | npm's code shown; `~/.mama/npm` left for the re-run, which reinstalls                                                                                                                                |
+| The vendor installer fails                                                                                                     | Its output shown, exit 1; the vendor's page named                                                                                                                                                    |
+| The backend `command -v` finds does not run (a shim, no real one)                                                              | The vendor installer runs; the installed one must run, or exit 1                                                                                                                                     |
+| A shim that forwards to a real backend elsewhere wins `command -v`                                                             | `start.sh` names the shim's folder; init's real turn fails if the service cannot run it (`init.ts:706-709`); the live proof checks PATH                                                              |
+| The backend is signed out                                                                                                      | Init refuses before any write and names the login with the binary's path; the agent runs it, then the install command again                                                                          |
+| A found backend runs but is older than the minimum (Homebrew's codex is exactly 0.160.1 today)                                 | The script keeps it, and init refuses "older than …; update it" before writing. The agent puts the vendor's build in `~/.local/bin`, which the script puts first, and runs the install command again |
+| Device code login is off, or its code expires (15 min)                                                                         | `codex login --device-auth` exits 1 and says so; the browser login, or the setting turned on and the command run again                                                                               |
+| Init sees a login the service lacks (`CLAUDE_CONFIG_DIR`, an API key in env)                                                   | The daemon's real turn fails and init says so (`init.ts:706-709`); fixed, the install command again                                                                                                  |
+| The install run in the foreground                                                                                              | Claude Code stops it at 10 min at most, mid-pairing or boot; the skill runs it in the background, and a rerun resumes                                                                                |
+| Nothing is entered on the setup page                                                                                           | It closes after its 15 minutes; init exits 1 with nothing written; the install command again opens a new one                                                                                         |
+| Telegram refuses the token, or a wrong code is entered                                                                         | The page shows the refusal, or "That is not a code the bot sent", and its form again                                                                                                                 |
+| The browser does not open (no `open` or `xdg-open`, no display)                                                                | Init says so. The agent gives the person the printed `file://` path of `open.html` to paste into the browser's address bar; the path holds no secret                                                 |
+| The person's browser is on another machine (SSH)                                                                               | `127.0.0.1` there is out of reach; a forwarded port is wave 3's (L5)                                                                                                                                 |
+| The installing agent's sandbox forbids a listener (Claude Code on macOS listens only with `sandbox.network.allowLocalBinding`) | Init's bind fails and says so; the person allows it, or approves the command outside the sandbox. Leg A and leg C record which                                                                       |
+| No `/bind` within 15 minutes                                                                                                   | Init stops without writing; the install command again pairs again                                                                                                                                    |
+| `sudo` needs a password in an agent's shell (Linux)                                                                            | The command printed; init refuses the default folders until it runs, or takes the two `MAMA_INIT_*_ROOT` folders; wave 3 settles it                                                                  |
+| Moving Node fails to boot                                                                                                      | The old folders back and started, exit 1                                                                                                                                                             |
+| A Node move is killed midway                                                                                                   | The hold keeps it stopped; the next run finishes or undoes the move                                                                                                                                  |
+| A source is enabled while its tool is missing                                                                                  | Refused before any write (W2.4.5e); otherwise boot fails on its `init()` (`daemon.ts:1311-1326`), and doctor names the commands                                                                      |
+| The toolkit cannot install on a fresh Mac                                                                                      | Init goes on without it (`init.ts:610-627`); see I7                                                                                                                                                  |
 
 ## Order of work
 
@@ -713,9 +757,15 @@ and I5 marked for macOS in v1.md, evidence in checks.md.
 
 ## Open owner decisions
 
-None. The owner answered both on 2026-10-30. Q1: setup changes after the first reply are made
-without a terminal too (W2.4.6). Q2: Claude's sign-in under Codex goes through the browser (the
-[Backend CLI](#backend-cli) table, leg C).
+The owner answered Q1 and Q2 on 2026-10-30:
+
+- Q1: setup changes after the first reply are made without a terminal too (W2.4.6).
+- Q2: Claude's sign-in under Codex goes through the browser (the [Backend CLI](#backend-cli)
+  table, leg C).
+
+- **Q3, a product choice, not a blocker.** Should MAMA later ship its own verified Google OAuth
+  client? A new person then skips the Cloud Console step (W2.4.5e step 2). The cost is that MAMA
+  holds a Google-verified app and its review. Until then the person creates their own client.
 
 The clean macOS account and its test bot are owner actions already needed by B2 and W2.3.
 
