@@ -6,9 +6,17 @@ here was measured or read on 2026-10-30 at `4b25f4b45`. `s/` is `packages/standa
 ## The owner decision this follows
 
 Owner, 2026-10-30 (dev memory `w2_4_agent_led_install`): the person's agent, Claude Code or Codex,
-installs MAMA through conversation, and the person never touches a terminal. The secret path
-stays the existing one: `MAMA_TELEGRAM_TOKEN` in init's environment, stored in `~/.mama/auth.env`
-(0600). A local web page for secrets was proposed and withdrawn as reinventing that path.
+installs MAMA through conversation, and the person never touches a terminal.
+
+The first revision kept the token as `MAMA_TELEGRAM_TOKEN` in init's environment. A local web page
+had been proposed as a new place to store secrets and was withdrawn, because the store already
+exists.
+
+Later the same day the owner asked for a browser page to enter the token: "토큰입력은 별도
+브라우저를 생성하면 되지않나?" ("Can't token entry just open a separate browser?"). This was after
+Claude's browser sign-in was settled. Secrets and the pairing code are entered in a page init opens.
+Storage is unchanged: `~/.mama/auth.env` (0600), through `updateSecrets` (`s/cli/secrets.ts:67`).
+So the page is only the way in.
 
 ## The agent's shell
 
@@ -34,8 +42,7 @@ stays the existing one: `MAMA_TELEGRAM_TOKEN` in init's environment, stored in `
   `MAMA_TELEGRAM_TOKEN=… sh install.sh` keeps the token in that shell's arguments for the whole
   install. Linux lets other local users read `/proc/<pid>/cmdline` by default. Init's own rule is
   "secrets come only from variables, never from flags, which `ps` shows" (`init.ts:241-243`). Hence
-  the skill's hand-off: a short command writes the token into a 0600 file, and the install command
-  loads it from there.
+  no secret goes on a command line or into an environment the agent sets: the setup page takes them.
 - **The startup block is not read.** The agent's shell does not read the PATH block `install.sh`
   writes. Claude Code's Bash sources a snapshot taken when the session started. This is finding C
   again, in the agent's flow. So the agent runs `~/.mama/bin/mama` and the backend by full path,
@@ -98,52 +105,68 @@ installer put there wins over the shim. Coding knowledge of cmux into MAMA is no
 daemon's real turn at the end of init (`init.ts:688-713`) is the check that fails when the service
 cannot run the backend it pinned.
 
-## Pairing: why one running init reads the code from a file
+## The setup page: the token and the pairing code
 
 What the code requires (`s/cli/runtime/telegram-pairing.ts`):
 
 - The only input to `pairOwner` is `ask(label, signal)` (`:95-100`).
 - The code→sender map, the update offset and the group messages seen so far live in that run's
-  memory (`:104`, `:108-111`), and `bindCommonGroup` continues from that offset and those messages
+  memory (`:104`, `:108-111`). `bindCommonGroup` continues from that offset and those messages
   (`:188-205`).
 - Held updates are dropped once, at the start (`:103`).
 - The bot sends a code to whoever writes privately while the run polls (`:115-146`). With no run
   polling, nobody answers the person's message.
 
-So the smallest change keeps one process from the token check to the end, and changes only where
-`ask` reads. The agent can reach a running background process only through files, which both
-agents can write. Init names the file, and only the text written there is compared with the codes.
+So one process runs from the token to the end, and only `ask`'s input changes. The page lives in
+that process, so it answers `ask` directly.
+
+Nothing in MAMA takes a secret in a browser today:
+
+- the viewer has no route or page for one;
+- MAMA has no browser opener (no `open` or `xdg-open` use in `packages/*/src`).
+
+The viewer's Host check (`s/api/viewer-request-security.ts:35-52`) is the pattern the page's check
+follows. The viewer itself is not reused: it starts with the daemon, after setup.
+
+What it proves: a code reaches only the chat it was sent to (`:88-94`). Entered on a page reachable
+only from this machine, it shows that the person at this machine's browser read that DM. The
+terminal gave the same proof from this machine's keyboard.
 
 Rejected:
 
+- **The code file and the token file.** This design's first revision had them, and the owner
+  replaced them the same day. The code passed through the agent's transcript, and the token through
+  the conversation and the provider.
 - **Two invocations, with state in the step record.**
   - The first run would have to keep polling anyway, or a later run would answer the message late.
   - The code→sender map would have to be on disk, which writes the proof itself to disk.
-  - The step record without `config` means a setup cut off while writing, and its files are removed
+  - A step record without `config` means a setup cut off while writing, and its files are removed
     (`init.ts:411-419`).
   - Each new run drops held updates again (`:103`).
-- **Stdin or a FIFO.** Claude Code's background Bash cannot write to a running process's stdin, and
-  `install.sh` gives init `</dev/null` (`install.sh:438`). A FIFO blocks its writer for as long as
-  init is gone.
-- **The code going the other way**, init printing one for the person to send to the bot. That code
-  would sit in the transcript and the provider's logs before it reaches Telegram, and anyone who
-  saw it could send it first. Today's direction ties the code to the chat it was sent to (`:88-94`),
-  so seeing it gives nothing.
+- **The code going the other way**, with init printing a code for the person to send to the bot.
+  The code would be shown before it reaches Telegram, and anyone who saw it could send it first.
 
-Why the folder is new and outside the MAMA home:
+Why `MAMA_TELEGRAM_TOKEN`, `MAMA_INIT_OWNER_TELEGRAM_ID` and `MAMA_INIT_COMMON_CHAT_ID` go as init
+answers:
 
-- Init makes the MAMA home only once the answers are in (`init.ts:519-526`).
-- `mama init --non-interactive` can also run without `install.sh`, on a home that does not exist.
-- A fresh `mkdtemp` folder (0700) holds no stale code.
-- On macOS the per-user temp folder is private; on Linux the folder's mode keeps other users out.
+- With the IDs, an agent holding the token could read `getUpdates` itself and fill in whoever wrote,
+  so no proof would be asked for. B2 says no numeric ID is typed.
+- A token variable beside the page would be a second way in, and it is the way the token reached
+  the transcript.
+- The only caller is the CI leg (`scripts/install-check/run.mjs:275-277`), whose Telegram stand-in
+  has no `getUpdates`. It drives the page instead (W2.4.5b).
 
-Why `MAMA_INIT_OWNER_TELEGRAM_ID` and `MAMA_INIT_COMMON_CHAT_ID` go:
+What this revision removes and adds:
 
-- With them, an agent holding the token can read `getUpdates` itself and fill in whoever wrote, and
-  no code ever comes back through the person.
-- B2 says no numeric ID is typed.
-- No caller needs them: the CI leg (`scripts/install-check/run.mjs:276-277`) passes them only
-  because its Telegram stand-in has no `getUpdates`.
+| Removed                                                                                                  | Added                                                                                                                                                                         |
+| -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The code file: the `mkdtemp` folder, its polling reader, its unlink and cleanup, and CI writing the file | One module, `s/cli/runtime/setup-page.ts`: one GET, one POST, two forms, the Host and nonce checks, the lifetime, `open`/`xdg-open`; an estimated 120–160 lines with its HTML |
+| The token file: the skill's 0600-file step and its notes                                                 | `tests/cli/setup-page.test.ts`                                                                                                                                                |
+| The init variable `MAMA_TELEGRAM_TOKEN` (`init.ts:262`, `run.mjs:275`)                                   | CI POSTs the token and the code to the page in place of the variable and the file                                                                                             |
+| `install.sh` unsetting the token for npm and the vendor installers, and its test                         |                                                                                                                                                                               |
+
+In code, the page adds more lines than the two handovers took. The design text gets shorter: the
+skill drops a step, and `install.sh` drops a step and a test.
 
 ## The terminal setup: why it goes
 
@@ -154,7 +177,7 @@ From the code and the owner's direction:
 - SSH and headless Linux run Claude Code or Codex in the remote shell. The flow is the same; only
   sign-in differs, as above.
 - The Docker plan already closes on `--non-interactive` (install.md, Plan corrections). With the
-  code file, Docker pairs the same way.
+  setup page, Docker pairs the same way; wave 4 decides how the host's browser reaches it.
 - What only the terminal setup asked has another home. See the relocations in
   [install.md, W2.4.5c](install.md#pr-5-setup-through-the-persons-agent).
 - Findings B and C on the clean account came only from the terminal path. AGENTS.md allows no
@@ -238,8 +261,8 @@ same goes for whether `gws auth login` needs an OAuth client set up first (`gws 
 needs `gcloud`). Leg A's step 6 records both.
 
 Doctor's token fix, `mama secret set <name>` (`diagnostics.ts:174-178`), needs a terminal
-(`secret.ts:18`). It predates PR 3. For a source's token, the non-interactive section with the
-variable set replaces it.
+(`secret.ts:18`). It predates PR 3. For a source's token, the non-interactive section replaces it,
+with the token entered on the setup page.
 
 ## The clean-account run's findings
 

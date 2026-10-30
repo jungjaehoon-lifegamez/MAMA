@@ -15,8 +15,9 @@ upgrade or an nvm switch can still break the service. Nothing says how to get `g
 versions are supported (I5).
 
 Owner, 2026-10-30: the person's agent (Claude Code or Codex) installs MAMA through conversation,
-and the person never touches a terminal. The bot token goes the existing way: as
-`MAMA_TELEGRAM_TOKEN` into init's environment, then into `~/.mama/auth.env` (0600).
+and the person never touches a terminal. Secrets and the pairing code are entered in a browser
+page init opens on this machine, like Claude's sign-in. They are stored in `~/.mama/auth.env`
+(0600) by the existing writer.
 
 ## What the script makes
 
@@ -126,6 +127,8 @@ running Node is refused at step 2, before any change.
 - In an agent's shell `sudo` has no terminal to ask the password on (`install.sh:210` runs it
   `</dev/null`), so it runs only where no password is asked; otherwise the script prints the
   command. How a person runs it without a terminal is wave 3's (L5).
+- The setup page binds `127.0.0.1` on the machine that runs init. Over SSH, the person's browser
+  needs a forwarded port; wave 3 (L5).
 - W2.4 assumes Ubuntu 24.04: glibc, systemd user units, a writable `/var`, `sudo` for the person.
   Wave 3 measures SteamOS (L5) and confirms each, and owns `bwrap`, `socat` and LibreOffice (L2,
   I3); the script installs no system packages.
@@ -144,12 +147,12 @@ running Node is refused at step 2, before any change.
   `npm view @jungjaehoon/mama-os@<version> version` answers before it uploads.
 - The body is one function called on the last line, so a cut-off download runs nothing.
 - No terminal is read. A new install needs `--backend` and either `--non-interactive` (init reads
-  `MAMA_INIT_*` and `MAMA_TELEGRAM_TOKEN`) or `--no-init`, which prints the init command. A set-up
+  `MAMA_INIT_*` and opens the setup page) or `--no-init`, which prints the init command. A set-up
   install needs no flag and keeps accepting these, so the bare command that `mama update`, doctor
   and status print
   (`s/cli/runtime/node-move-journal.ts:61-62`) runs as is.
-- Init gets `MAMA_INIT_BACKEND` from `--backend`. `MAMA_TELEGRAM_TOKEN` reaches init through the
-  environment only, never a flag, and npm and the vendor installers run without it.
+- Init gets `MAMA_INIT_BACKEND` from `--backend`. No secret goes through the script, its flags or
+  its environment: init's setup page takes them (W2.4.5b).
 - npm and init run by full path with `~/.mama/node/bin` first on PATH, as `npmEnvironment` does
   (`update.ts:181-186`). npm honours `npm_config_registry`; the script has no registry flag.
 - Startup block, by `$SHELL`: zsh `~/.zshrc`; bash `~/.bashrc` on Linux, `~/.bash_profile` on macOS
@@ -265,13 +268,11 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
     same check (`install.sh:334-371`).
   - Init gets `MAMA_INIT_BACKEND=$backend` (`install.sh:438`). A different `MAMA_INIT_BACKEND`
     already in the environment is refused.
-  - npm and the vendor installers run with `MAMA_TELEGRAM_TOKEN` unset.
   - The Linux lines that say init asks for or offers other folders (`install.sh:201,213`) name
     `MAMA_INIT_MEMBER_ROOT` and `MAMA_INIT_TOOLS_ROOT` instead, since no question is left.
   - Tests in `tests/cli/install-script.test.ts`:
     - a `claude` first on PATH that exits 127 makes the vendor installer run;
     - a set-up install with no flags runs init;
-    - the token is absent from a stub vendor installer's environment;
     - `--backend codex` with `MAMA_INIT_BACKEND=claude` is refused;
     - the "without a terminal" case is rewritten.
   - `packages/standalone/CHANGELOG.md` `## [Unreleased]`, `### Changed`: the install script asks
@@ -279,42 +280,75 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
     skipped. A set-up install needs no flags.
   - Done: `cd packages/standalone && npx vitest run tests/cli/install-script.test.ts && cd ../.. && pnpm lint:sh`.
 
-- **W2.4.5b Pairing from the conversation.** Only `ask`'s input and three lines of text change in
-  `telegram-pairing.ts`.
-  - `environmentAnswers` (`init.ts:245-293`) drops `MAMA_INIT_COMMON_CHAT_ID` and
-    `MAMA_INIT_OWNER_TELEGRAM_ID` (`:263`, `:283`). It follows `askAnswers`' order:
-    - the backend;
-    - `checks.telegram(token)` with no chat (`:264`);
-    - the folders;
-    - `checks.pair(token)` last (`:215-218`).
-  - `checks.pair` (`init.ts:490-513`) is reused; its `ask` (`:497`) becomes a file reader.
-    - Init makes a folder with `mkdtemp` under the OS temp folder (0700) and prints the file to
-      write, `<folder>/code`.
-    - Every second, `ask` treats a missing or empty file as not yet. It reads and unlinks a
-      non-empty one and returns its trimmed text.
-    - `ask` rejects once the signal aborts (`telegram-pairing.ts:98-99`). The folder is removed when
-      init ends.
-    - A wrong code gets `:163`'s line, and init waits for the file again.
-  - `telegram-pairing.ts` text: `:106` names the file and says that a `/bind` sent early counts
-    (`:110-121`); `:134` says "Give this code to the agent setting up MAMA."; `:163` drops "type".
-  - Tests:
-    - `tests/cli/onboarding.test.ts` runs `--non-interactive` pairing through the file:
-      - a wrong code, then the right one;
-      - `/bind` before the code, and after it;
-      - a code the bot never sent does not count, and the owner is the sender whose code was
-        written;
-      - an abort while waiting;
-      - no folder left afterwards.
-    - `tests/cli/telegram-pairing.test.ts` keeps its cases, with the new text.
-  - CI: `scripts/install-check/run.mjs:276-277` drops the two IDs. `managed.mjs`'s Telegram
-    stand-in serves `getUpdates` (a private message, then `/bind` from the same sender) and
-    `sendMessage`, takes the code from the DM it was asked to send and writes it to the file init
-    printed.
+- **W2.4.5b The setup page: the bot token and the pairing code** ([why](install-notes.md#the-setup-page-the-token-and-the-pairing-code)).
+  The page is the one new piece. In `telegram-pairing.ts` only `ask`'s input and three lines of
+  text change.
+  - `environmentAnswers` (`init.ts:245-293`) reads no secret and no ID. `MAMA_TELEGRAM_TOKEN`
+    (`:262`), `MAMA_INIT_COMMON_CHAT_ID` (`:263`) and `MAMA_INIT_OWNER_TELEGRAM_ID` (`:283`) go.
+    The order is the backend, the folders, then the page.
+  - The page, `s/cli/runtime/setup-page.ts` (new), is served by the running init:
+    - It binds `127.0.0.1` on a random port, at the path `/<nonce>`, where the nonce is 32 random
+      bytes.
+    - It opens the browser with `open` (macOS) or `xdg-open` (Linux); MAMA has no opener today. A
+      failed open is reported, and the printed URL remains the way in.
+    - GET `/<nonce>` shows the current step's form. POST `/<nonce>` (form-encoded) takes that
+      step's one field.
+    - **Step 1, the bot token.** Init runs `checkTelegram` (`init-questions.ts:295-317`). A refused
+      token gets the same sentence on the page, and the form again. An accepted one stays in memory.
+      `updateSecrets` (`s/cli/secrets.ts:67`) writes it at the existing write point (`init.ts:577`),
+      once every answer is in.
+    - **Step 2, the pairing code.** `checks.pair` (`init.ts:490-513`) is reused, and its `ask`
+      (`:497`) is answered by this POST. The POST's reply waits for `pairOwner`:
+      - another `ask` means a wrong code (`telegram-pairing.ts:161-164`), and the page shows that
+        line;
+      - a return means accepted, and the page says to add the bot to the group and send `/bind`.
+    - Once the code is accepted, the nonce is dead and the server stops. `bindCommonGroup` needs no
+      page.
+  - The page lives 15 minutes from its start, the same as `/bind`'s wait (`telegram-pairing.ts:32`)
+    and Codex's device code. At expiry the server stops, and init exits 1 having written nothing.
+    The server also stops whenever init exits.
+  - What the agent reads on stdout, in order: 1. `setup page: http://127.0.0.1:<port>/<nonce> (opened in the browser; it closes at <time>)`; 2. `bot token accepted for @<bot>`, or the refusal sentence, after which the page waits again; 3. `pairOwner`'s line (`:106`), which now ends "enter it on the setup page"; 4. `pairing code accepted`, then `bindCommonGroup`'s line (`:200`); 5. `setup page closed`, then init's steps as today.
+
+        At expiry it reads: `the setup page expired at <time>; nothing was written; run the install
+
+    command again`. The token never appears on stdout, in a page or in an error.
+
+  - Security, each item with its reason:
+    - `127.0.0.1` only: the page takes a secret, and no other machine may reach it.
+    - A random port: no fixed port to collide with another account's MAMA.
+    - The nonce in the path: another site's page can POST a form to localhost without CORS, but it
+      cannot guess the path.
+    - Host must be exactly `127.0.0.1:<port>`: a rebinding site sends its own name. The viewer makes
+      the same check (`s/api/viewer-request-security.ts:35-52`).
+    - POST only, for the token and the code: a GET would put them in history and logs.
+    - `Cache-Control: no-store`: the browser keeps no copy once the server stops.
+    - One token and one code are accepted, then the page closes: a later submission cannot change
+      the owner.
+    - Nothing secret is logged or echoed: the page and stdout name the bot, never the token.
+    - A fixed lifetime: a forgotten background init does not keep a page that accepts a token.
+  - Proof of person: the code entered on this page proves that the person at this machine's browser
+    read the bot's DM, since a code reaches only the chat it was sent to (`telegram-pairing.ts:88-94`).
+    Neither the code nor the token passes through the conversation.
+  - `telegram-pairing.ts` text: `:106` and `:134` say "enter it on the setup page"; `:163` drops
+    "type".
+  - Tests in `tests/cli/setup-page.test.ts` (new) and `onboarding.test.ts`:
+    - a refused token, then an accepted one;
+    - a wrong code, then the right one;
+    - `/bind` before the code, and after it;
+    - a wrong nonce gets 404, and a Host other than `127.0.0.1:<port>` gets 421;
+    - a token sent by GET is not taken;
+    - a POST after the code is refused;
+    - expiry exits 1 with nothing written;
+    - the token is in no stdout line and no response body.
+  - CI: `scripts/install-check/run.mjs:275-277` drops the token and the two IDs. `managed.mjs`
+    reads the page's URL from init's output and POSTs the token. Its Telegram stand-in serves
+    `getUpdates` and `sendMessage`, and the check POSTs the code from the DM it was asked to send.
   - `packages/standalone/CHANGELOG.md` `## [Unreleased]`:
-    - `### Changed`: `mama init --non-interactive` pairs the first owner and the common group
-      through the bot. The code the bot sends is written to the file init names.
-    - `### Removed`: `MAMA_INIT_OWNER_TELEGRAM_ID` and `MAMA_INIT_COMMON_CHAT_ID`.
-  - Done: `cd packages/standalone && npx vitest run tests/cli/onboarding.test.ts tests/cli/telegram-pairing.test.ts`, and CI `install-check` green on macOS and Ubuntu.
+    - `### Added`: `mama init --non-interactive` opens a setup page on this machine for the bot
+      token and the pairing code.
+    - `### Removed`: the init variables `MAMA_TELEGRAM_TOKEN`, `MAMA_INIT_OWNER_TELEGRAM_ID` and
+      `MAMA_INIT_COMMON_CHAT_ID`.
+  - Done: `cd packages/standalone && npx vitest run tests/cli/setup-page.test.ts tests/cli/onboarding.test.ts tests/cli/telegram-pairing.test.ts`, and CI `install-check` green on macOS and Ubuntu.
 
 - **W2.4.5c The terminal setup goes** ([why, and the count](install-notes.md#the-terminal-setup-why-it-goes)).
   - Delete:
@@ -339,9 +373,9 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
       onboarding in your terminal" and the ID rows (`:36-62`, `:109-122`). This is the procedure
       both agents follow (Codex has no plugin):
       - what the person makes (a BotFather bot, a group);
-      - the command and its variables, and how the token is handed over;
+      - the command and its variables, and the setup page;
       - the sign-in table above;
-      - running in the background, the pairing relay, and running again;
+      - running in the background, passing on init's lines, and running again;
       - done when MAMA answers. It lands here because the live run's agent reads it from `main`.
   - `terminalSignIn` stays for `--section model` (`init-section.ts:96-101`).
   - Tests: the `runInit([])` cases in `onboarding.test.ts` (35 calls) move to the environment
@@ -355,25 +389,25 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
 
 - **W2.4.5d The mama-install skill and its test.**
   - `packages/claude-code-plugin/skills/mama-install/SKILL.md` drops "Never ask for a token, key or
-    password in the conversation" and "the owner runs it in their own terminal". It says plainly:
-    a token given in this conversation reaches the model provider and this agent's transcript.
+    password in the conversation" and "the owner runs it in their own terminal". In their place it
+    says plainly: the person enters secrets and the pairing code only in the page MAMA opens, never
+    in the chat. The conversation reaches the model provider and this agent's transcript.
   - Then, briefly, with owner-setup.md as the procedure:
     1. Ask which backend (yourself unless the person picks the other) and which model.
-    2. Take the token. Write it into a 0600 file with a short command; the install command loads
-       it, because a long command's text stays in `ps` ([notes](install-notes.md#the-agents-shell)).
-    3. Start the install in the background, with its output in a file.
-    4. Pass on the sign-in and pairing lines, and write the code where init says. Codex's device
-       page warns to cancel a code "another person gave you"; say that this code comes from the
-       login the agent started on the person's machine.
-    5. After a sign-in, run the same install command again. Use full paths.
-    6. The setup is done when MAMA answers the person's message.
+    2. Start the install in the background, with its output in a file, and show the person the
+       setup page's URL from it.
+    3. Pass on the sign-in lines and the page's steps. Codex's device page warns to cancel a code
+       "another person gave you"; say that this code comes from the login the agent started on the
+       person's machine.
+    4. After a sign-in, run the same install command again. Use full paths.
+    5. The setup is done when MAMA answers the person's message.
   - Sources are chosen in the conversation. The tool is installed with its printed command, the
     person completes its login in the browser, and only then is the source enabled with the
     non-interactive section (W2.4.5e). The Jev paragraph says Jev is turned on later with
     `mama init --section jev` (W2.4.6).
   - `tests/skills/mama-install-skill.test.js:32-39` asserts:
-    - the transcript sentence;
-    - no "own terminal";
+    - the setup-page sentence;
+    - no "own terminal" and no token asked for in the chat;
     - `--non-interactive`;
     - the guide link and "MAMA answers" stay.
   - `packages/claude-code-plugin/CHANGELOG.md` `## [Unreleased]`, `### Changed`: the skill installs
@@ -394,8 +428,8 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
   start.
   - `mama init --section connectors --non-interactive` takes `MAMA_INIT_CONNECTORS`: a JSON object
     of connector blocks in `connectors.json`'s own shape (`s/connectors/framework/types.ts`), the
-    shape `collectConnectors` builds. It takes each block's token from the variable its
-    `auth.tokenName` names, and Slack's app token from `MAMA_SLACK_APP_TOKEN`.
+    shape `collectConnectors` builds. The tokens the blocks name (`auth.tokenName`, and Slack's
+    app token) are entered on the setup page (W2.4.5b), one field each.
     `requireTTY` (`init-section.ts:64`) applies to every other section and form. The staging, boot's
     `planConnectors` check and the renames (`:170-192`) are reused.
   - Before anything is written, `sourceTools()` (PR 3, `s/cli/runtime/source-tools.ts`, `gwsTool`)
@@ -414,12 +448,13 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
       picker. Each Google source's `type: 'cli'` requirement names its gws service.
     - The whole setup's caller goes (W2.4.5c). PR 3's doctor lines stay.
   - Doctor's token fix is `mama secret set` (`diagnostics.ts:174-178`), which needs a terminal. For
-    a source token, the agent runs this section again with the variable set; the fix names that.
+    a source token, the agent runs this section again and the page takes the token; the fix names
+    that.
   - Tests in `onboarding.test.ts`:
     - Gmail with gws on the service's PATH is enabled;
     - with gws only on the shell's PATH, or nowhere, the section is refused and `connectors.json`
       is unchanged;
-    - a Notion block takes `MAMA_NOTION_TOKEN` into `auth.env`;
+    - a Notion block's token, entered on the page, lands in `auth.env`;
     - a block boot would refuse is refused;
     - the terminal form refuses a missing tool too.
   - `packages/standalone/CHANGELOG.md` `## [Unreleased]`, `### Added`:
@@ -439,9 +474,9 @@ The owner, 2026-10-30: the person never touches a terminal after the first reply
 
   Each needs a terminal today (`init-section.ts:64`, `secret.ts:18`, `uninstall.ts:304`).
 
-- Answers come from the environment, as W2.4.5e's connectors form does.
-- Each secret is handed over the same way as the bot token: a 0600 file the command loads. This
-  covers the bot token, the Discord and Slack tokens, the Jev key and a rotated secret.
+- Answers that are not secret come from the environment, as W2.4.5e's do.
+- Each secret is entered on W2.4.5b's setup page: a new bot token, the Discord and Slack tokens, the
+  Jev key, a rotated secret.
 - `uninstall` confirms its plan by a flag the agent passes after showing the plan in the
   conversation.
 - Each part names its `## [Unreleased]` entry in `packages/standalone/CHANGELOG.md`.
@@ -496,14 +531,15 @@ The steps:
 
 1. **Leg A.**
    1. The person says "install MAMA" to Claude Code.
-   2. The agent asks for the backend (`claude`, itself), the model and the bot token, then runs
-      `install.sh` from the candidate in the background.
-   3. The agent passes on the pairing lines. The person messages the bot, gives the agent the code,
-      adds the bot to the group and sends `/bind`.
+   2. The agent asks for the backend (`claude`, itself) and the model, then runs `install.sh` from
+      the candidate in the background. Init opens the setup page.
+   3. The person pastes the bot token on the page, messages the bot, and enters the bot's code on
+      the page. They then add the bot to the group and send `/bind`.
    4. Init starts the service, and the person's DM gets a reply.
 
    Checks entry: what the person typed, and where (conversation, Telegram, browser, terminal; the
-   terminal count must be 0), the minutes taken, and every place the agent left the docs.
+   terminal count must be 0), the minutes taken, and every place the agent left the docs. The
+   token appears nowhere in the agent's transcript file or in `ps` during the run.
 
 2. `mama doctor` is clean, and `start.sh` names the managed Node.
    - `start.sh`'s PATH has no per-terminal folder, such as a cmux shim's (finding A).
@@ -536,7 +572,7 @@ The steps:
    `claude` backend:
    - `claude auth login` from Codex's shell: the browser sign-in, and a code written to its stdin
      if the CLI asks for one;
-   - whether Codex's background run survives the turns of the pairing relay.
+   - whether Codex's background run survives across turns until init ends.
 
 **After the release:** W2.3's registry update. Then `mama uninstall --data`, the backend removed
 by its vendor's steps, and leg A against npmjs.
@@ -547,8 +583,10 @@ by its vendor's steps, and leg A against npmjs.
 
 - **I1 (macOS):** on the clean account, from "install MAMA" said to Claude Code, the person reaches
   a DM reply without typing anything in a terminal.
-  - In the conversation they choose the backend and model, and give the bot token, the bot's
-    pairing code and any code a backend's sign-in asks for.
+  - In the conversation they choose the backend and model, and give any code a backend's sign-in
+    asks for.
+  - On the setup page MAMA opens they enter the bot token and the bot's pairing code. The token
+    appears nowhere in the agent's transcript.
   - In Telegram they make the bot and the group, message the bot, and send `/bind`.
   - In a browser they sign in a backend that is not the installing agent's.
 
@@ -573,9 +611,10 @@ by its vendor's steps, and leg A against npmjs.
 | Device code login is off, or its code expires (15 min)                       | `codex login --device-auth` exits 1 and says so; the browser login, or the setting turned on and the command run again                  |
 | Init sees a login the service lacks (`CLAUDE_CONFIG_DIR`, an API key in env) | The daemon's real turn fails and init says so (`init.ts:706-709`); fixed, the install command again                                     |
 | The install run in the foreground                                            | Claude Code stops it at 10 min at most, mid-pairing or boot; the skill runs it in the background, and a rerun resumes                   |
-| The token on the install command's own line                                  | It stays in `ps` for the run; the skill hands it over through a 0600 file                                                               |
-| No pairing code arrives                                                      | Init waits, as the terminal prompt did; stopping it writes nothing, since pairing comes before every write                              |
-| A wrong code is written                                                      | "That is not a code the bot sent"; init waits for the file again                                                                        |
+| Nothing is entered on the setup page                                         | It closes after its 15 minutes; init exits 1 with nothing written; the install command again opens a new one                            |
+| Telegram refuses the token, or a wrong code is entered                       | The page shows the refusal, or "That is not a code the bot sent", and its form again                                                    |
+| The browser does not open (no `open` or `xdg-open`, no display)              | Init says so; the printed URL is the way in                                                                                             |
+| The person's browser is on another machine (SSH)                             | `127.0.0.1` there is out of reach; a forwarded port is wave 3's (L5)                                                                    |
 | No `/bind` within 15 minutes                                                 | Init stops without writing; the install command again pairs again                                                                       |
 | `sudo` needs a password in an agent's shell (Linux)                          | The command printed; init refuses the default folders until it runs, or takes the two `MAMA_INIT_*_ROOT` folders; wave 3 settles it     |
 | Moving Node fails to boot                                                    | The old folders back and started, exit 1                                                                                                |
@@ -593,7 +632,8 @@ and I5 marked for macOS in v1.md, evidence in checks.md.
 
 - W2.4's Docker sentence belongs to wave 4: no image exists (D1) and G4 forbids offering a command
   that has not run. I1's and I4's Docker halves close there, on `mama init --non-interactive`
-  pairing through the code file. This replaces I1's `docker compose run --rm mama init`.
+  with the setup page. This replaces I1's `docker compose run --rm mama init`. Wave 4 decides how
+  the host's browser reaches the page inside the container.
 - I5 closes with waves 3 and 4, which fill the Linux and Docker rows.
 - W2.3's `mama update` changes in PR 2: it has no `engines` check today, and it gains the
   `--node` move and the pin note.
