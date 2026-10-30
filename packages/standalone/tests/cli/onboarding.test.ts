@@ -151,7 +151,7 @@ function person(entries: { tokens?: string[]; codes?: string[]; after?: () => vo
           replies.push(await post(url, { code: code === 'sent' ? await telegram.code() : code }));
         entries.after?.();
       })().catch((error: unknown) => driverFailures.push(error));
-      return 0;
+      return { exit: Promise.resolve(0) };
     },
   };
 }
@@ -903,6 +903,24 @@ describe('the setup page in mama init', () => {
     expect(loadConfig({ home }).telegram).toMatchObject({ owner_chat_id: '-100' });
   });
 
+  it('answers a token whose pairing then fails with the sentence and no form', async () => {
+    // Telegram hands the bot's messages to one reader: another program already polls this bot.
+    const owner = person({ codes: [] });
+    const { run } = setUp({
+      openRun: owner.openRun,
+      telegramCall: async (token, method, params) =>
+        method === 'getUpdates'
+          ? { ok: false, error_code: 409 }
+          : await telegram.call(token, method, params),
+    });
+    await expect(run()).rejects.toThrow(/Another program is reading this bot's messages/);
+    await vi.waitFor(() => expect(owner.replies).toHaveLength(1));
+    expect(owner.replies[0]).toContain('Another program is reading this bot&#39;s messages');
+    expect(owner.replies[0]).toContain('This page has closed.');
+    expect(owner.replies[0]).not.toContain('<form');
+    expect(existsSync(join(root, 'config.yaml'))).toBe(false);
+  });
+
   it('shows a wrong code on the page, and takes the right one', async () => {
     const owner = person({ codes: ['000000', 'sent'] });
     const { p, run } = setUp({ openRun: owner.openRun });
@@ -1164,6 +1182,49 @@ describe('mama init --section', () => {
     await runInit(['--section', 'model'], probe);
     expect(homes).toEqual([join(home, 'codex-elsewhere')]);
   });
+
+  it.each(['claude', 'codex'] as const)(
+    "runs a signed-out %s's own login on the terminal, then reads the login again",
+    async (backend) => {
+      await setUp();
+      let signedIn = false;
+      const ran: Array<{ command: string; args: string[]; codexHome: string | undefined }> = [];
+      const probe = (command: string, args: string[]) =>
+        ({
+          ...probeOk(command, args),
+          stdout:
+            args[0] === '--version'
+              ? '9.9.9'
+              : args[0] === 'auth' && signedIn
+                ? '{"loggedIn":true}'
+                : '{"loggedIn":false}',
+          status: backend === 'codex' && args[0] === 'login' && !signedIn ? 1 : 0,
+        }) as never;
+      const p = prompt([backend, 'fixture-model-2'], []);
+      await runInit(
+        ['--section', 'model'],
+        options(p.adapter, {
+          probeRun: probe as InitOptions['probeRun'],
+          signIn: (command, args, env) => {
+            ran.push({ command, args, codexHome: env.CODEX_HOME });
+            signedIn = true;
+            return 0;
+          },
+        })
+      );
+      expect(ran).toEqual([
+        backend === 'claude'
+          ? { command: join(home, 'bin', 'claude'), args: ['auth', 'login'], codexHome: undefined }
+          : {
+              command: join(home, 'bin', 'codex'),
+              args: ['login'],
+              codexHome: join(root, '.codex'),
+            },
+      ]);
+      expect(p.output.join('\n')).toContain(`${backend} is not signed in; running: `);
+      expect(readDoc().agent).toMatchObject({ backend, model: 'fixture-model-2' });
+    }
+  );
 
   it('offers the only backend on PATH as the answer Enter keeps', async () => {
     await setUp();

@@ -126,7 +126,7 @@ if (command === 'kind') {
       },
       telegramCall,
       // No browser on the runner: the redirect file is read above, as a browser would.
-      openRun: async () => 0,
+      openRun: async () => ({ exit: Promise.resolve(0) }),
       // The document toolkit installs host software (brew, LibreOffice); not this check's.
       installToolkit: async () => {},
       startService: async () => {

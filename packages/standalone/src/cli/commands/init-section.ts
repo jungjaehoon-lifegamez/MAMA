@@ -99,7 +99,7 @@ export async function runInitSection(section: string, options: InitOptions = {})
             locate,
             options.probeRun,
             'run this again',
-            { run: terminalSignIn, write }
+            { run: options.signIn ?? terminalSignIn, write }
           ),
         locate
       );

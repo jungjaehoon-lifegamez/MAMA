@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import type { AddressInfo, Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -29,7 +29,11 @@ export interface SetupField {
   readonly name: string;
   /** What the page asks for. */
   readonly label: string;
-  /** Typed into a password box. No field's value is shown back or printed either way. */
+  /**
+   * A secret's box is plain text, not a password box, so the browser offers no password manager
+   * to keep the value (a bot token is no login password), with spell checking, autocorrect and
+   * autocapitalisation off. No field's value is shown back or printed either way.
+   */
   readonly secret: boolean;
   /**
    * Takes the entered value. It resolves with what the page says once the value is taken, or
@@ -38,14 +42,24 @@ export interface SetupField {
   check(value: string): Promise<string>;
 }
 
-/** Runs the browser opener and resolves with its exit status; tests replace it. */
-export type OpenRun = (command: string, args: string[]) => Promise<number>;
+/**
+ * Starts the browser opener. It resolves once the opener has started, with its exit status to
+ * come, and rejects when it cannot start; tests replace it. The page does not wait for the exit:
+ * `xdg-open` without a desktop runs the browser itself, in the foreground, until it quits.
+ */
+export type OpenRun = (command: string, args: string[]) => Promise<{ exit: Promise<number> }>;
 
 export const defaultOpenRun: OpenRun = (command, args) =>
   new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: 'ignore' });
     child.once('error', reject);
-    child.once('close', (status) => resolve(status ?? 1));
+    child.once('spawn', () => {
+      // A browser left running does not keep setup from exiting.
+      child.unref();
+      resolve({
+        exit: new Promise((exited) => child.once('exit', (status) => exited(status ?? 1))),
+      });
+    });
   });
 
 export interface SetupPage {
@@ -90,9 +104,12 @@ ${body}
 `;
 }
 
-/** The body as text, or undefined past BODY_LIMIT; a larger body is read through and dropped. */
-function readBody(req: IncomingMessage): Promise<string | undefined> {
-  return new Promise((resolve, reject) => {
+/**
+ * The body as text; `too long` past BODY_LIMIT, whose body is read through and dropped; `gone`
+ * when the client went away before sending all of it, which leaves the page as it was.
+ */
+function readBody(req: IncomingMessage): Promise<string | 'too long' | 'gone'> {
+  return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let size = 0;
     req.on('data', (chunk: Buffer) => {
@@ -100,9 +117,12 @@ function readBody(req: IncomingMessage): Promise<string | undefined> {
       if (size <= BODY_LIMIT) chunks.push(chunk);
     });
     req.on('end', () =>
-      resolve(size > BODY_LIMIT ? undefined : Buffer.concat(chunks).toString('utf8'))
+      resolve(size > BODY_LIMIT ? 'too long' : Buffer.concat(chunks).toString('utf8'))
     );
-    req.on('error', reject);
+    req.on('error', () => resolve('gone'));
+    req.on('close', () => {
+      if (!req.complete) resolve('gone');
+    });
   });
 }
 
@@ -129,6 +149,9 @@ export async function openSetupPage(options: {
   let checking = false;
   let closed = false;
   let folder: string | undefined;
+  const sockets = new Set<Socket>();
+  /** Connections whose request reached a check: their answer comes once the check settles. */
+  const answering = new Set<Socket>();
   let stop!: (error: unknown) => void;
   const stopped = new Promise<never>((_resolve, reject) => {
     stop = reject;
@@ -142,7 +165,9 @@ export async function openSetupPage(options: {
     closed = true;
     clearTimeout(timer);
     server.close();
-    server.closeIdleConnections();
+    // Any other connection goes now, a half-sent request included: server.close() would wait
+    // for it, and setup would never exit.
+    for (const socket of sockets) if (!answering.has(socket)) socket.destroy();
     if (folder !== undefined) rmSync(folder, { recursive: true, force: true });
     write('setup page closed');
   };
@@ -154,7 +179,7 @@ export async function openSetupPage(options: {
         refusal === undefined ? '' : `<p class="refused" role="alert">${escape(refusal)}</p>`,
         '<form method="post" autocomplete="off">',
         `<label for="${escape(field.name)}">${escape(field.label)}</label>`,
-        `<input id="${escape(field.name)}" name="${escape(field.name)}" type="${field.secret ? 'password' : 'text'}" required autofocus spellcheck="false" autocapitalize="off">`,
+        `<input id="${escape(field.name)}" name="${escape(field.name)}" type="text" autocomplete="off" required autofocus${field.secret ? ' spellcheck="false" autocorrect="off" autocapitalize="off"' : ''}>`,
         '<button type="submit">Continue</button>',
         '</form>',
         `<p>This page closes at ${until}.</p>`,
@@ -204,15 +229,26 @@ export async function openSetupPage(options: {
     checking = true;
     try {
       const body = await readBody(req);
-      if (body === undefined)
+      if (body === 'gone') return;
+      if (body === 'too long')
         return send(res, 413, form(field, notice, 'That entry is too long for this page.'));
+      answering.add(req.socket);
+      res.once('close', () => answering.delete(req.socket));
       let said: string;
       try {
         said = await field.check(new URLSearchParams(body).get(field.name) ?? '');
       } catch (error) {
         if (!(error instanceof CliInputError)) throw error;
+        // The setup stopped while this entry was checked: its sentence, and no form to send again.
+        if (closed)
+          return send(
+            res,
+            200,
+            html(`<p>${escape(error.message)}</p><p>This page has closed.</p>`)
+          );
         return send(res, 200, form(field, notice, error.message));
       }
+      if (closed) return send(res, 200, html(`<p>${escape(said)}</p><p>This page has closed.</p>`));
       index += 1;
       notice = said;
       if (index < fields.length) return send(res, 200, form(fields[index]!, said));
@@ -231,6 +267,10 @@ export async function openSetupPage(options: {
       close();
       stop(error);
     });
+  });
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -267,21 +307,23 @@ export async function openSetupPage(options: {
   }, lifetimeMs);
 
   const command = options.platform === 'darwin' ? 'open' : 'xdg-open';
-  let failure: string | undefined;
+  // The file's path holds no secret: it is the way in when no browser opened.
+  const wayIn = `open ${pathToFileURL(file).href} in the browser; it closes at ${until}`;
   try {
-    const status = await (options.openRun ?? defaultOpenRun)(command, [file]);
-    if (status !== 0) failure = `${command} exited ${status}`;
+    const { exit } = await (options.openRun ?? defaultOpenRun)(command, [file]);
+    write(`setup page: opened in the browser from ${file}; it closes at ${until}`);
+    void exit.then((status) => {
+      if (status !== 0 && !closed)
+        write(
+          `setup page: ${command} exited ${status}, so the browser may not have opened; ${wayIn}`
+        );
+    });
   } catch (error) {
-    failure =
+    const failure =
       (error as NodeJS.ErrnoException).code === 'ENOENT'
         ? `${command} is not installed`
         : `${command} failed: ${(error as Error).message}`;
+    write(`setup page: the browser did not open (${failure}); ${wayIn}`);
   }
-  // The file's path holds no secret: it is the way in when no browser opened.
-  write(
-    failure === undefined
-      ? `setup page: opened in the browser from ${file}; it closes at ${until}`
-      : `setup page: the browser did not open (${failure}); open ${pathToFileURL(file).href} in the browser; it closes at ${until}`
-  );
   return { stopped, close };
 }

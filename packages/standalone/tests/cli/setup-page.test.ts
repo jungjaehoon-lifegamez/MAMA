@@ -5,7 +5,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { connect } from 'node:net';
+import { connect, type Socket } from 'node:net';
 import { dirname } from 'node:path';
 import { CliInputError } from '../../src/cli/prompt.js';
 import {
@@ -46,7 +46,7 @@ function field(name: string, secret: boolean, refused: string, seen: string[]): 
 
 async function serve(
   fields: SetupField[],
-  options: { lifetimeMs?: number; status?: number } = {}
+  options: { lifetimeMs?: number; exit?: Promise<number> } = {}
 ): Promise<Opened> {
   const lines: string[] = [];
   const opened: string[][] = [];
@@ -56,7 +56,7 @@ async function serve(
     platform: 'darwin',
     openRun: async (command, args) => {
       opened.push([command, ...args]);
-      return options.status ?? 0;
+      return { exit: options.exit ?? Promise.resolve(0) };
     },
     ...(options.lifetimeMs === undefined ? {} : { lifetimeMs: options.lifetimeMs }),
   });
@@ -113,7 +113,10 @@ describe('the setup page', () => {
     ]);
     const first = await request(url);
     expect(first.status).toBe(200);
-    expect(first.body).toContain('name="token" type="password"');
+    // A plain text box: no password manager offers to keep a bot token.
+    expect(first.body).toContain('name="token" type="text" autocomplete="off"');
+    expect(first.body).toContain('spellcheck="false"');
+    expect(first.body).not.toContain('type="password"');
     expect(first.head).toMatch(/^Cache-Control: no-store$/im);
     expect(first.head).toMatch(/^Referrer-Policy: no-referrer$/im);
     // Nothing is loaded from anywhere else.
@@ -176,15 +179,110 @@ describe('the setup page', () => {
     for (const text of [...lines, ...opened.flat()]) expect(text.includes(nonce)).toBe(false);
   });
 
-  it('names the file to open when the browser does not open', async () => {
-    const { file, lines } = await serve([field('token', true, '', [])], { status: 1 });
+  it('names the file to open when the opener fails, at once or later', async () => {
+    let exited!: (status: number) => void;
+    const { file, lines } = await serve([field('token', true, '', [])], {
+      exit: new Promise((resolve) => (exited = resolve)),
+    });
+    exited(1);
+    await new Promise((resolve) => setTimeout(resolve, 10));
     expect(lines).toEqual([
+      `setup page: opened in the browser from ${file}; it closes at ${lines[0]!.slice(-5)}`,
       expect.stringMatching(
         new RegExp(
-          `^setup page: the browser did not open \\(open exited 1\\); open file://${file}\\b`
+          `^setup page: open exited 1, so the browser may not have opened; open file://${file} in the browser; it closes at \\d\\d:\\d\\d$`
         )
       ),
     ]);
+    open?.page.close();
+    // An opener that cannot start (none installed) is named the same way.
+    const missing: string[] = [];
+    const page = await openSetupPage({
+      fields: [field('token', true, '', [])],
+      write: (line) => missing.push(line),
+      platform: 'linux',
+      openRun: async () => {
+        throw Object.assign(new Error('spawn xdg-open ENOENT'), { code: 'ENOENT' });
+      },
+    });
+    page.close();
+    expect(missing[0]).toMatch(
+      /^setup page: the browser did not open \(xdg-open is not installed\); open file:\/\/.+\/open\.html in the browser; it closes at \d\d:\d\d$/
+    );
+  });
+
+  it('takes entries while an opener stays in the foreground', async () => {
+    // xdg-open without a desktop runs the browser itself until it quits.
+    const seen: string[] = [];
+    const { url, lines } = await serve([field('token', true, '', seen)], {
+      exit: new Promise(() => {}),
+    });
+    expect(lines[0]).toMatch(/^setup page: opened in the browser from /);
+    expect((await post(url, 'token', TOKEN)).body).toContain('token taken');
+    expect(seen).toEqual([TOKEN]);
+  });
+
+  it.each([
+    ['half a request line', () => 'GET /half'],
+    [
+      'headers that never end',
+      (url: URL) => `GET ${url.pathname} HTTP/1.1\r\nHost: ${url.host}\r\n`,
+    ],
+    [
+      'a body that never comes',
+      (url: URL) =>
+        `POST ${url.pathname} HTTP/1.1\r\nHost: ${url.host}\r\nContent-Length: 50\r\n\r\ntok`,
+    ],
+  ])('drops a connection holding %s when it closes, so setup can exit', async (_label, text) => {
+    const { page, url } = await serve([field('token', true, '', [])]);
+    const socket: Socket = connect(Number(url.port), '127.0.0.1');
+    await new Promise((resolve) => socket.once('connect', resolve));
+    socket.write(text(url));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const dropped = new Promise((resolve) => socket.once('close', resolve));
+    page.close();
+    await dropped;
+  });
+
+  it('keeps the page when a client goes away in the middle of its entry', async () => {
+    const seen: string[] = [];
+    const { page, url } = await serve([field('token', true, '', seen)]);
+    let stopped = false;
+    page.stopped.catch(() => (stopped = true));
+    const socket = connect(Number(url.port), '127.0.0.1');
+    await new Promise((resolve) => socket.once('connect', resolve));
+    socket.write(
+      `POST ${url.pathname} HTTP/1.1\r\nHost: ${url.host}\r\nContent-Length: 50\r\n\r\ntoken=`
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    socket.destroy();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(stopped).toBe(false);
+    expect((await post(url, 'token', TOKEN)).body).toContain('token taken');
+    expect(seen).toEqual([TOKEN]);
+  });
+
+  it('answers an entry the setup stopped during with its sentence and no form', async () => {
+    let release!: () => void;
+    const { page, url } = await serve([
+      {
+        name: 'token',
+        label: 'The token',
+        secret: true,
+        check: () =>
+          new Promise<string>((_resolve, reject) => {
+            release = () => reject(new CliInputError('fixture: the setup stopped'));
+          }),
+      },
+    ]);
+    const reply = post(url, 'token', TOKEN);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    page.close();
+    release();
+    const { body } = await reply;
+    expect(body).toContain('fixture: the setup stopped');
+    expect(body).toContain('This page has closed.');
+    expect(body).not.toContain('<form');
   });
 
   it('never shows or prints an entered value', async () => {

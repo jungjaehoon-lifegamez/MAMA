@@ -39,6 +39,7 @@ import { defaultServiceRun, type ServiceRun } from '../runtime/systemd-service.j
 import { askDaemon } from './daemon.js';
 import {
   checkBackend,
+  type BackendSignIn,
   checkTelegram,
   type TelegramCall,
   writeSourceTools,
@@ -72,6 +73,11 @@ export interface InitOptions {
   setupPageMs?: number;
   /** Runs the backend CLI to read its version and login; tests replace it. */
   probeRun?: ProbeRun;
+  /**
+   * Runs a signed-out backend's login on the terminal, for `mama init --section model`; tests
+   * replace it. The whole setup runs no login: it names it, for the person's agent to run.
+   */
+  signIn?: BackendSignIn;
   /** Runs launchctl or systemctl for the service step; tests replace it. */
   serviceRun?: ServiceRun;
   /** Installs and starts the service with the viewer's settings; tests replace it. */
