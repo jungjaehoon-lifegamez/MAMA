@@ -32,8 +32,8 @@ You never type in a terminal. You choose the backend and the model in the conver
 the bot token and a pairing code on a page MAMA opens in your browser, and send `/bind` in
 Telegram. The next section is what the agent follows.
 
-macOS is supported today. Linux over SSH, or on a machine without a desktop, has no setup path
-yet: the setup page opens only in a browser on the machine that runs MAMA. See
+macOS is supported today. Linux is not supported yet (over SSH or without a desktop there is no
+setup path). See
 [Supported versions](#supported-versions). To keep your own Node.js, see
 [Install with your own Node.js](#install-with-your-own-nodejs).
 
@@ -74,7 +74,8 @@ The setup reads these variables. None of them is a secret:
 
 ### The setup page
 
-Setup checks the backend, the model, the time zone, the folders and the tunnel first. Then it
+Setup checks the backend, the time zone, the folders and the tunnel first, and that a model is
+named; its real turn at the end tests the model. Then it
 opens a setup page in your browser on this machine, and the agent tells you so. If no browser
 opened, the agent gives you the `file://` path of `open.html` that setup printed; paste it into
 the browser's address bar. The path holds no secret. On the page:
@@ -265,7 +266,7 @@ Then you or your agent run setup with its variables, and setup goes on as above 
 page:
 
 ```bash
-MAMA_INIT_BACKEND=claude MAMA_INIT_MODEL=<model> mama init --non-interactive
+MAMA_INIT_BACKEND=<claude|codex> MAMA_INIT_MODEL=<model> mama init --non-interactive
 ```
 
 If the backend is not signed in, setup names the sign-in: `claude auth login`, or for Codex,
@@ -280,15 +281,15 @@ use `node packages/standalone/dist/cli/index.js` wherever the guides say `mama`.
 
 ## Supported versions
 
-| What                         | Supported                                              | Source                                                                                                                           |
-| ---------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| Node.js (install command)    | Node.js 22, the release the install command pins       | [`install/node.json`](../../packages/standalone/install/node.json), installed and run in CI on macOS and Ubuntu                  |
-| Node.js (your own, with npm) | 22.13 or newer                                         | `engines` in [`package.json`](../../packages/standalone/package.json)                                                            |
-| Claude Code                  | 2.1.299 or newer                                       | [`backend-probe.ts`](../../packages/standalone/src/cli/runtime/backend-probe.ts); setup refuses an older one                     |
-| Codex                        | 0.160.1 or newer                                       | [`backend-probe.ts`](../../packages/standalone/src/cli/runtime/backend-probe.ts); setup refuses an older one                     |
-| macOS                        | 26.6 on Apple silicon, the version setup was proven on | A clean Mac account, set up through Claude Code ([checks](../development/checks.md)); Claude Code itself needs macOS 13 or newer |
-| Linux                        | Not yet: a later release adds it                       | —                                                                                                                                |
-| Docker                       | Not yet: there is no image; a later release adds it    | —                                                                                                                                |
+| What                         | Supported                                              | Source                                                                                                                     |
+| ---------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Node.js (install command)    | Node.js 22, the release the install command pins       | [`install/node.json`](../../packages/standalone/install/node.json), installed and run in CI on macOS and Ubuntu            |
+| Node.js (your own, with npm) | 22.13 or newer                                         | `engines` in [`package.json`](../../packages/standalone/package.json)                                                      |
+| Claude Code                  | 2.1.299 or newer                                       | [`backend-probe.ts`](../../packages/standalone/src/cli/runtime/backend-probe.ts); setup refuses an older one               |
+| Codex                        | 0.160.1 or newer                                       | [`backend-probe.ts`](../../packages/standalone/src/cli/runtime/backend-probe.ts); setup refuses an older one               |
+| macOS                        | 26.6 on Apple silicon, the version setup was proven on | A clean Mac account, set up through Claude Code (`docs/development/checks.md`); Claude Code itself needs macOS 13 or newer |
+| Linux                        | Not yet: a later release adds it                       | —                                                                                                                          |
+| Docker                       | Not yet: there is no image; a later release adds it    | —                                                                                                                          |
 
 Known limits:
 

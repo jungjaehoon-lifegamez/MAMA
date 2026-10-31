@@ -73,16 +73,15 @@ To set up a source from the conversation, now or whenever the person asks:
      account:
      - A gmail.com account: user type External. They fill in the app name and support email,
        add themselves as a test user while setting up, then press "Publish app" so the app is In
-       production. Google may also want a homepage and a privacy policy URL before it publishes;
-       that has not been measured yet. The first sign-in shows "Google hasn't verified this app":
+       production. Google may also ask for a homepage and a privacy policy URL. The first sign-in shows "Google hasn't verified this app":
        they choose Advanced, then continue. After that the sign-in does not end after 7 days.
-     - A Google Workspace account: user type Internal. There is no warning, no test user and no
-       7-day end.
+     - A Google Workspace account: user type Internal, in their organization's Cloud project.
+       There is no warning, no test user and no 7-day end.
 
-     If the client is left in Testing, Google ends the sign-in after 7 days. Then they create an
-     OAuth client of type Desktop app and download its JSON. Move that file to
+     Then they create an OAuth client of type Desktop app and download its JSON. Move that file to
      `~/.config/gws/client_secret.json` with mode 0600, without printing it: it is the tool's own
-     credential, not a MAMA secret.
+     credential, not a MAMA secret. If the client is left in Testing, Google ends the sign-in after
+     7 days.
 
   2. The tool. Run the enabling command above. While MAMA's service cannot find `gws`, it saves
      nothing and prints the command that installs it; run that command.

@@ -23,7 +23,7 @@ With your own Node.js 22.13 or newer, install with npm instead, then run setup:
 
 ```bash
 npm install -g @jungjaehoon/mama-os
-MAMA_INIT_BACKEND=claude MAMA_INIT_MODEL=<model> mama init --non-interactive
+MAMA_INIT_BACKEND=<claude|codex> MAMA_INIT_MODEL=<model> mama init --non-interactive
 ```
 
 From a checkout, run `pnpm install` and `pnpm build`, then use

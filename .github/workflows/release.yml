@@ -509,7 +509,7 @@ jobs:
           curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | MAMA_INIT_MODEL=<model> sh -s -- --backend <claude|codex> --non-interactive
           ```
 
-          With your own Node.js 22.13 or newer: `npm install -g @jungjaehoon/mama-os`, then `MAMA_INIT_BACKEND=claude MAMA_INIT_MODEL=<model> mama init --non-interactive`. Supported versions are listed in the [owner setup guide](https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/start/owner-setup.md#supported-versions). macOS is supported; Linux over SSH or without a desktop has no setup path yet, and Docker has no image yet.
+          With your own Node.js 22.13 or newer: `npm install -g @jungjaehoon/mama-os`, then `MAMA_INIT_BACKEND=<claude|codex> MAMA_INIT_MODEL=<model> mama init --non-interactive`. Supported versions are listed in the [owner setup guide](https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/start/owner-setup.md#supported-versions). macOS is supported. Linux is not supported yet (over SSH or without a desktop there is no setup path), and Docker has no image yet.
 
           ```bash
           # MCP Server (Claude Desktop/Code)

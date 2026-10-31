@@ -52,7 +52,7 @@ application; it does not maintain a second email allowlist.
 Setup takes tokens only on a page MAMA opens in the owner's browser on its own
 machine, never in the chat with the agent that runs the install. The page listens
 on `127.0.0.1` at a random path that is never printed, takes one bot token and one
-pairing code, and closes after 15 minutes; a source's token is entered on the same
+pairing code, and closes after the code, or after 15 minutes if unused; a source's token is entered on the same
 kind of page when the agent enables it. Tokens are written only to
 `~/.mama/auth.env` with mode 0600; `config.yaml` and `connectors.json` carry
 settings and credential variable names. Rotate a token with `mama secret set <NAME>`

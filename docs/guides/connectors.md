@@ -19,14 +19,15 @@ sources MAMA should watch and sets up the ones you pick; you can also ask for on
 - A block names its secrets and never holds one. You enter the tokens on the setup page MAMA opens
   in your browser, never in the chat, and they go only to `auth.env`.
 - The Slack and Discord sources read the same token as MAMA's Slack and Discord messengers
-  (`MAMA_SLACK_TOKEN`, `MAMA_DISCORD_TOKEN`). If you use both, enter that same bot's token: another
-  one replaces the messenger's.
+  (`MAMA_SLACK_TOKEN`, `MAMA_DISCORD_TOKEN`). The setup page asks for it each time the source is
+  enabled, even to add a channel, and a token entered there replaces the messenger's
+  ([#552](https://github.com/jungjaehoon-lifegamez/MAMA/issues/552)).
 - The command checks each block as MAMA's start does, and a Google source's `gws` and sign-in, and
   saves nothing until those pass. A token is not tried with its service, so check on the viewer's
   Connectors page that the source collects. The command leaves MAMA stopped, and the agent starts
   it again.
 
-A `connectors.json` edited by hand is checked only when MAMA starts.
+A `connectors.json` edited by hand is checked when MAMA starts and by `mama doctor`.
 
 | Connector     | What it collects                                                  | Authentication                         | Channel settings                                    |
 | ------------- | ----------------------------------------------------------------- | -------------------------------------- | --------------------------------------------------- |
@@ -67,13 +68,12 @@ your own. They need no MAMA token. Your agent sets one up in this order:
    `sheets.googleapis.com`. You set up the OAuth consent screen by account:
    - **A gmail.com account:** user type External. Fill in the app name and support email, add
      yourself as a test user while setting up, then press "Publish app" so the app is In
-     production. Google may also want a homepage and a privacy policy URL before it publishes;
-     that has not been measured yet. The first sign-in shows "Google hasn't verified this app":
+     production. Google may also ask for a homepage and a privacy policy URL. The first sign-in shows "Google hasn't verified this app":
      choose Advanced, then continue. After that the sign-in does not end after 7 days. Google's
      [personal-use exception](https://support.google.com/cloud/answer/13464323) lets an app with
      fewer than 100 users run unverified this way.
-   - **A Google Workspace account:** user type Internal. There is no warning, no test user and no
-     7-day end.
+   - **A Google Workspace account:** user type Internal, in your organization's Cloud project.
+     There is no warning, no test user and no 7-day end.
 
    Then you create an OAuth client of type Desktop app and download its JSON. The agent saves that
    file as `~/.config/gws/client_secret.json` (mode 0600). It is gws's own credential, not a MAMA
