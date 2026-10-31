@@ -2899,3 +2899,18 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Live 2026-10-31 21:00:
   - The next Codex session rewrote `~/.mama/.codex/config.toml` with `"~/.config/gws" = "deny"` and `"~/Library/Application Support/gws" = "deny"`, and the file parses as TOML.
   - The 21:00 reminder report ran under that profile and was delivered (message 8276).
+
+### Release 0.79.0: mama-os 0.79.0, mama-core 8.9.0, mama-server 2.6.1, plugin 2.4.0 (2026-11-01)
+
+- Result: the first release that ships the install command. #550 (the docs for setup through your agent, merged at release so the public docs never showed a command that 404s) and #553 (versions, the root CHANGELOG, and the workflow fix that keeps a release without mama-os from becoming "latest") were merged. Release run 41219519039 followed a dry run (41219453050) and every job succeeded: prepare, core, server, mama-os, plugin sync, Pages, create-release.
+- Evidence:
+  - npm serves `@jungjaehoon/mama-core` 8.9.0, `mama-server` 2.6.1 and `mama-os` 0.79.0.
+  - `releases/latest/download/install.sh` returns 200, with `MAMA_OS_VERSION=0.79.0` and `NODE_VERSION=22.23.4`.
+  - The claude-plugins marketplace lists 2.4.0.
+  - The live daemon (checkout) reports 0.79.0. No code changed with the release, so no restart was needed.
+- Still open:
+  - The post-release runs on the clean account: the published command end to end; W2.3's update, `/update` and rollback; the Node move with a reboot.
+  - Live step 6 (Gmail from the conversation, with a production-published client).
+  - W2.4.6.
+  - Issues #540, #541 and #552.
+  - Q3, a lasting Google client.
