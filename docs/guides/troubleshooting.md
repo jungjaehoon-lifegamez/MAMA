@@ -32,7 +32,7 @@ does not make that feature run. See [Configuration](../reference/configuration.m
 If startup says `run mama secret set MAMA_TELEGRAM_TOKEN and remove telegram.token`,
 enter the token through that terminal command, remove the obsolete YAML key, and
 restart through `start.sh`. The bare `mama daemon` command does not load
-`auth.env` itself. `mama init` refuses existing setup files; it is not a reset tool.
+`auth.env` itself. Setup (`mama init --non-interactive`) refuses existing setup files; it is not a reset tool.
 
 ## Restart or stop a launchd service
 

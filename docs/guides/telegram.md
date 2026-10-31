@@ -9,8 +9,8 @@ nav_order: 5
 For setup and shared Telegram, Discord, and Slack delivery rules, see the [messengers guide](messengers.md).
 
 Telegram admits registered members in their own DMs and in allowed groups: owners join the common session, other members get a session of their own for that group. Replies return to the input chat;
-reports, notifications, and security alerts use the routes in `delivery`. Set it up with
-[`mama init`](../start/owner-setup.md), using a bot token entered in your terminal.
+reports, notifications, and security alerts use the routes in `delivery`. Set it up through your
+agent ([owner setup](../start/owner-setup.md)); you enter the bot token on the page MAMA opens in your browser.
 The daemon reads `MAMA_TELEGRAM_TOKEN` from the environment loaded by
 `~/.mama/start.sh`. A `telegram.token` entry in YAML is rejected.
 
@@ -26,7 +26,9 @@ The `telegram` section of `~/.mama/config.yaml` contains:
 | `polling`       | Receive messages; defaults to `true`                                                       |
 | `file_delivery` | Let MAMA send files; defaults to `true`                                                    |
 
-Create a group with the bot for common changes, even for a solo owner. `mama init` sets
+Create a group with the bot for common changes, even for a solo owner. Telegram's member picker
+does not list bots: add the bot by searching its @username, or with Add to Group on the bot's
+profile, then make it an administrator. Setup sets
 `owner_chat_id` and `allowed_chats` when you send `/bind` in that group. By hand, set
 `owner_chat_id` to that group's negative ID and include it in `allowed_chats`. A supergroup also works. Positive
 private chat IDs are rejected: every private chat enters its person's intake, so it cannot

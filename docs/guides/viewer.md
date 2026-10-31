@@ -23,11 +23,13 @@ Treat processes that can reach that local listener as trusted.
 ## Enable remote access
 
 Keep the origin on loopback and put a Cloudflare Tunnel and Access application in
-front of it. `mama init` can write these non-secret settings into `start.sh`:
+front of it. Setup reads these non-secret settings from the environment and writes them into
+`start.sh`:
 
 - `MAMA_CF_ACCESS_ISSUER`: the Access application's HTTPS issuer origin.
 - `MAMA_CF_ACCESS_AUD`: its audience value.
-- `MAMA_VIEWER_HOSTNAMES`: allowed viewer hostnames, comma-separated without URLs.
+- `MAMA_VIEWER_HOSTNAMES`: allowed viewer hostnames, comma-separated without URLs (setup takes
+  one).
 - `MAMA_VIEWER_OWNER_EMAILS`: optional expected identities for monitoring.
 
 Configure the tunnel and Access policy separately, then restart the daemon. The

@@ -74,7 +74,7 @@ Nobody reads another person's skills.
 
 ## Documents
 
-Run `mama tools install` once on the host. On macOS `mama init` runs it for you; elsewhere set
+Run `mama tools install` once on the host. On macOS setup runs it for you; elsewhere set
 `tools_root` in `config.yaml` first. It installs a document toolkit for every session: Python
 libraries for PowerPoint, Word, Excel and PDF files, LibreOffice and CJK fonts. Ask for a document
 in your DM or the group. On macOS MAMA can also render a document's pages to check them before

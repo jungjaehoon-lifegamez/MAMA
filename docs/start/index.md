@@ -6,7 +6,7 @@ has_children: true
 
 # Start
 
-Install MAMA OS, complete terminal onboarding, and connect development memory.
+Install MAMA OS through your agent, and connect development memory.
 
 - [Your first day with MAMA](tutorial.md)
 - [Owner setup](owner-setup.md)

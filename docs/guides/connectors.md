@@ -6,9 +6,18 @@ nav_order: 3
 
 # Connect work sources
 
-Connectors collect evidence for the owner agent. Configure them during
-[`mama init`](../start/owner-setup.md), or edit `~/.mama/connectors.json` and restart the daemon.
-The JSON stores settings and secret names; enter token values with `mama secret set <NAME>`.
+Sources collect evidence for the owner agent. Once MAMA has answered you, your agent asks which
+sources MAMA should watch and sets up the ones you pick; you can also ask for one at any time
+([owner setup](../start/owner-setup.md#sources-after-mama-answers)).
+
+- With MAMA stopped, the agent runs `~/.mama/bin/mama init --section connectors --non-interactive`,
+  with the sources' blocks, in the shape shown below, as one JSON object in `MAMA_INIT_CONNECTORS`.
+- A block names its secrets and never holds one. You enter the tokens on the setup page MAMA opens
+  in your browser, never in the chat, and they go only to `auth.env`.
+- The command checks each source as MAMA's start does, and saves nothing until every source can
+  run. It leaves MAMA stopped, and the agent starts it again.
+
+A `connectors.json` edited by hand is checked only when MAMA starts.
 
 | Connector     | What it collects                                                  | Authentication                         | Channel settings                                    |
 | ------------- | ----------------------------------------------------------------- | -------------------------------------- | --------------------------------------------------- |
@@ -20,6 +29,7 @@ The JSON stores settings and secret names; enter token values with `mama secret 
 | `gmail`       | Message IDs, subject, sender and snippet for new mail             | Logged-in `gws` CLI                    | The key `inbox`                                     |
 | `drive`       | File changes, metadata and removals in selected folders or drives | Logged-in `gws` CLI                    | `folderId` or `driveId`                             |
 | `sheets`      | Current rows and row changes in selected ranges                   | Logged-in `gws` CLI                    | `spreadsheetId`, `sheetRange`, optional `dataRange` |
+| `ical`        | Events in the calendar feeds you add                              | `MAMA_ICAL_URL_<NAME>`, the feed's URL | A feed key, `name` and `feedName`                   |
 | `notion`      | Shared page titles and block text                                 | `MAMA_NOTION_TOKEN`                    | One workspace channel                               |
 | `obsidian`    | Markdown notes in selected vault paths                            | None                                   | `vaultPath` on each channel                         |
 | `discord`     | Messages from selected channels                                   | `MAMA_DISCORD_TOKEN`                   | Channel IDs                                         |
@@ -38,11 +48,32 @@ Supported channel roles are `truth`, `hub`, `deliverable`, `spoke`, `reference`,
 `ignore` excludes a configured channel from collection. Roles describe a source; they do not assign
 work or decide completion. The agent judges those from evidence.
 
-## Google Workspace CLI
+## Google sources
 
-Install `gws`, run `gws auth login` with the scopes required by the selected connectors, and ensure
-the `gws` executable is on the daemon's PATH in `~/.mama/start.sh`. Gmail, Drive, Sheets and Calendar
-use this login and do not need a MAMA token.
+Gmail, Calendar, Drive and Sheets run Google's `gws` command, signed in through an OAuth client of
+your own. They need no MAMA token. Your agent sets one up in this order:
+
+1. **The OAuth client.** In Google Cloud Console you create a project and enable the APIs your
+   sources use: `gmail.googleapis.com`, `calendar-json.googleapis.com`, `drive.googleapis.com` and
+   `sheets.googleapis.com`. You set up the OAuth consent screen as External in testing mode, with
+   yourself as a test user, or as Internal for a Google Workspace account. Then you create an
+   OAuth client of type Desktop app and download its JSON. The agent saves that file as
+   `~/.config/gws/client_secret.json` (mode 0600). It is gws's own credential, not a MAMA secret,
+   so it does not go through the setup page.
+2. **gws.** While MAMA's service cannot find `gws`, the enabling command saves nothing and prints
+   the command that installs it. On an install the install command made, that command uses MAMA's
+   own Node and puts `gws` in `~/.mama/npm`; otherwise it is `npm install -g @googleworkspace/cli`
+   or `brew install googleworkspace-cli`. The agent runs it.
+3. **The sign-in.** While `gws` cannot read for the new source, the enabling command saves nothing
+   and prints the login, `gws auth login -s <services>`. It names the service of every Google
+   source that is on, since one sign-in serves them all. The agent runs it, and you complete
+   Google's consent in your browser.
+4. **Enabling.** The agent runs the enabling command again. It saves the source, and the agent
+   starts MAMA.
+
+With a client in testing mode, Google ends the sign-in after 7 days. MAMA keeps running, but the
+Google sources' polls fail, and `mama doctor` names the login to run again. An Internal client, for
+a Google Workspace account, has neither the test-user step nor that limit.
 
 ### Gmail
 
@@ -55,7 +86,7 @@ event time. It reads the subject, sender and snippet. Configure exactly one chan
     "enabled": true,
     "pollIntervalMinutes": 5,
     "channels": { "inbox": { "role": "hub" } },
-    "auth": { "type": "cli", "cli": "gws", "cliAuthCommand": "gws auth login" }
+    "auth": { "type": "cli", "cli": "gws" }
   }
 }
 ```
@@ -81,7 +112,7 @@ it is enabled.
     "channels": {
       "folder-fixture": { "role": "reference", "folderId": "folder-fixture" }
     },
-    "auth": { "type": "cli", "cli": "gws", "cliAuthCommand": "gws auth login" }
+    "auth": { "type": "cli", "cli": "gws" }
   }
 }
 ```
@@ -106,7 +137,7 @@ the connector sees a new row identity; choose a stable key column for the range.
         "dataRange": "Records!A2:C"
       }
     },
-    "auth": { "type": "cli", "cli": "gws", "cliAuthCommand": "gws auth login" }
+    "auth": { "type": "cli", "cli": "gws" }
   }
 }
 ```
@@ -133,15 +164,15 @@ also lets a holiday calendar appear in `schedule.upcoming`.
         "name": "Public holidays"
       }
     },
-    "auth": { "type": "cli", "cli": "gws", "cliAuthCommand": "gws auth login" }
+    "auth": { "type": "cli", "cli": "gws" }
   }
 }
 ```
 
 ### iCal feeds
 
-An iCal feed is configured as a channel. Store its private URL as a secret; it is
-never written into connector configuration or poll logs. Use an uppercase feed key
+An iCal feed is configured as a channel. Its private URL is a secret: you enter it on the setup
+page, and it is never written into connector configuration or poll logs. Use an uppercase feed key
 for the matching secret name.
 
 Date-only and floating event times use the owner's configured time zone when read. The connector
@@ -149,10 +180,6 @@ retains each DTSTART and DTEND value and its value kind, so changing the owner t
 change the archived event. DTSTART with DURATION is supported; an event without DTEND or DURATION
 ends at its start, except that a date-only start lasts one day. RRULE and EXDATE recurrence
 expansion is not supported.
-
-```sh
-mama secret set MAMA_ICAL_URL_STAYS
-```
 
 ```json
 {
@@ -254,7 +281,7 @@ Trello reads configured boards, their cards and activity. Set `boardId` to the b
 }
 ```
 
-Trello also needs the separate `MAMA_TRELLO_KEY` value in `auth.env`.
+Trello also reads `MAMA_TRELLO_KEY`; the setup page takes it beside the token.
 
 For current board state, the agent uses `trello.read` to list configured boards, read open cards,
 inspect a card, or search cards. These reads go to Trello and do not keep a board snapshot. The

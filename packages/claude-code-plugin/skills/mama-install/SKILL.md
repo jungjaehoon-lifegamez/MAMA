@@ -37,13 +37,20 @@ read `open.html` and never POST to the setup page. The page is the person's.
 5. Setup is done when MAMA answers the person's message to their bot. Files on disk or a running
    service are not the end.
 
-Sources (Gmail, Calendar, Slack and the others) are not part of the install: do not offer them
-before MAMA answers. When the person asks for one afterwards, set it up from the conversation:
+6. Then offer sources. They are not part of the install itself: do not offer them before MAMA
+   answers. Once it has answered, ask the person which sources MAMA should watch. Name each source
+   in the table of the
+   [connectors guide](https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/guides/connectors.md),
+   with its line of what it collects; read the list there, not from memory. Leave out the
+   Kagemusha bridge, which a new install cannot use. Set up each source the person picks, one at
+   a time, as below. If they decline or say later, skip this, and tell them they can ask for a
+   source at any time.
+
+To set up a source from the conversation, now or whenever the person asks:
 
 - Agree with the person on what the source reads, and write its block in `connectors.json`'s
-  shape, as the
-  [connectors guide](https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/guides/connectors.md)
-  shows it. A block names its secrets by `auth.tokenName` and never holds one.
+  shape, as the connectors guide shows it. A block names its secrets by `auth.tokenName` and never
+  holds one.
 - Enable it with MAMA stopped, the blocks as one JSON object in `MAMA_INIT_CONNECTORS`, in the
   background with its output in a file, as the install command runs:
 

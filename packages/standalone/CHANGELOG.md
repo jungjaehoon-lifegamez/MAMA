@@ -236,6 +236,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mama init --section connectors --non-interactive` with that source's block, whose setup page
   takes the token, instead of `mama secret set`, which needs a terminal. A messenger's token
   still names `mama secret set`.
+- The package README and the install guide (`docs/start/owner-setup.md`) describe setup through
+  the person's agent: the sentence to give it, naming this repository, and the install command it
+  runs, with `npm install -g` for a person who keeps their own Node.js. The guide lists the
+  supported versions of Node.js, Claude Code, Codex and macOS with their sources, what the install
+  command makes, how a new Node.js release is moved to, and the known limits: no setup path yet for
+  Linux over SSH or without a desktop, and the document tools on a Mac account without its own
+  Homebrew.
 
 ### Removed
 

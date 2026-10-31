@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consent), then the source enabled. It says that a testing-mode client's login ends after 7
   days. The command leaves MAMA stopped however it ends, so the skill starts MAMA again after
   each run. Jev is still not set up from the conversation.
+- Once MAMA has answered the person's first message, the `mama-install` skill asks which sources
+  MAMA should watch. It names each source the connectors guide lists, with what it reads, and sets
+  up the ones the person picks; "later" skips it, and the person can ask at any time. Before that
+  first answer it still offers none.
 
 ## [2.3.0] - 2026-10-16
 

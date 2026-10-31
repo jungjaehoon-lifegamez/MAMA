@@ -1,7 +1,7 @@
 # Configuration reference
 
-Use `mama init` to create a configuration, then change non-secret settings in `~/.mama/config.yaml`
-and `~/.mama/connectors.json`. Rotate credentials with `mama secret set <NAME>` in a terminal.
+Setup (the install command, which runs `mama init --non-interactive`) creates a configuration. Then
+change non-secret settings in `~/.mama/config.yaml` and `~/.mama/connectors.json`. Rotate credentials with `mama secret set <NAME>` in a terminal.
 Restart the daemon to apply config edits. The owner can change `timezone` live in chat with
 `owner.timezone.set`; development-memory settings are [separate](mcp-tools.md).
 

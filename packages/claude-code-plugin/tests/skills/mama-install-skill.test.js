@@ -64,6 +64,26 @@ describe('Story ONB-8: thin MAMA OS installation skill', () => {
     expect(content).not.toMatch(/(^|[^/])\bmama (init|service|doctor|status|update|stop)\b/);
   });
 
+  it('offers sources once MAMA has answered, from the connectors guide, and lets the person skip', () => {
+    const content = skill();
+    const answered = content.indexOf("Setup is done when MAMA answers the person's message");
+    const offer = content.indexOf('ask the person which sources MAMA should watch');
+
+    // The install itself offers none; the first reply comes first, then the offer.
+    expect(answered).toBeGreaterThanOrEqual(0);
+    expect(offer).toBeGreaterThan(answered);
+    expect(content).toContain('do not offer them before MAMA answers');
+    // The list is the guide's, not the model's memory.
+    expect(content).toContain('Name each source in the table of the [connectors guide]');
+    expect(content).toContain('read the list there, not from memory');
+    expect(content).toContain('Leave out the Kagemusha bridge');
+    // Each pick goes through the same enabling flow.
+    expect(content).toContain('Set up each source the person picks, one at a time, as below');
+    expect(content).toContain(
+      'If they decline or say later, skip this, and tell them they can ask for a source at any time'
+    );
+  });
+
   it("orders a Google source's steps: the OAuth client, the tool, the login, then enabling", () => {
     const content = skill();
     const steps = [

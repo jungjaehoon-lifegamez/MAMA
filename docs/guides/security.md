@@ -49,11 +49,15 @@ application; it does not maintain a second email allowlist.
 
 ## Owner credential boundary
 
-Run `mama init` in the owner's terminal for onboarding. It reads tokens with echo
-off and writes them only to `~/.mama/auth.env` with mode 0600; `config.yaml` and
-`connectors.json` carry settings and credential variable names. Rotate a token
-with `mama secret set <NAME>`, also in a terminal, then restart the daemon.
-`mama secret list` prints names only. The agent does not receive or type tokens.
+Setup takes tokens only on a page MAMA opens in the owner's browser on its own
+machine, never in the chat with the agent that runs the install. The page listens
+on `127.0.0.1` at a random path that is never printed, takes one bot token and one
+pairing code, and closes after 15 minutes; a source's token is entered on the same
+kind of page when the agent enables it. Tokens are written only to
+`~/.mama/auth.env` with mode 0600; `config.yaml` and `connectors.json` carry
+settings and credential variable names. Rotate a token with `mama secret set <NAME>`
+in a terminal, then restart the daemon. `mama secret list` prints names only. MAMA's
+agent does not receive or type tokens.
 
 The daemon reads the Telegram bot token from `MAMA_TELEGRAM_TOKEN`, loaded by
 `~/.mama/start.sh` from `auth.env`. A `telegram.token` key in `config.yaml` is an

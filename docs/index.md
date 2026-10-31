@@ -14,8 +14,25 @@ model receive the information needed for each task.
 
 ## Start here
 
+On the Mac that will run MAMA, open Claude Code or Codex and say:
+
+> Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA by following its owner setup
+> guide, docs/start/owner-setup.md.
+
+Name the repository: "install MAMA" alone can send the agent to other programs called mama. The
+agent runs the install command, and you never type in a terminal:
+
+```sh
+curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | MAMA_INIT_MODEL=<model> sh -s -- --backend <claude|codex> --non-interactive
+```
+
+In Claude Code, MAMA's plugin has a `mama-install` skill that does the same: run
+`/plugin marketplace add jungjaehoon-lifegamez/claude-plugins`, then `/plugin install mama`. macOS
+is supported today; Linux and Docker are not yet.
+
 - [Your first day with MAMA](start/tutorial.md) walks through setup and a first owner conversation.
-- [Owner setup](start/owner-setup.md) explains terminal onboarding and the local daemon.
+- [Owner setup](start/owner-setup.md) is the setup your agent follows, with what it installs and
+  the supported versions.
 - [Development memory](start/claude-code-plugin.md) sets up the Claude Code plugin and MCP server.
 
 ## Guides
