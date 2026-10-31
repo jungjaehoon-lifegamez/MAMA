@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { resolveApiPort } from '../../api/viewer-server.js';
 import { loadConnector } from '../../connectors/index.js';
-import type { IConnector } from '../../connectors/framework/types.js';
+import type { AuthRequirement, IConnector } from '../../connectors/framework/types.js';
 import { loadConfig, type W1Config } from '../../runtime/config.js';
 import { backendEnvironment } from '../../runtime/backend-security.js';
 import { connectorLoadPaths, planConnectors } from '../../runtime/connectors.js';
@@ -163,10 +163,29 @@ export function portAnswers(port: number, host: string): Promise<boolean> {
   });
 }
 
+function managedSecret(name: string): boolean {
+  return (SECRET_NAMES as readonly string[]).includes(name) || isIcalSecret(name);
+}
+
 function secretFix(name: string): string {
-  return (SECRET_NAMES as readonly string[]).includes(name) || isIcalSecret(name)
-    ? `mama secret set ${name}`
-    : `add ${name} to auth.env`;
+  return managedSecret(name) ? `mama secret set ${name}` : `add ${name} to auth.env`;
+}
+
+/**
+ * A source's tokens are entered on the setup page by the sources section, run again for that
+ * source, which needs no terminal (install.md, W2.4.5e); a name MAMA does not store goes into
+ * auth.env by hand.
+ */
+function sourceSecretFixes(source: string, names: readonly string[]): string[] {
+  const managed = names.filter(managedSecret);
+  return [
+    ...(managed.length > 0
+      ? [
+          `with MAMA stopped, run mama init --section connectors --non-interactive with ${source}'s block from connectors.json in MAMA_INIT_CONNECTORS; its setup page takes ${managed.join(' and ')}`,
+        ]
+      : []),
+    ...names.filter((name) => !managedSecret(name)).map(secretFix),
+  ];
 }
 
 /**
@@ -756,6 +775,13 @@ export async function telegramCheck(
   };
 }
 
+/** The secrets a source's requirements name. */
+function secretNames(needs: readonly AuthRequirement[]): string[] {
+  return needs.flatMap((need) =>
+    need.type === 'token' && need.tokenName !== undefined ? [need.tokenName] : []
+  );
+}
+
 /** connectors.json as the connector runtime reads it, and what each enabled source needs. */
 async function sourceChecks(
   config: W1Config,
@@ -796,18 +822,21 @@ async function sourceChecks(
   }
   const checks: Check[] = [];
   const timeZone = createTimeZoneSetting(config.timezone);
+  const loaded: Array<{ name: string; connector: IConnector }> = [];
   for (const name of plan.enabledConnectorNames) {
-    let connector: IConnector;
     try {
-      connector = await start.load(
+      loaded.push({
         name,
-        plan.config.config[name],
-        connectorLoadPaths(name, {
-          statePath: paths.connectorsRoot,
-          kagemushaDbPath: paths.kagemushaDbPath,
-          timeZone,
-        })
-      );
+        connector: await start.load(
+          name,
+          plan.config.config[name],
+          connectorLoadPaths(name, {
+            statePath: paths.connectorsRoot,
+            kagemushaDbPath: paths.kagemushaDbPath,
+            timeZone,
+          })
+        ),
+      });
     } catch (error) {
       checks.push({
         name: `source ${name}`,
@@ -815,18 +844,23 @@ async function sourceChecks(
         detail: 'cannot be built from connectors.json; boot stops at the connectors stage',
         context: message(error),
       });
-      continue;
     }
-    const needs = connector.getAuthRequirements();
+  }
+  const enabled = loaded.map(({ name, connector }) => ({
+    name,
+    connector,
+    needs: connector.getAuthRequirements(),
+  }));
+  for (const { name, connector, needs } of enabled) {
     // A secret's name can carry an owner's channel key (iCal), so it stays out of the report.
-    const secrets = needs.flatMap((need) =>
-      need.type === 'token' && need.tokenName && !secret(need.tokenName) ? [need.tokenName] : []
-    );
+    const secrets = secretNames(needs).filter((tokenName) => !secret(tokenName));
     const tools = sourceTools(
       [{ name, needs }],
       start.service,
       { root: dirname(configPath), home: start.home },
-      { inDirs: locate, shell: start.findShell }
+      { inDirs: locate, shell: start.findShell },
+      // One login of a tool serves every source that runs it, so it names what all of them need.
+      enabled
     );
     const missing = tools.filter((tool) => tool.servicePath === null);
     // Paths stay out of `detail`, which --report shares.
@@ -846,7 +880,7 @@ async function sourceChecks(
         ].join('; '),
         ...(context.length > 0 ? { context: context.join('; ') } : {}),
         fix: [
-          ...secrets.map(secretFix),
+          ...sourceSecretFixes(name, secrets),
           ...missing.map(({ shellPath, install, login }) =>
             shellPath === null
               ? `install it: ${install.join(' or ')}; then log in: ${login}`
@@ -883,14 +917,10 @@ async function sourceChecks(
               status: 'fail',
               detail: 'starts, but its credentials or sign-in are refused, so its polls fail',
               fix:
-                needs
-                  .map((need) =>
-                    need.type === 'cli' && need.cli !== undefined
-                      ? tools.find(({ tool }) => tool.command === need.cli)!.login
-                      : (need.cliAuthCommand ?? (need.tokenName ? secretFix(need.tokenName) : ''))
-                  )
-                  .filter(Boolean)
-                  .join('; ') || undefined,
+                [
+                  ...tools.map(({ login }) => login),
+                  ...sourceSecretFixes(name, secretNames(needs)),
+                ].join('; ') || undefined,
             };
           }
         })

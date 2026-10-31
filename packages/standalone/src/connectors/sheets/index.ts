@@ -86,7 +86,8 @@ export class SheetsConnector implements IConnector {
     return [
       {
         ...cliAuth(gwsTool),
-        description: 'Google Workspace CLI authentication. Run: gws auth login',
+        scope: 'sheets',
+        description: 'Google Workspace CLI authentication. Run: gws auth login -s sheets',
       },
     ];
   }

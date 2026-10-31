@@ -130,15 +130,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   print how to install it and how to sign in. On an install the install command made, both
   commands use MAMA's own Node and put `gws` where the service finds it:
   `PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/node/bin/npm install -g --prefix ~/.mama/npm @googleworkspace/cli`,
-  then `PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login`. Other installs get
-  `npm install -g @googleworkspace/cli` or `brew install googleworkspace-cli`, then
-  `gws auth login`. When only the terminal finds `gws`, they say that `mama service install` adds
-  its folder. MAMA's service does not start while such a source is on and `gws` is missing, and
-  they say so: `mama init`, continuing a setup that stopped, names `gws` again and says to
-  install it now and run the install command again, and `--section` says to run
-  `mama service install` and start the service once it is installed. Doctor's fix for a source that does not start, or
-  whose sign-in is refused, names the same login command, and the sources' own errors point to
-  `mama doctor` for those commands instead of a bare `gws auth login` (#543).
+  then `PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login -s <services>`. Other
+  installs get `npm install -g @googleworkspace/cli` or `brew install googleworkspace-cli`, then
+  `gws auth login -s <services>`. The login names the gws service of every Google source that is
+  on (`-s calendar,gmail`), since one login serves them all. Before it, `mama init` and
+  `--section` name the OAuth client gws signs in through: a Desktop app client from Google Cloud
+  Console, saved as `~/.config/gws/client_secret.json`. When only the terminal finds `gws`, they
+  say that `mama service install` adds its folder. MAMA's service does not start while such a
+  source is on and `gws` is missing, and they say so: `mama init`, continuing a setup that
+  stopped, names `gws` again and says to install it now and run the install command again, and
+  `--section` no longer enables the source (below). Doctor's fix for a source that does not
+  start, or whose sign-in is refused, names the same login command, and the sources' own errors
+  point to `mama doctor` for those commands instead of a bare `gws auth login` (#543).
+- `mama init --section connectors --non-interactive` enables sources without a terminal, for the
+  person's agent, while MAMA is stopped:
+  - It reads `MAMA_INIT_CONNECTORS`, a JSON object of `connectors.json` blocks keyed by source
+    name, checked as boot checks `connectors.json`. A source name or setting MAMA does not read is
+    refused.
+  - The tokens the sources read, as each source names them (Trello's key too), are entered on the
+    setup page, one field each, and go only to `auth.env`. A source that reads a token under a
+    name `auth.env` does not hold is refused before the page opens.
+  - The other parts of `mama init --section` still need a terminal.
+- A source whose tool MAMA's service cannot find is no longer enabled, from either form of
+  `mama init --section connectors`; with a Google source and `gws` missing from start.sh's PATH,
+  boot stopped. The section saves nothing and prints how to install `gws`, the OAuth client file,
+  the login, and "Then run this again." With `gws` found, it prints the client file and the login
+  before it saves.
 - `mama init --non-interactive` opens a setup page on this machine for the bot token and the
   pairing code, once every other answer has been checked:
   - The page listens on 127.0.0.1 at a path of 32 random bytes, and answers only a request whose
@@ -180,6 +197,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the installer is skipped: its `--version` must exit 0 and print a version, so a shim with no
   backend behind it gets the vendor's installer. A set-up install needs no flags: it runs
   `mama init --non-interactive`, and without `--backend` it keeps the backend it has.
+- `mama doctor`'s fix for a source token that is missing or refused names
+  `mama init --section connectors --non-interactive` with that source's block, whose setup page
+  takes the token, instead of `mama secret set`, which needs a terminal. A messenger's token
+  still names `mama secret set`.
 
 ### Removed
 

@@ -135,8 +135,9 @@ export class CalendarConnector implements IConnector {
     return [
       {
         ...cliAuth(gwsTool),
+        scope: 'calendar',
         description:
-          'Google Calendar read access through Google Workspace CLI. Run: gws auth login',
+          'Google Calendar read access through Google Workspace CLI. Run: gws auth login -s calendar',
       },
     ];
   }

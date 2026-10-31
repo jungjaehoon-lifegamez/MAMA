@@ -4,11 +4,17 @@ import type { SourceTool } from './types.js';
 /**
  * The Google Workspace CLI the Google sources (calendar, gmail, drive, sheets) run. The npm
  * package is a Node script (`bin` run.js, `postinstall` `node install.js`) that fetches the
- * native binary; the Homebrew formula installs that binary.
+ * native binary; the Homebrew formula installs that binary. Its login needs an OAuth client of
+ * the person's own: without one, `gws auth login` exits at once with `401 No OAuth client
+ * configured` (install-notes.md, measured on 0.11.1). The client file is gws's own credential,
+ * like a backend's login, not a MAMA secret.
  */
 export const gwsTool: SourceTool = {
   command: 'gws',
   loginArgs: 'auth login',
+  scopeFlag: '-s',
+  beforeLogin:
+    'gws signs in through an OAuth client of your own: in Google Cloud Console, create an OAuth client of type Desktop app, download its JSON and save it as ~/.config/gws/client_secret.json (mode 0600).',
   npmPackage: '@googleworkspace/cli',
   brewFormula: 'googleworkspace-cli',
 };

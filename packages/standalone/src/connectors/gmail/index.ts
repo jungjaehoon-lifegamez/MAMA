@@ -70,7 +70,8 @@ export class GmailConnector implements IConnector {
     return [
       {
         ...cliAuth(gwsTool),
-        description: 'Google Workspace CLI authentication. Run: gws auth login',
+        scope: 'gmail',
+        description: 'Google Workspace CLI authentication. Run: gws auth login -s gmail',
       },
     ];
   }

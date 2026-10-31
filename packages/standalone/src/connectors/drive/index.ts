@@ -121,7 +121,8 @@ export class DriveConnector implements IConnector {
     return [
       {
         ...cliAuth(gwsTool),
-        description: 'Google Workspace CLI authentication. Run: gws auth login',
+        scope: 'drive',
+        description: 'Google Workspace CLI authentication. Run: gws auth login -s drive',
       },
     ];
   }

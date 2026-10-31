@@ -37,10 +37,45 @@ read `open.html` and never POST to the setup page. The page is the person's.
 5. Setup is done when MAMA answers the person's message to their bot. Files on disk or a running
    service are not the end.
 
-Sources (Gmail, Calendar, Slack and the others) and Jev are not set up from the conversation
-yet: today each needs the person at a terminal, which this install does not use. Do not offer
-them during the install. If the person asks for one, say that MAMA cannot set it up through you
-yet, and that it works without them.
+Sources (Gmail, Calendar, Slack and the others) are not part of the install: do not offer them
+before MAMA answers. When the person asks for one afterwards, set it up from the conversation:
+
+- Agree with the person on what the source reads, and write its block in `connectors.json`'s
+  shape, as the
+  [connectors guide](https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/guides/connectors.md)
+  shows it. A block names its secrets by `auth.tokenName` and never holds one.
+- Enable it with MAMA stopped, the blocks as one JSON object in `MAMA_INIT_CONNECTORS`, in the
+  background with its output in a file, as the install command runs:
+
+  ```bash
+  ~/.mama/bin/mama stop
+  MAMA_INIT_CONNECTORS='{"gmail": {...}}' ~/.mama/bin/mama init --section connectors --non-interactive
+  ```
+
+  A source with a token opens the setup page for it, one field each; tell the person it is open,
+  as in step 2. The command saves nothing until every check passes. When it has saved, start
+  MAMA with `~/.mama/bin/mama service start`.
+
+- Gmail, Calendar, Drive and Sheets run Google's `gws`, which signs in through an OAuth client of
+  the person's own. In this order:
+  1. The client. In Google Cloud Console the person creates a project and enables the APIs its
+     sources use: `gmail.googleapis.com`, `calendar-json.googleapis.com`,
+     `drive.googleapis.com` and `sheets.googleapis.com`. They set up the OAuth consent screen as
+     External in testing mode with themselves as a test user, or as Internal for a Google
+     Workspace account. Then they create an OAuth client of type Desktop app and download its
+     JSON. Move that file to `~/.config/gws/client_secret.json` with mode 0600, without printing
+     it: it is the tool's own credential, not a MAMA secret. Tell the person that with a
+     testing-mode client Google ends the login after 7 days, and they sign in again then.
+  2. The tool. Run the enabling command above. While MAMA's service cannot find `gws`, it saves
+     nothing and prints the command that installs it; run that command.
+  3. The login. Run the login the command printed (`gws auth login -s <services>`), exactly as
+     printed, in the background, and give the person the address it prints; they finish it in
+     their browser.
+  4. Enabling. Run the enabling command again if it saved nothing; then start MAMA.
+
+Jev is not set up from the conversation yet: it needs the person at a terminal, which this
+install does not use. Do not offer it. If the person asks for it, say that MAMA cannot turn it on
+through you yet, and that MAMA works without it.
 
 If the person asks about Jev (TypeSafe): with it, the owner agent can judge many messages or items
 without reading them all, and the text in those calls goes to the Jev service. MAMA works the same
