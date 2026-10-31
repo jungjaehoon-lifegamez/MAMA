@@ -2826,3 +2826,22 @@ The implementation writes raw/index data during import only. Replay is the owner
   - **I7 measured.** The toolkit fails on a Standard account with "python3 >= 3.10 required" (system python3 is 3.9.6). Init went on, and doctor warns.
   - **A sandboxed Claude Code was not measured.** That case needs `allowLocalBinding`.
   - **Next:** W2.4.5e (sources from the conversation, with the OAuth client step), W2.4.6, PR 4, and steps 2–5 of the live proof (W2.3's update and rollback, the Node move) on this account.
+
+### Viewer: cross-site browser requests refused, report-stream cap (#549, 2026-10-31)
+
+- Result:
+  - Data routes refuse `Sec-Fetch-Site: cross-site` and `same-site` with 403, after auth and before any action, so no `tool_traces` row is written. Each refusal is logged as a `cross_origin` security event, alerted once per class per 10 minutes. A missing header, `same-origin` and `none` pass, so local tools, curl and the viewer page are unaffected.
+  - Report streams are capped at 8, and the 9th is refused with 503.
+  - The unused Express `createReportRouter` (PUT/DELETE), `ReportStore.delete` and the express dependency are deleted.
+- Why: the owner asked whether attacks reach MAMA beyond the aocr.org referrer spam (a broad campaign hitting GitHub traffic; 101/101 unique "views" on this repo, 10/28–29).
+  - Over 8,355 tunnel requests since 09-26, the only external intrusion attempt was 09-26: a forged Access header, `/.env` and `/.git/config` probes, and a wrong Host. All were refused.
+  - 7,069 of 7,072 tunnel API calls came from the owner's one Access identity.
+  - Agent shell egress was refused by the deny-all proxy every time.
+  - An investigation measured that the viewer is read-only: non-GET gets 405, no body is read, and no CORS header is sent. DNS rebinding gets 421. Member sandboxes cannot connect to loopback (EPERM on both backends).
+  - The one gap: a cross-site GET ran read actions that wrote page-chosen text into `tool_traces`, unlogged.
+- Evidence: an Opus review returned FIX-FIRST and reproduced it on a real server. A tunnel stream dropped during Access key verification leaked its slot, and 8 such drops locked the board out. It is fixed (`res.destroyed` checked before the client is added), with a real-socket regression test. CI is green on e73cf3b00. Merged as 4f71b8fc2 and deployed with a drained stop; the boot was clean.
+- Still open:
+  - Browsers that send no `Sec-Fetch-Site` (Safari before 16.4) pass the check.
+  - Whether Cloudflare forwards `Sec-Fetch-*` to the origin is unverified.
+  - Loopback stays tokenless by owner decision; any process of the owner's account, or another OS account on this Mac, can read the API.
+  - Cloudflare-edge refusals are not visible in MAMA's logs.
