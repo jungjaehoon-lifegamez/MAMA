@@ -141,10 +141,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   print how to install it and how to sign in. On an install the install command made, both
   commands use MAMA's own Node and put `gws` where the service finds it:
   `PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/node/bin/npm install -g --prefix ~/.mama/npm @googleworkspace/cli`,
-  then `PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login -s <services>`. Other
-  installs get `npm install -g @googleworkspace/cli` or `brew install googleworkspace-cli`, then
-  `gws auth login -s <services>`. The login names the gws service of every Google source that is
-  on (`-s calendar,gmail`), since one login serves them all. Before it, `mama init` and
+  then `PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login --scopes <scopes>`.
+  Other installs get `npm install -g @googleworkspace/cli` or `brew install googleworkspace-cli`,
+  then `gws auth login --scopes <scopes>`. The login names the OAuth scope of every Google source
+  that is on (see Changed), since one login serves them all. Before it, `mama init` and
   `--section` name the OAuth client gws signs in through: a Desktop app client from Google Cloud
   Console, saved as `~/.config/gws/client_secret.json`. When only the terminal finds `gws`, they
   say that `mama service install` adds its folder. MAMA's service does not start while such a
@@ -165,8 +165,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in, from either form of `mama init --section connectors`. With a Google source and `gws`
   missing from start.sh's PATH, boot stopped; signed out, every poll failed. The section saves
   nothing and prints how to install `gws`, or the OAuth client file and the login
-  (`gws auth login -s <services>`, naming every Google source that is on, since one login serves
-  them all), then "Then run this again." The sign-in is each source's own check, run in the
+  (`gws auth login --scopes <scopes>`, naming the OAuth scope of every Google source that is on,
+  since one login serves them all), then "Then run this again." The sign-in is each source's own check, run in the
   environment start.sh gives the daemon: one read with that source's own scope (Gmail its
   profile, Drive `about`, Sheets its first spreadsheet, Calendar the calendar), so a sign-in made
   for other services is refused too, with gws's reason.

@@ -5,7 +5,8 @@
  * builds the whole command, so no gws flag is an input: nothing is uploaded, sent, written to a
  * file the agent names, or dumped page after page. The allowlist is the read-only guard: the
  * sign-in carries Drive write access for deliver.drive.file, and a login made before 2026-10-31
- * may carry write access to every service. The agent's shell stays closed. Nothing is stored.
+ * may carry write access to every service. The agent's shell stays closed. Nothing is saved as a
+ * source; tool_traces keeps its usual bounded, redacted summary of each call (observeCall).
  */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -145,7 +146,7 @@ export function googleReadActionRegistrations(ports: GoogleReadPorts): ActionReg
         name: GOOGLE_READ_ACTION,
         readsConnector: { fromInput: 'service' },
         summary:
-          'Read the owner\'s Gmail, Calendar and Sheets, or a Google Doc as text, live through gws, as `gws <service> <argv…> --params <params>`, for what the stored sources do not hold. Read methods only: gmail users getProfile, users labels list, users messages list|get, users threads list|get; calendar calendarList list, events list|get; sheets spreadsheets get, spreadsheets values get; drive files export, which returns a Google Doc, Sheet or Slides file as text (mimeType text/plain, text/csv, text/html or text/markdown). Find and fetch Drive files with drive.read and drive.download. params is the method\'s --params JSON (userId "me" for Gmail). A list returns one page with its nextPageToken; pass it as pageToken for the next. A result over 100,000 characters is refused: narrow it with fields, maxResults/pageSize or a smaller range. Nothing is stored.',
+          'Read the owner\'s Gmail, Calendar and Sheets, or a Google Doc as text, live through gws, as `gws <service> <argv…> --params <params>`, for what the stored sources do not hold. Read methods only: gmail users getProfile, users labels list, users messages list|get, users threads list|get; calendar calendarList list, events list|get; sheets spreadsheets get, spreadsheets values get; drive files export, which returns a Google Doc, Sheet or Slides file as text (mimeType text/plain, text/csv, text/html or text/markdown). Find and fetch Drive files with drive.read and drive.download. params is the method\'s --params JSON (userId "me" for Gmail). A list returns one page with its nextPageToken; pass it as pageToken for the next. A result over 100,000 characters is refused: narrow it with fields, maxResults/pageSize or a smaller range. Nothing is saved as a source; tool_traces keeps a bounded, redacted excerpt of each result, as for every action.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
