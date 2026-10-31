@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.1] - 2026-11-01
+
+### Changed
+
+- Published with `@jungjaehoon/mama-core` 8.9.0, the core the Claude Code plugin 2.4.0 installs
+  for its hooks, so the plugin's hooks and this server still run one core. The server's own code
+  is unchanged.
+
 ## [2.6.0] - 2026-10-16
 
 ### Changed

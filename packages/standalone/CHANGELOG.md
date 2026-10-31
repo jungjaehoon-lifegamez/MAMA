@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.79.0] - 2026-11-01
+
 ### Added
 
 - `google.read`: the owner agent reads Gmail, Calendar and Sheets, and a Google Doc, Sheet or
@@ -115,7 +117,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path. While an update runs, another `/update` says only since when. A git checkout answers with
   the commands that update it; asked in the group, those go to the owner's DM, since they name
   folders on MAMA's machine. `/update` is in the bot's command menu (#536).
-- An install command, `install.sh`, attached to each MAMA OS release starting with the next one
+- An install command, `install.sh`, attached to each MAMA OS release starting with this one
   (#538):
   - It runs on macOS and Linux, on x64 or arm64, and reads no terminal. A new install is given
     its backend (Claude Code or Codex) with `--backend`, and `--non-interactive` or `--no-init`.

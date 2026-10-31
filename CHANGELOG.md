@@ -2,6 +2,98 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.79.0] / mama-core [8.9.0] / mama-server [2.6.1] / plugin [2.4.0] - 2026-11-01
+
+You can now have your agent set MAMA up: Claude Code or Codex runs one install command, you enter
+the bot token and a pairing code on a page MAMA opens in your browser, and setup is done when MAMA
+answers your first message. MAMA then updates itself with `mama update` or `/update`, stops a
+running turn on `/stop`, reads Gmail, Calendar and Sheets when asked, and writes a closing summary
+for finished work. Each package changelog lists every change.
+
+### Upgrading
+
+- New installs use the install command attached to each MAMA OS release from this one on
+  (`install.sh`). Tell your agent to install MAMA OS by following `docs/start/owner-setup.md`; it
+  runs the command, which puts its own Node.js, MAMA OS and a `mama` command in `~/.mama`.
+- Bare `mama init` is now a usage error. Setup is `mama init --non-interactive`, which your agent
+  runs, and `mama init --section <part>` changes one part of a finished setup.
+  `MAMA_INIT_OWNER_TELEGRAM_ID` and `MAMA_INIT_COMMON_CHAT_ID` are gone: the bot's pairing code
+  and `/bind` name the owner and the common group.
+- An npm install has no `mama update` yet, so this upgrade is by hand:
+  `npm install -g @jungjaehoon/mama-os@0.79.0`, then `mama service install` and
+  `mama service restart`. The `start.sh` it writes is the one `mama update` needs; from then on
+  `mama update`, or `/update` in Telegram, updates MAMA.
+- Slack, Chatwork and Trello sources now read only `MAMA_SLACK_TOKEN`, `MAMA_CHATWORK_TOKEN` and
+  `MAMA_TRELLO_TOKEN`. A Slack or Chatwork source without `auth.tokenName` read
+  `SLACK_BOT_TOKEN` or `CHATWORK_API_TOKEN` before: set the new name with `mama secret set` before
+  you restart. A source that names any other variable stops MAMA at start until it is corrected.
+  Run `mama doctor` after the upgrade; it names what is missing.
+- The Google login MAMA prints is now `gws auth login --scopes <scopes>`: read-only for Gmail,
+  Calendar and Sheets, and full Drive access. An existing sign-in keeps working as it was granted;
+  a new sign-in with the printed line narrows it.
+- gws's credential store (`~/.config/gws`, or the folder `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` names)
+  is now denied to the agents' own file reads and shell. MAMA's Google sources and `google.read`
+  still use it through the daemon.
+- Update the Claude Code plugin to 2.4.0. It runs mama-server 2.6.1 on mama-core 8.9.0; the
+  development-memory database keeps its schema.
+
+### Added
+
+- The install command, `install.sh`, attached to each MAMA OS release: its own Node.js at a pinned,
+  hash-checked version, MAMA OS and the `mama` command in `~/.mama`, then setup. Run again, it
+  moves MAMA to a newly pinned Node.js (#538, #539).
+- Setup through your agent. `mama init --non-interactive` checks the backend, the bot token and
+  the folders before it writes anything, takes the token and a pairing code on a page on this
+  machine, registers you as the first owner, installs and starts the service, and proves the
+  backend with one real turn (#524, #526, #528, #547).
+- `mama init --section <part>` asks one part of a setup again. With `connectors` and
+  `--non-interactive` it enables sources from the conversation, with their tokens entered on the
+  setup page, and only once a source's tool is installed and signed in (#527, #543, #548).
+- `mama update` updates an npm install and puts the old version back if a step fails; `/update`
+  runs it from Telegram. A daily release check shows a newer release in `mama status` and
+  `mama doctor` (#534, #535, #536).
+- `/stop` stops the turn running in a conversation and keeps the conversation (#521, #522, #523).
+  `/whoami`, `/status`, `/new` and `/help` answer without a model turn (#520).
+- `google.read`: the owner agent reads Gmail, Calendar and Sheets, and a Google Doc, Sheet or
+  Slides file as text, live and read only (#551).
+- Closing summaries for finished work, and a daily check of work items against the board
+  (#529, #530, #531).
+
+### Changed
+
+- The Google login MAMA prints asks for explicit scopes instead of gws's defaults (#551).
+- `mama stop` lets running work finish first; `mama stop --now` stops at once (#533).
+- Slack, Chatwork and Trello read only their own `MAMA_*_TOKEN`, and `mama doctor`'s fix for a
+  missing or refused source token names the setup page instead of `mama secret set` (#548).
+- The plugin's `mama-install` skill installs MAMA OS through the conversation and offers sources
+  once MAMA has answered. For a Google source it sets up the OAuth client, then `gws`, or
+  `mama service install` when only the agent's shell finds `gws`, then the login (#547, #548,
+  #550, #551).
+- The install guide and the READMEs describe setup through your agent and list the supported
+  versions (#550).
+
+### Fixed
+
+- A backend failure, such as a signed-out Claude CLI or an API error, no longer arrives as MAMA's
+  answer (mama-core, #528).
+- A report that a newer one already covered is no longer sent days late, and a failed send no
+  longer writes the same hour's report again every minute (#542).
+- Gmail, Drive and Sheets check their sign-in with a read under their own scope, and Calendar no
+  longer stops MAMA at start when its sign-in has ended (#548).
+- `mama stop` no longer refuses a MAMA that is just starting (#546).
+
+### Security
+
+- gws's credential store is denied to the agents' own file reads and shell (#551).
+- The viewer refuses a request another website makes through your browser, with 403 and a
+  security alert, and the board's live updates allow 8 open connections (#549).
+
+### Removed
+
+- The interactive whole setup, and `MAMA_INIT_OWNER_TELEGRAM_ID`, `MAMA_INIT_COMMON_CHAT_ID` and
+  `MAMA_TELEGRAM_TOKEN` as init variables (#547).
+- Express, whose only use was a report router nothing served (#549).
+
 ## mama-os [0.78.0] / mama-core [8.8.0] / mama-server [2.6.0] / plugin [2.3.0] - 2026-10-16
 
 MAMA can now be run and looked after like a service: it checks itself, backs up and restores,

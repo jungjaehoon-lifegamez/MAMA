@@ -18,7 +18,7 @@ mama_install() {
   # mama init makes ~/.mama 0700 only when it creates it; this script may create it first.
   umask 077
 
-  MAMA_OS_VERSION=0.78.0
+  MAMA_OS_VERSION=0.79.0
   NODE_VERSION=22.23.4
   NODE_SHA256_DARWIN_ARM64=c9e1dbc748b33ed2d14f42445191ecaf14c56259c7a9a26d0042c49ec2b66428
   NODE_SHA256_DARWIN_X64=efcc2b0db6f94bf53eddb038fe2b370277a042bd29e4f19b8f8e23598795b819

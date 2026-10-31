@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.9.0] - 2026-11-01
+
 ### Added
 
 - `IModelRunner.interrupt(sessionId, sessionKey)` stops the turn running in a session now and
