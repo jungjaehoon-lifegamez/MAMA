@@ -85,7 +85,7 @@ function bot(held: Update[] = [], arriving: Update[] = []) {
 }
 
 describe('pairing the first owner', () => {
-  it('sends each private sender a code and pairs whoever types theirs', async () => {
+  it('sends each private sender a code and pairs whoever enters theirs', async () => {
     const telegram = bot([], [dm(1, STRANGER), dm(2, OWNER)]);
     const lines: string[] = [];
     const answers = ['000000'];
@@ -98,7 +98,7 @@ describe('pairing the first owner', () => {
     });
     expect(paired.ownerId).toBe(String(OWNER));
     expect(paired.offset).toBe(3);
-    // Both got a code; only the code typed at the terminal names the owner.
+    // Both got a code; only the code entered names the owner.
     expect(telegram.sent.map((entry) => entry.chat_id).sort()).toEqual(
       [String(OWNER), String(STRANGER)].sort()
     );
@@ -272,7 +272,7 @@ describe('binding the common group', () => {
         now: () => (clock += 1000),
         waitMs: 3000,
       })
-    ).rejects.toThrow(/No \/bind arrived.*run mama init again/);
+    ).rejects.toThrow(/No \/bind arrived.*run the install command again/);
   });
 
   it('marks what init read as handled, so the daemon starts after it', async () => {

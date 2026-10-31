@@ -67,7 +67,7 @@ export async function runInitSection(section: string, options: InitOptions = {})
   const root = join(home, '.mama');
   const configPath = join(root, 'config.yaml');
   if (!existsSync(configPath))
-    throw new CliInputError('MAMA is not set up here; run mama init first.');
+    throw new CliInputError('MAMA is not set up here; run the install command first.');
   const lock = acquireInstallLock(daemonControlPaths(root), 'init --section');
   try {
     refuseWhileRestoring(root);
@@ -85,7 +85,7 @@ export async function runInitSection(section: string, options: InitOptions = {})
         config.telegram?.owner_chat_id,
         options.telegramCall ?? defaultTelegramCall,
         write,
-        { groupRequired: true }
+        { groupRequired: true, next: 'run this again' }
       );
       secrets.MAMA_TELEGRAM_TOKEN = token;
     } else if (section === 'model') {
@@ -98,6 +98,7 @@ export async function runInitSection(section: string, options: InitOptions = {})
             config.agent.codex_home ?? join(root, '.codex'),
             locate,
             options.probeRun,
+            'run this again',
             { run: options.signIn ?? terminalSignIn, write }
           ),
         locate

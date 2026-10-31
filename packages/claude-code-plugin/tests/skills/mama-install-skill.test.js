@@ -8,6 +8,8 @@ const __dirname = path.dirname(__filename);
 const pluginRoot = path.resolve(__dirname, '../..');
 const skillPath = path.join(pluginRoot, 'skills', 'mama-install', 'SKILL.md');
 const manifestPath = path.join(pluginRoot, '.claude-plugin', 'plugin.json');
+/** The skill's text with its line breaks folded, so a sentence reads as one line. */
+const skill = () => fs.readFileSync(skillPath, 'utf8').replace(/\s+/g, ' ');
 
 describe('Story ONB-8: thin MAMA OS installation skill', () => {
   it('ships and registers the mama-install skill', () => {
@@ -16,12 +18,18 @@ describe('Story ONB-8: thin MAMA OS installation skill', () => {
     expect(manifest.skills).toContain('./skills/mama-install');
   });
 
-  it('points at the CLI and the setup guide without copying onboarding knowledge', () => {
-    const content = fs.readFileSync(skillPath, 'utf8');
+  it('runs the install command in the background and points at the setup guide', () => {
+    const content = skill();
 
-    expect(content).toContain('npm i -g @jungjaehoon/mama-os');
-    expect(content).toContain('mama --help');
-    expect(content).toContain('mama init');
+    // The install command, not npm: Homebrew's npm cannot write its prefix from a Standard
+    // account, and `mama` on PATH may be another program.
+    expect(content).toContain(
+      'curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh |'
+    );
+    expect(content).toContain('--non-interactive');
+    expect(content).toContain('in the background');
+    expect(content).not.toContain('npm i -g');
+    expect(content).not.toContain('mama --help');
     expect(content).toContain('docs/start/owner-setup.md');
     // mama status --json went away with the rebuilt CLI; setup ends when MAMA answers the owner.
     expect(content).not.toContain('status --json');
@@ -29,11 +37,30 @@ describe('Story ONB-8: thin MAMA OS installation skill', () => {
     expect(content).not.toMatch(/BotFather|allowed_chats|detect-owner|personality|wizard/i);
   });
 
-  it('keeps secrets with the owner and lets the owner choose Jev', () => {
-    const content = fs.readFileSync(skillPath, 'utf8');
+  it('keeps secrets and the pairing code on the setup page, out of the chat', () => {
+    const content = skill();
 
-    expect(content).toContain('Never ask for a token, key or password in the conversation');
-    expect(content).toContain('Jev');
+    expect(content).toContain(
+      'The person enters secrets and the pairing code only in the setup page MAMA opens in their browser, never in this chat'
+    );
+    expect(content).toContain('Never read `open.html` and never POST to the setup page.');
+    expect(content).not.toMatch(/own terminal/i);
+    // No token, key, password or code is asked for in the conversation.
+    expect(content).not.toMatch(/\b(ask|type|paste)\b[^.]*\b(token|key|password|pairing code)\b/i);
+  });
+
+  it('offers no source or Jev during the install, since neither is set up from the conversation yet', () => {
+    const content = skill();
+
+    expect(content).toContain(
+      'Sources (Gmail, Calendar, Slack and the others) and Jev are not set up from the conversation yet'
+    );
+    expect(content).toContain('Do not offer them during the install.');
+    // No command that cannot run from the agent's shell: --section needs a terminal.
+    expect(content).not.toContain('--section');
+    // Bare `mama` in the agent's shell may be another program; a named command is the wrapper's.
+    expect(content).not.toMatch(/(^|[^/])\bmama (init|service|doctor|status|update)\b/);
+    // What Jev sends out stays explained, for when the person asks.
     expect(content).toContain('goes to the Jev service');
     expect(content).toContain('MAMA works the same without it');
   });

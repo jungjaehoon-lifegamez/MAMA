@@ -83,7 +83,7 @@ const cli = () =>
 
 /**
  * A Node folder: `bin/node --version` prints the version; any other run is logged with it, and
- * exits $FAKE_NODE_STATUS (0 by default).
+ * exits $FAKE_NODE_STATUS (0 by default). A run of `mama init` also logs the backend it was given.
  */
 function fakeNode(folder: string, nodeVersion: string): void {
   const bin = join(folder, 'bin');
@@ -93,6 +93,7 @@ function fakeNode(folder: string, nodeVersion: string): void {
     [
       '#!/bin/sh',
       `[ "$1" = --version ] && { echo v${nodeVersion}; exit 0; }`,
+      '[ "$2" = init ] && echo "init MAMA_INIT_BACKEND=${MAMA_INIT_BACKEND-unset}" >> "$STUB_LOG"',
       `echo "node v${nodeVersion} $*" >> "$STUB_LOG"`,
       'exit "${FAKE_NODE_STATUS:-0}"',
       '',
@@ -131,6 +132,15 @@ const block = (localBin = false) =>
     '# <<< mama <<<',
   ].join('\n');
 
+/** A backend in ~/.local/bin, where the vendor installers put it, that prints its version. */
+function localBackend(name: string): string {
+  const path = join(home, '.local', 'bin', name);
+  mkdirSync(join(home, '.local', 'bin'), { recursive: true });
+  writeFileSync(path, `#!/bin/sh\necho "${name} 9.9.9"\n`);
+  chmodSync(path, 0o755);
+  return path;
+}
+
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), 'mama-install-sh-')));
   stubs = `${home}-stubs`;
@@ -139,7 +149,10 @@ beforeEach(() => {
   stub('uname', 'case "$1" in -s) echo "$FAKE_UNAME_S" ;; -m) echo "$FAKE_UNAME_M" ;; esac');
   stub('id', '[ "$1" = -un ] && { echo "$FAKE_USER"; exit 0; }; exec /usr/bin/id "$@"');
   stub('sudo', 'echo "sudo $*" >> "$STUB_LOG"; exit "$FAKE_SUDO_STATUS"');
-  stub('codex', 'echo "codex $*" >> "$STUB_LOG"');
+  stub(
+    'codex',
+    'echo "codex $*" >> "$STUB_LOG"; [ "$1" = --version ] && echo "codex-cli 0.160.1"; exit 0'
+  );
 });
 
 afterEach(() => {
@@ -161,9 +174,14 @@ describe('install.sh', () => {
     expect(readFileSync(join(home, '.zshrc'), 'utf8')).toBe(`${block()}\n`);
     expect(first.output).toContain(`Node.js ${pin.version} is in place`);
     expect(first.output).toContain(`MAMA OS ${version} is in place`);
-    expect(first.output).toContain('mama init');
-    // npm is asked only what it holds; nothing is installed and the backend is not run.
-    expect(calls().every((call) => call.startsWith('npm ls -g --prefix'))).toBe(true);
+    // Quoted, and with ~/.local/bin first, where the vendor installers put the backend.
+    expect(first.output).toContain(
+      `Set up with: PATH="$HOME/.local/bin:$PATH" MAMA_INIT_BACKEND=codex MAMA_INIT_MODEL=<model> '${wrapper}' init --non-interactive`
+    );
+    // npm is asked only what it holds, and the backend only its version; nothing is installed.
+    expect(
+      calls().every((call) => call.startsWith('npm ls -g --prefix') || call === 'codex --version')
+    ).toBe(true);
 
     const before = [wrapper, join(home, '.zshrc')].map((path) => statSync(path).mtimeMs);
     const second = await run(['--backend', 'codex', '--no-init']);
@@ -195,12 +213,67 @@ describe('install.sh', () => {
   it('names ~/.local/bin when the backend lives there', async () => {
     seedInstall();
     rmSync(join(stubs, 'codex'));
-    mkdirSync(join(home, '.local', 'bin'), { recursive: true });
-    writeFileSync(join(home, '.local', 'bin', 'codex'), '#!/bin/sh\n');
-    chmodSync(join(home, '.local', 'bin', 'codex'), 0o755);
+    const codex = localBackend('codex');
     const result = await run(['--backend', 'codex', '--no-init']);
     expect(result.status, result.output).toBe(0);
-    expect(result.output).toContain(`codex is installed: ${join(home, '.local', 'bin', 'codex')}`);
+    expect(result.output).toContain(`codex is installed: ${codex}`);
+    expect(readFileSync(join(home, '.zshrc'), 'utf8')).toBe(`${block(true)}\n`);
+  });
+
+  it("a backend on PATH that does not run is installed with its vendor's installer", async () => {
+    seedInstall();
+    // A shim with no real CLI behind it, as cmux's is on an account without Claude Code.
+    stub(
+      'claude',
+      'echo "claude $*" >> "$STUB_LOG"; echo "claude not found in PATH" >&2; exit 127'
+    );
+    /** A curl that serves a vendor script writing a claude into ~/.local/bin that prints $1. */
+    const vendor = (printed: string) =>
+      stub(
+        'curl',
+        [
+          'echo "curl $*" >> "$STUB_LOG"',
+          'while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done',
+          `cat > "$out" <<'VENDOR'`,
+          'mkdir -p "$HOME/.local/bin"',
+          `printf '#!/bin/sh\\necho "${printed}"\\n' > "$HOME/.local/bin/claude"`,
+          'chmod 755 "$HOME/.local/bin/claude"',
+          'VENDOR',
+        ].join('\n')
+      );
+    const installed = join(home, '.local', 'bin', 'claude');
+    // The installed one must run too.
+    vendor('no version here');
+    const broken = await run(['--backend', 'claude', '--no-init']);
+    expect(broken.status, broken.output).toBe(1);
+    expect(broken.output).toContain(`${join(stubs, 'claude')} does not run`);
+    expect(broken.output).toContain(
+      `claude's installer finished, but ${installed} does not run (its --version exited non-zero or printed no version)`
+    );
+    rmSync(installed);
+    vendor('2.1.300 (Claude Code)');
+    const result = await run(['--backend', 'claude', '--no-init']);
+    expect(result.status, result.output).toBe(0);
+    expect(
+      calls()
+        .filter((call) => call.startsWith('curl'))
+        .at(-1)
+    ).toMatch(/ https:\/\/claude\.ai\/install\.sh$/);
+    expect(result.output).toContain(`claude installed: ${installed}`);
+    expect(readFileSync(join(home, '.zshrc'), 'utf8')).toBe(`${block(true)}\n`);
+  });
+
+  it('a set-up install needs no flags: it keeps its backend and runs init', async () => {
+    seedInstall();
+    writeFileSync(join(root(), 'config.yaml'), 'version: 1\n');
+    localBackend('claude');
+    const result = await run([]);
+    expect(result.status, result.output).toBe(0);
+    expect(calls()).toContain(`node v${pin.version} ${cli()} init --non-interactive`);
+    // No backend is looked for or installed, and init gets none from the script.
+    expect(calls()).toContain('init MAMA_INIT_BACKEND=unset');
+    expect(calls().filter((call) => /^(codex|claude|curl) /.test(call))).toEqual([]);
+    // The backend a vendor installer put in ~/.local/bin stays on PATH.
     expect(readFileSync(join(home, '.zshrc'), 'utf8')).toBe(`${block(true)}\n`);
   });
 
@@ -621,14 +694,20 @@ describe('install.sh', () => {
     expect(existsSync(join(root(), 'runtime', 'node-move.json'))).toBe(true);
   });
 
-  it('without a terminal needs --backend, and --non-interactive or --no-init', async () => {
+  it('a new install needs --backend, and --non-interactive or --no-init; it asks nothing', async () => {
     const asked = await run([]);
     expect(asked.status).toBe(1);
-    expect(asked.output).toContain('pass --backend');
+    expect(asked.output).toContain('a new install needs --backend claude or --backend codex');
     const init = await run(['--backend', 'codex']);
     expect(init.status).toBe(1);
-    expect(init.output).toContain('--non-interactive');
+    expect(init.output).toContain('a new install needs --non-interactive');
     expect(readdirSync(home)).toEqual([]);
+    // With both, init runs on the backend the script was given.
+    seedInstall();
+    const result = await run(['--backend', 'codex', '--non-interactive']);
+    expect(result.status, result.output).toBe(0);
+    expect(calls()).toContain('init MAMA_INIT_BACKEND=codex');
+    expect(calls()).toContain(`node v${pin.version} ${cli()} init --non-interactive`);
   });
 
   it('refuses a platform other than macOS and Linux', async () => {

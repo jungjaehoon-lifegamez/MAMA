@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join, resolve } from 'node:path';
 import * as yaml from 'js-yaml';
-import type { ConnectorsConfig } from '../../connectors/framework/types.js';
 import { loadConfig, parseConfig, type W1Config } from '../../runtime/config.js';
 import { validateMemberRoot } from '../../runtime/member-paths.js';
 import { assertRootAncestors, validateToolsRoot } from '../../runtime/tools-paths.js';
@@ -11,16 +10,11 @@ import { physicalReadPath } from '../../runtime/backend-security.js';
 import { resolveApiPort } from '../../api/viewer-server.js';
 import { installDocumentToolkit } from '../../tools/document-toolkit.js';
 import { findExecutable } from '../launch-files.js';
-import {
-  CliInputError,
-  createTerminalPrompt,
-  nonblankLine,
-  requireTTY,
-  type PromptAdapter,
-} from '../prompt.js';
-import { shellQuote, updateSecrets, type SecretName } from '../secrets.js';
+import { CliInputError, nonblankLine, type PromptAdapter } from '../prompt.js';
+import { updateSecrets, type SecretName } from '../secrets.js';
 import type { ProbeRun } from '../runtime/backend-probe.js';
 import { defaultTelegramCall, portAnswers, telegramCheck } from '../runtime/diagnostics.js';
+import { openSetupPage, type OpenRun } from '../runtime/setup-page.js';
 import { defaultRoots, prepareRoot, type DefaultRoots } from '../runtime/default-roots.js';
 import {
   bindCommonGroup,
@@ -44,21 +38,13 @@ import {
 import { defaultServiceRun, type ServiceRun } from '../runtime/systemd-service.js';
 import { askDaemon } from './daemon.js';
 import {
-  askBackend,
-  askDiscord,
-  askJev,
-  askSlack,
-  askTimezone,
   checkBackend,
-  terminalSignIn,
   type BackendSignIn,
   checkTelegram,
-  collectConnectors,
+  type TelegramCall,
   writeSourceTools,
   report,
-  text,
   validTimezone,
-  yes,
 } from './init-questions.js';
 import { initSections, runInitSection } from './init-section.js';
 import { registerOwnerHolding } from './register-owner.js';
@@ -81,9 +67,16 @@ export interface InitOptions {
   env?: NodeJS.ProcessEnv;
   /** Calls the Telegram Bot API; tests replace it. */
   telegramCall?: Parameters<typeof telegramCheck>[2];
+  /** Runs open or xdg-open on the setup page's redirect file; tests replace it. */
+  openRun?: OpenRun;
+  /** How long the setup page takes entries; 15 minutes by default. */
+  setupPageMs?: number;
   /** Runs the backend CLI to read its version and login; tests replace it. */
   probeRun?: ProbeRun;
-  /** Runs a signed-out backend's login on the terminal; tests replace it. */
+  /**
+   * Runs a signed-out backend's login on the terminal, for `mama init --section model`; tests
+   * replace it. The whole setup runs no login: it names it, for the person's agent to run.
+   */
   signIn?: BackendSignIn;
   /** Runs launchctl or systemctl for the service step; tests replace it. */
   serviceRun?: ServiceRun;
@@ -103,9 +96,9 @@ export interface InitOptions {
 
 /** What init says to do once a source's missing tool is installed. */
 const SOURCE_TOOL_NEXT =
-  'Install it now; if setup stops waiting for MAMA to start, running mama init again continues it.';
+  'Install it now; if setup stops waiting for MAMA to start, running the install command again continues it.';
 
-/** The answers `mama init` asks for, from a person at a terminal or from MAMA_INIT_* variables. */
+/** The setup's answers: MAMA_INIT_* and the viewer's variables, then the setup page. */
 interface InitAnswers {
   backend: 'claude' | 'codex';
   model: string;
@@ -115,12 +108,7 @@ interface InitAnswers {
   ownerTelegramId: string;
   memberRoot: string;
   toolsRoot: string;
-  connectors: ConnectorsConfig;
-  discordConfig: Record<string, unknown>;
-  slackConfig: Record<string, unknown>;
   viewer: Record<string, string>;
-  jevEnabled: boolean;
-  jevKey: string | undefined;
 }
 
 function requiredVariable(env: NodeJS.ProcessEnv, name: string): string {
@@ -144,130 +132,208 @@ function validTelegramId(id: string): string {
   return id;
 }
 
-async function askAnswers(
-  prompt: PromptAdapter,
-  root: string,
-  defaults: DefaultRoots | undefined,
-  checks: {
-    backend(name: 'claude' | 'codex'): void;
-    locate(name: string): string | undefined;
-    telegram(token: string, chat?: string): Promise<void>;
-    roots(
-      memberRoot: string,
-      toolsRoot: string,
-      isDefault: { member: boolean; tools: boolean }
-    ): { memberRoot: string; toolsRoot: string };
-    pair(token: string): Promise<{ ownerId: string; chatId: string }>;
+/** The variables start.sh exports for a viewer behind a Cloudflare Access tunnel (service.ts). */
+const TUNNEL_VARIABLES = [
+  'MAMA_CF_ACCESS_ISSUER',
+  'MAMA_CF_ACCESS_AUD',
+  'MAMA_VIEWER_HOSTNAMES',
+  'MAMA_VIEWER_OWNER_EMAILS',
+] as const;
+
+/**
+ * The tunnel, from those variables: none set, no tunnel; any set, the issuer, audience and
+ * hostname are needed and the owner emails stay optional.
+ */
+function tunnelVariables(env: NodeJS.ProcessEnv): Record<string, string> {
+  if (!TUNNEL_VARIABLES.some((name) => env[name]?.trim())) return {};
+  const issuer = requiredVariable(env, 'MAMA_CF_ACCESS_ISSUER');
+  let url: URL;
+  try {
+    url = new URL(issuer);
+  } catch {
+    throw new CliInputError('MAMA_CF_ACCESS_ISSUER must be an HTTPS origin.');
   }
-): Promise<InitAnswers> {
-  const { backend, model } = await askBackend(prompt, checks.backend, checks.locate);
-  const timezone = await askTimezone(prompt);
-  const secrets: Partial<Record<SecretName, string>> = {
-    MAMA_TELEGRAM_TOKEN: nonblankLine(await prompt.secret('Telegram bot token')),
-  };
-  await checks.telegram(secrets.MAMA_TELEGRAM_TOKEN!);
-  const memberAnswer = (
-    await prompt.text(
-      `Folder for member workspaces, outside your home${defaults ? ` [${defaults.memberRoot}]` : ''}`
-    )
-  ).trim();
-  const toolsAnswer = (
-    await prompt.text(
-      `Folder for the document tools, outside your home${defaults ? ` [${defaults.toolsRoot}]` : ''}`
-    )
-  ).trim();
-  const memberChoice = memberAnswer || defaults?.memberRoot;
-  const toolsChoice = toolsAnswer || defaults?.toolsRoot;
-  if (!memberChoice || !toolsChoice)
-    throw new CliInputError('This platform has no default folders; enter both folders.');
-  const { memberRoot, toolsRoot } = checks.roots(memberChoice, toolsChoice, {
-    member: !memberAnswer,
-    tools: !toolsAnswer,
-  });
-  const connectors = await collectConnectors(prompt, secrets);
-  const discordConfig = await askDiscord(prompt, secrets);
-  const slackConfig = await askSlack(prompt, secrets);
-  const viewer: Record<string, string> = {};
-  const { enabled: jevEnabled, key: jevKey } = await askJev(prompt, join(root, 'jev-key'));
-  if (await yes(prompt, 'Expose the viewer through a tunnel')) {
-    const issuer = await text(prompt, 'Access issuer (HTTPS URL)');
-    let url: URL;
-    try {
-      url = new URL(issuer);
-    } catch {
-      throw new CliInputError('Access issuer must be an HTTPS origin.');
-    }
-    if (
-      url.protocol !== 'https:' ||
-      url.username ||
-      url.password ||
-      url.search ||
-      url.hash ||
-      url.pathname !== '/'
-    ) {
-      throw new CliInputError('Access issuer must be an HTTPS origin.');
-    }
-    viewer.MAMA_CF_ACCESS_ISSUER = url.origin;
-    viewer.MAMA_CF_ACCESS_AUD = await text(prompt, 'Access audience');
-    const hostname = await text(prompt, 'Viewer hostname (no scheme or path)');
-    if (!/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/i.test(hostname))
-      throw new CliInputError('Enter a hostname without scheme or path.');
-    viewer.MAMA_VIEWER_HOSTNAMES = hostname;
-    const emails = (
-      await prompt.text('Viewer owner emails for access monitoring (comma-separated, optional)')
-    ).trim();
-    if (emails) viewer.MAMA_VIEWER_OWNER_EMAILS = nonblankLine(emails);
+  if (
+    url.protocol !== 'https:' ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    url.pathname !== '/'
+  ) {
+    throw new CliInputError('MAMA_CF_ACCESS_ISSUER must be an HTTPS origin.');
   }
-  // Pairing comes last, once every typed answer passed: a refusal after it would make the owner
-  // pair and /bind again. No numeric ID is typed: the bot's code names the owner and /bind the
-  // common group.
-  const paired = await checks.pair(secrets.MAMA_TELEGRAM_TOKEN!);
-  const chatId = validChatId(paired.chatId);
-  const ownerTelegramId = validTelegramId(paired.ownerId);
-  return {
-    backend,
-    model,
-    timezone,
-    secrets,
-    chatId,
-    ownerTelegramId,
-    memberRoot,
-    toolsRoot,
-    connectors,
-    discordConfig,
-    slackConfig,
-    viewer,
-    jevEnabled,
-    jevKey,
+  const viewer: Record<string, string> = {
+    MAMA_CF_ACCESS_ISSUER: url.origin,
+    MAMA_CF_ACCESS_AUD: requiredVariable(env, 'MAMA_CF_ACCESS_AUD'),
   };
+  const hostname = requiredVariable(env, 'MAMA_VIEWER_HOSTNAMES');
+  if (!/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/i.test(hostname))
+    throw new CliInputError('MAMA_VIEWER_HOSTNAMES must be one hostname, without scheme or path.');
+  viewer.MAMA_VIEWER_HOSTNAMES = hostname;
+  const emails = env.MAMA_VIEWER_OWNER_EMAILS?.trim();
+  if (emails) viewer.MAMA_VIEWER_OWNER_EMAILS = nonblankLine(emails);
+  return viewer;
 }
 
 /**
- * `--non-interactive`: the answers come from the environment (the Docker image and scripts use
- * this). Secrets come only from variables, never from flags, which `ps` shows. No source,
- * messenger besides Telegram, Jev or tunnel is set up this way; `mama init --section` adds the
- * first three from a terminal.
+ * The bot token and the pairing code, entered on the setup page (install.md, W2.4.5b). The token
+ * is checked as Telegram answers it; then pairOwner's `ask` is answered by the code's entry, whose
+ * reply waits for pairOwner: another `ask` means a wrong code, a return the right one. One process
+ * runs from the token to /bind, since the codes and the update offset live in pairOwner's memory.
+ */
+async function pairOnSetupPage(options: {
+  call: TelegramCall;
+  write: (line: string) => void;
+  platform: NodeJS.Platform;
+  openRun?: OpenRun;
+  lifetimeMs?: number;
+}): Promise<{ token: string; ownerId: string; chatId: string }> {
+  const { call, write } = options;
+  let taken!: (value: { token: string; botUsername: string }) => void;
+  const tokenTaken = new Promise<{ token: string; botUsername: string }>((resolve) => {
+    taken = resolve;
+  });
+  // pairOwner's first ask: it has dropped what the bot held from before (telegram-pairing.ts).
+  let asked!: () => void;
+  let notAsked!: (error: unknown) => void;
+  const firstAsk = new Promise<void>((resolve, reject) => {
+    asked = resolve;
+    notAsked = reject;
+  });
+  firstAsk.catch(() => {});
+  /** The ask waiting for an entry, and the entry waiting for pairOwner's verdict. */
+  let waiting: ((code: string) => void) | undefined;
+  let entry: { accept: (said: string) => void; refuse: (error: unknown) => void } | undefined;
+  /** pairOwner's last line: after a wrong code, the one that says so. */
+  let lastLine = '';
+  const page = await openSetupPage({
+    fields: [
+      {
+        name: 'token',
+        label: 'Telegram bot token (from BotFather)',
+        secret: true,
+        check: async (value) => {
+          let token: string;
+          let botUsername: string;
+          try {
+            token = nonblankLine(value).trim();
+            // The page asks again, so a network failure names the entry, not a rerun.
+            await checkTelegram(token, undefined, call, write, {
+              next: 'enter it again on the setup page',
+            });
+            botUsername = await botName({ token, call, write });
+          } catch (error) {
+            if (error instanceof CliInputError) write(error.message);
+            throw error;
+          }
+          write(`bot token accepted for @${botUsername}`);
+          taken({ token, botUsername });
+          // A message sent before pairOwner's first poll would be dropped with the held ones.
+          await firstAsk;
+          return `The bot token is accepted for @${botUsername}. In Telegram, send @${botUsername} a new private message; it answers with a pairing code.`;
+        },
+      },
+      {
+        name: 'code',
+        label: 'Pairing code (from the bot)',
+        secret: false,
+        check: (value) =>
+          new Promise<string>((accept, refuse) => {
+            const answer = waiting;
+            // The page takes one entry at a time, and asks for the code only after pairOwner did.
+            if (answer === undefined)
+              throw new Error('a pairing code was entered with none asked for');
+            waiting = undefined;
+            entry = { accept, refuse };
+            answer(value);
+          }),
+      },
+    ],
+    write,
+    platform: options.platform,
+    ...(options.openRun ? { openRun: options.openRun } : {}),
+    ...(options.lifetimeMs === undefined ? {} : { lifetimeMs: options.lifetimeMs }),
+  });
+  try {
+    const { token, botUsername } = await Promise.race([tokenTaken, page.stopped]);
+    const owner = await pairOwner({
+      token,
+      call,
+      botUsername,
+      write: (line) => {
+        lastLine = line;
+        write(line);
+      },
+      ask: (_label, signal) => {
+        // pairOwner asks again only after a wrong code, and wrote why just before.
+        entry?.refuse(new CliInputError(lastLine));
+        entry = undefined;
+        asked();
+        return new Promise<string>((resolve, reject) => {
+          waiting = resolve;
+          signal.addEventListener('abort', () => reject(new Error('pairing stopped')), {
+            once: true,
+          });
+          page.stopped.catch(reject);
+        });
+      },
+    });
+    write('pairing code accepted');
+    entry?.accept(
+      `The pairing code is accepted. Add @${botUsername} to the group for common work as an administrator, then send /bind in that group. This page has closed.`
+    );
+    const group = await bindCommonGroup({
+      token,
+      call,
+      write,
+      botUsername,
+      ownerId: owner.ownerId,
+      offset: owner.offset,
+      earlier: owner.groupMessages,
+    });
+    await confirmUpdates({ token, call, write, offset: group.offset });
+    // The bot's post in the group proved the token; the group's privacy and membership are only
+    // reported, and doctor checks them again later.
+    report(await telegramCheck(token, group.chatId, call), write);
+    return { token, ownerId: owner.ownerId, chatId: group.chatId };
+  } catch (error) {
+    // An entry still waiting gets the sentence that ends the setup.
+    notAsked(error);
+    entry?.refuse(error);
+    throw error;
+  } finally {
+    page.close();
+  }
+}
+
+/**
+ * The setup's answers. Those from the environment are all checked before the setup page opens,
+ * so a refused one does not make the owner pair again. The page takes the bot token and the
+ * pairing code: a secret never comes from a variable or a flag, which `ps` shows, and no Telegram
+ * ID is typed. Sources, Discord, Slack and Jev are set up afterwards with `mama init --section`.
  */
 async function environmentAnswers(
   env: NodeJS.ProcessEnv,
   defaults: DefaultRoots | undefined,
   checks: {
     backend(name: 'claude' | 'codex'): void;
-    telegram(token: string, chat?: string): Promise<void>;
     roots(
       memberRoot: string,
       toolsRoot: string,
       isDefault: { member: boolean; tools: boolean }
     ): { memberRoot: string; toolsRoot: string };
+    page(): Promise<{ token: string; ownerId: string; chatId: string }>;
   }
 ): Promise<InitAnswers> {
   const backend = requiredVariable(env, 'MAMA_INIT_BACKEND');
   if (backend !== 'claude' && backend !== 'codex')
     throw new CliInputError('MAMA_INIT_BACKEND must be claude or codex.');
   checks.backend(backend);
-  const token = requiredVariable(env, 'MAMA_TELEGRAM_TOKEN');
-  const chatId = validChatId(requiredVariable(env, 'MAMA_INIT_COMMON_CHAT_ID'));
-  await checks.telegram(token, chatId);
+  const model = requiredVariable(env, 'MAMA_INIT_MODEL');
+  const timezone = validTimezone(
+    env.MAMA_INIT_TIMEZONE?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone
+  );
   const memberAnswer = env.MAMA_INIT_MEMBER_ROOT?.trim() || defaults?.memberRoot;
   const toolsAnswer = env.MAMA_INIT_TOOLS_ROOT?.trim() || defaults?.toolsRoot;
   if (!memberAnswer || !toolsAnswer)
@@ -278,23 +344,18 @@ async function environmentAnswers(
     member: !env.MAMA_INIT_MEMBER_ROOT?.trim(),
     tools: !env.MAMA_INIT_TOOLS_ROOT?.trim(),
   });
+  const viewer = tunnelVariables(env);
+  const paired = await checks.page();
   return {
     backend,
-    model: requiredVariable(env, 'MAMA_INIT_MODEL'),
-    timezone: validTimezone(
-      env.MAMA_INIT_TIMEZONE?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone
-    ),
-    secrets: { MAMA_TELEGRAM_TOKEN: token },
-    chatId,
-    ownerTelegramId: validTelegramId(requiredVariable(env, 'MAMA_INIT_OWNER_TELEGRAM_ID')),
+    model,
+    timezone,
+    secrets: { MAMA_TELEGRAM_TOKEN: paired.token },
+    chatId: validChatId(paired.chatId),
+    ownerTelegramId: validTelegramId(paired.ownerId),
     memberRoot,
     toolsRoot,
-    connectors: {},
-    discordConfig: { enabled: false, allowed_channels: [], owner_user_ids: [] },
-    slackConfig: { enabled: false, allowed_channels: [], owner_user_ids: [] },
-    viewer: {},
-    jevEnabled: false,
-    jevKey: undefined,
+    viewer,
   };
 }
 
@@ -315,7 +376,7 @@ export async function waitForBoot(options: {
   const started = Date.now();
   let reported = started;
   let stage = 'not started';
-  const next = options.next ?? 'mama init again continues from here';
+  const next = options.next ?? 'running the install command again continues from here';
   for (;;) {
     // A daemon busy booting may miss one status deadline; that is no answer yet, not a failure.
     const reply = await options.status().catch(() => null);
@@ -352,7 +413,7 @@ async function freeViewerPort(answers: (port: number, host: string) => Promise<b
     if (!(await answers(port, '127.0.0.1'))) return port;
   }
   throw new CliInputError(
-    `Ports ${DEFAULT_VIEWER_PORT}-${DEFAULT_VIEWER_PORT + 49} are all in use; free one, then run mama init again.`
+    `Ports ${DEFAULT_VIEWER_PORT}-${DEFAULT_VIEWER_PORT + 49} are all in use; free one, then run the install command again.`
   );
 }
 
@@ -370,7 +431,7 @@ export async function viewerHealth(port: number): Promise<boolean> {
 /** How much longer than the daemon's own turn limit init waits for the backend check. */
 const PROBE_MARGIN_MS = 60_000;
 
-const initUsage = `Usage: mama init [--non-interactive] | mama init --section <${initSections.join('|')}>`;
+const initUsage = `Usage: mama init --non-interactive | mama init --section <${initSections.join('|')}>`;
 
 export async function runInit(
   args: readonly string[] = [],
@@ -380,12 +441,9 @@ export async function runInit(
     if (args.length !== 2) throw new CliInputError(initUsage);
     return runInitSection(args[1], options);
   }
-  if (args.length > 1 || (args.length === 1 && args[0] !== '--non-interactive'))
-    throw new CliInputError(initUsage);
-  const nonInteractive = args[0] === '--non-interactive';
-  const prompt = options.prompt ?? createTerminalPrompt();
-  if (!nonInteractive) requireTTY(prompt);
-  const write = (line: string) => prompt.write(line);
+  // The setup reads no terminal: the person's agent runs it (owner-setup.md).
+  if (args.length !== 1 || args[0] !== '--non-interactive') throw new CliInputError(initUsage);
+  const write = (line: string) => (options.prompt ? options.prompt.write(line) : console.log(line));
   const home = options.home ?? homedir();
   const platform = options.platform ?? process.platform;
   const root = join(home, '.mama');
@@ -457,17 +515,15 @@ export async function runInit(
       });
       const call = options.telegramCall ?? defaultTelegramCall;
       const checks = {
-        // On a terminal a signed-out backend's own login runs here; --non-interactive names it.
+        // A signed-out backend's login is named, with the backend's full path; the agent runs it.
         backend: (name: 'claude' | 'codex') =>
           checkBackend(
             name,
             join(root, '.codex'),
             locate,
             options.probeRun,
-            nonInteractive ? undefined : { run: options.signIn ?? terminalSignIn, write }
+            'run the install command again'
           ),
-        locate,
-        telegram: (token: string, chat?: string) => checkTelegram(token, chat, call, write),
         roots: (
           memberAnswer: string,
           toolsAnswer: string,
@@ -493,34 +549,16 @@ export async function runInit(
           }
           return { memberRoot, toolsRoot };
         },
-        pair: async (token: string) => {
-          const botUsername = await botName({ token, call, write });
-          const owner = await pairOwner({
-            token,
+        page: () =>
+          pairOnSetupPage({
             call,
             write,
-            botUsername,
-            ask: (label, signal) => prompt.text(label, signal),
-          });
-          const group = await bindCommonGroup({
-            token,
-            call,
-            write,
-            botUsername,
-            ownerId: owner.ownerId,
-            offset: owner.offset,
-            earlier: owner.groupMessages,
-          });
-          await confirmUpdates({ token, call, write, offset: group.offset });
-          // The bot's post in the group proved the token; the group's privacy and membership are
-          // only reported, and doctor checks them again later.
-          report(await telegramCheck(token, group.chatId, call), write);
-          return { ownerId: owner.ownerId, chatId: group.chatId };
-        },
+            platform,
+            ...(options.openRun ? { openRun: options.openRun } : {}),
+            ...(options.setupPageMs === undefined ? {} : { lifetimeMs: options.setupPageMs }),
+          }),
       };
-      answers = nonInteractive
-        ? await environmentAnswers(options.env ?? process.env, defaults, checks)
-        : await askAnswers(prompt, root, defaults, checks);
+      answers = await environmentAnswers(options.env ?? process.env, defaults, checks);
     }
     if (lock === undefined && !serviceOnly) {
       // A new install: the MAMA home is made only once the questions are answered, and another
@@ -528,7 +566,9 @@ export async function runInit(
       mkdirSync(root, { recursive: true, mode: 0o700 });
       lock = acquireInstallLock(lockPaths, 'init');
       if (readInitState(root) !== null || existsSync(configPath))
-        throw new CliInputError('Another mama init set up here meanwhile; run mama init again.');
+        throw new CliInputError(
+          'Another mama init set up here meanwhile; run the install command again.'
+        );
     }
     // A restore sets the launch files aside too, so even the service step waits for it.
     refuseWhileRestoring(root);
@@ -563,15 +603,14 @@ export async function runInit(
             allowed_chats: [answers.chatId],
             polling: true,
           },
-          discord: answers.discordConfig,
-          slack: answers.slackConfig,
+          discord: { enabled: false, allowed_channels: [], owner_user_ids: [] },
+          slack: { enabled: false, allowed_channels: [], owner_user_ids: [] },
           delivery: { reports: 'telegram', notifications: 'telegram', security_alerts: 'telegram' },
           wiki: {
             enabled: true,
             vaultPath: join(root, 'workspace'),
             wikiDir: join(root, 'workspace', 'wiki'),
           },
-          ...(answers.jevEnabled ? { jev: { enabled: true } } : {}),
         },
         { home }
       );
@@ -581,31 +620,13 @@ export async function runInit(
       mkdirSync(join(root, 'workspace', 'wiki'), { recursive: true, mode: 0o700 });
       // All answers are in before any write; the step is marked done once config.yaml exists.
       updateSecrets(home, answers.secrets);
-      writeFileSync(
-        join(root, 'connectors.json'),
-        `${JSON.stringify(answers.connectors, null, 2)}\n`,
-        { flag: 'wx', mode: 0o600 }
-      );
-      if (answers.jevKey !== undefined)
-        writeFileSync(join(root, 'jev-key'), `${answers.jevKey}\n`, { flag: 'wx', mode: 0o600 });
+      // No source yet: `mama init --section connectors` adds them.
+      writeFileSync(join(root, 'connectors.json'), '{}\n', { flag: 'wx', mode: 0o600 });
       writeFileSync(configPath, yaml.dump(config), { flag: 'wx', mode: 0o600 });
       progress.viewer = answers.viewer;
       progress.pendingOwner = answers.ownerTelegramId;
       mark('config');
       write('Setup written. Credentials are stored only in auth.env (0600).');
-      if (answers.jevEnabled)
-        write(
-          `Jev is on (jev.enabled in config.yaml); its key is ${shellQuote(join(root, 'jev-key'))} (0600). Turn it off by removing jev.enabled.`
-        );
-      // start.sh does not exist yet: the service step writes it from this shell.
-      await writeSourceTools(
-        Object.keys(answers.connectors),
-        { root, home, platform, configPath },
-        config,
-        options,
-        write,
-        SOURCE_TOOL_NEXT
-      );
     } else {
       config = loadConfig({ home, path: configPath });
       // A setup that stopped (often at the boot wait, when a source's tool is missing) names the
@@ -622,7 +643,9 @@ export async function runInit(
     if (!done('owner')) {
       const owner = progress.pendingOwner;
       if (!owner)
-        throw new CliInputError('No owner Telegram ID was recorded; run mama init again.');
+        throw new CliInputError(
+          'No owner Telegram ID was recorded; run the install command again.'
+        );
       await registerOwnerHolding(root, config, config.member_root!, owner);
       delete progress.pendingOwner;
       mark('owner');
@@ -709,9 +732,10 @@ export async function runInit(
       pollMs: options.pollMs ?? 1_000,
       write,
     });
-    // The backend's version and login were read from this terminal. One real turn through the
+    // The backend's version and login were read from this shell. One real turn through the
     // daemon proves it answers as the service runs it: its PATH, environment, sandbox and model.
-    // The step is done only then, so mama init again checks once more after a fix.
+    // The step is done only then, so running the install command again checks once more after a
+    // fix.
     write('Checking the backend with one real turn through MAMA…');
     // A turn that keeps progressing may run until agent.max_turn_ms, and the daemon answers with its
     // own error before then; wait a little longer than that.
@@ -720,16 +744,16 @@ export async function runInit(
       options.daemonProbe ?? (() => askDaemon('probe', { home, timeoutMs }))
     )().catch((error: unknown) => {
       throw new CliInputError(
-        `MAMA did not answer the backend check (${error instanceof Error ? error.message : 'no answer'}). mama logs shows why; then run mama init again.`
+        `MAMA did not answer the backend check (${error instanceof Error ? error.message : 'no answer'}). mama logs shows why; then run the install command again.`
       );
     });
     if (probe.state !== 'running')
       throw new CliInputError(
-        'MAMA stopped before its backend could be checked. mama logs shows why; then run mama init again.'
+        'MAMA stopped before its backend could be checked. mama logs shows why; then run the install command again.'
       );
     if (probe.reply.ok !== true)
       throw new CliInputError(
-        `The backend did not answer a real turn: ${String(probe.reply.error)}. mama logs shows more, and mama doctor checks the backend's login; fix it, then run mama init again.`
+        `The backend did not answer a real turn: ${String(probe.reply.error)}. mama logs shows more, and mama doctor checks the backend's login; fix it, then run the install command again.`
       );
     const probed = probe.reply.probe as { backend?: unknown; model?: unknown; ms?: unknown };
     write(

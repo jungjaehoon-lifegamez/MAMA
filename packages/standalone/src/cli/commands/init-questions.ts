@@ -22,7 +22,7 @@ import { findExecutable, findIn } from '../launch-files.js';
 import { pathsFor } from './daemon.js';
 import { serviceLaunch, type ServiceOptions } from './service.js';
 
-/** The questions and checks `mama init` asks, shared by a whole setup and by `--section`. */
+/** The questions `mama init --section` asks, and the checks it shares with the whole setup. */
 
 const connectorNames = [
   'slack',
@@ -306,8 +306,9 @@ export function validTimezone(timezone: string): string {
 }
 
 /**
- * Run a backend's own sign-in attached to the terminal (install.md, "Backend CLI"): init names the
- * command and runs it for the person, then reads the login again. Its exit status.
+ * Run a backend's own sign-in attached to the terminal, for `mama init --section model`: it names
+ * the command and runs it for the person, then reads the login again. Its exit status. The whole
+ * setup only names the login, for the person's agent to run (owner-setup.md).
  */
 export type BackendSignIn = (command: string, args: string[], env: NodeJS.ProcessEnv) => number;
 
@@ -320,23 +321,28 @@ export const terminalSignIn: BackendSignIn = (command, args, env) => {
 /**
  * The backend this install will run must be installed, at least the version a release was
  * verified on, and signed in, before anything is written: the daemon would otherwise fail its
- * first turn. Codex is asked about the managed home MAMA gives it. With `signIn` (a terminal), a
- * signed-out backend's login runs here, and the login is read again; without it, the command is
- * named and init stops.
+ * first turn. Codex is asked about the managed home MAMA gives it. With `signIn` (a terminal,
+ * `--section model`), a signed-out backend's login runs here, and the login is read again;
+ * without it, the login is named with the backend's full path, for the person's agent to run.
+ * `next` is the caller's next step after a fix.
  */
 export function checkBackend(
   backend: 'claude' | 'codex',
   codexHome: string,
   locate: (name: string) => string | undefined,
   run: ProbeRun | undefined,
+  next: string,
   signIn?: { run: BackendSignIn; write: (line: string) => void }
 ): void {
   const executable = locate(backend);
+  const command = executable === undefined ? backend : shellQuote(executable);
   const login =
-    backend === 'claude' ? 'claude auth login' : `CODEX_HOME=${shellQuote(codexHome)} codex login`;
+    backend === 'claude'
+      ? `${command} auth login`
+      : `CODEX_HOME=${shellQuote(codexHome)} ${command} login`;
   if (!executable) {
     throw new CliInputError(
-      `${backend} is not on this PATH. Install it, sign in with: ${login}, then run mama init again.`
+      `${backend} is not on this PATH. Install it, sign in with: ${login}, then ${next}.`
     );
   }
   // The daemon starts the backend without secret-shaped variables; a login that only this
@@ -353,30 +359,30 @@ export function checkBackend(
   // An old CLI is the more useful answer even when its login could not be read.
   if (!probe.versionOk) {
     throw new CliInputError(
-      `${backend} ${probe.version} is older than ${probe.minimum}, the oldest MAMA was verified on; update it, then run mama init again.`
+      `${backend} ${probe.version} is older than ${probe.minimum}, the oldest MAMA was verified on; update it, then ${next}.`
     );
   }
   if (probe.problem) throw new CliInputError(`${probe.problem}; check ${executable}`);
+  // Codex refuses a CODEX_HOME that does not exist; this one is MAMA's own, made here so the login
+  // named below, or run on a terminal, works.
+  if (!probe.loggedIn && backend === 'codex')
+    mkdirSync(codexHome, { recursive: true, mode: 0o700 });
   if (!probe.loggedIn && signIn) {
     signIn.write(`${backend} is not signed in; running: ${login}`);
     let status: number;
     if (backend === 'codex') {
-      // Codex refuses a CODEX_HOME that does not exist; this one is MAMA's own.
-      mkdirSync(codexHome, { recursive: true, mode: 0o700 });
       status = signIn.run(executable, ['login'], { ...env, CODEX_HOME: codexHome });
     } else {
       status = signIn.run(executable, ['auth', 'login'], env);
     }
     if (status !== 0) {
-      throw new CliInputError(
-        `${login} exited ${status}; sign in with it yourself, then run mama init again.`
-      );
+      throw new CliInputError(`${login} exited ${status}; sign in with it yourself, then ${next}.`);
     }
     probe = read();
     if (probe.problem) throw new CliInputError(`${probe.problem}; check ${executable}`);
   }
   if (!probe.loggedIn) {
-    throw new CliInputError(`${backend} is not signed in. Run: ${login}, then mama init again.`);
+    throw new CliInputError(`${backend} is not signed in. Run: ${login}, then ${next}.`);
   }
 }
 
@@ -386,7 +392,7 @@ export async function checkTelegram(
   chatId: string | undefined,
   call: TelegramCall,
   write: (line: string) => void,
-  options: { groupRequired?: boolean } = {}
+  options: { groupRequired?: boolean; next: string }
 ): Promise<void> {
   const check = await telegramCheck(token, chatId, call);
   if (check.detail === 'Telegram refused the bot token') {
@@ -394,7 +400,7 @@ export async function checkTelegram(
   }
   if (check.detail.startsWith('could not reach Telegram')) {
     throw new CliInputError(
-      `${check.detail}, so the token is unchecked; check the network, then run mama init again.`
+      `${check.detail}, so the token is unchecked; check the network, then ${options.next}.`
     );
   }
   // A new bot the common group cannot be shown to hold, or to read, would leave that channel silent.

@@ -6,7 +6,8 @@
  * 1. `install.sh --backend codex --no-init`, with npm's registry set to the local one and
  *    node-gyp set to /bin/false, so the prebuilt native binaries must cover this platform. Linux:
  *    the sudo call leaves /var/lib/mama 0755 and the user's folder 0700.
- * 2. The installed package's init under the managed Node (managed.mjs), then
+ * 2. The installed package's init under the managed Node (managed.mjs), which enters the bot
+ *    token and the pairing code on its setup page, then
  *    `~/.mama/bin/mama service install` through the stand-in service manager with another Node
  *    first on PATH: start.sh names the managed Node, installKind is npm at ~/.mama/npm, doctor's
  *    Node check is ok, and `mama update N+1 --dry-run` shows N → N+1.
@@ -277,9 +278,6 @@ try {
     PATH: `${stubs}:${join(mama, 'node', 'bin')}:${base.PATH}`,
     MAMA_API_PORT: String(await freePort()),
     MAMA_INIT_BACKEND: 'codex',
-    MAMA_TELEGRAM_TOKEN: 'install-check-secret',
-    MAMA_INIT_COMMON_CHAT_ID: '-1001234567890',
-    MAMA_INIT_OWNER_TELEGRAM_ID: '424242',
     MAMA_INIT_MODEL: 'fixture-model',
     MAMA_INIT_TIMEZONE: 'UTC',
     // Linux keeps the defaults: the folder the sudo call made.
@@ -362,7 +360,13 @@ try {
     scriptEnv(home)
   );
   expect(second.status === 0, `the second run exited ${second.status}`);
-  const changed = sameSnapshot(before, Object.assign({}, ...watched.map(snapshot)));
+  // The script runs the backend it finds (`--version`, finding A), and Codex makes new arg0 links
+  // under its own home's tmp/ each time it starts. That is the backend's scratch, not a file the
+  // install command writes.
+  const codexScratch = join(home, '.codex', 'tmp');
+  const changed = sameSnapshot(before, Object.assign({}, ...watched.map(snapshot))).filter(
+    (path) => path !== codexScratch && !path.startsWith(`${codexScratch}/`)
+  );
   expect(changed.length === 0, `the second run changed ${changed.join(', ')}`);
 
   // A run on a finished install ends at init's status and exits 0. Init's service step is

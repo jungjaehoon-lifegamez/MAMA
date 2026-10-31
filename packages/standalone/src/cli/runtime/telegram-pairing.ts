@@ -43,7 +43,7 @@ async function request(
     const cause = (error as { cause?: { code?: unknown } }).cause?.code;
     const name = error instanceof Error ? error.name : 'Error';
     throw new CliInputError(
-      `Could not reach Telegram (${typeof cause === 'string' ? cause : name}); check the network and run mama init again.`
+      `Could not reach Telegram (${typeof cause === 'string' ? cause : name}); check the network and run the install command again.`
     );
   }
 }
@@ -64,7 +64,7 @@ async function updates(
   // stopping each other.
   if (reply.error_code === 409)
     throw new CliInputError(
-      "Another program is reading this bot's messages (another MAMA install?). Use a bot only this install uses, then run mama init again."
+      "Another program is reading this bot's messages (another MAMA install?). Use a bot only this install uses, then run the install command again."
     );
   throw new CliInputError(
     `Telegram refused to hand over the bot's messages (${String(reply.error_code ?? 'no code')}).`
@@ -86,9 +86,9 @@ async function send(options: PairingOptions, chatId: number, text: string): Prom
 }
 
 /**
- * Make the person at the terminal the first owner without a typed user ID: everyone who messages
- * the bot privately while init waits gets a code, and the code typed here names the owner. A
- * code reaches only the chat it was sent to, so typing it proves that chat is this person's.
+ * Make the person setting up the first owner without a typed user ID: everyone who messages the
+ * bot privately while init waits gets a code, and the code `ask` returns names the owner. A code
+ * reaches only the chat it was sent to, so entering it proves that chat is this person's.
  * Messages the bot held from before are dropped first: they were not sent to this setup, and an
  * old /bind would otherwise name a group without a new word from the owner.
  */
@@ -103,7 +103,7 @@ export async function pairOwner(
   const held = await updates(options, -1, 0);
   let offset = held.length > 0 ? held[held.length - 1].update_id + 1 : 0;
   options.write(
-    `Open Telegram and send @${options.botUsername} a new private message (one sent before now is dropped). It answers with a pairing code; type that code here.`
+    `Open Telegram and send @${options.botUsername} a new private message (one sent before now is dropped). It answers with a pairing code; enter it on the setup page.`
   );
   const codes = new Map<string, string>();
   const senders = new Set<string>();
@@ -131,7 +131,7 @@ export async function pairOwner(
         const sent = await send(
           options,
           message.chat.id,
-          `Your MAMA pairing code: ${code}\nType it in the terminal where mama init runs.`
+          `Your MAMA pairing code: ${code}\nEnter it on the setup page.`
         );
         // A chat that refuses the bot (blocked it, account gone) cannot show its code; that sender
         // may unblock the bot and write again.
@@ -160,7 +160,7 @@ export async function pairOwner(
       if (failure !== undefined) throw failure;
       ownerId = codes.get(answer);
       if (ownerId === undefined)
-        options.write('That is not a code the bot sent; type the code from its latest message.');
+        options.write('That is not a code the bot sent; enter the code from its latest message.');
     }
   } finally {
     stopped = true;
@@ -228,7 +228,9 @@ export async function bindCommonGroup(
       );
     }
     if (now() >= deadline)
-      throw new CliInputError('No /bind arrived in the group; run mama init again to pair again.');
+      throw new CliInputError(
+        'No /bind arrived in the group; run the install command again to pair again.'
+      );
     batch = await updates(options, offset);
   }
 }
