@@ -2802,3 +2802,27 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Result: the macOS install-check failure ("holds the install does not answer on its control socket", and "unknown (pid 0) holds the install") had one cause. A drained stop read the install state once. A daemon creates its lock, then its holder file, then its control socket, and at its own stop it closes the socket just before letting go of the lock. A stop that landed in between was refused. Now both the drained stop and `--now` read again while the lock is held with no holder file or no socket, for up to 5 s (`CONTROL_WAIT_MS`, named reason: no turn runs in that stretch). After that the old messages stand. `--now` on macOS no longer reports failure after it has already unloaded the service.
 - Evidence: an Opus review returned FIX-FIRST: fold the `--now` pid-0 variant in, since it is the same circuit and has production paths in `update.ts:1060`, `node-move.ts:354` and `install.sh:123`. Six new tests fail on main's `control.ts`. macOS install-check passed 4 of 4 runs on 56fc94f69 and 5 of 5 on the first head. Merged as 2bd134492 and deployed with a drained stop; the boot was clean.
 - Still open: the stale-token "unauthorized" race after a crash, which needs a crash plus sub-millisecond timing. The CI runs show the leg is stable, but did not land in the new wait; the unit tests prove that path.
+
+### W2.4 PR 5 (5a–d): setup through the person's agent, leg A on a clean account, merged and deployed (#547, 2026-10-31)
+
+- Result: the person's agent installs MAMA, and the person uses only the chat, a browser page and Telegram.
+  - `install.sh` asks nothing. A found backend counts only if its `--version` runs; this fixes the cmux shim.
+  - `mama init --non-interactive` checks every other answer, then opens a one-shot setup page. The page binds 127.0.0.1 on a 32-byte nonce path, using the viewer's Host rule. It opens through a 0600 `open.html` in a 0700 tmpdir, and closes after one token and one code or 15 minutes. It takes the bot token, checked with Telegram, and then the pairing code the bot DMs.
+  - The terminal setup is gone: bare `mama init` is a usage error. Each relocation is in place: tunnel environment variables, `--section` for Discord, Slack and Jev, and a "Set up through your agent" section in owner-setup.md. The skill installs with the install command and never offers sources or Jev yet.
+- Evidence:
+  - The design was reviewed four times (#545). The implementation had one Opus review, with F1 (the skill offered flows that cannot run), S1–S3 and the notes all fixed. CI green on d527dde41.
+  - Leg A ran before merge from this build, served by a local registry, on the clean Standard account. Times are from that account's daemon.log.
+    - At about 12:33 the person asked Claude Code (CLI, auto mode, no sandbox) to install MAMA. Claude cleaned the earlier partial install and ran the candidate `install.sh --backend claude --non-interactive` (exit 0).
+    - The page opened in the browser. The token and code went in there, then the bot was added to the group as admin and `/bind` was sent.
+    - The service started at 12:47:17 on the managed Node v22.23.4 (launchd, and start.sh `exec`s `~/.mama/node/bin/node`). The first owner DM was answered about 12:48:50, after a 34 s embedding-model load, and the second at 12:49:42. A scheduled report was delivered too.
+    - Doctor was all ok except the toolkit. The terminal count was 0, apart from opening the Claude Code CLI.
+    - The transcript check found 0 token shapes, 0 nonce URLs, 0 six-digit codes, 0 reads of `open.html` and 0 POSTs to the page. A `ps` watch from another account found 0 token shapes and 0 setup URLs in 2451 samples.
+  - Merged as 6654b46a8 and deployed with a drained stop; the boot was clean.
+- Found in leg A, still open:
+  - **Discovery.** "mama 를 설치해줘" alone sent Claude to PyPI/npm packages named mama. It then ran a stale install's `mama init --non-interactive` and asked for the Telegram token and ID in the chat. It followed the flow only after being pointed at owner-setup.md. The person's first sentence must say where MAMA is (PR 4: README and landing say "tell your agent: install MAMA OS from <URL>"), or the plugin skill must be present.
+  - **The skill was not used live.** It is proven only by its unit test.
+  - **Auto mode refused `rm -rf ~/.mama`.** Claude moved the folder aside instead.
+  - **Telegram's group picker does not list a bot.** It has to be added by @username search or from the bot profile; the docs don't say so.
+  - **I7 measured.** The toolkit fails on a Standard account with "python3 >= 3.10 required" (system python3 is 3.9.6). Init went on, and doctor warns.
+  - **A sandboxed Claude Code was not measured.** That case needs `allowLocalBinding`.
+  - **Next:** W2.4.5e (sources from the conversation, with the OAuth client step), W2.4.6, PR 4, and steps 2–5 of the live proof (W2.3's update and rollback, the Node move) on this account.
