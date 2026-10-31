@@ -32,6 +32,7 @@ import {
 } from '../../src/cli/runtime/daemon-control.js';
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
 import { startScript } from '../../src/cli/launch-files.js';
+import { serviceFile } from '../../src/cli/commands/service.js';
 
 let home: string;
 let root: string;
@@ -156,25 +157,40 @@ function person(entries: { tokens?: string[]; codes?: string[]; after?: () => vo
   };
 }
 
+/** What the `gws` stand-in answers a read its sign-in does not grant, as Google does. */
+const SCOPE_REFUSED =
+  '{"error":{"code":403,"message":"Request had insufficient authentication scopes."}}';
+
 /**
- * A `gws` stand-in in `folder` under this test's HOME, signed in or not, as the sign-in checks
- * read it: `gws auth status` exits 0 either way and says `token_valid` only when Google accepted
- * the sign-in; Calendar's check reads the calendar.
+ * A `gws` stand-in in `folder` under this test's HOME, signed in for the services `granted`, as
+ * `gws auth login -s <services>` leaves it: a read of a granted service answers, any other is
+ * refused with Google's error on stdout and exit 1. Nothing granted is no sign-in.
  */
-function gwsIn(folder: string, signedIn = true): string {
+function gwsIn(
+  folder: string,
+  granted: readonly string[] = ['calendar', 'drive', 'gmail', 'sheets']
+): string {
   const path = join(home, folder, 'gws');
   mkdirSync(dirname(path), { recursive: true });
-  const status = signedIn
-    ? '{"auth_method":"oauth2","token_valid":true}'
-    : '{"auth_method":"none"}';
-  const read = signedIn ? 'echo \'{"items":[]}\'' : 'echo \'{"error":{"code":401}}\'; exit 1';
   writeFileSync(
     path,
-    `#!/bin/sh\ncase "$1" in\n  --version) echo 0.22.5 ;;\n  auth) echo '${status}' ;;\n  calendar) ${read} ;;\n  *) echo '{}' ;;\nesac\n`,
+    [
+      '#!/bin/sh',
+      'case "$1" in',
+      '  --version) echo 0.22.5 ;;',
+      ...granted.map((service) => `  ${service}) echo '{"items":[]}' ;;`),
+      `  *) echo '${SCOPE_REFUSED}'; exit 1 ;;`,
+      'esac',
+      '',
+    ].join('\n'),
     { mode: 0o755 }
   );
   return path;
 }
+
+/** A source's line in the section's refusal when gws cannot read for it. */
+const cannotRead = (label: string, what: string) =>
+  `${label}: gws cannot read ${what} with its sign-in (gws CLI returned an error: {"code":403,"message":"Request had insufficient authentication scopes."}). Sign in with its access (mama doctor names the gws auth login command for this install), then retry.`;
 
 /** A shell that finds the backend, and gws only at `gws`. */
 const shell = (gws?: string) => (name: string) => (name === 'gws' ? gws : join(home, 'bin', name));
@@ -1570,7 +1586,7 @@ describe('tools a source needs (install.md, PR 3)', () => {
         'Then log in to gws for gmail:',
         '  gws auth login -s gmail',
         "MAMA's service does not start with gmail until gws is on its PATH. Then run this again.",
-        'MAMA is still stopped; start it with mama service start.',
+        'MAMA is still stopped; start it with mama service install, then mama service start.',
       ].join('\n')
     );
     expect(await refusedGmail({ findExecutable: shell(), ...managed() })).toContain(
@@ -1616,7 +1632,7 @@ describe('tools a source needs (install.md, PR 3)', () => {
     await setUp();
     const output = await enableGmail({ findExecutable: shell(gwsIn('shell-bin')) });
     expect(output).toBe(
-      'Saved connectors. Check the install with mama doctor, then start MAMA: mama service start'
+      'Saved connectors. Check the install with mama doctor, then start MAMA: mama service install, then mama service start'
     );
     expect(Object.keys(JSON.parse(readFileSync(join(root, 'connectors.json'), 'utf8')))).toEqual([
       'gmail',
@@ -1626,15 +1642,15 @@ describe('tools a source needs (install.md, PR 3)', () => {
   it('--section connectors: gws found but not signed in refuses the source, naming the login as the service runs it', async () => {
     await setUp();
     // The managed prefix's bin is on start.sh's PATH (PR 2), not on the shell's.
-    gwsIn('.mama/npm/bin', false);
+    gwsIn('.mama/npm/bin', []);
     expect(await refusedGmail({ findExecutable: shell(), ...managed() })).toBe(
       [
         'Nothing was saved.',
-        'gws is not signed in for gmail.',
+        cannotRead('Gmail', 'the mailbox'),
         clientStep,
         'Sign in first: PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login -s gmail',
         'Then run this again.',
-        'MAMA is still stopped; start it with mama service start.',
+        'MAMA is still stopped; start it with mama service install, then mama service start.',
       ].join('\n')
     );
   });
@@ -1693,7 +1709,7 @@ describe('tools a source needs (install.md, PR 3)', () => {
           clientStep,
           'Then log in to gws for gmail: gws auth login -s gmail',
           "MAMA's service does not start with gmail until gws is on its PATH. Then run this again.",
-          'MAMA is still stopped; start it with mama service start.',
+          'MAMA is still stopped; start it with mama service install, then mama service start.',
         ].join('\n')
       );
     });
@@ -1725,7 +1741,7 @@ describe('tools a source needs (install.md, PR 3)', () => {
     );
 
     it("gws on the service's PATH: signed out it is refused with its login, signed in it is enabled", async () => {
-      const found = gwsIn('tool-bin', false);
+      const found = gwsIn('tool-bin', []);
       await setUp([dirname(found)]);
       expect(await refusedGmail({ findExecutable: shell() })).toContain(
         'Sign in first: ~/tool-bin/gws auth login -s gmail'
@@ -1735,7 +1751,7 @@ describe('tools a source needs (install.md, PR 3)', () => {
     });
 
     it('on a script-made install, in the managed prefix', async () => {
-      const found = gwsIn('.mama/npm/bin', false);
+      const found = gwsIn('.mama/npm/bin', []);
       await setUp([dirname(found)], join(root, 'node', 'bin', 'node'));
       expect(await refusedGmail({ findExecutable: shell() })).toContain(
         'Sign in first: PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login -s gmail'
@@ -1811,23 +1827,23 @@ describe('a source enabled from the conversation (install.md, W2.4.5e)', () => {
     const before = readFileSync(file(), 'utf8');
     const auth = readFileSync(join(root, 'auth.env'), 'utf8');
     await expect(
-      enable({ gmail }, { findExecutable: shell(gwsIn('shell-bin', false)) })
+      enable({ gmail }, { findExecutable: shell(gwsIn('shell-bin', [])) })
     ).rejects.toThrow(
       [
         'Nothing was saved.',
-        'gws is not signed in for gmail.',
+        cannotRead('Gmail', 'the mailbox'),
         'gws signs in through an OAuth client of your own: in Google Cloud Console, create an OAuth client of type Desktop app, download its JSON and save it as ~/.config/gws/client_secret.json (mode 0600).',
         // Calendar is already on: logging in for Gmail alone could narrow what Calendar was granted.
         'Sign in first: gws auth login -s calendar,gmail',
         'Then run this again.',
-        'MAMA is still stopped; start it with mama service start.',
+        'MAMA is still stopped; start it with mama service install, then mama service start.',
       ].join('\n')
     );
     expect(readFileSync(file(), 'utf8')).toBe(before);
     expect(readFileSync(join(root, 'auth.env'), 'utf8')).toBe(auth);
     const output = await enable({ gmail }, { findExecutable: shell(gwsIn('shell-bin')) });
     expect(output).toEqual([
-      'Saved connectors. Check the install with mama doctor, then start MAMA: mama service start',
+      'Saved connectors. Check the install with mama doctor, then start MAMA: mama service install, then mama service start',
     ]);
     const loaded = loadConnectorConfig(file());
     expect(loaded.ok && Object.keys(loaded.config)).toEqual(['calendar', 'gmail']);
@@ -1839,10 +1855,39 @@ describe('a source enabled from the conversation (install.md, W2.4.5e)', () => {
     await expect(
       enable(
         { calendar: { ...gmail, channels: { calendar: { role: 'hub' } } } },
-        { findExecutable: shell(gwsIn('shell-bin', false)) }
+        { findExecutable: shell(gwsIn('shell-bin', [])) }
       )
-    ).rejects.toThrow('gws is not signed in for calendar.');
+    ).rejects.toThrow(cannotRead('Calendar', 'the calendar'));
     expect(readFileSync(file(), 'utf8')).toBe(before);
+  });
+
+  it('refuses Drive beside Gmail while the sign-in grants Gmail only, naming one login for both', async () => {
+    await setUp();
+    writeFileSync(file(), JSON.stringify({ gmail }));
+    const before = readFileSync(file(), 'utf8');
+    // Signed in with `gws auth login -s gmail`: the sign-in refreshes, but grants no Drive scope.
+    const signedIn = { findExecutable: shell(gwsIn('shell-bin', ['gmail'])) };
+    const drive = { ...gmail, channels: { 'folder-1': { role: 'hub', folderId: 'folder-1' } } };
+    await expect(enable({ drive }, signedIn)).rejects.toThrow(
+      [
+        'Nothing was saved.',
+        cannotRead('Drive', 'Drive'),
+        'gws signs in through an OAuth client of your own: in Google Cloud Console, create an OAuth client of type Desktop app, download its JSON and save it as ~/.config/gws/client_secret.json (mode 0600).',
+        'Sign in first: gws auth login -s drive,gmail',
+        'Then run this again.',
+      ].join('\n')
+    );
+    expect(readFileSync(file(), 'utf8')).toBe(before);
+  });
+
+  it('names service start alone once the service is installed', async () => {
+    await setUp();
+    const unit = serviceFile({ home, platform: 'linux' });
+    mkdirSync(dirname(unit), { recursive: true });
+    writeFileSync(unit, '');
+    await expect(enable({ gmail }, { findExecutable: shell() })).rejects.toThrow(
+      /\nMAMA is still stopped; start it with mama service start\.$/
+    );
   });
 
   it('names the command the install command made, when it is there', async () => {
@@ -1850,10 +1895,10 @@ describe('a source enabled from the conversation (install.md, W2.4.5e)', () => {
     mkdirSync(join(root, 'bin'), { recursive: true });
     writeFileSync(join(root, 'bin', 'mama'), '#!/bin/sh\n', { mode: 0o755 });
     await expect(enable({ gmail }, { findExecutable: shell() })).rejects.toThrow(
-      /\nMAMA is still stopped; start it with ~\/\.mama\/bin\/mama service start\.$/
+      /\nMAMA is still stopped; start it with ~\/\.mama\/bin\/mama service install, then ~\/\.mama\/bin\/mama service start\.$/
     );
     expect(await enable({ gmail }, { findExecutable: shell(gwsIn('shell-bin')) })).toEqual([
-      'Saved connectors. Check the install with ~/.mama/bin/mama doctor, then start MAMA: ~/.mama/bin/mama service start',
+      'Saved connectors. Check the install with ~/.mama/bin/mama doctor, then start MAMA: ~/.mama/bin/mama service install, then ~/.mama/bin/mama service start',
     ]);
   });
 
@@ -1913,7 +1958,7 @@ describe('a source enabled from the conversation (install.md, W2.4.5e)', () => {
     expect(auth).toContain(`MAMA_TELEGRAM_TOKEN=${fixtureSecrets.MAMA_TELEGRAM_TOKEN}\n`);
     expect(output).toContain('MAMA_TRELLO_KEY taken');
     expect(output.at(-1)).toBe(
-      'Saved connectors. Check the install with mama doctor, then start MAMA: mama service start'
+      'Saved connectors. Check the install with mama doctor, then start MAMA: mama service install, then mama service start'
     );
     // The opener gets the redirect file's path only; no line and no page shows a token.
     expect(page.opened).toEqual([['xdg-open', expect.stringMatching(/open\.html$/)]]);
@@ -1992,17 +2037,6 @@ describe('a source enabled from the conversation (install.md, W2.4.5e)', () => {
         },
         /would be refused at boot: Trello auth\.tokenName must be MAMA_TRELLO_TOKEN/,
       ],
-      [
-        {
-          MAMA_INIT_CONNECTORS: JSON.stringify({
-            slack: {
-              ...token('MAMA_SLACK_TOKEN', { c: { role: 'hub' } }),
-              auth: { type: 'token' },
-            },
-          }),
-        },
-        /Slack auth\.tokenName must be MAMA_SLACK_TOKEN/,
-      ],
     ];
     for (const [env, said] of refusals) {
       const p = prompt([], [], [false, false]);
@@ -2060,7 +2094,7 @@ describe('a source enabled from the conversation (install.md, W2.4.5e)', () => {
         { openRun: tokenPage({}).openRun, setupPageMs: 50 }
       )
     ).rejects.toThrow(
-      /the setup page expired at .*; nothing was written\nMAMA is still stopped; start it with mama service start\.$/
+      /the setup page expired at .*; nothing was written\nMAMA is still stopped; start it with mama service install, then mama service start\.$/
     );
     expect(readFileSync(file(), 'utf8')).toBe(before);
     expect(readFileSync(join(root, 'auth.env'), 'utf8')).toBe(auth);

@@ -96,8 +96,9 @@ export class SlackConnector implements IConnector {
 
   constructor(config: ConnectorConfig, options: SlackConnectorOptions = {}) {
     // A setting, checked when the source is built, before it runs (see NotionConnector): the
-    // setup page takes the token this block names, so it may name no other secret.
-    if (config.auth.tokenName !== 'MAMA_SLACK_TOKEN') {
+    // setup page takes the token this block names, so it may name no other secret. A block
+    // without a name reads this one.
+    if ((config.auth.tokenName ?? 'MAMA_SLACK_TOKEN') !== 'MAMA_SLACK_TOKEN') {
       throw new Error('Slack auth.tokenName must be MAMA_SLACK_TOKEN');
     }
     this.config = config;
@@ -109,7 +110,7 @@ export class SlackConnector implements IConnector {
   async init(): Promise<void> {
     const token = process.env.MAMA_SLACK_TOKEN;
     if (!token) {
-      throw new Error('Slack bot token not found in the daemon environment.');
+      throw new Error('Slack bot token not found in the daemon environment (MAMA_SLACK_TOKEN).');
     }
     this.token = token;
     if (this.providedClient !== undefined) {

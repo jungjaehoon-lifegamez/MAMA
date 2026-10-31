@@ -16,6 +16,7 @@ import {
   shellWords,
   findExecutable,
   findIn,
+  mamaCommand,
   startExports,
   startScriptPath,
   versionedNodePath,
@@ -167,11 +168,11 @@ export function portAnswers(port: number, host: string): Promise<boolean> {
  * source, which needs no terminal (install.md, W2.4.5e). Every token source is built only with
  * the token name it reads, which auth.env holds.
  */
-function sourceSecretFixes(source: string, names: readonly string[]): string[] {
+function sourceSecretFixes(source: string, names: readonly string[], mama: string): string[] {
   return names.length === 0
     ? []
     : [
-        `with MAMA stopped, run mama init --section connectors --non-interactive with ${source}'s block from connectors.json in MAMA_INIT_CONNECTORS; its setup page takes ${names.join(' and ')}`,
+        `with MAMA stopped, run ${mama} init --section connectors --non-interactive with ${source}'s block from connectors.json in MAMA_INIT_CONNECTORS; its setup page takes ${names.join(' and ')}`,
       ];
 }
 
@@ -322,14 +323,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
       fix: `correct the quoting in ${join(root, 'auth.env')}`,
     });
   }
-  const serviceEnv: NodeJS.ProcessEnv = {
-    HOME: home,
-    USER: process.env.USER,
-    LOGNAME: process.env.LOGNAME,
-    ...auth,
-    ...exports,
-    PATH: servicePath.join(':'),
-  };
+  const serviceEnv = serviceEnvironment(home, auth, exports, servicePath);
   const secret = (name: string): boolean => Boolean(serviceEnv[name]?.trim());
 
   if (config) {
@@ -400,7 +394,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
 
     checks.push(
       ...(await sourceChecks(config, configPath, locate, secret, {
-        service: { path: servicePath, nodePath: serviceNode },
+        service: { path: servicePath, nodePath: serviceNode, exports },
         findShell: options.findExecutable ?? findExecutable,
         home,
         env: serviceEnv,
@@ -867,7 +861,7 @@ async function sourceChecks(
         ].join('; '),
         ...(context.length > 0 ? { context: context.join('; ') } : {}),
         fix: [
-          ...sourceSecretFixes(name, secrets),
+          ...sourceSecretFixes(name, secrets, mamaCommand(dirname(configPath))),
           ...missing.map(({ shellPath, install, login }) =>
             shellPath === null
               ? `install it: ${install.join(' or ')}; then log in: ${login}`
@@ -906,7 +900,7 @@ async function sourceChecks(
               fix:
                 [
                   ...tools.map(({ login }) => login),
-                  ...sourceSecretFixes(name, secretNames(needs)),
+                  ...sourceSecretFixes(name, secretNames(needs), mamaCommand(dirname(configPath))),
                 ].join('; ') || undefined,
             };
           }
@@ -938,6 +932,23 @@ function bounded<T>(ms: number, run: () => Promise<T>): Promise<T> {
       timer = setTimeout(() => reject(new Error(`no answer within ${ms / 1000} s`)), ms);
     }),
   ]).finally(() => clearTimeout(timer));
+}
+
+/** The environment start.sh gives the daemon: auth.env, then its own exports, then its PATH. */
+export function serviceEnvironment(
+  home: string,
+  auth: Record<string, string>,
+  exports: Record<string, string>,
+  path: readonly string[]
+): NodeJS.ProcessEnv {
+  return {
+    HOME: home,
+    USER: process.env.USER,
+    LOGNAME: process.env.LOGNAME,
+    ...auth,
+    ...exports,
+    PATH: path.join(':'),
+  };
 }
 
 /** Run with process.env as the daemon's process has it, then put this shell's back. */

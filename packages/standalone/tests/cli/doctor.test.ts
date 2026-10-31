@@ -878,6 +878,56 @@ describe('mama doctor', () => {
     });
   });
 
+  it('fails a Google source whose read its gws sign-in does not grant, naming one login for all', async () => {
+    const installed = install({
+      bins: ['gws-bin/gws'],
+      connectors: {
+        gmail: {
+          enabled: true,
+          pollIntervalMinutes: 5,
+          channels: { inbox: { role: 'hub' } },
+          auth: { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' },
+        },
+        drive: {
+          enabled: true,
+          pollIntervalMinutes: 5,
+          channels: { 'folder-1': { role: 'hub', folderId: 'folder-1' } },
+          auth: { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' },
+        },
+      },
+    });
+    // Signed in with `gws auth login -s gmail`: the sign-in refreshes, but a Drive read is refused,
+    // as Google refuses it (403, on stdout, exit 1).
+    const found = join(installed.home, 'gws-bin', 'gws');
+    mkdirSync(dirname(found), { recursive: true });
+    writeFileSync(
+      found,
+      [
+        '#!/bin/sh',
+        'case "$1" in',
+        '  --version) echo 0.22.5 ;;',
+        `  gmail) echo '{"emailAddress":"owner@example.com"}' ;;`,
+        `  *) echo '{"error":{"code":403,"message":"Request had insufficient authentication scopes."}}'; exit 1 ;;`,
+        'esac',
+        '',
+      ].join('\n'),
+      { mode: 0o755 }
+    );
+    const by = byName(
+      await runDiagnostics({
+        ...base(installed),
+        findIn: (name: string) => (name === 'gws' ? found : `/fixture/bin/${name}`),
+        findExecutable: () => undefined,
+      })
+    );
+    expect(by['source gmail']).toBeUndefined();
+    expect(by['source drive']).toMatchObject({
+      status: 'fail',
+      detail: 'starts, but its credentials or sign-in are refused, so its polls fail',
+      fix: '~/gws-bin/gws auth login -s drive,gmail',
+    });
+  });
+
   it('fails a generated start.sh that no longer loads auth.env', async () => {
     const installed = install();
     const script = join(installed.root, 'start.sh');

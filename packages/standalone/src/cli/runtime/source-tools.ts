@@ -2,7 +2,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { AuthRequirement, SourceTool } from '../../connectors/framework/types.js';
 import { gwsTool } from '../../connectors/framework/gws-utils.js';
-import { readStartScript, shellWords, startPathEntries, startScriptPath } from '../launch-files.js';
+import {
+  readStartScript,
+  shellWords,
+  startExports,
+  startPathEntries,
+  startScriptPath,
+} from '../launch-files.js';
 import { CliInputError } from '../prompt.js';
 import { shellQuote } from '../secrets.js';
 import { managedNodePath, nodeMovePlaces } from './node-move-journal.js';
@@ -24,6 +30,8 @@ export interface ServiceSight {
   readonly path: string[];
   /** The Node start.sh runs; `null` when its exec line names none. */
   readonly nodePath: string | null;
+  /** What start.sh exports after loading auth.env; none before start.sh is written. */
+  readonly exports: Record<string, string>;
 }
 
 /**
@@ -46,6 +54,7 @@ export function serviceSight(
       return {
         path: startScriptPath(reading, home, platform),
         nodePath: (reading.exec === null ? undefined : shellWords(reading.exec)[1]) ?? null,
+        exports: startExports(reading),
       };
     } catch (error) {
       throw new CliInputError(
@@ -61,6 +70,7 @@ export function serviceSight(
       ...(toolDirectoryExists ? { exists: toolDirectoryExists } : {}),
     }),
     nodePath: launch.nodePath,
+    exports: {},
   };
 }
 

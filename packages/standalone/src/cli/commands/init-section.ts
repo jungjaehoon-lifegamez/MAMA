@@ -7,10 +7,15 @@ import { parseConnectorConfig } from '../../connectors/config-loader.js';
 import type { ConnectorsConfig } from '../../connectors/framework/types.js';
 import { loadConfig, parseConfig, type W1Config } from '../../runtime/config.js';
 import { planConnectors } from '../../runtime/connectors.js';
-import { findExecutable } from '../launch-files.js';
+import { findExecutable, mamaCommand } from '../launch-files.js';
 import { CliInputError, createTerminalPrompt, nonblankLine, requireTTY } from '../prompt.js';
 import { updateSecrets, type SecretName } from '../secrets.js';
-import { defaultTelegramCall, withEnvironment } from '../runtime/diagnostics.js';
+import {
+  defaultTelegramCall,
+  readAuthEnv,
+  serviceEnvironment,
+  withEnvironment,
+} from '../runtime/diagnostics.js';
 import { openSetupPage } from '../runtime/setup-page.js';
 import { sourceToolLines } from '../runtime/source-tools.js';
 import {
@@ -20,6 +25,7 @@ import {
 } from '../runtime/daemon-control.js';
 import { pathsFor, validateDeliveryRoutes } from './daemon.js';
 import type { InitOptions } from './init.js';
+import { serviceFile } from './service.js';
 import {
   askBackend,
   askDiscord,
@@ -29,7 +35,6 @@ import {
   buildSources,
   type BuiltSource,
   checkBackend,
-  mamaCommand,
   terminalSignIn,
   checkTelegram,
   collectConnectors,
@@ -82,30 +87,34 @@ async function checkSourceTools(
     throw new CliInputError(
       ['Nothing was saved.', ...sourceToolLines(missing, SOURCE_NEXT, mama)].join('\n')
     );
-  const env = {
-    HOME: home,
-    USER: process.env.USER,
-    LOGNAME: process.env.LOGNAME,
-    PATH: tools.service.path.join(':'),
-  };
-  const signedOut: string[] = [];
+  // As doctor asks it: the environment start.sh gives the daemon.
+  const env = serviceEnvironment(
+    home,
+    readAuthEnv(root),
+    tools.service.exports,
+    tools.service.path
+  );
+  /** Each refused source's reason, in gws's words: no sign-in, a missing scope, the network. */
+  const refused = new Map<string, string>();
   for (const { name, source, needs } of added)
     if (
       needs.some((need) => need.type === 'cli') &&
       !(await withEnvironment(env, () => source.authenticate()))
     )
-      signedOut.push(name);
-  if (signedOut.length === 0) return;
+      // A Google source's failed check keeps gws's reason as its health error.
+      refused.set(name, (await source.healthCheck()).error!);
+  if (refused.size === 0) return;
   throw new CliInputError(
     [
       'Nothing was saved.',
       ...tools.reports.flatMap(({ tool, sources, login }) => {
-        const who = sources.filter((name) => signedOut.includes(name));
+        const who = sources.filter((name) => refused.has(name));
         return who.length === 0
           ? []
           : [
-              `${tool.command} is not signed in for ${who.join(', ')}.`,
+              ...who.map((name) => refused.get(name)!),
               tool.beforeLogin,
+              // One login serves every source that runs the tool, so it names what all need.
               `Sign in first: ${login}`,
             ];
       }),
@@ -217,6 +226,10 @@ export async function runInitSection(
   if (!existsSync(configPath))
     throw new CliInputError('MAMA is not set up here; run the install command first.');
   const mama = mamaCommand(root);
+  // `service start` needs the service file, which `service install` writes.
+  const start = existsSync(serviceFile({ home, platform: options.platform ?? process.platform }))
+    ? `${mama} service start`
+    : `${mama} service install, then ${mama} service start`;
   const lock = acquireInstallLock(daemonControlPaths(root), 'init --section');
   try {
     refuseWhileRestoring(root);
@@ -375,17 +388,14 @@ export async function runInitSection(
     // The section holds the install lock, so MAMA is stopped while it runs, and a refusal or an
     // expired page leaves it stopped.
     if (error instanceof CliInputError)
-      throw new CliInputError(
-        `${error.message}\nMAMA is still stopped; start it with ${mama} service start.`,
-        { cause: error }
-      );
+      throw new CliInputError(`${error.message}\nMAMA is still stopped; start it with ${start}.`, {
+        cause: error,
+      });
     throw error;
   } finally {
     lock.release();
   }
   // doctor checks what this command cannot see: the service's PATH for a new backend or a
   // source's tool, and the rest of the install as boot will read it.
-  write(
-    `Saved ${section}. Check the install with ${mama} doctor, then start MAMA: ${mama} service start`
-  );
+  write(`Saved ${section}. Check the install with ${mama} doctor, then start MAMA: ${start}`);
 }

@@ -15,7 +15,7 @@ import { cliAuth } from '../framework/types.js';
 import {
   execGwsAsync,
   execGwsTextAsync,
-  gwsSignedIn,
+  gwsReadRefusal,
   gwsTool,
   gwsUnavailable,
 } from '../framework/gws-utils.js';
@@ -83,11 +83,14 @@ export class GmailConnector implements IConnector {
   }
 
   async authenticate(): Promise<boolean> {
-    try {
-      return await gwsSignedIn();
-    } catch {
-      return false;
-    }
+    this.lastError = await gwsReadRefusal('Gmail', 'the mailbox', [
+      'gmail',
+      'users',
+      'getProfile',
+      '--params',
+      JSON.stringify({ userId: 'me' }),
+    ]);
+    return this.lastError === undefined;
   }
 
   private getHeader(msg: GmailMessage, name: string): string {

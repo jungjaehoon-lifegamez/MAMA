@@ -100,14 +100,26 @@ export function parseGwsOutput(raw: string): unknown {
 }
 
 /**
- * Whether gws holds a sign-in Google still accepts. `gws auth status` exits 0 whether or not it is
- * signed in (gws's `handle_status_succeeds_without_credentials`); its JSON says `token_valid: true`
- * only after Google exchanged the stored refresh token, so a missing or expired sign-in (a
- * testing-mode client's ends after 7 days) reads false.
+ * A Google source's sign-in check: one read that its own service's scope allows. `gws auth status`
+ * cannot be it: it exits 0 signed in or not (gws's `handle_status_succeeds_without_credentials`),
+ * and its `token_valid` says only that the sign-in can be refreshed, not which services it grants
+ * (`gws auth login -s gmail` grants Gmail's scopes alone). Resolves with undefined when the read
+ * works, or with why it did not, in gws's own words: no sign-in, an ended one, a missing scope,
+ * the network.
  */
-export async function gwsSignedIn(): Promise<boolean> {
-  const status = (await execGwsAsync(['auth', 'status'])) as { token_valid?: unknown };
-  return status.token_valid === true;
+export async function gwsReadRefusal(
+  label: string,
+  what: string,
+  args: string[]
+): Promise<string | undefined> {
+  try {
+    await execGwsAsync(args);
+    return undefined;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT'
+      ? `${label}: ${gwsMissing}`
+      : `${label}: ${gwsTool.command} cannot read ${what} with its sign-in (${error instanceof Error ? error.message : String(error)}). Sign in with its access (${gwsLogin}), then retry.`;
+  }
 }
 
 /** Run non-JSON gws commands with argv and without blocking the daemon. */

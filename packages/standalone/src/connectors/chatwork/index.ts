@@ -98,7 +98,7 @@ export class ChatworkConnector implements IConnector {
 
   constructor(config: ConnectorConfig, options: ChatworkConnectorOptions = {}) {
     // A setting, checked when the source is built (see SlackConnector).
-    if (config.auth.tokenName !== 'MAMA_CHATWORK_TOKEN') {
+    if ((config.auth.tokenName ?? 'MAMA_CHATWORK_TOKEN') !== 'MAMA_CHATWORK_TOKEN') {
       throw new Error('Chatwork auth.tokenName must be MAMA_CHATWORK_TOKEN');
     }
     this.config = config;

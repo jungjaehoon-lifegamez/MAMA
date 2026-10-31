@@ -12,8 +12,7 @@ import { cliAuth } from '../framework/types.js';
 import {
   execGwsAsync,
   execGwsTextAsync,
-  gwsLogin,
-  gwsMissing,
+  gwsReadRefusal,
   gwsTool,
   gwsUnavailable,
 } from '../framework/gws-utils.js';
@@ -103,17 +102,6 @@ export class CalendarConnector implements IConnector {
     this.pendingSynced = null;
   }
 
-  private async verifyAccess(): Promise<void> {
-    // auth status can succeed without Calendar scope. Exercise the read permission itself.
-    await execGwsAsync([
-      'calendar',
-      'events',
-      'list',
-      '--params',
-      JSON.stringify({ calendarId: this.calendars[0]?.id ?? 'primary', maxResults: 1 }),
-    ]);
-  }
-
   /**
    * Starting needs only gws, as for the other Google sources. The sign-in is the read check in
    * authenticate(): a sign-in that has ended (a testing-mode client's, after 7 days) fails each
@@ -150,17 +138,14 @@ export class CalendarConnector implements IConnector {
   }
 
   async authenticate(): Promise<boolean> {
-    try {
-      await this.verifyAccess();
-      this.lastError = undefined;
-      return true;
-    } catch (error) {
-      this.lastError =
-        (error as NodeJS.ErrnoException).code === 'ENOENT'
-          ? `Calendar: ${gwsMissing}`
-          : `Calendar: ${gwsTool.command} cannot read the primary calendar. Sign in with Google Calendar read access (${gwsLogin}), then retry.`;
-      return false;
-    }
+    this.lastError = await gwsReadRefusal('Calendar', 'the calendar', [
+      'calendar',
+      'events',
+      'list',
+      '--params',
+      JSON.stringify({ calendarId: this.calendars[0]?.id ?? 'primary', maxResults: 1 }),
+    ]);
+    return this.lastError === undefined;
   }
 
   async poll(since: Date, cursor?: ConnectorPollCursor): Promise<NormalizedItem[]> {

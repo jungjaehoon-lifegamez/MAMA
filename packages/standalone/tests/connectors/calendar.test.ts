@@ -138,7 +138,7 @@ describe('CalendarConnector (ported from the pre-stub connector)', () => {
       healthy: false,
       lastPollCount: 0,
       error: expect.stringMatching(
-        /Sign in with Google Calendar read access \(mama doctor names the gws auth login command/
+        /^Calendar: gws cannot read the calendar with its sign-in \(.*\)\. Sign in with its access \(mama doctor names the gws auth login command/
       ),
     });
   });

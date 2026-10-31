@@ -15,7 +15,7 @@ import { cliAuth } from '../framework/types.js';
 import {
   execGwsAsync,
   execGwsTextAsync,
-  gwsSignedIn,
+  gwsReadRefusal,
   gwsTool,
   gwsUnavailable,
 } from '../framework/gws-utils.js';
@@ -99,11 +99,19 @@ export class SheetsConnector implements IConnector {
   }
 
   async authenticate(): Promise<boolean> {
-    try {
-      return await gwsSignedIn();
-    } catch {
-      return false;
-    }
+    // The first spreadsheet this source reads; with none configured it reads nothing.
+    const spreadsheetId = Object.values(this.config.channels).find(
+      (channel) => channel.role !== 'ignore' && channel.spreadsheetId
+    )?.spreadsheetId;
+    if (spreadsheetId === undefined) return true;
+    this.lastError = await gwsReadRefusal('Sheets', `spreadsheet ${spreadsheetId}`, [
+      'sheets',
+      'spreadsheets',
+      'get',
+      '--params',
+      JSON.stringify({ spreadsheetId, fields: 'spreadsheetId' }),
+    ]);
+    return this.lastError === undefined;
   }
 
   async poll(_since: Date): Promise<NormalizedItem[]> {

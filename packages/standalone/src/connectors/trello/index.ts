@@ -77,7 +77,7 @@ export class TrelloConnector implements IConnector {
   ) {
     // A setting, checked when the source is built (see SlackConnector); the key is always
     // MAMA_TRELLO_KEY.
-    if (config.auth.tokenName !== 'MAMA_TRELLO_TOKEN') {
+    if ((config.auth.tokenName ?? 'MAMA_TRELLO_TOKEN') !== 'MAMA_TRELLO_TOKEN') {
       throw new Error('Trello auth.tokenName must be MAMA_TRELLO_TOKEN');
     }
     this.config = config;

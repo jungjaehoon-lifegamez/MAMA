@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import {
   cliAuth,
   type AuthRequirement,
@@ -24,7 +24,7 @@ import {
   type ServiceSight,
   type SourceToolReport,
 } from '../runtime/source-tools.js';
-import { findExecutable, findIn } from '../launch-files.js';
+import { findExecutable, findIn, mamaCommand } from '../launch-files.js';
 import { pathsFor } from './daemon.js';
 import { serviceLaunch, type ServiceOptions } from './service.js';
 
@@ -224,11 +224,6 @@ export async function collectConnectors(
     };
   }
   return config;
-}
-
-/** The command the person's agent runs: the install command's wrapper, or `mama` on PATH. */
-export function mamaCommand(root: string): string {
-  return existsSync(join(root, 'bin', 'mama')) ? '~/.mama/bin/mama' : 'mama';
 }
 
 /** A source as boot builds it from connectors.json, with what it needs. */

@@ -15,7 +15,7 @@ import { cliAuth } from '../framework/types.js';
 import {
   execGwsAsync,
   execGwsTextAsync,
-  gwsSignedIn,
+  gwsReadRefusal,
   gwsTool,
   gwsUnavailable,
 } from '../framework/gws-utils.js';
@@ -134,11 +134,15 @@ export class DriveConnector implements IConnector {
   }
 
   async authenticate(): Promise<boolean> {
-    try {
-      return await gwsSignedIn();
-    } catch {
-      return false;
-    }
+    // Drive requires `fields` on about.get.
+    this.lastError = await gwsReadRefusal('Drive', 'Drive', [
+      'drive',
+      'about',
+      'get',
+      '--params',
+      JSON.stringify({ fields: 'user' }),
+    ]);
+    return this.lastError === undefined;
   }
 
   /**

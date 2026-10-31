@@ -69,11 +69,13 @@ before MAMA answers. When the person asks for one afterwards, set it up from the
      testing-mode client Google ends the login after 7 days, and they sign in again then.
   2. The tool. Run the enabling command above. While MAMA's service cannot find `gws`, it saves
      nothing and prints the command that installs it; run that command.
-  3. The login. While `gws` is not signed in, the enabling command saves nothing and prints the
-     login (`gws auth login -s <services>`). Run it exactly as printed, in the background, and
-     give the person the address it prints. Never open or complete the Google consent yourself:
-     the person does it in their browser. Your sandbox may block the local address gws waits on
-     for the browser's answer; if the login fails that way, say so to the person.
+  3. The login. While `gws` cannot read for the new source (no sign-in, or one made for other
+     services), the enabling command saves nothing and prints the login
+     (`gws auth login -s <services>`), naming every Google source that is on. Run it exactly as
+     printed, in the background, and give the person the address it prints. Never open or
+     complete the Google consent yourself: the person does it in their browser. Your sandbox may
+     block the local address gws waits on for the browser's answer; if the login fails that way,
+     say so to the person.
   4. Enabling. Run the enabling command again; once `gws` is installed and signed in, it saves
      the source. Then start MAMA.
 

@@ -154,11 +154,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in, from either form of `mama init --section connectors`. With a Google source and `gws`
   missing from start.sh's PATH, boot stopped; signed out, every poll failed. The section saves
   nothing and prints how to install `gws`, or the OAuth client file and the login
-  (`gws auth login -s <services>`), then "Then run this again." The sign-in is each source's own
-  check, run with the service's PATH: Calendar reads the calendar, and Gmail, Drive and Sheets ask
-  `gws auth status` whether Google still accepts the sign-in.
+  (`gws auth login -s <services>`, naming every Google source that is on, since one login serves
+  them all), then "Then run this again." The sign-in is each source's own check, run in the
+  environment start.sh gives the daemon: one read with that source's own scope (Gmail its
+  profile, Drive `about`, Sheets its first spreadsheet, Calendar the calendar), so a sign-in made
+  for other services is refused too, with gws's reason.
 - Each refusal of `mama init --section`, an expired setup page included, ends by saying MAMA is
-  still stopped and how to start it. On an install the install command made, the section's lines
+  still stopped and how to start it (`mama service install` first while no service is
+  installed). On an install the install command made, the section's lines
   name `~/.mama/bin/mama`.
 - An enabled source already in `connectors.json` that boot cannot build refuses the section, which
   names it and says how to turn it off: its block with `"enabled": false` in
@@ -204,6 +207,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the installer is skipped: its `--version` must exit 0 and print a version, so a shim with no
   backend behind it gets the vendor's installer. A set-up install needs no flags: it runs
   `mama init --non-interactive`, and without `--backend` it keeps the backend it has.
+- Slack, Chatwork and Trello sources read only `MAMA_SLACK_TOKEN`, `MAMA_CHATWORK_TOKEN` and
+  `MAMA_TRELLO_TOKEN`, so the setup page never takes another secret, such as the owner bot's
+  token or `MAMA_AUTH_TOKEN`. A block without `auth.tokenName` reads that name. A Slack or
+  Chatwork block without one read `SLACK_BOT_TOKEN` or `CHATWORK_API_TOKEN` before; it now needs
+  `MAMA_SLACK_TOKEN` or `MAMA_CHATWORK_TOKEN` in `auth.env`, and doctor names the one missing. A
+  block that names any other variable stops boot until it is corrected, and doctor names it.
 - `mama doctor`'s fix for a source token that is missing or refused names
   `mama init --section connectors --non-interactive` with that source's block, whose setup page
   takes the token, instead of `mama secret set`, which needs a terminal. A messenger's token
@@ -225,14 +234,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A Slack, Chatwork, Trello, Notion, Discord or Telegram source whose block names another token
-  than its own (`MAMA_SLACK_TOKEN`, `MAMA_CHATWORK_TOKEN`, `MAMA_TRELLO_TOKEN`,
-  `MAMA_NOTION_TOKEN`, `MAMA_DISCORD_TOKEN`, `MAMA_TELEGRAM_SOURCE_TOKEN`) is refused when the
-  source is built, in the section, doctor and boot. The setup page therefore never takes another
-  secret, such as the owner bot's token or `MAMA_AUTH_TOKEN`. Slack and Chatwork no longer fall
-  back to `SLACK_BOT_TOKEN` and `CHATWORK_API_TOKEN`, which `auth.env` could not hold.
-- Gmail, Drive and Sheets' sign-in check reads Google's answer: `gws auth status` exits 0 signed in
-  or not, so doctor reported a signed-out source as signed in. It now needs `token_valid: true`.
+- A Notion, Discord or Telegram source whose block names another token than its own is refused
+  when the source is built, in the section, doctor and boot; before, only its start in boot
+  refused it.
+- Gmail, Drive and Sheets' sign-in check is a read with the source's own scope. It ran
+  `gws auth status`, which exits 0 signed in or not and does not say which services a sign-in
+  grants, so doctor reported a signed-out source, or one without its scope, as signed in.
 - Calendar starts as the other Google sources do, when `gws` runs. Its calendar read is its sign-in
   check, so a sign-in that ended (a testing-mode client's, after 7 days) fails its polls and
   doctor's check instead of stopping MAMA at boot.
