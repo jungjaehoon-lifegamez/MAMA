@@ -2845,3 +2845,26 @@ The implementation writes raw/index data during import only. Replay is the owner
   - Whether Cloudflare forwards `Sec-Fetch-*` to the origin is unverified.
   - Loopback stays tokenless by owner decision; any process of the owner's account, or another OS account on this Mac, can read the API.
   - Cloudflare-edge refusals are not visible in MAMA's logs.
+
+### W2.4.5e: a source enabled from the conversation, merged and deployed (#548, 2026-10-31)
+
+- Result: `mama init --section connectors --non-interactive` takes `MAMA_INIT_CONNECTORS` (boot's own `parseConnectorConfig`), and takes each source token on the setup page.
+  - **Before anything is written**, it refuses a new source whose tool the service cannot find, or whose sign-in does not read. Each Google source checks with one read under its own scope: Calendar events, Gmail `users getProfile`, Drive `about get`, Sheets `spreadsheets get`. A refusal prints gws's reason, the OAuth client step, and one `gws auth login -s <all enabled Google services>`.
+  - **Every refusal says MAMA is still stopped.**
+  - **Source token names are pinned.** Slack, Chatwork and Trello read only `MAMA_SLACK_TOKEN`, `MAMA_CHATWORK_TOKEN` and `MAMA_TRELLO_TOKEN`; Notion, Discord and Telegram were pinned in round 1. A block naming another variable is refused, so the page can no longer overwrite the bot or viewer token.
+  - **Calendar boots even when its sign-in is lost.** Its `init()` only runs `--version`, so an expired sign-in fails the poll and doctor instead of crash-looping boot.
+  - **The skill teaches the conversational flow:** client, gws, browser login, enable.
+- Evidence:
+  - Opus review rounds:
+    - Round 1 (FIX-FIRST) found four problems: Calendar was saved before sign-in and crash-looped; a stopped MAMA went unannounced; a Slack, Chatwork or Trello `tokenName` could overwrite `MAMA_TELEGRAM_TOKEN` or `MAMA_AUTH_TOKEN`; and a 7-day expiry crash-looped Calendar.
+    - Round 2: the worker's pushback held. `gws auth status` always exits 0 (gws source test `handle_status_succeeds_without_credentials`).
+    - Round 3 (FIX-FIRST): `token_valid` cannot tell services apart, so a second Google source was saved without its scope. The fix is a scoped read per source.
+  - Codex P2 (token-name checks at build) was fixed. CodeRabbit had nothing actionable on 10b03c637. CI green.
+  - Merged as c59c9f14f and deployed with a drained stop at 15:16. The boot was clean, every live source polled ok (including Calendar), and doctor reported no warning.
+  - The live connectors already used the pinned token names, checked by name only.
+- Still open:
+  - Live step 6 on the clean account: client, `gws auth login -s gmail` started by the agent, consent in the browser, then enable.
+  - A real gws answering the four reads; the tests use a stand-in shaped like gws's output.
+  - A sandboxed agent's gws localhost callback.
+  - Q3, a lasting Google client (7-day testing-mode expiry).
+  - Process lapse: an agent ran `gws auth login --help` with the real HOME. It started a real login and was stopped after 120 s; no credential changed. Briefs now forbid every `gws auth` command.
