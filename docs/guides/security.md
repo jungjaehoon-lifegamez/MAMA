@@ -183,6 +183,12 @@ What can leave the machine from an owner turn, checked on the Claude backend on
   Trello, Chatwork and Slack are read only.
 - Drive is read through the gws CLI and its own credential store (`drive.read`,
   `drive.download`); the daemon makes the calls and the agent receives the results.
+  Gmail, Calendar, Sheets and Docs as text are read the same way (`google.read`): the agent
+  names a read method from a fixed list and its parameters, the daemon builds the whole gws
+  command, and no flag that writes a file, sends content or names another destination can be
+  given. The list is the read-only guard, since the same sign-in carries Drive write access for
+  `deliver.drive.file`. Turns with no person in them have it too: the destination is Google's API
+  under the owner's own sign-in, not a host the agent chooses. Members and room sessions do not.
 - Every call is recorded in `tool_traces`, native Bash, web fetch and web search
   included, with a bounded input summary.
 - A native shell command that opens a network connection (a network client, a

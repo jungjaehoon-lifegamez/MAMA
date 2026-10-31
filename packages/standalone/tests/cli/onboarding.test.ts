@@ -163,7 +163,7 @@ const SCOPE_REFUSED =
 
 /**
  * A `gws` stand-in in `folder` under this test's HOME, signed in for the services `granted`, as
- * `gws auth login -s <services>` leaves it: a read of a granted service answers, any other is
+ * `gws auth login --scopes <one per service>` leaves it: a read of a granted service answers, any other is
  * refused with Google's error on stdout and exit 1. Nothing granted is no sign-in.
  */
 function gwsIn(
@@ -1584,7 +1584,7 @@ describe('tools a source needs (install.md, PR 3)', () => {
         '  brew install googleworkspace-cli',
         clientStep,
         'Then log in to gws for gmail:',
-        '  gws auth login -s gmail',
+        '  gws auth login --scopes https://www.googleapis.com/auth/gmail.readonly',
         "MAMA's service does not start with gmail until gws is on its PATH. Then run this again.",
         'MAMA is still stopped; start it with mama service install, then mama service start.',
       ].join('\n')
@@ -1595,7 +1595,7 @@ describe('tools a source needs (install.md, PR 3)', () => {
         '  PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/node/bin/npm install -g --prefix ~/.mama/npm @googleworkspace/cli',
         clientStep,
         'Then log in to gws for gmail:',
-        '  PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login -s gmail',
+        '  PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login --scopes https://www.googleapis.com/auth/gmail.readonly',
       ].join('\n')
     );
   });
@@ -1610,7 +1610,7 @@ describe('tools a source needs (install.md, PR 3)', () => {
     expect(output).toContain('continuing setup');
     expect(output).toContain("gmail runs gws, which the service's PATH does not have.");
     expect(output).toContain(
-      `${clientStep}\nThen log in to gws for gmail:\n  gws auth login -s gmail`
+      `${clientStep}\nThen log in to gws for gmail:\n  gws auth login --scopes https://www.googleapis.com/auth/gmail.readonly`
     );
     expect(output).toContain('running the install command again continues it.');
   });
@@ -1648,7 +1648,7 @@ describe('tools a source needs (install.md, PR 3)', () => {
         'Nothing was saved.',
         cannotRead('Gmail', 'the mailbox'),
         clientStep,
-        'Sign in first: PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login -s gmail',
+        'Sign in first: PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login --scopes https://www.googleapis.com/auth/gmail.readonly',
         'Then run this again.',
         'MAMA is still stopped; start it with mama service install, then mama service start.',
       ].join('\n')
@@ -1707,7 +1707,7 @@ describe('tools a source needs (install.md, PR 3)', () => {
           'Nothing was saved.',
           `gmail runs gws; this shell finds ${found}, but the service's PATH does not name ${dirname(found)}. mama service install adds it.`,
           clientStep,
-          'Then log in to gws for gmail: gws auth login -s gmail',
+          'Then log in to gws for gmail: gws auth login --scopes https://www.googleapis.com/auth/gmail.readonly',
           "MAMA's service does not start with gmail until gws is on its PATH. Then run this again.",
           'MAMA is still stopped; start it with mama service install, then mama service start.',
         ].join('\n')
@@ -1744,7 +1744,7 @@ describe('tools a source needs (install.md, PR 3)', () => {
       const found = gwsIn('tool-bin', []);
       await setUp([dirname(found)]);
       expect(await refusedGmail({ findExecutable: shell() })).toContain(
-        'Sign in first: ~/tool-bin/gws auth login -s gmail'
+        'Sign in first: ~/tool-bin/gws auth login --scopes https://www.googleapis.com/auth/gmail.readonly'
       );
       gwsIn('tool-bin');
       expect(await section(shell())).toContain('Saved connectors.');
@@ -1754,7 +1754,7 @@ describe('tools a source needs (install.md, PR 3)', () => {
       const found = gwsIn('.mama/npm/bin', []);
       await setUp([dirname(found)], join(root, 'node', 'bin', 'node'));
       expect(await refusedGmail({ findExecutable: shell() })).toContain(
-        'Sign in first: PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login -s gmail'
+        'Sign in first: PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login --scopes https://www.googleapis.com/auth/gmail.readonly'
       );
     });
   });
@@ -1834,7 +1834,7 @@ describe('a source enabled from the conversation (install.md, W2.4.5e)', () => {
         cannotRead('Gmail', 'the mailbox'),
         'gws signs in through an OAuth client of your own: in Google Cloud Console, create an OAuth client of type Desktop app, download its JSON and save it as ~/.config/gws/client_secret.json (mode 0600).',
         // Calendar is already on: logging in for Gmail alone could narrow what Calendar was granted.
-        'Sign in first: gws auth login -s calendar,gmail',
+        'Sign in first: gws auth login --scopes https://www.googleapis.com/auth/calendar.readonly,https://www.googleapis.com/auth/gmail.readonly',
         'Then run this again.',
         'MAMA is still stopped; start it with mama service install, then mama service start.',
       ].join('\n')
@@ -1865,7 +1865,7 @@ describe('a source enabled from the conversation (install.md, W2.4.5e)', () => {
     await setUp();
     writeFileSync(file(), JSON.stringify({ gmail }));
     const before = readFileSync(file(), 'utf8');
-    // Signed in with `gws auth login -s gmail`: the sign-in refreshes, but grants no Drive scope.
+    // Signed in with `gws auth login --scopes https://www.googleapis.com/auth/gmail.readonly`: the sign-in refreshes, but grants no Drive scope.
     const signedIn = { findExecutable: shell(gwsIn('shell-bin', ['gmail'])) };
     const drive = { ...gmail, channels: { 'folder-1': { role: 'hub', folderId: 'folder-1' } } };
     await expect(enable({ drive }, signedIn)).rejects.toThrow(
@@ -1873,7 +1873,7 @@ describe('a source enabled from the conversation (install.md, W2.4.5e)', () => {
         'Nothing was saved.',
         cannotRead('Drive', 'Drive'),
         'gws signs in through an OAuth client of your own: in Google Cloud Console, create an OAuth client of type Desktop app, download its JSON and save it as ~/.config/gws/client_secret.json (mode 0600).',
-        'Sign in first: gws auth login -s drive,gmail',
+        'Sign in first: gws auth login --scopes https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/gmail.readonly',
         'Then run this again.',
       ].join('\n')
     );

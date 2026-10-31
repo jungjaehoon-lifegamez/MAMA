@@ -182,7 +182,7 @@ export function sourceTools(
                 `${pathFirst(nodeBin, home)} ${shellPath(join(nodeBin, 'npm'), home)} install -g --prefix ${shellPath(prefix, home)} ${tool.npmPackage}`,
               ]
             : [`npm install -g ${tool.npmPackage}`, `brew install ${tool.brewFormula}`],
-      login: `${run} ${tool.loginArgs}${scopes.has(tool) ? ` ${tool.scopeFlag} ${[...scopes.get(tool)!].sort().join(',')}` : ''}`,
+      login: `${run} ${tool.loginArgs}${scopes.has(tool) ? ` ${tool.scopeFlag} ${[...scopes.get(tool)!].map(tool.loginScope).sort().join(',')}` : ''}`,
     };
   });
 }

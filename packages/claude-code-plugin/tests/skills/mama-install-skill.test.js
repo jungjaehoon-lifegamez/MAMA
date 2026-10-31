@@ -69,7 +69,7 @@ describe('Story ONB-8: thin MAMA OS installation skill', () => {
     const steps = [
       'Move that file to `~/.config/gws/client_secret.json` with mode 0600',
       'it saves nothing and prints the command that installs it; run that command',
-      'the enabling command saves nothing and prints the login (`gws auth login -s <services>`), naming every Google source that is on',
+      'the enabling command saves nothing and prints the login (`gws auth login --scopes <scopes>`), naming the scope of every Google source that is on',
       'once `gws` is installed and signed in, it saves the source',
     ].map((step) => content.indexOf(step));
     expect(steps.every((at) => at >= 0)).toBe(true);

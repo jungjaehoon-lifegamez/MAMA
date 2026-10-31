@@ -788,13 +788,13 @@ describe('mama doctor', () => {
     expect(await check(npm, undefined, undefined)).toMatchObject({
       status: 'fail',
       detail: "the gws command is not on the service's PATH",
-      fix: 'install it: npm install -g @googleworkspace/cli or brew install googleworkspace-cli; then log in: gws auth login -s gmail',
+      fix: 'install it: npm install -g @googleworkspace/cli or brew install googleworkspace-cli; then log in: gws auth login --scopes https://www.googleapis.com/auth/gmail.readonly',
     });
     expect(await check(npm, undefined, '/shell/bin/gws')).toMatchObject({
       status: 'fail',
       detail: "the gws command is not on the service's PATH",
       context: 'this shell finds gws at /shell/bin/gws',
-      fix: "mama service install adds /shell/bin to start.sh's PATH, mama service restart applies it; then log in: gws auth login -s gmail",
+      fix: "mama service install adds /shell/bin to start.sh's PATH, mama service restart applies it; then log in: gws auth login --scopes https://www.googleapis.com/auth/gmail.readonly",
     });
     // On the service's PATH (start.sh names /opt/homebrew/bin when it exists; here, the system's).
     expect(await check(npm, '/usr/bin/gws', undefined)).toBeUndefined();
@@ -812,7 +812,7 @@ describe('mama doctor', () => {
       },
     });
     expect((await check(both, undefined, undefined)).fix).toBe(
-      'install it: npm install -g @googleworkspace/cli or brew install googleworkspace-cli; then log in: gws auth login -s calendar,gmail'
+      'install it: npm install -g @googleworkspace/cli or brew install googleworkspace-cli; then log in: gws auth login --scopes https://www.googleapis.com/auth/calendar.readonly,https://www.googleapis.com/auth/gmail.readonly'
     );
 
     // The install command's layout: start.sh runs ~/.mama/node and its PATH names ~/.mama/npm/bin;
@@ -823,13 +823,13 @@ describe('mama doctor', () => {
       bins: ['.mama/npm/bin/mama'],
     });
     expect((await check(script, undefined, undefined)).fix).toBe(
-      'install it: PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/node/bin/npm install -g --prefix ~/.mama/npm @googleworkspace/cli; then log in: PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login -s gmail'
+      'install it: PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/node/bin/npm install -g --prefix ~/.mama/npm @googleworkspace/cli; then log in: PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login --scopes https://www.googleapis.com/auth/gmail.readonly'
     );
     // The managed Node on another package (a checkout): ~/.mama/npm/bin is not on its PATH, so
     // installing there would not reach the service.
     const checkout = install({ connectors: gmail, node: '.mama/node/bin/node' });
     expect((await check(checkout, undefined, undefined)).fix).toBe(
-      'install it: npm install -g @googleworkspace/cli or brew install googleworkspace-cli; then log in: gws auth login -s gmail'
+      'install it: npm install -g @googleworkspace/cli or brew install googleworkspace-cli; then log in: gws auth login --scopes https://www.googleapis.com/auth/gmail.readonly'
     );
     // Found there, it starts; a refused sign-in names the same login.
     const found = join(script.root, 'npm', 'bin', 'gws');
@@ -896,7 +896,7 @@ describe('mama doctor', () => {
         },
       },
     });
-    // Signed in with `gws auth login -s gmail`: the sign-in refreshes, but a Drive read is refused,
+    // Signed in with `gws auth login --scopes https://www.googleapis.com/auth/gmail.readonly`: the sign-in refreshes, but a Drive read is refused,
     // as Google refuses it (403, on stdout, exit 1).
     const found = join(installed.home, 'gws-bin', 'gws');
     mkdirSync(dirname(found), { recursive: true });
@@ -924,7 +924,7 @@ describe('mama doctor', () => {
     expect(by['source drive']).toMatchObject({
       status: 'fail',
       detail: 'starts, but its credentials or sign-in are refused, so its polls fail',
-      fix: '~/gws-bin/gws auth login -s drive,gmail',
+      fix: '~/gws-bin/gws auth login --scopes https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/gmail.readonly',
     });
   });
 

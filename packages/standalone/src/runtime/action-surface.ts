@@ -42,6 +42,7 @@ import {
 } from '@jungjaehoon/mama-core';
 import type { ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 import type { DatabaseInstance } from '@jungjaehoon/mama-core/db-manager';
 import type { JudgmentAccess, Knowledge } from '@jungjaehoon/mama-core/knowledge';
 import type { MemoryScopeRef } from '@jungjaehoon/mama-core/memory/types';
@@ -72,6 +73,7 @@ import type { TimeZoneSetting } from './timezone.js';
 import { reportSourceActionRegistrations } from '../api/report-source-actions.js';
 import { trelloActionRegistrations } from '../api/trello-actions.js';
 import { driveActionRegistrations } from '../api/drive-actions.js';
+import { googleReadActionRegistrations } from '../api/google-read-actions.js';
 import {
   driveDeliveryActionRegistrations,
   type DriveDeliveryPorts,
@@ -106,6 +108,7 @@ const OWNER_ACTIONS = [
   'trello.read',
   'drive.read',
   'drive.download',
+  'google.read',
   'judge',
   'owner.timezone.set',
   ...MEMBER_MANAGEMENT_ACTIONS,
@@ -576,6 +579,10 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       ...(options.attachmentPorts?.principalPaths === undefined
         ? {}
         : { principalPaths: options.attachmentPorts.principalPaths }),
+    }),
+    // Gmail, Calendar, Sheets and Docs as text, through the same daemon-held gws sign-in.
+    ...googleReadActionRegistrations({
+      scratchDir: join(options.runtimeRoot, 'runtime', 'google-read'),
     }),
     ...(options.driveDelivery === undefined
       ? []

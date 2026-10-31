@@ -16,6 +16,7 @@ import {
   execGwsAsync,
   execGwsTextAsync,
   gwsReadRefusal,
+  gwsLogin,
   gwsTool,
   gwsUnavailable,
 } from '../framework/gws-utils.js';
@@ -128,7 +129,7 @@ export class DriveConnector implements IConnector {
       {
         ...cliAuth(gwsTool),
         scope: 'drive',
-        description: 'Google Workspace CLI authentication. Run: gws auth login -s drive',
+        description: `Google Workspace CLI sign-in with ${gwsTool.loginScope('drive')}; ${gwsLogin}`,
       },
     ];
   }

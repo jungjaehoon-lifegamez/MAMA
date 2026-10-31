@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The `mama-install` skill names the Google login as MAMA now prints it,
+  `gws auth login --scopes <scopes>`: read-only for Gmail, Calendar and Sheets, full Drive access
+  for Drive.
 - The `mama-install` skill installs MAMA OS through the conversation. It runs the install command
   in the background, with `--non-interactive`, and passes on its lines; the person enters the bot
   token and the pairing code only on the setup page MAMA opens in their browser, never in the chat,

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `google.read`: the owner agent reads Gmail, Calendar and Sheets, and a Google Doc, Sheet or
+  Slides file as text, live through `gws`, which the daemon runs with its own sign-in. The agent
+  names the method as gws takes it (`service`, `argv`, `params`); read methods only, and no gws
+  flag is an input, so nothing is sent, uploaded or written to a file the agent names. A list
+  returns one page with its `nextPageToken`; a result over 100,000 characters is refused with how
+  to narrow it. A missing `gws`, no sign-in, a sign-in without the service, an API not enabled in
+  the client's Cloud project, and a rate or quota refusal each come back saying what to do. The
+  result is quoted as external evidence and each call is in `tool_traces`. The common session has
+  it in chat, source changes and reports, and an owner-role person in their own DM; members
+  without the role and room sessions do not. Drive files are still found with `drive.read` and
+  fetched with `drive.download`.
 - Closing summaries for finished work. Every hour MAMA orders the work it saw closed or cancelled
   since its first start with this version, ten items at a time. For each, the agent writes one
   summary: the rounds, the points of outside feedback, who did what, and how it ended. Then a
@@ -181,6 +192,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The Google login MAMA prints (setup, `init --section connectors`, `mama doctor`) asks for
+  explicit scopes, `gws auth login --scopes <scopes>`: read-only for Gmail, Calendar and Sheets,
+  and full Drive access, which `deliver.drive.file` needs to upload into the owner's folder and
+  set its readers. It was `-s <services>`, which in a terminal opened gws's scope picker and
+  otherwise asked for gws's defaults (`gmail.modify`, full Calendar and Sheets). An existing
+  sign-in keeps working; signing in again with the printed line narrows it.
 - A closing summary, once checked, is not ordered again even if a later write clears or replaces
   it. Before, an order was placed again when that happened within a week.
 - `mama stop` lets running work finish first. MAMA claims nothing new: messages, source changes
