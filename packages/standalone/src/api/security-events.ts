@@ -13,7 +13,8 @@ export type SecurityEventClass =
   | 'host_rejected'
   | 'probe'
   | 'unknown_identity'
-  | 'request_failed';
+  | 'request_failed'
+  | 'cross_origin';
 
 export interface SecurityEvent {
   time: string;

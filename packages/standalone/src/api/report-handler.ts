@@ -1,4 +1,3 @@
-import { Router, type Request, type Response } from 'express';
 import type { ServerResponse } from 'node:http';
 import { DebugLogger } from '@jungjaehoon/mama-core/debug-logger';
 
@@ -33,7 +32,6 @@ export interface ReportStore {
       options?: ReportUpdateOptions;
     }[]
   ): void;
-  delete(slotId: string): void;
   getAll(): Record<string, ReportSlot>;
   getAllSorted(): ReportSlot[];
 }
@@ -110,11 +108,6 @@ export function createReportStore(
       options.beforePublish?.(next);
       slots = staged;
       options.onChange?.(next);
-    },
-
-    delete(slotId: string): void {
-      slots.delete(slotId);
-      changed();
     },
 
     getAll(): Record<string, ReportSlot> {
@@ -201,63 +194,4 @@ export function createReportPublisher(
       changedSlotIds: changed.sort(),
     };
   };
-}
-
-/**
- * Create an Express Router that exposes report slot CRUD + SSE stream.
- */
-export function createReportRouter(store: ReportStore, sseClients: Set<ServerResponse>): Router {
-  const router = Router();
-
-  // GET / — list all slots sorted by priority
-  router.get('/', (_req: Request, res: Response) => {
-    res.json({ slots: store.getAllSorted() });
-  });
-
-  // GET /events — SSE stream
-  router.get('/events', (req: Request, res: Response) => {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-
-    const raw = res as unknown as ServerResponse;
-    sseClients.add(raw);
-
-    req.on('close', () => {
-      sseClients.delete(raw);
-    });
-  });
-
-  // PUT / — bulk update
-  router.put('/', (req: Request, res: Response) => {
-    const body = req.body as {
-      slots?: Record<string, { html: string; priority?: number }>;
-    };
-    const incoming = body?.slots ?? {};
-    for (const [id, { html, priority = 0 }] of Object.entries(incoming)) {
-      store.update(id, html, priority);
-    }
-    broadcastReportUpdate(sseClients, { slots: store.getAllSorted() });
-    res.json({ ok: true });
-  });
-
-  // PUT /slots/:slotId — single update
-  router.put('/slots/:slotId', (req: Request<{ slotId: string }>, res: Response) => {
-    const slotId = req.params.slotId as string;
-    const { html, priority = 0 } = req.body as { html: string; priority?: number };
-    store.update(slotId, html, priority);
-    broadcastReportUpdate(sseClients, { slots: store.getAllSorted() });
-    res.json({ ok: true, slot: slotId });
-  });
-
-  // DELETE /slots/:slotId — delete a slot
-  router.delete('/slots/:slotId', (req: Request<{ slotId: string }>, res: Response) => {
-    const slotId = req.params.slotId as string;
-    store.delete(slotId);
-    broadcastReportUpdate(sseClients, { deleted: slotId });
-    res.json({ ok: true });
-  });
-
-  return router;
 }

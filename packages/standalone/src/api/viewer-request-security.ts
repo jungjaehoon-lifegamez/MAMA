@@ -60,6 +60,17 @@ export function isAllowedViewerHost(req: IncomingMessage): boolean {
   return isAllowedHost(req, (process.env.MAMA_VIEWER_HOSTNAMES ?? '').split(','));
 }
 
+/**
+ * A page of another origin made the owner's browser send this request: a link, or a page granted
+ * loopback access. Browsers set Sec-Fetch-Site and a page cannot. `same-site` is another port on
+ * this loopback host or a sibling of the tunnel's name, so it is another page too; the viewer's own
+ * page sends `same-origin`, the address bar `none`, and curl and Node nothing.
+ */
+export function isOtherPageRequest(req: IncomingMessage): boolean {
+  const site = req.headers['sec-fetch-site'];
+  return site === 'cross-site' || site === 'same-site';
+}
+
 function configuredValues(): string[] {
   return Object.entries(process.env)
     .filter(
@@ -138,6 +149,8 @@ function securityClass(
   path: string
 ): SecurityEventClass {
   if (status === 421) return 'host_rejected';
+  // The other 403 is a denied action, and such a request is refused before any action runs.
+  if (status === 403 && isOtherPageRequest(req)) return 'cross_origin';
   const lower = path.toLowerCase();
   if (SCANNER_PATHS.some((probe) => lower === probe || lower.startsWith(probe + '/')))
     return 'probe';

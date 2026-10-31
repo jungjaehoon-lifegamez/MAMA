@@ -33,6 +33,7 @@ import { createSecurityEventRecorder, type SecurityEventOptions } from './securi
 import { epochAtLocalDateTime, localDateKey, type TimeZoneSetting } from '../runtime/timezone.js';
 import {
   isAllowedViewerHost,
+  isOtherPageRequest,
   logViewerInternalError,
   viewerRequestAudit,
 } from './viewer-request-security.js';
@@ -71,6 +72,13 @@ const GRAPH_KINDS = new Set([
   'observation',
   'entity',
 ]);
+/**
+ * The board opens one report stream while it is shown, so a person needs one per open board. Each
+ * stream holds a socket and a timer and is written the whole board on every publish (up to 24
+ * slots of 512 KiB), which Node buffers for a client that stops reading. Eight covers one person's
+ * boards on a few devices; a page or script that keeps opening streams is refused, not evicted.
+ */
+export const REPORT_STREAM_LIMIT = 8;
 const CONTENT_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
@@ -1047,6 +1055,16 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
       json(res, 503, { error: true, code: 'NOT_AVAILABLE', message: 'Report store is not wired' });
       return;
     }
+    if (reportClients.size >= REPORT_STREAM_LIMIT) {
+      // The board shows "reconnecting"; daemon.log says why.
+      console.warn(`[viewer] report_stream_limit: ${reportClients.size} streams open, one refused`);
+      json(res, 503, {
+        error: true,
+        code: 'REPORT_STREAM_LIMIT',
+        message: `${REPORT_STREAM_LIMIT} report streams are open; close a viewer tab`,
+      });
+      return;
+    }
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache',
@@ -1147,6 +1165,15 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
         return;
       }
       if (!(await requireViewerAuth(req, res, audit.identity))) return;
+      // Each data route runs actions traced as the owner's, with input the requesting page chose.
+      if (isOtherPageRequest(req)) {
+        json(res, 403, {
+          error: true,
+          code: 'CROSS_ORIGIN_REFUSED',
+          message: 'Viewer data is read only from the viewer page itself',
+        });
+        return;
+      }
 
       if (url.pathname === '/api/report/events') {
         handleReportEvents(req, res);

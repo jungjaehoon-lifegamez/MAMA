@@ -52,17 +52,6 @@ describe('ReportStore', () => {
     expect(sorted[2].slotId).toBe('low');
   });
 
-  it('deletes a slot', () => {
-    store.update('header', '<h1>Hello</h1>', 10);
-    store.update('footer', '<footer>Bye</footer>', 20);
-
-    store.delete('header');
-
-    expect(store.get('header')).toBeUndefined();
-    expect(store.get('footer')).toBeDefined();
-    expect(Object.keys(store.getAll())).toHaveLength(1);
-  });
-
   it.each(['get', 'getAll', 'getAllSorted'] as const)(
     'returns a detached slot value from %s',
     (reader) => {
