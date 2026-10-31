@@ -149,7 +149,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     refused.
   - The tokens the sources read, as each source names them (Trello's key too), are entered on the
     setup page, one field each, and go only to `auth.env`. A source that reads a token under a
-    name `auth.env` does not hold is refused before the page opens.
+    name `auth.env` does not hold is refused before the page opens. So is a Notion, Discord or
+    Telegram source whose block names another token than the one it reads: that source now fails
+    when it is built, which the section and `mama doctor` do, instead of at its start in boot.
   - The other parts of `mama init --section` still need a terminal.
 - A source whose tool MAMA's service cannot find is no longer enabled, from either form of
   `mama init --section connectors`; with a Google source and `gws` missing from start.sh's PATH,

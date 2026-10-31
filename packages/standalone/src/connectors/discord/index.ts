@@ -41,16 +41,17 @@ export class DiscordConnector implements IConnector {
   private lastError: string | undefined = undefined;
 
   constructor(config: ConnectorConfig, stateFilePath: string) {
+    // A setting, checked when the source is built, before it runs (see NotionConnector).
+    if (config.auth.tokenName !== 'MAMA_DISCORD_TOKEN') {
+      throw new Error('Discord auth.tokenName must be MAMA_DISCORD_TOKEN');
+    }
     this.config = config;
     if (!stateFilePath.trim()) throw new Error('Discord state file path is required');
     this.stateFilePath = stateFilePath;
   }
 
   async init(): Promise<void> {
-    if (this.config.auth.tokenName !== 'MAMA_DISCORD_TOKEN') {
-      throw new Error('Discord auth.tokenName must be MAMA_DISCORD_TOKEN');
-    }
-    const token = process.env[this.config.auth.tokenName];
+    const token = process.env[this.config.auth.tokenName!];
     if (!token) {
       throw new Error('Discord bot token not found. Run mama secret set MAMA_DISCORD_TOKEN.');
     }

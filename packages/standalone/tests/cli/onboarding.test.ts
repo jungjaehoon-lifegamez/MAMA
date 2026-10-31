@@ -1903,6 +1903,15 @@ describe('a source enabled from the conversation (install.md, W2.4.5e)', () => {
         },
         /connectors\.json would be refused at boot: .*contains the configured wiki root/,
       ],
+      // Notion reads MAMA_NOTION_TOKEN only, so a block naming another token stops boot.
+      [
+        {
+          MAMA_INIT_CONNECTORS: JSON.stringify({
+            notion: token('MAMA_SLACK_TOKEN', { workspace: { role: 'hub' } }),
+          }),
+        },
+        /connectors\.json would be refused at boot: Notion auth\.tokenName must be MAMA_NOTION_TOKEN/,
+      ],
       // Without a tokenName the Slack source reads SLACK_BOT_TOKEN, which auth.env cannot hold.
       [
         {
