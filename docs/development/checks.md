@@ -2896,3 +2896,6 @@ The implementation writes raw/index data during import only. Replay is the owner
   - Check that the Codex profile carries the new denies once the next Codex session writes it.
   - #550 (docs, merging at release) still prints `-s <services>` in connectors.md; switch it to the `--scopes` line when it is rebased.
   - Owner decisions pending: narrowing the polling defaults, full Drive on installs that never deliver, and whether to alert on write-method requests.
+- Live 2026-10-31 21:00:
+  - The next Codex session rewrote `~/.mama/.codex/config.toml` with `"~/.config/gws" = "deny"` and `"~/Library/Application Support/gws" = "deny"`, and the file parses as TOML.
+  - The 21:00 reminder report ran under that profile and was delivered (message 8276).
