@@ -5,7 +5,7 @@ Codex, watch connected work, keep task revisions and evidence, answer in Telegra
 and the common group), Discord or Slack, publish reports and a board, and recall corrections.
 [mama-core](../mama-core/README.md) supplies the shared engine.
 
-Current manifest: **0.78.0**. Install it through your agent: on the Mac that will run MAMA, tell
+Current manifest: **0.79.0**. Install it through your agent: on the Mac that will run MAMA, tell
 Claude Code or Codex "Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA by
 following its owner setup guide, docs/start/owner-setup.md". See
 [owner setup](../../docs/start/owner-setup.md), with the supported versions.

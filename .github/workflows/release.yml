@@ -527,10 +527,16 @@ jobs:
           📚 [Documentation](https://jungjaehoon-lifegamez.github.io/MAMA)
           EOF
 
+          # A release without MAMA OS has no install command attached (its tag still needs an
+          # unused MAMA OS version). Made latest, it would turn the documented
+          # releases/latest/download/install.sh into a 404, so it is created as not latest.
+          LATEST=()
+          [[ -n "$INSTALL_SCRIPT" ]] || LATEST=(--latest=false)
           gh release create "${{ needs.prepare-release.outputs.release_tag }}" \
             --title "MAMA ${{ needs.prepare-release.outputs.release_tag }}" \
             --notes-file release-notes.md \
             --verify-tag \
+            "${LATEST[@]}" \
             ${INSTALL_SCRIPT:+"$INSTALL_SCRIPT"}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
