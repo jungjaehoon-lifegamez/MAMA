@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -24,15 +25,24 @@ let root: string;
 let bin: string;
 let scratch: string;
 let log: string;
+let cwdLog: string;
 
-/** A `gws` stand-in on PATH that records its argv, one argument per line, then runs `script`. */
+/**
+ * A `gws` stand-in on PATH that records its argv, one argument per line, and the directory it runs
+ * in, then runs `script`.
+ */
 function fakeGws(script: string): void {
-  writeFileSync(join(bin, 'gws'), `#!/bin/sh\nprintf '%s\\n' "$@" > '${log}'\n${script}\n`);
+  writeFileSync(
+    join(bin, 'gws'),
+    `#!/bin/sh\nprintf '%s\\n' "$@" > '${log}'\npwd -P > '${cwdLog}'\n${script}\n`
+  );
   chmodSync(join(bin, 'gws'), 0o755);
 }
 
 const argvRun = (): string[] | null =>
   existsSync(log) ? readFileSync(log, 'utf8').trimEnd().split('\n') : null;
+/** Where the last gws ran: a directory of its own under the scratch directory. */
+const ranIn = (): string => readFileSync(cwdLog, 'utf8').trim();
 
 const access: ActionContext['access'] = {
   principalId: 'owner',
@@ -42,10 +52,10 @@ const access: ActionContext['access'] = {
   scopes: [],
 };
 
-const read = (input: Record<string, unknown>) =>
+const read = (input: Record<string, unknown>, session?: ActionContext['session']) =>
   createDispatcher(createCatalog(googleReadActionRegistrations({ scratchDir: scratch })))(
     { action: 'google.read', input },
-    { access }
+    { access, ...(session === undefined ? {} : { session }) }
   );
 
 describe('google.read', () => {
@@ -54,6 +64,7 @@ describe('google.read', () => {
     bin = join(root, 'bin');
     scratch = join(root, 'runtime', 'google-read');
     log = join(root, 'argv');
+    cwdLog = join(root, 'cwd');
     mkdirSync(bin);
     vi.stubEnv('PATH', `${bin}:${process.env.PATH ?? ''}`);
   });
@@ -74,6 +85,8 @@ describe('google.read', () => {
           data: { ok: true },
         });
         expect(argvRun()).toEqual([service, ...argv, '--params', '{"userId":"me"}']);
+        expect(ranIn().startsWith(`${realpathSync(scratch)}/call-`)).toBe(true);
+        expect(readdirSync(scratch)).toEqual([]);
       }
     }
     // Without params the host passes no --params either.
@@ -126,15 +139,24 @@ describe('google.read', () => {
     expect(argvRun()).toBeNull();
   });
 
-  it('refuses an alt that asks gws for the file itself', async () => {
+  it('refuses the parameters that ask Google for something other than JSON', async () => {
     fakeGws(`echo '{"ok":true}'`);
-    for (const alt of ['media', 'proto']) {
+    for (const extra of [
+      { alt: 'media' },
+      { alt: 'proto' },
+      { $alt: 'media' },
+      // JSONP whatever the function is called, "json" included.
+      { callback: 'f' },
+      { callback: 'json' },
+      { $callback: 'f' },
+    ]) {
       expect(
         await read({
           service: 'gmail',
-          argv: ['users', 'messages', 'get'],
-          params: { userId: 'me', id: 'm1', alt },
-        })
+          argv: ['users', 'threads', 'get'],
+          params: { userId: 'me', id: 't1', ...extra },
+        }),
+        JSON.stringify(extra)
       ).toMatchObject({
         status: 'failed',
         error: { kind: 'invalid_input', code: 'google_read_media_refused' },
@@ -180,9 +202,54 @@ describe('google.read', () => {
       '--params',
       '{"fileId":"doc1","mimeType":"text/plain"}',
     ]);
-    expect(args[5]).toBe('--output');
-    expect(args[6]!.startsWith(`${scratch}/export-`)).toBe(true);
+    // Relative to the call's own directory, not to wherever the daemon runs.
+    expect(args.slice(5)).toEqual(['--output', 'export']);
+    expect(ranIn().startsWith(`${realpathSync(scratch)}/call-`)).toBe(true);
     expect(readdirSync(scratch)).toEqual([]);
+  });
+
+  it('refuses a response gws wrote to a file, and removes the file unread', async () => {
+    // gws's handle_binary_response for a parameter that changes the format: the body goes to
+    // download.<ext> in its working directory and stdout carries only where it went.
+    fakeGws(
+      [
+        `printf 'the whole thread' > download.js`,
+        `echo '{"status":"success","saved_file":"download.js","mimeType":"text/javascript","bytes":16}'`,
+      ].join('\n')
+    );
+    const result = await read({
+      service: 'gmail',
+      argv: ['users', 'threads', 'get'],
+      params: { userId: 'me', id: 't1', unforeseen: 'x' },
+    });
+    expect(result).toMatchObject({
+      status: 'failed',
+      error: { code: 'google_read_media_refused' },
+    });
+    expect(JSON.stringify(result)).not.toContain('the whole thread');
+    expect(ranIn().startsWith(`${realpathSync(scratch)}/call-`)).toBe(true);
+    expect(existsSync(join(ranIn(), 'download.js'))).toBe(false);
+    expect(readdirSync(scratch)).toEqual([]);
+    expect(existsSync(join(process.cwd(), 'download.js'))).toBe(false);
+  });
+
+  it('takes argv token by token: one argument holding a whole method is refused', async () => {
+    fakeGws(`echo '{"ok":true}'`);
+    expect(
+      await read({ service: 'gmail', argv: ['users messages list'], params: { userId: 'me' } })
+    ).toMatchObject({ status: 'failed', error: { code: 'google_method_not_allowed' } });
+    expect(argvRun()).toBeNull();
+  });
+
+  it('is not available in a replay, which reads sources only up to its window', async () => {
+    fakeGws(`echo '{"ok":true}'`);
+    expect(
+      await read(
+        { service: 'gmail', argv: ['users', 'messages', 'list'], params: { userId: 'me' } },
+        { replaySourceEndMs: Date.parse('2026-09-30T00:00:00Z') }
+      )
+    ).toMatchObject({ status: 'failed', error: { kind: 'denied', code: 'google_read_replay' } });
+    expect(argvRun()).toBeNull();
   });
 
   it('refuses an export to a format that is not text', async () => {
@@ -206,6 +273,18 @@ describe('google.read', () => {
     expect(message).toContain(`${GOOGLE_READ_MAX_CHARS + 15} characters, over the 100000`);
     expect(message).toContain('fields');
     expect(message).toContain('pageToken');
+
+    // One item cannot be paged; the refusal says so instead of promising that fields helps.
+    const item = await read({
+      service: 'gmail',
+      argv: ['users', 'messages', 'get'],
+      params: { userId: 'me', id: 'm1' },
+    });
+    const single = (item as { error: { message: string } }).error.message;
+    expect(single).toContain('google.read does not return an item in parts');
+    expect(single).toContain('format "metadata"');
+    expect(single).not.toContain('fields');
+    expect(single).not.toContain('pageToken');
 
     // Past the 1 MiB output buffer gws is stopped, with the same refusal.
     writeFileSync(big, JSON.stringify({ messages: 'a'.repeat(1_200_000) }));
@@ -259,7 +338,7 @@ describe('google.read', () => {
       '{"error":{"code":403,"message":"Request had insufficient authentication scopes.","reason":"insufficientPermissions"}}',
       1,
       'google_scope_missing',
-      'with https://www.googleapis.com/auth/calendar.readonly among its --scopes',
+      "The login must include https://www.googleapis.com/auth/calendar.readonly. mama doctor names the gws auth login command for this install, with the scopes of the Google sources that are on; if calendar is not among them, the owner adds it to that line's --scopes list (gws auth login --scopes <those scopes>,https://www.googleapis.com/auth/calendar.readonly)",
     ],
     [
       'an API the Cloud project has not enabled',
@@ -276,7 +355,7 @@ describe('google.read', () => {
       '{"error":{"code":403,"message":"Request had insufficient authentication scopes.","reason":"unknown"}}',
       1,
       'google_scope_missing',
-      'with https://www.googleapis.com/auth/spreadsheets.readonly among its --scopes',
+      'The login must include https://www.googleapis.com/auth/spreadsheets.readonly.',
     ],
     [
       'Sheets not enabled in the Cloud project',

@@ -56,6 +56,8 @@ export interface GwsCallOptions {
   maxBuffer?: number;
   /** Defaults to 60 s; a download names its own. */
   timeoutMs?: number;
+  /** Where gws runs; a response gws writes to a file (not JSON) lands here. */
+  cwd?: string;
 }
 
 /** Where the JSON gws prints starts: the first line opening an object or an array. */
@@ -108,7 +110,12 @@ async function execGwsStdoutAsync(args: string[], options?: GwsCallOptions): Pro
     execFile(
       'gws',
       args,
-      { encoding: 'utf8', maxBuffer: options?.maxBuffer, timeout },
+      {
+        encoding: 'utf8',
+        maxBuffer: options?.maxBuffer,
+        timeout,
+        ...(options?.cwd === undefined ? {} : { cwd: options.cwd }),
+      },
       (error, value) => {
         if (error?.killed) {
           reject(

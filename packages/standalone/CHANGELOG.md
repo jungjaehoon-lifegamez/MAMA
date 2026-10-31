@@ -12,9 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `google.read`: the owner agent reads Gmail, Calendar and Sheets, and a Google Doc, Sheet or
   Slides file as text, live through `gws`, which the daemon runs with its own sign-in. The agent
   names the method as gws takes it (`service`, `argv`, `params`); read methods only, and no gws
-  flag is an input, so nothing is sent, uploaded or written to a file the agent names. A list
+  flag is an input, so nothing is sent or uploaded. Each call runs in a directory of its own that
+  is removed after it, and a response gws writes to a file instead of printing (a parameter such
+  as `alt` or `callback` asking for another format) is refused, never left on disk. A list
   returns one page with its `nextPageToken`; a result over 100,000 characters is refused with how
-  to narrow it. A missing `gws`, no sign-in, a sign-in without the service, an API not enabled in
+  to narrow it. A replay turn cannot use it: Google read now is past the replay's window. A missing `gws`, no sign-in, a sign-in without the service, an API not enabled in
   the client's Cloud project, and a rate or quota refusal each come back saying what to do. The
   result is quoted as external evidence and each call is in `tool_traces`. The common session has
   it in chat, source changes and reports, and an owner-role person in their own DM; members
@@ -283,6 +285,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- gws's credential store is now closed to the agents' own file reads and shell, as MAMA's own
+  credentials are (owner, 2026-10-31): its config directory (`~/.config/gws`, the legacy
+  `~/Library/Application Support/gws`, or the one `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` names) and a
+  `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`. MAMA's Google sources and `google.read` run on that
+  sign-in, and an agent that could read it, or run `gws auth export` against it, could carry the
+  refresh token, with Drive write access, out in a reply or a fetched URL. Claude's Read rules
+  and shell sandbox and the Codex permission profile all deny it; the daemon's own gws calls are
+  unaffected. Other tools' credential stores stay as they were.
 - Another website open in your browser can no longer read through MAMA's viewer in your name.
   Before, a link or a page your browser had allowed onto this machine could make one viewer
   request, such as a memory search with words it chose. MAMA ran that search as yours and kept

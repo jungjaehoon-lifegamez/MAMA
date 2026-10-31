@@ -186,9 +186,17 @@ What can leave the machine from an owner turn, checked on the Claude backend on
   Gmail, Calendar, Sheets and Docs as text are read the same way (`google.read`): the agent
   names a read method from a fixed list and its parameters, the daemon builds the whole gws
   command, and no flag that writes a file, sends content or names another destination can be
-  given. The list is the read-only guard, since the same sign-in carries Drive write access for
-  `deliver.drive.file`. Turns with no person in them have it too: the destination is Google's API
-  under the owner's own sign-in, not a host the agent chooses. Members and room sessions do not.
+  given. A parameter can still ask Google for something other than JSON, which gws writes to a
+  file; the known ones (`alt`, `callback`) are refused, and every call runs in a directory of its
+  own under `runtime/` that is removed after it, so such a response is refused and never left
+  where the agent could open it. The list is the read-only guard, since the same sign-in carries
+  Drive write access for `deliver.drive.file`. Turns with no person in them have it too: the
+  destination is Google's API under the owner's own sign-in, not a host the agent chooses. Replay
+  turns, members and room sessions do not.
+- gws's own credential store (its config directory, `~/.config/gws` or the one
+  `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` names, and a `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`) is
+  denied to the agents' native reads on both backends, as MAMA's own credentials are (owner,
+  2026-10-31). The daemon's gws runs outside the agents' sandboxes and still reads it.
 - Every call is recorded in `tool_traces`, native Bash, web fetch and web search
   included, with a bounded input summary.
 - A native shell command that opens a network connection (a network client, a
