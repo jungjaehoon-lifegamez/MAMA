@@ -95,10 +95,16 @@ describe('Story ONB-8: thin MAMA OS installation skill', () => {
     expect(steps.every((at) => at >= 0)).toBe(true);
     expect([...steps].sort((a, b) => a - b)).toEqual(steps);
     expect(content).toContain('OAuth client of type Desktop app');
+    // A gmail.com client is published (no 7-day end) after one unverified-app click-through; a
+    // Workspace account uses Internal (owner, 2026-10-31).
+    expect(content).toContain('A gmail.com account: user type External');
+    expect(content).toContain('then press "Publish app" so the app is In production');
+    expect(content).toContain('they choose Advanced, then continue');
+    expect(content).toContain('A Google Workspace account: user type Internal');
     expect(content).toContain(
-      'External in testing mode with themselves as a test user, or as Internal for a Google Workspace account'
+      'If the client is left in Testing, Google ends the sign-in after 7 days'
     );
-    expect(content).toContain('Google ends the login after 7 days');
+    expect(content).not.toContain('External in testing mode');
     expect(content).toContain('not a MAMA secret');
     // The consent is the person's; the agent only runs the login and passes on its address.
     expect(content).toContain('Never open or complete the Google consent yourself');

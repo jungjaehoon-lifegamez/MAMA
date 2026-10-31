@@ -64,11 +64,21 @@ your own. They need no MAMA token. Your agent sets one up in this order:
 
 1. **The OAuth client.** In Google Cloud Console you create a project and enable the APIs your
    sources use: `gmail.googleapis.com`, `calendar-json.googleapis.com`, `drive.googleapis.com` and
-   `sheets.googleapis.com`. You set up the OAuth consent screen as External in testing mode, with
-   yourself as a test user, or as Internal for a Google Workspace account. Then you create an
-   OAuth client of type Desktop app and download its JSON. The agent saves that file as
-   `~/.config/gws/client_secret.json` (mode 0600). It is gws's own credential, not a MAMA secret,
-   so it does not go through the setup page.
+   `sheets.googleapis.com`. You set up the OAuth consent screen by account:
+   - **A gmail.com account:** user type External. Fill in the app name and support email, add
+     yourself as a test user while setting up, then press "Publish app" so the app is In
+     production. Google may also want a homepage and a privacy policy URL before it publishes;
+     that has not been measured yet. The first sign-in shows "Google hasn't verified this app":
+     choose Advanced, then continue. After that the sign-in does not end after 7 days. Google's
+     [personal-use exception](https://support.google.com/cloud/answer/13464323) lets an app with
+     fewer than 100 users run unverified this way.
+   - **A Google Workspace account:** user type Internal. There is no warning, no test user and no
+     7-day end.
+
+   Then you create an OAuth client of type Desktop app and download its JSON. The agent saves that
+   file as `~/.config/gws/client_secret.json` (mode 0600). It is gws's own credential, not a MAMA
+   secret, so it does not go through the setup page.
+
 2. **gws.** While MAMA's service cannot find `gws`, the enabling command saves nothing and prints
    the command that installs it. On an install the install command made, that command uses MAMA's
    own Node and puts `gws` in `~/.mama/npm`; otherwise it is `npm install -g @googleworkspace/cli`
@@ -80,9 +90,8 @@ your own. They need no MAMA token. Your agent sets one up in this order:
 4. **Enabling.** The agent runs the enabling command again. It saves the source, and the agent
    starts MAMA.
 
-With a client in testing mode, Google ends the sign-in after 7 days. MAMA keeps running, but the
-Google sources' polls fail, and `mama doctor` names the login to run again. An Internal client, for
-a Google Workspace account, has neither the test-user step nor that limit.
+If the client is left in Testing, Google ends the sign-in after 7 days. MAMA keeps running, but the
+Google sources' polls fail, and `mama doctor` names the login to run again.
 
 ### Gmail
 

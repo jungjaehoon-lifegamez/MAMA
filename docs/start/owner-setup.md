@@ -139,7 +139,9 @@ want, or say "later": you can ask for a source at any time. For each one you pic
 
 Gmail, Calendar, Drive and Sheets also need Google's `gws` command and an OAuth client of your own.
 You create the client in Google Cloud Console, the agent puts its file in place, and you sign in
-in your browser. With a client in testing mode, Google ends that sign-in after 7 days. See
+in your browser. With a gmail.com account you publish the client (In production) and click
+through Google's unverified-app warning once; a Google Workspace account uses the Internal user
+type. If the client is left in Testing, Google ends the sign-in after 7 days. See
 [Google sources](../guides/connectors.md#google-sources).
 
 Discord or Slack as the messenger you talk to MAMA in, and Jev, still need a terminal:

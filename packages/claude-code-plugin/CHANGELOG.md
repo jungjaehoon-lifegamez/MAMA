@@ -25,7 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   creates in Google Cloud Console, whose JSON the agent moves to
   `~/.config/gws/client_secret.json`), then `gws` installed with the command MAMA prints, then the
   login MAMA prints, which the person completes in the browser (the agent never completes the
-  consent), then the source enabled. It says that a testing-mode client's login ends after 7
+  consent), then the source enabled. A gmail.com person publishes the client (In
+  production) and clicks through Google's unverified-app warning once, so the login does not end
+  after 7 days; a Google Workspace person uses the Internal user type. Left in Testing, the login
+  ends after 7
   days. The command leaves MAMA stopped however it ends, so the skill starts MAMA again after
   each run. Jev is still not set up from the conversation.
 - Once MAMA has answered the person's first message, the `mama-install` skill asks which sources
