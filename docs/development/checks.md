@@ -2868,3 +2868,9 @@ The implementation writes raw/index data during import only. Replay is the owner
   - A sandboxed agent's gws localhost callback.
   - Q3, a lasting Google client (7-day testing-mode expiry).
   - Process lapse: an agent ran `gws auth login --help` with the real HOME. It started a real login and was stopped after 120 s; no credential changed. Briefs now forbid every `gws auth` command.
+- Live 2026-10-31 (owner's signed-in gws 0.11.1, read-only, no `gws auth` command):
+  - The new sign-in reads work as written.
+    - Gmail `users getProfile {"userId":"me"}` exits 0 with JSON (`emailAddress`, `historyId`, …).
+    - Drive `about get {"fields":"user"}` exits 0 with JSON (`user`).
+    - Sheets `spreadsheets get` was checked on a nonexistent id: exit 1 with Google's 404 error JSON, so the command and its params are accepted. No spreadsheet is configured on this install, so a real sheet read is still unproven.
+  - gws prints `Using keyring backend: keyring` on stderr and the JSON on stdout, which is what `execGws` parses.
