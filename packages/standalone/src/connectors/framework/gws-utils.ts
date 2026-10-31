@@ -156,10 +156,21 @@ export type GwsFailureKind =
   | 'other';
 
 /**
+ * Google's own wording for a missing scope and for an API the client's project has not enabled.
+ * APIs that answer in the newer error shape (Sheets v4: `status` and `details`, no `errors[]`)
+ * carry no reason gws can read, so it prints `reason: "unknown"` (gws `executor.rs`,
+ * `handle_error_response`) and only Google's message names the cause.
+ */
+const SCOPE_MESSAGE = /insufficient authentication scopes/i;
+const DISABLED_MESSAGE = /has not been used in project/i;
+const ENABLE_URL = /https:\/\/console\.(?:developers|cloud)\.google\.com\/[^\s"]+/;
+
+/**
  * Why a gws call failed, read from gws's own report: ENOENT (not on PATH), the output buffer
  * overflowing, or the error object gws printed. 401 is gws's `authError` (no sign-in, or one
  * Google no longer refreshes); a missing scope is 403 `insufficientPermissions`; an API the
- * client's Cloud project has not enabled is 403 `accessNotConfigured` with `enable_url`.
+ * client's Cloud project has not enabled is 403 `accessNotConfigured` with `enable_url`, or the
+ * same two in Google's words where gws found no reason.
  */
 export function gwsFailure(error: unknown): {
   kind: GwsFailureKind;
@@ -172,16 +183,16 @@ export function gwsFailure(error: unknown): {
   if (code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return { kind: 'too_large', detail };
   if (!(error instanceof GwsCliError)) return { kind: 'other', detail };
   const { code: status, reason, enable_url: enableUrl } = error.reported;
+  const message = typeof error.reported.message === 'string' ? error.reported.message : '';
   if (status === 401) return { kind: 'signed_out', detail };
   if (status === 429 || (typeof reason === 'string' && QUOTA_REASONS.has(reason)))
     return { kind: 'quota', detail };
-  if (reason === 'insufficientPermissions') return { kind: 'scope_missing', detail };
-  if (reason === 'accessNotConfigured')
-    return {
-      kind: 'api_disabled',
-      detail,
-      ...(typeof enableUrl === 'string' ? { enableUrl } : {}),
-    };
+  if (reason === 'insufficientPermissions' || (status === 403 && SCOPE_MESSAGE.test(message)))
+    return { kind: 'scope_missing', detail };
+  if (reason === 'accessNotConfigured' || (status === 403 && DISABLED_MESSAGE.test(message))) {
+    const url = typeof enableUrl === 'string' ? enableUrl : ENABLE_URL.exec(message)?.[0];
+    return { kind: 'api_disabled', detail, ...(url === undefined ? {} : { enableUrl: url }) };
+  }
   return { kind: 'other', detail };
 }
 

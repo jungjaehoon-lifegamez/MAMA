@@ -270,6 +270,23 @@ describe('google.read', () => {
       'enable it at https://console.developers.google.com/apis/api/sheets.googleapis.com/overview?project=1',
     ],
     [
+      // Sheets v4 answers in the newer shape (status, details; no errors[]), so gws finds no reason.
+      'a Sheets sign-in without Sheets',
+      'sheets',
+      '{"error":{"code":403,"message":"Request had insufficient authentication scopes.","reason":"unknown"}}',
+      1,
+      'google_scope_missing',
+      'with https://www.googleapis.com/auth/spreadsheets.readonly among its --scopes',
+    ],
+    [
+      'Sheets not enabled in the Cloud project',
+      'sheets',
+      '{"error":{"code":403,"message":"Google Sheets API has not been used in project 123 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/sheets.googleapis.com/overview?project=123 then retry.","reason":"unknown"}}',
+      1,
+      'google_api_disabled',
+      'enable it at https://console.developers.google.com/apis/api/sheets.googleapis.com/overview?project=123, then retry',
+    ],
+    [
       'a rate limit',
       'gmail',
       '{"error":{"code":429,"message":"Too many requests","reason":"rateLimitExceeded"}}',
