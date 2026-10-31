@@ -20,7 +20,9 @@ export function isUntrustedExternalEvidenceTool(toolName: string): boolean {
     // the board reconcile order reads cards in a turn with no person in it.
     toolName === 'trello.read' ||
     toolName === 'drive.read' ||
-    toolName === 'drive.download'
+    toolName === 'drive.download' ||
+    // Mail, events, sheets and documents are written by other people too.
+    toolName === 'google.read'
   );
 }
 

@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `google.read`: the owner agent reads Gmail, Calendar and Sheets, and a Google Doc, Sheet or
+  Slides file as text, live through `gws`, which the daemon runs with its own sign-in. The agent
+  names the method as gws takes it (`service`, `argv`, `params`); read methods only, and no gws
+  flag is an input, so nothing is sent or uploaded. Each call runs in a directory of its own that
+  is removed after it, and a response gws writes to a file instead of printing (a parameter such
+  as `alt` or `callback` asking for another format) is refused, never left on disk. A list
+  returns one page with its `nextPageToken`; a result over 100,000 characters is refused with how
+  to narrow it. A replay turn cannot use it: Google read now is past the replay's window. A missing `gws`, no sign-in, a sign-in without the service, an API not enabled in
+  the client's Cloud project, and a rate or quota refusal each come back saying what to do. The
+  result is quoted as external evidence and each call is in `tool_traces`. The common session has
+  it in chat, source changes and reports, and an owner-role person in their own DM; members
+  without the role and room sessions do not. Drive files are still found with `drive.read` and
+  fetched with `drive.download`.
 - Closing summaries for finished work. Every hour MAMA orders the work it saw closed or cancelled
   since its first start with this version, ten items at a time. For each, the agent writes one
   summary: the rounds, the points of outside feedback, who did what, and how it ended. Then a
@@ -130,10 +143,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   print how to install it and how to sign in. On an install the install command made, both
   commands use MAMA's own Node and put `gws` where the service finds it:
   `PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/node/bin/npm install -g --prefix ~/.mama/npm @googleworkspace/cli`,
-  then `PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login -s <services>`. Other
-  installs get `npm install -g @googleworkspace/cli` or `brew install googleworkspace-cli`, then
-  `gws auth login -s <services>`. The login names the gws service of every Google source that is
-  on (`-s calendar,gmail`), since one login serves them all. Before it, `mama init` and
+  then `PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login --scopes <scopes>`.
+  Other installs get `npm install -g @googleworkspace/cli` or `brew install googleworkspace-cli`,
+  then `gws auth login --scopes <scopes>`. The login names the OAuth scope of every Google source
+  that is on (see Changed), since one login serves them all. Before it, `mama init` and
   `--section` name the OAuth client gws signs in through: a Desktop app client from Google Cloud
   Console, saved as `~/.config/gws/client_secret.json`. When only the terminal finds `gws`, they
   say that `mama service install` adds its folder. MAMA's service does not start while such a
@@ -154,8 +167,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in, from either form of `mama init --section connectors`. With a Google source and `gws`
   missing from start.sh's PATH, boot stopped; signed out, every poll failed. The section saves
   nothing and prints how to install `gws`, or the OAuth client file and the login
-  (`gws auth login -s <services>`, naming every Google source that is on, since one login serves
-  them all), then "Then run this again." The sign-in is each source's own check, run in the
+  (`gws auth login --scopes <scopes>`, naming the OAuth scope of every Google source that is on,
+  since one login serves them all), then "Then run this again." The sign-in is each source's own check, run in the
   environment start.sh gives the daemon: one read with that source's own scope (Gmail its
   profile, Drive `about`, Sheets its first spreadsheet, Calendar the calendar), so a sign-in made
   for other services is refused too, with gws's reason.
@@ -181,6 +194,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The Google login MAMA prints (setup, `init --section connectors`, `mama doctor`) asks for
+  explicit scopes, `gws auth login --scopes <scopes>`: read-only for Gmail, Calendar and Sheets,
+  and full Drive access, which `deliver.drive.file` needs to upload into the owner's folder and
+  set its readers. It was `-s <services>`, which in a terminal opened gws's scope picker and
+  otherwise asked for gws's defaults (`gmail.modify`, full Calendar and Sheets). An existing
+  sign-in keeps working; signing in again with the printed line narrows it.
 - A closing summary, once checked, is not ordered again even if a later write clears or replaces
   it. Before, an order was placed again when that happened within a week.
 - `mama stop` lets running work finish first. MAMA claims nothing new: messages, source changes
@@ -266,6 +285,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- gws's credential store is now closed to the agents' own file reads and shell, as MAMA's own
+  credentials are (owner, 2026-10-31): its config directory (`~/.config/gws`, the legacy
+  `~/Library/Application Support/gws`, or the one `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` names) and a
+  `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`. MAMA's Google sources and `google.read` run on that
+  sign-in, and an agent that could read it, or run `gws auth export` against it, could carry the
+  refresh token, with Drive write access, out in a reply or a fetched URL. Claude's Read rules
+  and shell sandbox and the Codex permission profile all deny it; the daemon's own gws calls are
+  unaffected. Other tools' credential stores stay as they were.
 - Another website open in your browser can no longer read through MAMA's viewer in your name.
   Before, a link or a page your browser had allowed onto this machine could make one viewer
   request, such as a memory search with words it chose. MAMA ran that search as yours and kept

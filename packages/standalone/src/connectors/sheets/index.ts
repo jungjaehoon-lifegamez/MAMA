@@ -16,6 +16,7 @@ import {
   execGwsAsync,
   execGwsTextAsync,
   gwsReadRefusal,
+  gwsLogin,
   gwsTool,
   gwsUnavailable,
 } from '../framework/gws-utils.js';
@@ -93,7 +94,7 @@ export class SheetsConnector implements IConnector {
       {
         ...cliAuth(gwsTool),
         scope: 'sheets',
-        description: 'Google Workspace CLI authentication. Run: gws auth login -s sheets',
+        description: `Google Workspace CLI sign-in with ${gwsTool.loginScope('sheets')}; ${gwsLogin}`,
       },
     ];
   }

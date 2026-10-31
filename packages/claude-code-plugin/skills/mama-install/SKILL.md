@@ -71,8 +71,9 @@ before MAMA answers. When the person asks for one afterwards, set it up from the
      nothing and prints the command that installs it; run that command.
   3. The login. While `gws` cannot read for the new source (no sign-in, or one made for other
      services), the enabling command saves nothing and prints the login
-     (`gws auth login -s <services>`), naming every Google source that is on. Run it exactly as
-     printed, in the background, and give the person the address it prints. Never open or
+     (`gws auth login --scopes <scopes>`), naming the scope of every Google source that is on:
+     read-only for Gmail, Calendar and Sheets, and full Drive access, which large-file delivery to
+     Drive needs. Run it exactly as printed, in the background, and give the person the address it prints. Never open or
      complete the Google consent yourself: the person does it in their browser. Your sandbox may
      block the local address gws waits on for the browser's answer; if the login fails that way,
      say so to the person.

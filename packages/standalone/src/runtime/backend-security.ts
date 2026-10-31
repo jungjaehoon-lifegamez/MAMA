@@ -130,6 +130,37 @@ export function backendEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS
   return Object.fromEntries(Object.entries(env).filter(([name]) => !isCredentialEnvName(name)));
 }
 
+/**
+ * gws's sign-in, which MAMA's Google sources and google.read run on (owner, 2026-10-31). gws reads
+ * it from one config directory (gws auth_commands.rs, config_dir): GOOGLE_WORKSPACE_CLI_CONFIG_DIR
+ * when set, else ~/.config/gws when it exists, else the legacy `dirs::config_dir()`/gws (macOS
+ * ~/Library/Application Support, elsewhere XDG_CONFIG_HOME) when that exists. It holds
+ * credentials.enc, its .encryption_key fallback, credentials.json, token_cache.json and
+ * client_secret.json. GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE names a plaintext sign-in anywhere
+ * (auth.rs). All of them are denied, whichever exists: gws may move to another later. The keychain
+ * item gws keeps on macOS is only the key to credentials.enc, so without the file it opens nothing.
+ */
+export function gwsCredentialPaths(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = homedir(),
+  platform: NodeJS.Platform = process.platform
+): string[] {
+  const named = (value: string | undefined): string[] =>
+    value?.trim() ? [resolve(value.trim())] : [];
+  const legacyBase =
+    platform === 'darwin'
+      ? join(home, 'Library', 'Application Support')
+      : (named(env.XDG_CONFIG_HOME)[0] ?? join(home, '.config'));
+  return [
+    ...new Set([
+      ...named(env.GOOGLE_WORKSPACE_CLI_CONFIG_DIR),
+      ...named(env.GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE),
+      join(home, '.config', 'gws'),
+      join(legacyBase, 'gws'),
+    ]),
+  ];
+}
+
 /** Paths are supplied by the product, never discovered by the shared engine. */
 export function credentialReadPaths(
   runtimeRoot: string,
@@ -146,6 +177,7 @@ export function credentialReadPaths(
       resolve(runtimeRoot, 'backups'),
       resolve(replayKeyFile ?? resolve(runtimeRoot, 'jev-key')),
       ...(codexHome ? [resolve(codexHome)] : []),
+      ...gwsCredentialPaths(),
     ]),
   ];
 }

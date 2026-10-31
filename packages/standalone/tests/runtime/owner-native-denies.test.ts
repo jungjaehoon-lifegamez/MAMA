@@ -1,4 +1,7 @@
-import { MEMBER_CLAUDE_TMP_PARENT } from '../../src/runtime/backend-security.js';
+import {
+  MEMBER_CLAUDE_TMP_PARENT,
+  gwsCredentialPaths,
+} from '../../src/runtime/backend-security.js';
 import { createRequire } from 'node:module';
 import {
   mkdirSync,
@@ -60,6 +63,10 @@ it.each([
     vi.stubEnv('HOME', home);
     vi.stubEnv('CLAUDE_CONFIG_DIR', join(home, 'claude-config'));
     vi.stubEnv('CLAUDE_SECURESTORAGE_CONFIG_DIR', join(home, 'claude-config'));
+    // gws's sign-in (owner, 2026-10-31): its default and legacy directories and the ones the
+    // service's environment names.
+    vi.stubEnv('GOOGLE_WORKSPACE_CLI_CONFIG_DIR', join(root, 'gws-config'));
+    vi.stubEnv('GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE', join(root, 'gws-credentials.json'));
     const mama = join(home, 'product');
     const workspace = join(mama, 'workspace');
     const downloads = join(mama, 'downloads');
@@ -124,6 +131,12 @@ it.each([
         `/tmp/mama-office-host-${userInfo().uid}`,
         join(realpathSync('/tmp'), `mama-office-host-${userInfo().uid}`),
         ...(withMembers ? [join(alias, 'members'), join(storage, 'members')] : []),
+        join(home, '.config', 'gws'),
+        process.platform === 'darwin'
+          ? join(home, 'Library', 'Application Support', 'gws')
+          : join(process.env.XDG_CONFIG_HOME?.trim() || join(home, '.config'), 'gws'),
+        join(root, 'gws-config'),
+        join(root, 'gws-credentials.json'),
       ];
       for (const path of expected) expect(driver.deniedReadPaths, path).toContain(path);
       for (const path of [home, mama, workspace, downloads, join(mama, 'owner-policy.md')])
@@ -158,3 +171,30 @@ it.each([
     }
   }
 );
+
+// gws's own config_dir (auth_commands.rs): the variable, ~/.config/gws, and the legacy
+// dirs::config_dir()/gws; a plaintext sign-in file the variable names (auth.rs).
+it('names every place gws keeps its sign-in', () => {
+  const home = join(tmpdir(), 'fixture-home');
+  const xdg = join(tmpdir(), 'fixture-xdg');
+  const configured = join(tmpdir(), 'fixture-gws');
+  const file = join(tmpdir(), 'fixture-sign-in.json');
+  expect(gwsCredentialPaths({}, home, 'darwin')).toEqual([
+    join(home, '.config', 'gws'),
+    join(home, 'Library', 'Application Support', 'gws'),
+  ]);
+  expect(gwsCredentialPaths({ XDG_CONFIG_HOME: xdg }, home, 'linux')).toEqual([
+    join(home, '.config', 'gws'),
+    join(xdg, 'gws'),
+  ]);
+  expect(
+    gwsCredentialPaths(
+      {
+        GOOGLE_WORKSPACE_CLI_CONFIG_DIR: configured,
+        GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: file,
+      },
+      home,
+      'linux'
+    )
+  ).toEqual([configured, file, join(home, '.config', 'gws')]);
+});

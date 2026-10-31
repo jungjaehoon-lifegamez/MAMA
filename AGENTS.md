@@ -178,6 +178,9 @@ channel) keeps the owner runtime's tools.
   config.yaml, runtime/, the managed Codex home and the replay key file, and since W1.3 (plan
   decision 5) the MAMA home's backups/, whose archives can carry all of them. Other tools' credential stores
   on the machine are not denied; the agent's native reads of them are recorded in tool_traces.
+- Owner decision 2026-10-31: gws's credential store (its config directory and a configured
+  credentials file) joined the denied set, for both backends, because MAMA's own connectors and
+  google.read run on that login. Other tools' stores stay as they were.
 - Standalone removes secret-shaped environment names before launching either backend; core accepts
   a complete consumer-supplied environment. Native children inherit it; daemon connectors keep theirs.
 - Claude CLI Read denies and Bash sandbox denyRead exclude auth.env, config.yaml, runtime/, backups/,

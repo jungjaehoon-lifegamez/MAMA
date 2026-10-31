@@ -497,8 +497,9 @@ try {
   const printed = /^install it: (.*); then log in: (.*)$/.exec(missing?.fix ?? '');
   const install =
     'PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/node/bin/npm install -g --prefix ~/.mama/npm @googleworkspace/cli';
-  // The login names the gws service of each Google source that is on (W2.4.5e).
-  const login = 'PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login -s gmail';
+  // The login names the scope of each Google source that is on (W2.4.5e; 2026-10-31).
+  const login =
+    'PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login --scopes https://www.googleapis.com/auth/gmail.readonly';
   expect(
     printed?.[1] === install && printed?.[2] === login,
     `doctor's fix for Gmail without gws: ${JSON.stringify(missing)}`
@@ -516,7 +517,10 @@ try {
     `the @googleworkspace/cli postinstall did not finish: no matching ${gwsVersion}`
   );
   for (const args of ['--version', 'auth --help']) {
-    const run = capture('sh', ['-c', login.replace(/ auth login -s gmail$/, ` ${args}`)], toolEnv);
+    const command = login.replace(/ auth login --scopes \S+$/, ` ${args}`);
+    // An unmatched suffix would run the login itself, which waits for a browser.
+    expect(command !== login, `the printed login did not end as expected: ${login}`);
+    const run = capture('sh', ['-c', command], toolEnv);
     expect(run.status === 0, `gws ${args}, as the printed login runs it, exited ${run.status}`);
   }
   expect(gmailCheck() === undefined, `doctor after the install: ${JSON.stringify(gmailCheck())}`);

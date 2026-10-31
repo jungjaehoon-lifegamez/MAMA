@@ -13,6 +13,7 @@ import {
   execGwsAsync,
   execGwsTextAsync,
   gwsReadRefusal,
+  gwsLogin,
   gwsTool,
   gwsUnavailable,
 } from '../framework/gws-utils.js';
@@ -131,8 +132,7 @@ export class CalendarConnector implements IConnector {
       {
         ...cliAuth(gwsTool),
         scope: 'calendar',
-        description:
-          'Google Calendar read access through Google Workspace CLI. Run: gws auth login -s calendar',
+        description: `Google Workspace CLI sign-in with ${gwsTool.loginScope('calendar')}; ${gwsLogin}`,
       },
     ];
   }

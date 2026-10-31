@@ -16,6 +16,7 @@ import {
   execGwsAsync,
   execGwsTextAsync,
   gwsReadRefusal,
+  gwsLogin,
   gwsTool,
   gwsUnavailable,
 } from '../framework/gws-utils.js';
@@ -77,7 +78,7 @@ export class GmailConnector implements IConnector {
       {
         ...cliAuth(gwsTool),
         scope: 'gmail',
-        description: 'Google Workspace CLI authentication. Run: gws auth login -s gmail',
+        description: `Google Workspace CLI sign-in with ${gwsTool.loginScope('gmail')}; ${gwsLogin}`,
       },
     ];
   }
