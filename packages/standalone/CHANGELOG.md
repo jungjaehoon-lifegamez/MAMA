@@ -130,15 +130,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   print how to install it and how to sign in. On an install the install command made, both
   commands use MAMA's own Node and put `gws` where the service finds it:
   `PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/node/bin/npm install -g --prefix ~/.mama/npm @googleworkspace/cli`,
-  then `PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login`. Other installs get
-  `npm install -g @googleworkspace/cli` or `brew install googleworkspace-cli`, then
-  `gws auth login`. When only the terminal finds `gws`, they say that `mama service install` adds
-  its folder. MAMA's service does not start while such a source is on and `gws` is missing, and
-  they say so: `mama init`, continuing a setup that stopped, names `gws` again and says to
-  install it now and run the install command again, and `--section` says to run
-  `mama service install` and start the service once it is installed. Doctor's fix for a source that does not start, or
-  whose sign-in is refused, names the same login command, and the sources' own errors point to
-  `mama doctor` for those commands instead of a bare `gws auth login` (#543).
+  then `PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login -s <services>`. Other
+  installs get `npm install -g @googleworkspace/cli` or `brew install googleworkspace-cli`, then
+  `gws auth login -s <services>`. The login names the gws service of every Google source that is
+  on (`-s calendar,gmail`), since one login serves them all. Before it, `mama init` and
+  `--section` name the OAuth client gws signs in through: a Desktop app client from Google Cloud
+  Console, saved as `~/.config/gws/client_secret.json`. When only the terminal finds `gws`, they
+  say that `mama service install` adds its folder. MAMA's service does not start while such a
+  source is on and `gws` is missing, and they say so: `mama init`, continuing a setup that
+  stopped, names `gws` again and says to install it now and run the install command again, and
+  `--section` no longer enables the source (below). Doctor's fix for a source that does not
+  start, or whose sign-in is refused, names the same login command, and the sources' own errors
+  point to `mama doctor` for those commands instead of a bare `gws auth login` (#543).
+- `mama init --section connectors --non-interactive` enables sources without a terminal, for the
+  person's agent, while MAMA is stopped:
+  - It reads `MAMA_INIT_CONNECTORS`, a JSON object of `connectors.json` blocks keyed by source
+    name, checked as boot checks `connectors.json`. A source name or setting MAMA does not read is
+    refused.
+  - The tokens the sources read, as each source names them (Trello's key too), are entered on the
+    setup page, one field each, and go only to `auth.env`.
+  - The other parts of `mama init --section` still need a terminal.
+- A source is enabled only once its tool is installed where MAMA's service finds it and signed
+  in, from either form of `mama init --section connectors`. With a Google source and `gws`
+  missing from start.sh's PATH, boot stopped; signed out, every poll failed. The section saves
+  nothing and prints how to install `gws`, or the OAuth client file and the login
+  (`gws auth login -s <services>`, naming every Google source that is on, since one login serves
+  them all), then "Then run this again." The sign-in is each source's own check, run in the
+  environment start.sh gives the daemon: one read with that source's own scope (Gmail its
+  profile, Drive `about`, Sheets its first spreadsheet, Calendar the calendar), so a sign-in made
+  for other services is refused too, with gws's reason.
+- Each refusal of `mama init --section`, an expired setup page included, ends by saying MAMA is
+  still stopped and how to start it (`mama service install` first while no service is
+  installed). On an install the install command made, the section's lines
+  name `~/.mama/bin/mama`.
+- An enabled source already in `connectors.json` that boot cannot build refuses the section, which
+  names it and says how to turn it off: its block with `"enabled": false` in
+  `MAMA_INIT_CONNECTORS`.
 - `mama init --non-interactive` opens a setup page on this machine for the bot token and the
   pairing code, once every other answer has been checked:
   - The page listens on 127.0.0.1 at a path of 32 random bytes, and answers only a request whose
@@ -180,6 +207,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the installer is skipped: its `--version` must exit 0 and print a version, so a shim with no
   backend behind it gets the vendor's installer. A set-up install needs no flags: it runs
   `mama init --non-interactive`, and without `--backend` it keeps the backend it has.
+- Slack, Chatwork and Trello sources read only `MAMA_SLACK_TOKEN`, `MAMA_CHATWORK_TOKEN` and
+  `MAMA_TRELLO_TOKEN`, so the setup page never takes another secret, such as the owner bot's
+  token or `MAMA_AUTH_TOKEN`. A block without `auth.tokenName` reads that name. A Slack or
+  Chatwork block without one read `SLACK_BOT_TOKEN` or `CHATWORK_API_TOKEN` before; it now needs
+  `MAMA_SLACK_TOKEN` or `MAMA_CHATWORK_TOKEN` in `auth.env`, and doctor names the one missing. A
+  block that names any other variable stops boot until it is corrected, and doctor names it.
+- `mama doctor`'s fix for a source token that is missing or refused names
+  `mama init --section connectors --non-interactive` with that source's block, whose setup page
+  takes the token, instead of `mama secret set`, which needs a terminal. A messenger's token
+  still names `mama secret set`.
 
 ### Removed
 
@@ -197,6 +234,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A Notion, Discord or Telegram source whose block names another token than its own is refused
+  when the source is built, in the section, doctor and boot; before, only its start in boot
+  refused it.
+- Gmail, Drive and Sheets' sign-in check is a read with the source's own scope. It ran
+  `gws auth status`, which exits 0 signed in or not and does not say which services a sign-in
+  grants, so doctor reported a signed-out source, or one without its scope, as signed in.
+- Calendar starts as the other Google sources do, when `gws` runs. Its calendar read is its sign-in
+  check, so a sign-in that ended (a testing-mode client's, after 7 days) fails its polls and
+  doctor's check instead of stopping MAMA at boot.
 - A backend failure such as a signed-out Claude CLI or an API error no longer arrives as MAMA's
   answer. The turn fails, its message is told it was interrupted, and `daemon.log` names the
   error. Before, the CLI's error text was sent as the reply and the run was recorded as committed

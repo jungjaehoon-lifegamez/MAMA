@@ -12,7 +12,13 @@ import type {
   NormalizedItem,
 } from '../framework/types.js';
 import { cliAuth } from '../framework/types.js';
-import { execGwsAsync, execGwsTextAsync, gwsTool, gwsUnavailable } from '../framework/gws-utils.js';
+import {
+  execGwsAsync,
+  execGwsTextAsync,
+  gwsReadRefusal,
+  gwsTool,
+  gwsUnavailable,
+} from '../framework/gws-utils.js';
 
 interface GmailMessage {
   id: string;
@@ -70,18 +76,21 @@ export class GmailConnector implements IConnector {
     return [
       {
         ...cliAuth(gwsTool),
-        description: 'Google Workspace CLI authentication. Run: gws auth login',
+        scope: 'gmail',
+        description: 'Google Workspace CLI authentication. Run: gws auth login -s gmail',
       },
     ];
   }
 
   async authenticate(): Promise<boolean> {
-    try {
-      await execGwsTextAsync(['auth', 'status']);
-      return true;
-    } catch {
-      return false;
-    }
+    this.lastError = await gwsReadRefusal('Gmail', 'the mailbox', [
+      'gmail',
+      'users',
+      'getProfile',
+      '--params',
+      JSON.stringify({ userId: 'me' }),
+    ]);
+    return this.lastError === undefined;
   }
 
   private getHeader(msg: GmailMessage, name: string): string {

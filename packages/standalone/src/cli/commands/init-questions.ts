@@ -17,8 +17,14 @@ import { CliInputError, nonblankLine, type PromptAdapter } from '../prompt.js';
 import { shellQuote, type SecretName } from '../secrets.js';
 import { probeBackend, type ProbeRun } from '../runtime/backend-probe.js';
 import { telegramCheck } from '../runtime/diagnostics.js';
-import { serviceSight, sourceToolLines, sourceTools } from '../runtime/source-tools.js';
-import { findExecutable, findIn } from '../launch-files.js';
+import {
+  serviceSight,
+  sourceToolLines,
+  sourceTools,
+  type ServiceSight,
+  type SourceToolReport,
+} from '../runtime/source-tools.js';
+import { findExecutable, findIn, mamaCommand } from '../launch-files.js';
 import { pathsFor } from './daemon.js';
 import { serviceLaunch, type ServiceOptions } from './service.js';
 
@@ -220,15 +226,85 @@ export async function collectConnectors(
   return config;
 }
 
+/** A source as boot builds it from connectors.json, with what it needs. */
+export interface BuiltSource {
+  readonly name: string;
+  readonly source: IConnector;
+  readonly needs: AuthRequirement[];
+}
+
 /**
- * For the sources just set up, each tool they run that the service cannot find, with how to
- * install it, and each one's login (install.md, PR 3). connectors.json is read as boot and doctor
- * read it (planConnectors), and each source names its tool in its own requirements, since
- * connectors.json's `auth` is not what the source runs. `only` limits it to the sources just
- * set up. It reports; the setup is already saved, and what boot refuses doctor names in full.
+ * Each enabled source in `plan`, built as boot builds it, with its own requirements: a source
+ * names its tool there, since connectors.json's `auth` is not what the source runs. A source that
+ * cannot be built comes back with its error; boot would stop at the connectors stage.
+ */
+export async function buildSources(
+  plan: ReturnType<typeof planConnectors>,
+  config: W1Config,
+  configPath: string
+): Promise<Array<BuiltSource | { readonly name: string; readonly error: Error }>> {
+  const paths = pathsFor(configPath, config);
+  const timeZone = createTimeZoneSetting(config.timezone);
+  const built: Array<BuiltSource | { name: string; error: Error }> = [];
+  for (const name of plan.enabledConnectorNames) {
+    try {
+      const source = await loadConnector(
+        name,
+        plan.config.config[name],
+        connectorLoadPaths(name, {
+          statePath: paths.connectorsRoot,
+          kagemushaDbPath: paths.kagemushaDbPath,
+          timeZone,
+        })
+      );
+      built.push({ name, source, needs: source.getAuthRequirements() });
+    } catch (error) {
+      built.push({ name, error: error as Error });
+    }
+  }
+  return built;
+}
+
+/**
+ * For `sources`, each tool they run as the service would find it (install.md, PR 3), with how to
+ * install it and its login, and the service's PATH it was looked for on; `enabled` is every
+ * source that will run. start.sh is read only when a source runs a tool: null when none does.
+ */
+export function sourceToolReports(
+  sources: readonly BuiltSource[],
+  enabled: readonly BuiltSource[],
+  install: { root: string; home: string; platform: NodeJS.Platform },
+  config: W1Config,
+  options: Pick<ServiceOptions, 'findExecutable' | 'nodePath' | 'cliPath' | 'toolDirectoryExists'>
+): { service: ServiceSight; reports: SourceToolReport[] } | null {
+  if (!sources.some(({ needs }) => needs.some((need) => need.type === 'cli'))) return null;
+  const { root, home, platform } = install;
+  const service = serviceSight(
+    root,
+    home,
+    platform,
+    () => serviceLaunch(config.agent.backend, options),
+    options.toolDirectoryExists
+  );
+  return {
+    service,
+    reports: sourceTools(
+      sources,
+      service,
+      { root, home },
+      { inDirs: findIn, shell: options.findExecutable ?? findExecutable },
+      enabled
+    ),
+  };
+}
+
+/**
+ * For the enabled sources in connectors.json, each tool they run that the service cannot find,
+ * with how to install it, and each one's login: what `mama init` says when it continues a setup
+ * that stopped (often at the boot wait, when a source's tool is missing). connectors.json is read
+ * as boot and doctor read it (planConnectors). It reports; what boot refuses doctor names in full.
  */
 export async function writeSourceTools(
-  only: readonly string[] | undefined,
   install: { root: string; home: string; platform: NodeJS.Platform; configPath: string },
   config: W1Config,
   options: Pick<ServiceOptions, 'findExecutable' | 'nodePath' | 'cliPath' | 'toolDirectoryExists'>,
@@ -236,12 +312,11 @@ export async function writeSourceTools(
   /** What to do once a missing tool is installed. */
   next: string
 ): Promise<void> {
-  const { root, home, platform, configPath } = install;
-  const paths = pathsFor(configPath, config);
+  const { configPath } = install;
   let plan: ReturnType<typeof planConnectors>;
   try {
     plan = planConnectors({
-      configPath: paths.connectorsConfigPath,
+      configPath: pathsFor(configPath, config).connectorsConfigPath,
       onIgnored: () => {},
       ...(config.wiki?.enabled
         ? { wikiRoot: resolve(config.wiki.vaultPath!, config.wiki.wikiDir!) }
@@ -253,45 +328,17 @@ export async function writeSourceTools(
     );
     return;
   }
-  const timeZone = createTimeZoneSetting(config.timezone);
-  const sources: { name: string; needs: AuthRequirement[] }[] = [];
-  for (const name of plan.enabledConnectorNames) {
-    if (only !== undefined && !only.includes(name)) continue;
-    let source: IConnector;
-    try {
-      source = await loadConnector(
-        name,
-        plan.config.config[name],
-        connectorLoadPaths(name, {
-          statePath: paths.connectorsRoot,
-          kagemushaDbPath: paths.kagemushaDbPath,
-          timeZone,
-        })
-      );
-    } catch (error) {
+  const sources: BuiltSource[] = [];
+  for (const source of await buildSources(plan, config, configPath)) {
+    if ('error' in source)
       write(
-        `${name} cannot be built from connectors.json (${(error as Error).message}); mama doctor names it.`
+        `${source.name} cannot be built from connectors.json (${source.error.message}); mama doctor names it.`
       );
-      continue;
-    }
-    sources.push({ name, needs: source.getAuthRequirements() });
+    else sources.push(source);
   }
-  // start.sh is read only when a source runs a tool.
-  if (!sources.some(({ needs }) => needs.some((need) => need.type === 'cli'))) return;
-  const service = serviceSight(
-    root,
-    home,
-    platform,
-    () => serviceLaunch(config.agent.backend, options),
-    options.toolDirectoryExists
-  );
-  const reports = sourceTools(
-    sources,
-    service,
-    { root, home },
-    { inDirs: findIn, shell: options.findExecutable ?? findExecutable }
-  );
-  for (const line of sourceToolLines(reports, next)) write(line);
+  const tools = sourceToolReports(sources, sources, install, config, options);
+  for (const line of sourceToolLines(tools?.reports ?? [], next, mamaCommand(install.root)))
+    write(line);
 }
 
 export type TelegramCall = Parameters<typeof telegramCheck>[2];

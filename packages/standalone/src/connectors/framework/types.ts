@@ -29,6 +29,11 @@ export interface AuthConfig {
 
 export interface AuthRequirement extends AuthConfig {
   description: string;
+  /**
+   * For a `type: 'cli'` requirement, what the tool's login must grant this source (gws: the
+   * source's service, which `gws auth login -s` takes).
+   */
+  scope?: string;
 }
 
 /** A command a source runs (its `type: 'cli'` requirement), how a person installs it, its login. */
@@ -37,6 +42,10 @@ export interface SourceTool {
   readonly command: string;
   /** The arguments after the command that sign it in. */
   readonly loginArgs: string;
+  /** The login's flag that takes the scopes the sources name, comma-separated. */
+  readonly scopeFlag: string;
+  /** What the login needs first, said before it. */
+  readonly beforeLogin: string;
   /** The npm package that installs the command. */
   readonly npmPackage: string;
   /** The Homebrew formula that installs the command. */

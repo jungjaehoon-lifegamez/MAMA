@@ -257,6 +257,18 @@ export function loadConnectorConfig(
     return failure('read_error', path, `Unable to read connector configuration at ${path}`);
   }
 
+  return parseConnectorConfig(source, path, onIgnored);
+}
+
+/**
+ * Connector configuration from its JSON text, checked as `loadConnectorConfig` checks the file;
+ * `path` names where the text came from.
+ */
+export function parseConnectorConfig(
+  source: string,
+  path: string,
+  onIgnored: (names: readonly string[]) => void = warnIgnored
+): ConnectorConfigLoadResult {
   let parsed: unknown;
   try {
     parsed = JSON.parse(source) as unknown;

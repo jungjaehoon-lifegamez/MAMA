@@ -1,8 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { AuthConfig, SourceTool } from '../../connectors/framework/types.js';
+import type { AuthRequirement, SourceTool } from '../../connectors/framework/types.js';
 import { gwsTool } from '../../connectors/framework/gws-utils.js';
-import { readStartScript, shellWords, startPathEntries, startScriptPath } from '../launch-files.js';
+import {
+  readStartScript,
+  shellWords,
+  startExports,
+  startPathEntries,
+  startScriptPath,
+} from '../launch-files.js';
 import { CliInputError } from '../prompt.js';
 import { shellQuote } from '../secrets.js';
 import { managedNodePath, nodeMovePlaces } from './node-move-journal.js';
@@ -10,8 +16,9 @@ import { managedNodePath, nodeMovePlaces } from './node-move-journal.js';
 /**
  * The tools sources run (docs/development/work/install.md, PR 3, I4): a source names its tool
  * with a `type: 'cli'` requirement, and this says, for the sources being enabled, which of those
- * tools the service cannot find, how to install each and how to log in. It reports; it never
- * refuses a setup.
+ * tools the service cannot find, how to install each and how to log in. It reports; the caller
+ * decides: `init --section connectors` refuses a source whose tool the service cannot find
+ * (W2.4.5e), since that source's start would stop boot.
  */
 
 /** Every tool a source runs, by its command. */
@@ -23,6 +30,8 @@ export interface ServiceSight {
   readonly path: string[];
   /** The Node start.sh runs; `null` when its exec line names none. */
   readonly nodePath: string | null;
+  /** What start.sh exports after loading auth.env; none before start.sh is written. */
+  readonly exports: Record<string, string>;
 }
 
 /**
@@ -45,6 +54,7 @@ export function serviceSight(
       return {
         path: startScriptPath(reading, home, platform),
         nodePath: (reading.exec === null ? undefined : shellWords(reading.exec)[1]) ?? null,
+        exports: startExports(reading),
       };
     } catch (error) {
       throw new CliInputError(
@@ -60,6 +70,7 @@ export function serviceSight(
       ...(toolDirectoryExists ? { exists: toolDirectoryExists } : {}),
     }),
     nodePath: launch.nodePath,
+    exports: {},
   };
 }
 
@@ -95,8 +106,24 @@ function pathFirst(folder: string, home: string): string {
   return rest === null ? `PATH=${shellQuote(folder)}:"$PATH"` : `PATH="$HOME/${rest}:$PATH"`;
 }
 
+type Source = { readonly name: string; readonly needs: readonly AuthRequirement[] };
+
+/** The tool a `type: 'cli'` requirement names; `undefined` for any other requirement. */
+function toolFor(source: string, need: AuthRequirement): SourceTool | undefined {
+  if (need.type !== 'cli' || need.cli === undefined) return undefined;
+  const tool = SOURCE_TOOLS.find(({ command }) => command === need.cli);
+  if (tool === undefined)
+    throw new Error(`${source} runs ${need.cli}, and nothing says how to install it`);
+  return tool;
+}
+
+/**
+ * `enabled` is every source that will run, `sources` among them: one login serves every source
+ * that runs the tool, so it names the scopes all of them need, and logging in for a new source
+ * does not narrow what an earlier one was granted.
+ */
 export function sourceTools(
-  sources: ReadonlyArray<{ readonly name: string; readonly needs: readonly AuthConfig[] }>,
+  sources: readonly Source[],
   service: ServiceSight,
   install: { readonly root: string; readonly home: string },
   find: {
@@ -104,17 +131,24 @@ export function sourceTools(
     inDirs(name: string, dirs: readonly string[]): string | undefined;
     /** Where this shell finds `name`. */
     shell(name: string): string | undefined;
-  }
+  },
+  enabled: readonly Source[] = sources
 ): SourceToolReport[] {
   const used = new Map<SourceTool, string[]>();
   for (const { name, needs } of sources) {
     for (const need of needs) {
-      if (need.type !== 'cli' || need.cli === undefined) continue;
-      const tool = SOURCE_TOOLS.find(({ command }) => command === need.cli);
-      if (tool === undefined)
-        throw new Error(`${name} runs ${need.cli}, and nothing says how to install it`);
+      const tool = toolFor(name, need);
+      if (tool === undefined) continue;
       const names = used.get(tool) ?? [];
       if (!names.includes(name)) used.set(tool, [...names, name]);
+    }
+  }
+  const scopes = new Map<SourceTool, Set<string>>();
+  for (const { name, needs } of enabled) {
+    for (const need of needs) {
+      const tool = toolFor(name, need);
+      if (tool === undefined || need.scope === undefined) continue;
+      scopes.set(tool, (scopes.get(tool) ?? new Set()).add(need.scope));
     }
   }
   const { root, home } = install;
@@ -148,34 +182,42 @@ export function sourceTools(
                 `${pathFirst(nodeBin, home)} ${shellPath(join(nodeBin, 'npm'), home)} install -g --prefix ${shellPath(prefix, home)} ${tool.npmPackage}`,
               ]
             : [`npm install -g ${tool.npmPackage}`, `brew install ${tool.brewFormula}`],
-      login: `${run} ${tool.loginArgs}`,
+      login: `${run} ${tool.loginArgs}${scopes.has(tool) ? ` ${tool.scopeFlag} ${[...scopes.get(tool)!].sort().join(',')}` : ''}`,
     };
   });
 }
 
 /**
- * What `mama init` and `init --section connectors` print for each report. The service does not
- * start while a source's tool is missing from its PATH (the source's start fails boot), so a
- * missing tool's lines end with `next`: what to do once it is installed.
+ * What `mama init` and `init --section connectors` print for each report: the tool's login, after
+ * what it needs first. A tool the service cannot find also gets how to install it, and `next`
+ * last: the service does not start while a source's tool is missing from its PATH (the source's
+ * start fails boot).
  */
-export function sourceToolLines(reports: readonly SourceToolReport[], next: string): string[] {
+export function sourceToolLines(
+  reports: readonly SourceToolReport[],
+  next: string,
+  /** The command that runs this install's `mama`. */
+  mama: string
+): string[] {
   return reports.flatMap((report) => {
     const { tool, sources } = report;
     const who = sources.join(', ');
     const s = sources.length > 1 ? '' : 's';
-    const scopes = `${tool.command} with the scopes ${who} need${s}:`;
     const stops = `MAMA's service does not start with ${who} until ${tool.command} is on its PATH.`;
-    if (report.servicePath !== null) return [`Log in to ${scopes} ${report.login}`];
+    if (report.servicePath !== null)
+      return [tool.beforeLogin, `Then log in to ${tool.command} for ${who}: ${report.login}`];
     if (report.shellPath !== null)
       return [
-        `${who} run${s} ${tool.command}; this shell finds ${report.shellPath}, but the service's PATH does not name ${dirname(report.shellPath)}. mama service install adds it; mama service restart then applies it.`,
-        stops,
-        `Log in to ${scopes} ${report.login}`,
+        `${who} run${s} ${tool.command}; this shell finds ${report.shellPath}, but the service's PATH does not name ${dirname(report.shellPath)}. ${mama} service install adds it.`,
+        tool.beforeLogin,
+        `Then log in to ${tool.command} for ${who}: ${report.login}`,
+        `${stops} ${next}`,
       ];
     return [
       `${who} run${s} ${tool.command}, which the service's PATH does not have. Install it${report.install.length > 1 ? ' with one of' : ''}:`,
       ...report.install.map((command) => `  ${command}`),
-      `Then log in to ${scopes}`,
+      tool.beforeLogin,
+      `Then log in to ${tool.command} for ${who}:`,
       `  ${report.login}`,
       `${stops} ${next}`,
     ];

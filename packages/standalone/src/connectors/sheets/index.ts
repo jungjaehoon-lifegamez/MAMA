@@ -12,7 +12,13 @@ import type {
   NormalizedItem,
 } from '../framework/types.js';
 import { cliAuth } from '../framework/types.js';
-import { execGwsAsync, execGwsTextAsync, gwsTool, gwsUnavailable } from '../framework/gws-utils.js';
+import {
+  execGwsAsync,
+  execGwsTextAsync,
+  gwsReadRefusal,
+  gwsTool,
+  gwsUnavailable,
+} from '../framework/gws-utils.js';
 import { readConnectorState, writeConnectorState } from '../framework/connector-state.js';
 
 interface SheetValues {
@@ -86,18 +92,26 @@ export class SheetsConnector implements IConnector {
     return [
       {
         ...cliAuth(gwsTool),
-        description: 'Google Workspace CLI authentication. Run: gws auth login',
+        scope: 'sheets',
+        description: 'Google Workspace CLI authentication. Run: gws auth login -s sheets',
       },
     ];
   }
 
   async authenticate(): Promise<boolean> {
-    try {
-      await execGwsTextAsync(['auth', 'status']);
-      return true;
-    } catch {
-      return false;
-    }
+    // The first spreadsheet this source reads; with none configured it reads nothing.
+    const spreadsheetId = Object.values(this.config.channels).find(
+      (channel) => channel.role !== 'ignore' && channel.spreadsheetId
+    )?.spreadsheetId;
+    if (spreadsheetId === undefined) return true;
+    this.lastError = await gwsReadRefusal('Sheets', `spreadsheet ${spreadsheetId}`, [
+      'sheets',
+      'spreadsheets',
+      'get',
+      '--params',
+      JSON.stringify({ spreadsheetId, fields: 'spreadsheetId' }),
+    ]);
+    return this.lastError === undefined;
   }
 
   async poll(_since: Date): Promise<NormalizedItem[]> {

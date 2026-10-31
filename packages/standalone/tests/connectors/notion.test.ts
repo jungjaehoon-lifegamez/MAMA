@@ -84,6 +84,13 @@ describe('NotionConnector', () => {
     });
   });
 
+  it('is not built with a token name it does not read', () => {
+    expect(
+      () =>
+        new NotionConnector(makeConfig({ auth: { type: 'token', tokenName: 'MAMA_SLACK_TOKEN' } }))
+    ).toThrow('Notion auth.tokenName must be MAMA_NOTION_TOKEN');
+  });
+
   describe('init', () => {
     it('initializes successfully with a token', async () => {
       const connector = new NotionConnector(makeConfig());

@@ -80,49 +80,67 @@ afterEach(() => {
 });
 
 describe('CalendarConnector (ported from the pre-stub connector)', () => {
-  it('loads through the production loader and verifies calendar access at init', async () => {
+  it('loads through the production loader, starts with gws and reads the calendar to check its sign-in', async () => {
     const connector = await loadConnector('calendar', config, { connectorStatePath: statePath() });
     await connector.init();
+    expect(gws.run.mock.calls).toEqual([[['--version']]]);
     expect(connector.name).toBe('calendar');
     expect(connector.type).toBe('api');
     expect(connector.getAuthRequirements()).toMatchObject([
-      { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' },
+      { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login', scope: 'calendar' },
     ]);
-    expect(gws.run).toHaveBeenCalledWith([
+    await expect(connector.authenticate()).resolves.toBe(true);
+    expect(gws.run).toHaveBeenLastCalledWith([
       'calendar',
       'events',
       'list',
       '--params',
       JSON.stringify({ calendarId: 'primary', maxResults: 1 }),
     ]);
-    await expect(connector.authenticate()).resolves.toBe(true);
     await expect(connector.dispose()).resolves.toBeUndefined();
   });
 
-  it.each([
-    [
-      Object.assign(new Error('spawn gws ENOENT'), { code: 'ENOENT' }),
-      /gws is not on the service's PATH; mama doctor names how to install it/,
-    ],
-    [new Error('401 invalid credentials'), /gws auth login/i],
-    [new Error('403 insufficient scope'), /gws auth login/i],
-  ])('fails at init with an actionable fix: %s', async (error, fix) => {
+  it('fails to start only without gws, naming how to install it', async () => {
     gws.run.mockImplementation(() => {
-      throw error;
+      throw Object.assign(new Error('spawn gws ENOENT'), { code: 'ENOENT' });
     });
     const connector = await loadConnector('calendar', config, { connectorStatePath: statePath() });
-    await expect(connector.init()).rejects.toThrow(fix);
+    await expect(connector.init()).rejects.toThrow(
+      /Calendar: gws is not on the service's PATH; mama doctor names how to install it/
+    );
+  });
+
+  // A sign-in that ended (a testing-mode client's, after 7 days) must not stop MAMA from starting:
+  // the read fails the sign-in check, which doctor and the health report name.
+  it.each([
+    [
+      '401 invalid credentials',
+      () => {
+        throw new Error('401 invalid credentials');
+      },
+    ],
+    [
+      '403 insufficient scope',
+      () => {
+        throw new Error('403 insufficient scope');
+      },
+    ],
+    [
+      'an error printed with exit 0',
+      () => JSON.stringify({ error: { code: 401, message: 'Login required' } }),
+    ],
+  ])('starts, and fails its sign-in check with an actionable fix: %s', async (_case, read) => {
+    gws.run.mockImplementation((args: string[]) => (args[0] === '--version' ? '0.22.5' : read()));
+    const connector = await loadConnector('calendar', config, { connectorStatePath: statePath() });
+    await expect(connector.init()).resolves.toBeUndefined();
+    await expect(connector.authenticate()).resolves.toBe(false);
     await expect(connector.healthCheck()).resolves.toMatchObject({
       healthy: false,
       lastPollCount: 0,
+      error: expect.stringMatching(
+        /^Calendar: gws cannot read the calendar with its sign-in \(.*\)\. Sign in with its access \(mama doctor names the gws auth login command/
+      ),
     });
-    await expect(connector.authenticate()).resolves.toBe(false);
-  });
-
-  it('rejects JSON error output even when gws exits successfully', async () => {
-    gws.run.mockReturnValue(JSON.stringify({ error: { code: 401, message: 'Login required' } }));
-    const connector = await loadConnector('calendar', config, { connectorStatePath: statePath() });
-    await expect(connector.init()).rejects.toThrow(/gws auth login/);
   });
 
   it('keeps the measured 90-day bound, page size, expansion and cancellation parameters', async () => {

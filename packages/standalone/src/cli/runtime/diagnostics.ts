@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { resolveApiPort } from '../../api/viewer-server.js';
 import { loadConnector } from '../../connectors/index.js';
-import type { IConnector } from '../../connectors/framework/types.js';
+import type { AuthRequirement, IConnector } from '../../connectors/framework/types.js';
 import { loadConfig, type W1Config } from '../../runtime/config.js';
 import { backendEnvironment } from '../../runtime/backend-security.js';
 import { connectorLoadPaths, planConnectors } from '../../runtime/connectors.js';
@@ -16,6 +16,7 @@ import {
   shellWords,
   findExecutable,
   findIn,
+  mamaCommand,
   startExports,
   startScriptPath,
   versionedNodePath,
@@ -23,7 +24,6 @@ import {
   CRASH_LOG_NAME,
 } from '../launch-files.js';
 import { DAEMON_LOG_LIMITS, SECURITY_LOG_LIMITS } from '../../runtime/rotating-log.js';
-import { isIcalSecret, SECRET_NAMES } from '../secrets.js';
 import {
   askDaemon,
   launchdService,
@@ -163,10 +163,17 @@ export function portAnswers(port: number, host: string): Promise<boolean> {
   });
 }
 
-function secretFix(name: string): string {
-  return (SECRET_NAMES as readonly string[]).includes(name) || isIcalSecret(name)
-    ? `mama secret set ${name}`
-    : `add ${name} to auth.env`;
+/**
+ * A source's tokens are entered on the setup page by the sources section, run again for that
+ * source, which needs no terminal (install.md, W2.4.5e). Every token source is built only with
+ * the token name it reads, which auth.env holds.
+ */
+function sourceSecretFixes(source: string, names: readonly string[], mama: string): string[] {
+  return names.length === 0
+    ? []
+    : [
+        `with MAMA stopped, run ${mama} init --section connectors --non-interactive with ${source}'s block from connectors.json in MAMA_INIT_CONNECTORS; its setup page takes ${names.join(' and ')}`,
+      ];
 }
 
 /**
@@ -316,14 +323,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
       fix: `correct the quoting in ${join(root, 'auth.env')}`,
     });
   }
-  const serviceEnv: NodeJS.ProcessEnv = {
-    HOME: home,
-    USER: process.env.USER,
-    LOGNAME: process.env.LOGNAME,
-    ...auth,
-    ...exports,
-    PATH: servicePath.join(':'),
-  };
+  const serviceEnv = serviceEnvironment(home, auth, exports, servicePath);
   const secret = (name: string): boolean => Boolean(serviceEnv[name]?.trim());
 
   if (config) {
@@ -377,7 +377,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
           name: messenger,
           status: 'fail',
           detail: `${missing.join(' and ')} not set; boot stops at the messengers stage`,
-          fix: missing.map(secretFix).join('; '),
+          fix: missing.map((name) => `mama secret set ${name}`).join('; '),
         });
       } else if (messenger === 'telegram' && !options.offline) {
         checks.push(
@@ -394,7 +394,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
 
     checks.push(
       ...(await sourceChecks(config, configPath, locate, secret, {
-        service: { path: servicePath, nodePath: serviceNode },
+        service: { path: servicePath, nodePath: serviceNode, exports },
         findShell: options.findExecutable ?? findExecutable,
         home,
         env: serviceEnv,
@@ -756,6 +756,13 @@ export async function telegramCheck(
   };
 }
 
+/** The secrets a source's requirements name. */
+function secretNames(needs: readonly AuthRequirement[]): string[] {
+  return needs.flatMap((need) =>
+    need.type === 'token' && need.tokenName !== undefined ? [need.tokenName] : []
+  );
+}
+
 /** connectors.json as the connector runtime reads it, and what each enabled source needs. */
 async function sourceChecks(
   config: W1Config,
@@ -796,18 +803,21 @@ async function sourceChecks(
   }
   const checks: Check[] = [];
   const timeZone = createTimeZoneSetting(config.timezone);
+  const loaded: Array<{ name: string; connector: IConnector }> = [];
   for (const name of plan.enabledConnectorNames) {
-    let connector: IConnector;
     try {
-      connector = await start.load(
+      loaded.push({
         name,
-        plan.config.config[name],
-        connectorLoadPaths(name, {
-          statePath: paths.connectorsRoot,
-          kagemushaDbPath: paths.kagemushaDbPath,
-          timeZone,
-        })
-      );
+        connector: await start.load(
+          name,
+          plan.config.config[name],
+          connectorLoadPaths(name, {
+            statePath: paths.connectorsRoot,
+            kagemushaDbPath: paths.kagemushaDbPath,
+            timeZone,
+          })
+        ),
+      });
     } catch (error) {
       checks.push({
         name: `source ${name}`,
@@ -815,18 +825,23 @@ async function sourceChecks(
         detail: 'cannot be built from connectors.json; boot stops at the connectors stage',
         context: message(error),
       });
-      continue;
     }
-    const needs = connector.getAuthRequirements();
+  }
+  const enabled = loaded.map(({ name, connector }) => ({
+    name,
+    connector,
+    needs: connector.getAuthRequirements(),
+  }));
+  for (const { name, connector, needs } of enabled) {
     // A secret's name can carry an owner's channel key (iCal), so it stays out of the report.
-    const secrets = needs.flatMap((need) =>
-      need.type === 'token' && need.tokenName && !secret(need.tokenName) ? [need.tokenName] : []
-    );
+    const secrets = secretNames(needs).filter((tokenName) => !secret(tokenName));
     const tools = sourceTools(
       [{ name, needs }],
       start.service,
       { root: dirname(configPath), home: start.home },
-      { inDirs: locate, shell: start.findShell }
+      { inDirs: locate, shell: start.findShell },
+      // One login of a tool serves every source that runs it, so it names what all of them need.
+      enabled
     );
     const missing = tools.filter((tool) => tool.servicePath === null);
     // Paths stay out of `detail`, which --report shares.
@@ -846,7 +861,7 @@ async function sourceChecks(
         ].join('; '),
         ...(context.length > 0 ? { context: context.join('; ') } : {}),
         fix: [
-          ...secrets.map(secretFix),
+          ...sourceSecretFixes(name, secrets, mamaCommand(dirname(configPath))),
           ...missing.map(({ shellPath, install, login }) =>
             shellPath === null
               ? `install it: ${install.join(' or ')}; then log in: ${login}`
@@ -883,14 +898,10 @@ async function sourceChecks(
               status: 'fail',
               detail: 'starts, but its credentials or sign-in are refused, so its polls fail',
               fix:
-                needs
-                  .map((need) =>
-                    need.type === 'cli' && need.cli !== undefined
-                      ? tools.find(({ tool }) => tool.command === need.cli)!.login
-                      : (need.cliAuthCommand ?? (need.tokenName ? secretFix(need.tokenName) : ''))
-                  )
-                  .filter(Boolean)
-                  .join('; ') || undefined,
+                [
+                  ...tools.map(({ login }) => login),
+                  ...sourceSecretFixes(name, secretNames(needs), mamaCommand(dirname(configPath))),
+                ].join('; ') || undefined,
             };
           }
         })
@@ -923,8 +934,28 @@ function bounded<T>(ms: number, run: () => Promise<T>): Promise<T> {
   ]).finally(() => clearTimeout(timer));
 }
 
+/** The environment start.sh gives the daemon: auth.env, then its own exports, then its PATH. */
+export function serviceEnvironment(
+  home: string,
+  auth: Record<string, string>,
+  exports: Record<string, string>,
+  path: readonly string[]
+): NodeJS.ProcessEnv {
+  return {
+    HOME: home,
+    USER: process.env.USER,
+    LOGNAME: process.env.LOGNAME,
+    ...auth,
+    ...exports,
+    PATH: path.join(':'),
+  };
+}
+
 /** Run with process.env as the daemon's process has it, then put this shell's back. */
-async function withEnvironment<T>(env: NodeJS.ProcessEnv, run: () => Promise<T>): Promise<T> {
+export async function withEnvironment<T>(
+  env: NodeJS.ProcessEnv,
+  run: () => Promise<T>
+): Promise<T> {
   const saved = { ...process.env };
   const replace = (next: NodeJS.ProcessEnv): void => {
     for (const name of Object.keys(process.env)) delete process.env[name];

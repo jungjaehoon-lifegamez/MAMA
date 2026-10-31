@@ -88,7 +88,7 @@ names and unknown fields are logged as ignored. A missing file means no configur
 | `channels.<id>.dataRange`         | Optional Google Sheets data range when headers and rows use separate ranges.                            |
 | `channels.<id>.vaultPath`         | Obsidian vault path. Each configured channel maps one vault to a channel ID.                            |
 | `auth.type`                       | `token`, `cli`, or `none`.                                                                              |
-| `auth.tokenName`                  | Environment variable name, never its token value; required for Notion, Discord and Telegram source.     |
+| `auth.tokenName`                  | Environment variable name, never its token value; each token source requires its own `MAMA_*` name.     |
 | `auth.cli`, `auth.cliAuthCommand` | Optional CLI authentication metadata; Google connectors use `gws` and `gws auth login`.                 |
 
 `init` uses `MAMA_CHATWORK_TOKEN`, `MAMA_SLACK_TOKEN`, `MAMA_TRELLO_KEY`, `MAMA_TRELLO_TOKEN`,

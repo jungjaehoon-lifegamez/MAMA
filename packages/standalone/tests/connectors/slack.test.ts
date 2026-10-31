@@ -17,7 +17,7 @@ const slack = vi.hoisted(() => ({
 
 vi.mock('@slack/web-api', () => ({ WebClient: slack.WebClient }));
 
-const envName = 'SLACK_BOT_TOKEN';
+const envName = 'MAMA_SLACK_TOKEN';
 const config: ConnectorConfig = {
   enabled: true,
   pollIntervalMinutes: 5,
@@ -53,6 +53,19 @@ describe('SlackConnector', () => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  });
+
+  it('reads MAMA_SLACK_TOKEN only: a block without a name reads it, one naming another secret is not built', async () => {
+    const nameless = new SlackConnector({ ...config, auth: { type: 'token' } });
+    expect(nameless.getAuthRequirements()).toMatchObject([
+      { type: 'token', tokenName: 'MAMA_SLACK_TOKEN' },
+    ]);
+    await expect(nameless.init()).resolves.toBeUndefined();
+    // The setup page takes the token a block names, so it may not name the owner bot's token.
+    expect(
+      () =>
+        new SlackConnector({ ...config, auth: { type: 'token', tokenName: 'MAMA_TELEGRAM_TOKEN' } })
+    ).toThrow('Slack auth.tokenName must be MAMA_SLACK_TOKEN');
   });
 
   it('polls paginated history through the SDK and resolves authors', async () => {

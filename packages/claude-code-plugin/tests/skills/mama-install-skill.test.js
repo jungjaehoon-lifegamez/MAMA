@@ -49,17 +49,55 @@ describe('Story ONB-8: thin MAMA OS installation skill', () => {
     expect(content).not.toMatch(/\b(ask|type|paste)\b[^.]*\b(token|key|password|pairing code)\b/i);
   });
 
-  it('offers no source or Jev during the install, since neither is set up from the conversation yet', () => {
+  it('sets a source up after the install through the non-interactive section, with MAMA stopped', () => {
     const content = skill();
 
+    expect(content).toContain('do not offer them before MAMA answers');
     expect(content).toContain(
-      'Sources (Gmail, Calendar, Slack and the others) and Jev are not set up from the conversation yet'
+      'MAMA_INIT_CONNECTORS=\'{"gmail": {...}}\' ~/.mama/bin/mama init --section connectors --non-interactive'
     );
-    expect(content).toContain('Do not offer them during the install.');
-    // No command that cannot run from the agent's shell: --section needs a terminal.
-    expect(content).not.toContain('--section');
+    expect(content).toContain('~/.mama/bin/mama stop');
+    expect(content).toContain('~/.mama/bin/mama service start');
+    // Only the sources' section runs without a terminal; the others still need one (W2.4.6).
+    expect(content.match(/--section \S+/g)).toEqual(['--section connectors']);
     // Bare `mama` in the agent's shell may be another program; a named command is the wrapper's.
-    expect(content).not.toMatch(/(^|[^/])\bmama (init|service|doctor|status|update)\b/);
+    expect(content).not.toMatch(/(^|[^/])\bmama (init|service|doctor|status|update|stop)\b/);
+  });
+
+  it("orders a Google source's steps: the OAuth client, the tool, the login, then enabling", () => {
+    const content = skill();
+    const steps = [
+      'Move that file to `~/.config/gws/client_secret.json` with mode 0600',
+      'it saves nothing and prints the command that installs it; run that command',
+      'the enabling command saves nothing and prints the login (`gws auth login -s <services>`), naming every Google source that is on',
+      'once `gws` is installed and signed in, it saves the source',
+    ].map((step) => content.indexOf(step));
+    expect(steps.every((at) => at >= 0)).toBe(true);
+    expect([...steps].sort((a, b) => a - b)).toEqual(steps);
+    expect(content).toContain('OAuth client of type Desktop app');
+    expect(content).toContain(
+      'External in testing mode with themselves as a test user, or as Internal for a Google Workspace account'
+    );
+    expect(content).toContain('Google ends the login after 7 days');
+    expect(content).toContain('not a MAMA secret');
+    // The consent is the person's; the agent only runs the login and passes on its address.
+    expect(content).toContain('Never open or complete the Google consent yourself');
+  });
+
+  it('starts MAMA again after every run of the enabling command, which leaves it stopped', () => {
+    const content = skill();
+
+    expect(content).toContain('it leaves MAMA stopped however it ends');
+    expect(content).toContain(
+      'Start MAMA again with `~/.mama/bin/mama service start` as soon as each run ends, before you wait on the person for the next step'
+    );
+  });
+
+  it('keeps Jev out of the conversation until it has a form without a terminal', () => {
+    const content = skill();
+
+    expect(content).toContain('Jev is not set up from the conversation yet');
+    expect(content).toContain('Do not offer it.');
     // What Jev sends out stays explained, for when the person asks.
     expect(content).toContain('goes to the Jev service');
     expect(content).toContain('MAMA works the same without it');

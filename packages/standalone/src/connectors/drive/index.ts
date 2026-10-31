@@ -12,7 +12,13 @@ import type {
   NormalizedItem,
 } from '../framework/types.js';
 import { cliAuth } from '../framework/types.js';
-import { execGwsAsync, execGwsTextAsync, gwsTool, gwsUnavailable } from '../framework/gws-utils.js';
+import {
+  execGwsAsync,
+  execGwsTextAsync,
+  gwsReadRefusal,
+  gwsTool,
+  gwsUnavailable,
+} from '../framework/gws-utils.js';
 import { readConnectorState, writeConnectorState } from '../framework/connector-state.js';
 
 interface DriveFile {
@@ -121,18 +127,22 @@ export class DriveConnector implements IConnector {
     return [
       {
         ...cliAuth(gwsTool),
-        description: 'Google Workspace CLI authentication. Run: gws auth login',
+        scope: 'drive',
+        description: 'Google Workspace CLI authentication. Run: gws auth login -s drive',
       },
     ];
   }
 
   async authenticate(): Promise<boolean> {
-    try {
-      await execGwsTextAsync(['auth', 'status']);
-      return true;
-    } catch {
-      return false;
-    }
+    // Drive requires `fields` on about.get.
+    this.lastError = await gwsReadRefusal('Drive', 'Drive', [
+      'drive',
+      'about',
+      'get',
+      '--params',
+      JSON.stringify({ fields: 'user' }),
+    ]);
+    return this.lastError === undefined;
   }
 
   /**

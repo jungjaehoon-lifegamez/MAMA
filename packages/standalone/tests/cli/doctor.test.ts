@@ -570,7 +570,8 @@ describe('mama doctor', () => {
     expect(by['source chatwork']).toMatchObject({
       status: 'fail',
       context: 'MAMA_CHATWORK_TOKEN',
-      fix: 'mama secret set MAMA_CHATWORK_TOKEN',
+      // A source's token is entered on the setup page, without a terminal (W2.4.5e).
+      fix: "with MAMA stopped, run mama init --section connectors --non-interactive with chatwork's block from connectors.json in MAMA_INIT_CONNECTORS; its setup page takes MAMA_CHATWORK_TOKEN",
     });
     expect(by['source ical']).toMatchObject({
       status: 'fail',
@@ -745,7 +746,7 @@ describe('mama doctor', () => {
     expect(by['source chatwork']).toMatchObject({
       status: 'fail',
       detail: 'starts, but its credentials or sign-in are refused, so its polls fail',
-      fix: 'mama secret set MAMA_CHATWORK_TOKEN',
+      fix: "with MAMA stopped, run mama init --section connectors --non-interactive with chatwork's block from connectors.json in MAMA_INIT_CONNECTORS; its setup page takes MAMA_CHATWORK_TOKEN",
     });
     expect(by['source kagemusha']).toMatchObject({
       status: 'fail',
@@ -787,16 +788,32 @@ describe('mama doctor', () => {
     expect(await check(npm, undefined, undefined)).toMatchObject({
       status: 'fail',
       detail: "the gws command is not on the service's PATH",
-      fix: 'install it: npm install -g @googleworkspace/cli or brew install googleworkspace-cli; then log in: gws auth login',
+      fix: 'install it: npm install -g @googleworkspace/cli or brew install googleworkspace-cli; then log in: gws auth login -s gmail',
     });
     expect(await check(npm, undefined, '/shell/bin/gws')).toMatchObject({
       status: 'fail',
       detail: "the gws command is not on the service's PATH",
       context: 'this shell finds gws at /shell/bin/gws',
-      fix: "mama service install adds /shell/bin to start.sh's PATH, mama service restart applies it; then log in: gws auth login",
+      fix: "mama service install adds /shell/bin to start.sh's PATH, mama service restart applies it; then log in: gws auth login -s gmail",
     });
     // On the service's PATH (start.sh names /opt/homebrew/bin when it exists; here, the system's).
     expect(await check(npm, '/usr/bin/gws', undefined)).toBeUndefined();
+    // One gws login serves every Google source, so each one's login names what all of them need:
+    // logging in for one would otherwise narrow what the other was granted.
+    const both = install({
+      connectors: {
+        ...gmail,
+        calendar: {
+          enabled: true,
+          pollIntervalMinutes: 5,
+          channels: { calendar: { role: 'hub' } },
+          auth: { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' },
+        },
+      },
+    });
+    expect((await check(both, undefined, undefined)).fix).toBe(
+      'install it: npm install -g @googleworkspace/cli or brew install googleworkspace-cli; then log in: gws auth login -s calendar,gmail'
+    );
 
     // The install command's layout: start.sh runs ~/.mama/node and its PATH names ~/.mama/npm/bin;
     // gws is a Node script.
@@ -806,13 +823,13 @@ describe('mama doctor', () => {
       bins: ['.mama/npm/bin/mama'],
     });
     expect((await check(script, undefined, undefined)).fix).toBe(
-      'install it: PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/node/bin/npm install -g --prefix ~/.mama/npm @googleworkspace/cli; then log in: PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login'
+      'install it: PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/node/bin/npm install -g --prefix ~/.mama/npm @googleworkspace/cli; then log in: PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login -s gmail'
     );
     // The managed Node on another package (a checkout): ~/.mama/npm/bin is not on its PATH, so
     // installing there would not reach the service.
     const checkout = install({ connectors: gmail, node: '.mama/node/bin/node' });
     expect((await check(checkout, undefined, undefined)).fix).toBe(
-      'install it: npm install -g @googleworkspace/cli or brew install googleworkspace-cli; then log in: gws auth login'
+      'install it: npm install -g @googleworkspace/cli or brew install googleworkspace-cli; then log in: gws auth login -s gmail'
     );
     // Found there, it starts; a refused sign-in names the same login.
     const found = join(script.root, 'npm', 'bin', 'gws');
@@ -858,6 +875,56 @@ describe('mama doctor', () => {
     expect(refused['source gmail']).toMatchObject({
       detail: 'does not start; boot stops at the connectors stage',
       fix: 'PATH="$HOME/.mama/node/bin:$PATH" ~/.mama/npm/bin/gws auth login',
+    });
+  });
+
+  it('fails a Google source whose read its gws sign-in does not grant, naming one login for all', async () => {
+    const installed = install({
+      bins: ['gws-bin/gws'],
+      connectors: {
+        gmail: {
+          enabled: true,
+          pollIntervalMinutes: 5,
+          channels: { inbox: { role: 'hub' } },
+          auth: { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' },
+        },
+        drive: {
+          enabled: true,
+          pollIntervalMinutes: 5,
+          channels: { 'folder-1': { role: 'hub', folderId: 'folder-1' } },
+          auth: { type: 'cli', cli: 'gws', cliAuthCommand: 'gws auth login' },
+        },
+      },
+    });
+    // Signed in with `gws auth login -s gmail`: the sign-in refreshes, but a Drive read is refused,
+    // as Google refuses it (403, on stdout, exit 1).
+    const found = join(installed.home, 'gws-bin', 'gws');
+    mkdirSync(dirname(found), { recursive: true });
+    writeFileSync(
+      found,
+      [
+        '#!/bin/sh',
+        'case "$1" in',
+        '  --version) echo 0.22.5 ;;',
+        `  gmail) echo '{"emailAddress":"owner@example.com"}' ;;`,
+        `  *) echo '{"error":{"code":403,"message":"Request had insufficient authentication scopes."}}'; exit 1 ;;`,
+        'esac',
+        '',
+      ].join('\n'),
+      { mode: 0o755 }
+    );
+    const by = byName(
+      await runDiagnostics({
+        ...base(installed),
+        findIn: (name: string) => (name === 'gws' ? found : `/fixture/bin/${name}`),
+        findExecutable: () => undefined,
+      })
+    );
+    expect(by['source gmail']).toBeUndefined();
+    expect(by['source drive']).toMatchObject({
+      status: 'fail',
+      detail: 'starts, but its credentials or sign-in are refused, so its polls fail',
+      fix: '~/gws-bin/gws auth login -s drive,gmail',
     });
   });
 

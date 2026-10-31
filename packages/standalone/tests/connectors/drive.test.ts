@@ -163,22 +163,28 @@ describe('DriveConnector', () => {
   });
 
   describe('authenticate', () => {
-    it('returns true when gws auth status succeeds', async () => {
-      mockExecSync.mockReturnValue('' as unknown as ReturnType<typeof execSync>);
+    // `gws auth status` exits 0 signed in or not, and a sign-in granted for other services
+    // refreshes fine: only a read with this source's own scope says it can read.
+    it('reads with its own scope', async () => {
       const connector = makeConnector(makeConfig());
       await connector.init();
+      mockExecSync.mockReturnValue('{}' as unknown as ReturnType<typeof execSync>);
       expect(await connector.authenticate()).toBe(true);
+      expect(mockExecSync).toHaveBeenLastCalledWith(
+        'gws drive about get --params {"fields":"user"}'
+      );
     });
 
-    it('returns false when gws auth status throws', async () => {
-      mockExecSync
-        .mockReturnValueOnce('' as unknown as ReturnType<typeof execSync>)
-        .mockImplementationOnce(() => {
-          throw new Error('not authenticated');
-        });
+    it('is refused when the read is, and says why', async () => {
       const connector = makeConnector(makeConfig());
       await connector.init();
+      mockExecSync.mockImplementation(() => {
+        throw new Error('403 Request had insufficient authentication scopes.');
+      });
       expect(await connector.authenticate()).toBe(false);
+      expect((await connector.healthCheck()).error).toBe(
+        'Drive: gws cannot read Drive with its sign-in (403 Request had insufficient authentication scopes.). Sign in with its access (mama doctor names the gws auth login command for this install), then retry.'
+      );
     });
   });
 

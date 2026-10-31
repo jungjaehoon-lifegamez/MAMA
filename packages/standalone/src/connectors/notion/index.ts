@@ -61,14 +61,16 @@ export class NotionConnector implements IConnector {
   private lastError: string | undefined = undefined;
 
   constructor(config: ConnectorConfig) {
+    // A setting, checked when the source is built: `mama init --section connectors` and doctor
+    // build each source before it runs (init needs the token).
+    if (config.auth.tokenName !== 'MAMA_NOTION_TOKEN') {
+      throw new Error('Notion auth.tokenName must be MAMA_NOTION_TOKEN');
+    }
     this.config = config;
   }
 
   async init(): Promise<void> {
-    const tokenName = this.config.auth.tokenName;
-    if (tokenName !== 'MAMA_NOTION_TOKEN') {
-      throw new Error('Notion auth.tokenName must be MAMA_NOTION_TOKEN');
-    }
+    const tokenName = this.config.auth.tokenName!;
     const token = process.env[tokenName];
     if (!token) {
       throw new Error('Notion token not found. Run mama secret set MAMA_NOTION_TOKEN.');

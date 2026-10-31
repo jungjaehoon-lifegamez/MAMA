@@ -91,13 +91,13 @@ function portsFor(
 }
 
 async function chatwork(http: typeof fetch): Promise<ChatworkConnector> {
-  vi.stubEnv('CHATWORK_ATTACHMENT_TEST_TOKEN', 'fixture-token');
+  vi.stubEnv('MAMA_CHATWORK_TOKEN', 'fixture-token');
   const connector = new ChatworkConnector(
     {
       enabled: true,
       pollIntervalMinutes: 5,
       channels: { '501': { role: 'hub', name: 'room-test' } },
-      auth: { type: 'token', tokenName: 'CHATWORK_ATTACHMENT_TEST_TOKEN' },
+      auth: { type: 'token', tokenName: 'MAMA_CHATWORK_TOKEN' },
     },
     { fetch: http }
   );

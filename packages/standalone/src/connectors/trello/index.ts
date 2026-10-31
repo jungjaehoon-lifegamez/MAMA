@@ -69,10 +69,19 @@ export class TrelloConnector implements IConnector {
   private lastPollCount = 0;
   private lastError: string | undefined = undefined;
 
+  private readonly config: ConnectorConfig;
+
   constructor(
-    private readonly config: ConnectorConfig,
+    config: ConnectorConfig,
     private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init)
-  ) {}
+  ) {
+    // A setting, checked when the source is built (see SlackConnector); the key is always
+    // MAMA_TRELLO_KEY.
+    if ((config.auth.tokenName ?? 'MAMA_TRELLO_TOKEN') !== 'MAMA_TRELLO_TOKEN') {
+      throw new Error('Trello auth.tokenName must be MAMA_TRELLO_TOKEN');
+    }
+    this.config = config;
+  }
 
   /** The configured boards; an ignored channel or one without a board is left out. */
   boards(): TrelloBoardChannel[] {
@@ -96,7 +105,7 @@ export class TrelloConnector implements IConnector {
 
   async init(): Promise<void> {
     const apiKey = process.env.MAMA_TRELLO_KEY;
-    const token = process.env[this.config.auth.tokenName ?? 'MAMA_TRELLO_TOKEN'];
+    const token = process.env.MAMA_TRELLO_TOKEN;
     if (!apiKey?.trim() || !token?.trim()) {
       throw new Error(
         'Trello credentials missing. Run mama secret set MAMA_TRELLO_KEY and mama secret set MAMA_TRELLO_TOKEN, then restart through ~/.mama/start.sh.'
@@ -127,7 +136,7 @@ export class TrelloConnector implements IConnector {
       },
       {
         type: 'token',
-        tokenName: this.config.auth.tokenName ?? 'MAMA_TRELLO_TOKEN',
+        tokenName: 'MAMA_TRELLO_TOKEN',
         description: 'Trello token. Enter it with mama secret set MAMA_TRELLO_TOKEN.',
       },
     ];
@@ -136,7 +145,7 @@ export class TrelloConnector implements IConnector {
   async authenticate(): Promise<boolean> {
     try {
       const apiKey = process.env.MAMA_TRELLO_KEY;
-      const token = process.env[this.config.auth.tokenName ?? 'MAMA_TRELLO_TOKEN'];
+      const token = process.env.MAMA_TRELLO_TOKEN;
       if (!apiKey || !token) return false;
       const res = await fetch(`https://api.trello.com/1/members/me?key=${apiKey}&token=${token}`);
       return res.ok;

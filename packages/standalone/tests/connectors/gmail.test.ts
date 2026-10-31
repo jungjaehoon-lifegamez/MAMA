@@ -104,23 +104,28 @@ describe('GmailConnector', () => {
   });
 
   describe('authenticate', () => {
-    it('returns true when gws auth status succeeds', async () => {
-      mockExecSync.mockReturnValue('' as unknown as ReturnType<typeof execSync>);
+    // `gws auth status` exits 0 signed in or not, and a sign-in granted for other services
+    // refreshes fine: only a read with this source's own scope says it can read.
+    it('reads with its own scope', async () => {
       const connector = new GmailConnector(makeConfig());
       await connector.init();
+      mockExecSync.mockReturnValue('{}' as unknown as ReturnType<typeof execSync>);
       expect(await connector.authenticate()).toBe(true);
+      expect(mockExecSync).toHaveBeenLastCalledWith(
+        'gws gmail users getProfile --params {"userId":"me"}'
+      );
     });
 
-    it('returns false when gws auth status throws', async () => {
-      // First call (init --version) succeeds, second call (auth status) fails
-      mockExecSync
-        .mockReturnValueOnce('' as unknown as ReturnType<typeof execSync>)
-        .mockImplementationOnce(() => {
-          throw new Error('not authenticated');
-        });
+    it('is refused when the read is, and says why', async () => {
       const connector = new GmailConnector(makeConfig());
       await connector.init();
+      mockExecSync.mockImplementation(() => {
+        throw new Error('403 Request had insufficient authentication scopes.');
+      });
       expect(await connector.authenticate()).toBe(false);
+      expect((await connector.healthCheck()).error).toBe(
+        'Gmail: gws cannot read the mailbox with its sign-in (403 Request had insufficient authentication scopes.). Sign in with its access (mama doctor names the gws auth login command for this install), then retry.'
+      );
     });
   });
 

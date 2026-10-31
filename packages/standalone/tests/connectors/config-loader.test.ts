@@ -95,13 +95,21 @@ describe('connector config loader', () => {
       'claude-code',
     ]) {
       expect(LOADABLE_CONNECTORS).toContain(name);
+      // Notion, Discord and Telegram are built only with the token name they read.
+      const tokenName = (
+        {
+          notion: 'MAMA_NOTION_TOKEN',
+          discord: 'MAMA_DISCORD_TOKEN',
+          telegram: 'MAMA_TELEGRAM_SOURCE_TOKEN',
+        } as Record<string, string>
+      )[name];
       const connector = await loadConnector(
         name,
         {
           enabled: false,
           pollIntervalMinutes: 5,
           channels: {},
-          auth: { type: 'none' },
+          auth: tokenName === undefined ? { type: 'none' } : { type: 'token', tokenName },
         },
         paths
       );

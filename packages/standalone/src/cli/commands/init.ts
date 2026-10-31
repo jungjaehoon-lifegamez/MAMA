@@ -94,9 +94,9 @@ export interface InitOptions {
   pollMs?: number;
 }
 
-/** What init says to do once a source's missing tool is installed. */
+/** What init says to do about a source's tool the service cannot find. */
 const SOURCE_TOOL_NEXT =
-  'Install it now; if setup stops waiting for MAMA to start, running the install command again continues it.';
+  'Do that now; if setup stops waiting for MAMA to start, running the install command again continues it.';
 
 /** The setup's answers: MAMA_INIT_* and the viewer's variables, then the setup page. */
 interface InitAnswers {
@@ -431,15 +431,16 @@ export async function viewerHealth(port: number): Promise<boolean> {
 /** How much longer than the daemon's own turn limit init waits for the backend check. */
 const PROBE_MARGIN_MS = 60_000;
 
-const initUsage = `Usage: mama init --non-interactive | mama init --section <${initSections.join('|')}>`;
+const initUsage = `Usage: mama init --non-interactive | mama init --section <${initSections.join('|')}> | mama init --section connectors --non-interactive`;
 
 export async function runInit(
   args: readonly string[] = [],
   options: InitOptions = {}
 ): Promise<void> {
   if (args[0] === '--section') {
-    if (args.length !== 2) throw new CliInputError(initUsage);
-    return runInitSection(args[1], options);
+    const nonInteractive = args.length === 3 && args[2] === '--non-interactive';
+    if (args.length !== 2 && !nonInteractive) throw new CliInputError(initUsage);
+    return runInitSection(args[1], options, nonInteractive);
   }
   // The setup reads no terminal: the person's agent runs it (owner-setup.md).
   if (args.length !== 1 || args[0] !== '--non-interactive') throw new CliInputError(initUsage);
@@ -632,7 +633,6 @@ export async function runInit(
       // A setup that stopped (often at the boot wait, when a source's tool is missing) names the
       // tools again: the service does not start until they are installed.
       await writeSourceTools(
-        undefined,
         { root, home, platform, configPath },
         config,
         options,

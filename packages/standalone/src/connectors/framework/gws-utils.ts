@@ -4,11 +4,17 @@ import type { SourceTool } from './types.js';
 /**
  * The Google Workspace CLI the Google sources (calendar, gmail, drive, sheets) run. The npm
  * package is a Node script (`bin` run.js, `postinstall` `node install.js`) that fetches the
- * native binary; the Homebrew formula installs that binary.
+ * native binary; the Homebrew formula installs that binary. Its login needs an OAuth client of
+ * the person's own: without one, `gws auth login` exits at once with `401 No OAuth client
+ * configured` (install-notes.md, measured on 0.11.1). The client file is gws's own credential,
+ * like a backend's login, not a MAMA secret.
  */
 export const gwsTool: SourceTool = {
   command: 'gws',
   loginArgs: 'auth login',
+  scopeFlag: '-s',
+  beforeLogin:
+    'gws signs in through an OAuth client of your own: in Google Cloud Console, create an OAuth client of type Desktop app, download its JSON and save it as ~/.config/gws/client_secret.json (mode 0600).',
   npmPackage: '@googleworkspace/cli',
   brewFormula: 'googleworkspace-cli',
 };
@@ -91,6 +97,29 @@ export function parseGwsOutput(raw: string): unknown {
     throw new Error(`gws CLI returned an error: ${JSON.stringify(result.error)}`);
   }
   return result;
+}
+
+/**
+ * A Google source's sign-in check: one read that its own service's scope allows. `gws auth status`
+ * cannot be it: it exits 0 signed in or not (gws's `handle_status_succeeds_without_credentials`),
+ * and its `token_valid` says only that the sign-in can be refreshed, not which services it grants
+ * (`gws auth login -s gmail` grants Gmail's scopes alone). Resolves with undefined when the read
+ * works, or with why it did not, in gws's own words: no sign-in, an ended one, a missing scope,
+ * the network.
+ */
+export async function gwsReadRefusal(
+  label: string,
+  what: string,
+  args: string[]
+): Promise<string | undefined> {
+  try {
+    await execGwsAsync(args);
+    return undefined;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT'
+      ? `${label}: ${gwsMissing}`
+      : `${label}: ${gwsTool.command} cannot read ${what} with its sign-in (${error instanceof Error ? error.message : String(error)}). Sign in with its access (${gwsLogin}), then retry.`;
+  }
 }
 
 /** Run non-JSON gws commands with argv and without blocking the daemon. */

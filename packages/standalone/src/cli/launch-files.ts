@@ -16,6 +16,14 @@ export function findExecutable(name: string): string | undefined {
   return undefined;
 }
 
+/**
+ * The command the person's agent runs for this install: the wrapper the install command makes in
+ * the MAMA home, by its path (the agent's shell may find another `mama`), or else `mama`.
+ */
+export function mamaCommand(root: string): string {
+  return existsSync(join(root, 'bin', 'mama')) ? '~/.mama/bin/mama' : 'mama';
+}
+
 /** The first of `dirs` that holds `name`, as a service whose PATH is `dirs` finds it. */
 export function findIn(name: string, dirs: readonly string[]): string | undefined {
   for (const dir of dirs) {

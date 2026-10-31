@@ -14,7 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   token and the pairing code only on the setup page MAMA opens in their browser, never in the chat,
   and the agent neither reads that page's `open.html` nor posts to it. It no longer runs
   `npm i -g @jungjaehoon/mama-os` or `mama --help`. It offers no source and no Jev during the
-  install, since neither is set up from the conversation yet.
+  install.
+- After MAMA answers, the skill sets up a source the person asks for: with MAMA stopped, it runs
+  `~/.mama/bin/mama init --section connectors --non-interactive` with the source's block in
+  `MAMA_INIT_CONNECTORS`, and the person enters the source's tokens on the setup page. For Gmail,
+  Calendar, Drive or Sheets the order is the OAuth client (a Desktop app client the person
+  creates in Google Cloud Console, whose JSON the agent moves to
+  `~/.config/gws/client_secret.json`), then `gws` installed with the command MAMA prints, then the
+  login MAMA prints, which the person completes in the browser (the agent never completes the
+  consent), then the source enabled. It says that a testing-mode client's login ends after 7
+  days. The command leaves MAMA stopped however it ends, so the skill starts MAMA again after
+  each run. Jev is still not set up from the conversation.
 
 ## [2.3.0] - 2026-10-16
 
