@@ -131,10 +131,11 @@ want, or say "later": you can ask for a source at any time. For each one you pic
 
 1. You and the agent agree on what it reads: the rooms, channels, folders or calendars.
 2. The agent stops MAMA and runs `~/.mama/bin/mama init --section connectors --non-interactive`
-   with the source's settings in `MAMA_INIT_CONNECTORS`. A source with a token opens the setup page
-   again; enter the token there.
-3. The command saves nothing until the source can run, and leaves MAMA stopped however it ends.
-   The agent starts MAMA again after each run.
+   with the source's settings in `MAMA_INIT_CONNECTORS` (with your own Node.js, it runs the `mama`
+   npm installed). A source with a token opens the setup page again; enter the token there.
+3. The command saves nothing until the source's settings pass MAMA's checks, and a Google source's
+   tool and sign-in work. It does not try a token with its service. It leaves MAMA stopped however
+   it ends, and the agent starts MAMA again after each run.
 
 Gmail, Calendar, Drive and Sheets also need Google's `gws` command and an OAuth client of your own.
 You create the client in Google Cloud Console, the agent puts its file in place, and you sign in

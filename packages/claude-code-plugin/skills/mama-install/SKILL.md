@@ -50,7 +50,8 @@ To set up a source from the conversation, now or whenever the person asks:
 
 - Agree with the person on what the source reads, and write its block in `connectors.json`'s
   shape, as the connectors guide shows it. A block names its secrets by `auth.tokenName` and never
-  holds one.
+  holds one. A block replaces that source's whole entry: for a source that is already on, start
+  from its block in `~/.mama/connectors.json` and add to it, so its channels stay.
 - Enable it with MAMA stopped, the blocks as one JSON object in `MAMA_INIT_CONNECTORS`, in the
   background with its output in a file, as the install command runs:
 

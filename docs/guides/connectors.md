@@ -10,12 +10,20 @@ Sources collect evidence for the owner agent. Once MAMA has answered you, your a
 sources MAMA should watch and sets up the ones you pick; you can also ask for one at any time
 ([owner setup](../start/owner-setup.md#sources-after-mama-answers)).
 
-- With MAMA stopped, the agent runs `~/.mama/bin/mama init --section connectors --non-interactive`,
-  with the sources' blocks, in the shape shown below, as one JSON object in `MAMA_INIT_CONNECTORS`.
+- With MAMA stopped, the agent runs `mama init --section connectors --non-interactive` (on an
+  install the install command made, `~/.mama/bin/mama`), with the sources' blocks, in the shape
+  shown below, as one JSON object in `MAMA_INIT_CONNECTORS`.
+- A block replaces that source's whole entry in `connectors.json`. So a block for a source that is
+  already on keeps its channels, with the new one added.
 - A block names its secrets and never holds one. You enter the tokens on the setup page MAMA opens
   in your browser, never in the chat, and they go only to `auth.env`.
-- The command checks each source as MAMA's start does, and saves nothing until every source can
-  run. It leaves MAMA stopped, and the agent starts it again.
+- The Slack and Discord sources read the same token as MAMA's Slack and Discord messengers
+  (`MAMA_SLACK_TOKEN`, `MAMA_DISCORD_TOKEN`). If you use both, enter that same bot's token: another
+  one replaces the messenger's.
+- The command checks each block as MAMA's start does, and a Google source's `gws` and sign-in, and
+  saves nothing until those pass. A token is not tried with its service, so check on the viewer's
+  Connectors page that the source collects. The command leaves MAMA stopped, and the agent starts
+  it again.
 
 A `connectors.json` edited by hand is checked only when MAMA starts.
 
