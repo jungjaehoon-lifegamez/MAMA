@@ -13,8 +13,9 @@ sources MAMA should watch and sets up the ones you pick; you can also ask for on
 - With MAMA stopped, the agent runs `mama init --section connectors --non-interactive` (on an
   install the install command made, `~/.mama/bin/mama`), with the sources' blocks, in the shape
   shown below, as one JSON object in `MAMA_INIT_CONNECTORS`.
-- A block replaces that source's whole entry in `connectors.json`. So a block for a source that is
-  already on keeps its channels, with the new one added.
+- A block replaces that source's whole entry in `connectors.json`, and channels it leaves out stop
+  being collected. To add a channel to a source that is already on, the block lists its current
+  channels too.
 - A block names its secrets and never holds one. You enter the tokens on the setup page MAMA opens
   in your browser, never in the chat, and they go only to `auth.env`.
 - The Slack and Discord sources read the same token as MAMA's Slack and Discord messengers
