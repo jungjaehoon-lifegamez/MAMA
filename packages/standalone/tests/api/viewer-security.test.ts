@@ -6,9 +6,17 @@ import { gzipSync } from 'node:zlib';
 import { tmpdir } from 'node:os';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createViewerServer, type ViewerServerOptions } from '../../src/api/viewer-server.js';
+import { createKnowledge } from '@jungjaehoon/mama-core';
+import {
+  createViewerServer,
+  REPORT_STREAM_LIMIT,
+  type ViewerServerOptions,
+} from '../../src/api/viewer-server.js';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
 import { createOutboundEventRecorder } from '../../src/api/security-events.js';
+import { createReportStore } from '../../src/api/report-handler.js';
+import { createActionSurface } from '../../src/runtime/action-surface.js';
+import { openCoreDatabase } from '../../src/runtime/core-db.js';
 
 const transport = vi.hoisted(() => ({
   handler: undefined as undefined | ((req: IncomingMessage, res: ServerResponse) => void),
@@ -682,6 +690,194 @@ describe('security events and owner alerts', () => {
     expect(contents).not.toContain(email);
     expect(contents).not.toContain(token);
     expect(contents).not.toContain('?');
+  });
+});
+
+// What a browser adds when a page of another site, or of another port on this host, starts the request.
+const otherSite = { 'sec-fetch-site': 'cross-site', origin: 'https://evil.example' };
+const otherPort = { 'sec-fetch-site': 'same-site', origin: 'http://localhost:9876' };
+
+/** A report stream stays open: it resolves on its first frame, or on a refusal's end. */
+function openStream(headers: IncomingMessage['headers'] = {}) {
+  const all = { host: 'localhost', ...headers };
+  const req = Object.assign(new EventEmitter(), {
+    url: '/api/report/events',
+    method: 'GET',
+    headers: all,
+    rawHeaders: Object.entries(all).flatMap(([name, value]) => [name, String(value)]),
+    socket: { remoteAddress: '127.0.0.1' },
+  });
+  return new Promise<{ status: number; body: string; close: () => void }>((resolve) => {
+    const response = Object.assign(new EventEmitter(), {
+      statusCode: 200,
+      headersSent: false,
+      setHeader() {},
+      writeHead(status: number) {
+        this.statusCode = status;
+        this.headersSent = true;
+        return this;
+      },
+      write(chunk: string) {
+        resolve({ status: this.statusCode, body: chunk, close: () => req.emit('close') });
+        return true;
+      },
+      end(body = '') {
+        this.emit('finish');
+        this.emit('close');
+        resolve({ status: this.statusCode, body, close: () => {} });
+      },
+    });
+    transport.handler!(req as unknown as IncomingMessage, response as unknown as ServerResponse);
+  });
+}
+
+describe('browser requests another page started', () => {
+  const actionRoutes = [
+    '/api/mama/search?q=fixture-page-input',
+    '/api/viewer/memory/search?q=fixture-page-input',
+    '/api/viewer/tasks/fixture-commitment',
+    '/api/memory/links',
+    '/api/operator/summary',
+    '/api/operator/tasks',
+    '/graph',
+    '/graph/detail?id=memory:fixture',
+    '/checkpoints',
+  ];
+
+  it.each([
+    ['cross-site', otherSite],
+    ['same-site', otherPort],
+  ])('refuses Sec-Fetch-Site %s before any action runs and records it', async (_value, headers) => {
+    const sendToOwner = vi.fn(async (_text: string, _key: string) => {});
+    await serve({ securityEvents: { sendToOwner } });
+    for (const path of actionRoutes) expect((await request(path, headers)).status).toBe(403);
+    expect(dispatch).not.toHaveBeenCalled();
+    const rows = securityRows();
+    expect(rows).toHaveLength(actionRoutes.length);
+    for (const row of rows)
+      expect(row).toMatchObject({
+        class: 'cross_origin',
+        method: 'GET',
+        status: 403,
+        identity: 'anonymous',
+      });
+    // The page's query and origin stay out of the security log. A path it chose is logged, and
+    // reaches the alert's Path line, bounded and redacted as every event path is.
+    const contents = fs.readFileSync(securityPath(), 'utf8');
+    expect(contents).not.toContain('fixture-page-input');
+    expect(contents).not.toContain(headers.origin);
+    expect(rows.map((row) => row.path)).toContain('/api/viewer/tasks/fixture-commitment');
+    expect(sendToOwner).toHaveBeenCalledOnce();
+    expect(sendToOwner.mock.calls[0]![0]).toContain('Class: cross_origin');
+  });
+
+  it.each([
+    ['absent', {}],
+    ['same-origin', { 'sec-fetch-site': 'same-origin' }],
+    ['none', { 'sec-fetch-site': 'none' }],
+  ])('serves a request whose Sec-Fetch-Site is %s', async (_value, headers) => {
+    dispatch.mockResolvedValue({ status: 'completed', data: { checkpoints: [] } });
+    await serve();
+    expect((await request('/checkpoints', headers)).status).toBe(200);
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(fs.existsSync(securityPath())).toBe(false);
+  });
+
+  it('still opens the viewer page and health from a link on another site', async () => {
+    await serve();
+    expect((await request('/', otherSite)).status).toBe(302);
+    expect((await request('/health', otherSite)).status).toBe(200);
+    expect(fs.existsSync(securityPath())).toBe(false);
+  });
+
+  it('opens no report stream for another page', async () => {
+    const reportSseClients = new Set<ServerResponse>();
+    await serve({ reportStore: createReportStore(), reportSseClients });
+    expect((await openStream(otherSite)).status).toBe(403);
+    expect(reportSseClients.size).toBe(0);
+    expect(securityRows().map((row) => row.class)).toEqual(['cross_origin']);
+  });
+
+  it('keeps tunnel authentication first and refuses an authenticated tunnel request another page started', async () => {
+    // A token stands in for the Access cookie a browser would carry to the tunnel.
+    const token = randomBytes(24).toString('hex');
+    vi.stubEnv('MAMA_AUTH_TOKEN', token);
+    dispatch.mockResolvedValue({ status: 'completed', data: { checkpoints: [] } });
+    await serve();
+    const owner = { ...tunnel, authorization: `Bearer ${token}` };
+    expect((await request('/checkpoints', owner)).status).toBe(200);
+    expect(
+      (await request('/checkpoints', { ...owner, 'sec-fetch-site': 'same-origin' })).status
+    ).toBe(200);
+    expect((await request('/checkpoints', { ...tunnel, ...otherSite })).status).toBe(401);
+    expect((await request('/checkpoints', { ...owner, ...otherSite })).status).toBe(403);
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(securityRows().map((row) => [row.class, row.status, row.identity])).toEqual([
+      ['owner_access', 200, 'token'],
+      ['owner_access', 200, 'token'],
+      ['auth_failed', 401, 'anonymous'],
+      ['cross_origin', 403, 'token'],
+    ]);
+  });
+
+  it('writes no tool_traces row through the real dispatcher', async () => {
+    const path = join(process.env.HOME!, 'state.db');
+    vi.stubEnv('MAMA_DB_PATH', path);
+    const database = await openCoreDatabase({ path });
+    try {
+      const surface = createActionSurface({
+        adapter: database.adapter,
+        knowledge: createKnowledge({ adapter: database.adapter, embedder: null }),
+        ownerPrincipalId: 'fixture-owner',
+        agentId: 'fixture-agent',
+        timeZone: createTimeZoneSetting('UTC'),
+        runtimeRoot: process.env.HOME!,
+        configPath: join(process.env.HOME!, 'config.yaml'),
+        isOwnerMessageTurn: () => true,
+      });
+      await serve({ dispatch: surface.dispatch, ownerAccess: surface.ownerAccess });
+      const traces = () =>
+        database.adapter.prepare('SELECT tool_name, input_summary FROM tool_traces').all();
+      // The id is input the requesting page chooses.
+      const page = '/api/viewer/tasks/fixture-page-input';
+      // The viewer's own page runs work.list, traced as the owner's with that input in it, even
+      // though no such task exists.
+      expect((await request(page, { 'sec-fetch-site': 'same-origin' })).status).toBe(404);
+      expect(traces()).toEqual([
+        {
+          tool_name: 'work.list',
+          input_summary: expect.stringContaining('fixture-page-input'),
+        },
+      ]);
+      expect((await request(page, otherSite)).status).toBe(403);
+      expect(traces()).toHaveLength(1);
+      expect(securityRows().map((row) => row.class)).toEqual(['cross_origin']);
+    } finally {
+      await database.close();
+    }
+  });
+});
+
+describe('report stream limit', () => {
+  it('refuses a stream past the limit with 503 and accepts one again once a stream closes', async () => {
+    const reportSseClients = new Set<ServerResponse>();
+    await serve({ reportStore: createReportStore(), reportSseClients });
+    const open: Array<{ close: () => void }> = [];
+    for (let index = 0; index < REPORT_STREAM_LIMIT; index++) {
+      const stream = await openStream();
+      expect(stream.status).toBe(200);
+      open.push(stream);
+    }
+    const refused = await openStream();
+    expect(refused.status).toBe(503);
+    expect(JSON.parse(refused.body).code).toBe('REPORT_STREAM_LIMIT');
+    expect(reportSseClients.size).toBe(REPORT_STREAM_LIMIT);
+    expect(JSON.stringify(vi.mocked(console.warn).mock.calls)).toContain('report_stream_limit');
+    open.pop()!.close();
+    const again = await openStream();
+    expect(again.status).toBe(200);
+    for (const stream of [...open, again]) stream.close();
+    expect(reportSseClients.size).toBe(0);
   });
 });
 

@@ -21,6 +21,13 @@ is accepted locally. Remote or tunneled data requests need `Authorization: Beare
 Header presence alone does not authenticate. Missing credentials return `401`.
 `MAMA_VIEWER_OWNER_EMAILS` affects monitoring only.
 
+A data request that a page of another origin started in the browser (`Sec-Fetch-Site: cross-site`,
+or `same-site`, such as another port of the same host) returns `403` before any action runs, and is
+recorded as a `cross_origin` security event. The viewer page itself sends `same-origin`, the
+address bar `none`, and curl and Node clients no such header; those pass. Through the tunnel, an
+`/api` address bookmarked and opened after the Access session expired comes back from the Access
+sign-in page as `cross-site` and returns `403`; open `/viewer` instead.
+
 `GET /health` returns `{"status":"ok"}` without data-route authentication. `/` redirects to
 `/viewer`; the static viewer and its assets also sit outside data-route authentication. Static files
 support GET and HEAD; OPTIONS returns `204`. Loading the page alone does not establish access to its
@@ -42,7 +49,7 @@ All paths in this table use GET. Limits outside a route's accepted range return 
 | `/api/operator/tasks`                           | Work projected as operator tasks. `limit` defaults to 50, maximum 50; optional `status` and `source_channel`. Source-channel filtering occurs after reading the bounded work page. |
 | `/api/viewer/graph`                             | Graph wrapper with a `missing` notice for revision-chain edges. `limit` defaults to 300, maximum 2000; `cursor`, `kind`.                                                           |
 | `/api/report`                                   | Current report slots from the report store.                                                                                                                                        |
-| `/api/report/events`                            | Server-sent `report-update` events; starts with the current slots and sends keep-alives every 15 seconds.                                                                          |
+| `/api/report/events`                            | Server-sent `report-update` events; starts with the current slots and sends keep-alives every 15 seconds. At most 8 streams at once; another returns `503`.                        |
 | `/api/wiki/tree`                                | Wiki paths as a directory tree.                                                                                                                                                    |
 | `/api/wiki/page`                                | Required `path`; returns Markdown content, raw page and parsed frontmatter. Reads up to 20,000 characters.                                                                         |
 | `/api/runtime/status`                           | Runtime and connector state provided by the daemon.                                                                                                                                |

@@ -116,17 +116,17 @@ describe('createPersistentReportStore', () => {
     warn.mockRestore();
   });
 
-  it('persists deletions and coalesces bursts into one snapshot', async () => {
+  it('coalesces a burst of updates into one snapshot', async () => {
     const a = createPersistentReportStore({ filePath });
     a.update('one', '<p>1</p>', 0);
     a.update('two', '<p>2</p>', 1);
-    a.delete('one');
+    a.update('one', '<p>1 again</p>', 0);
     await flushDebounce();
 
     const b = createPersistentReportStore({ filePath });
-    expect(b.get('one')).toBeUndefined();
+    expect(b.get('one')?.html).toBe('<p>1 again</p>');
     expect(b.get('two')?.html).toBe('<p>2</p>');
-    expect(b.getAllSorted()).toHaveLength(1);
+    expect(b.getAllSorted()).toHaveLength(2);
   });
 
   it('persists a mixed agent-authored batch atomically', async () => {

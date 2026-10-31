@@ -192,6 +192,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The init variables `MAMA_INIT_OWNER_TELEGRAM_ID` and `MAMA_INIT_COMMON_CHAT_ID`, and
   `MAMA_TELEGRAM_TOKEN` as an init variable (the secret name stays): the setup page takes the token,
   and the bot's pairing code and `/bind` name the owner and the common group.
+- The package no longer installs Express. Its only use was an old report router with write routes
+  that nothing ever served.
 
 ### Fixed
 
@@ -215,6 +217,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 --now` waits the same way, only while the holder is still unnamed, before it stops the service.
   Running the install command again right after a Node move was cut off hit this: the install
   command stopped with "MAMA on it did not stop" and changed nothing (#546).
+
+### Security
+
+- Another website open in your browser can no longer read through MAMA's viewer in your name.
+  Before, a link or a page your browser had allowed onto this machine could make one viewer
+  request, such as a memory search with words it chose. MAMA ran that search as yours and kept
+  the words in its record of your actions. The viewer now answers such a request with 403 and runs
+  nothing. It records the request in `security-events.jsonl` as `cross_origin` and alerts you as
+  for other viewer security events. A page on another port of this machine counts as another
+  website. The viewer itself, a link or bookmark that opens it, curl and local tools work as
+  before. Through the tunnel, a bookmark to an `/api` address opened after your Cloudflare Access
+  sign-in expired comes back from the sign-in page as another website's request and gets 403;
+  open the viewer instead.
+- The board's live updates allow 8 open connections at once. Another connection is refused with
+  503 and a line in `daemon.log`, instead of each one adding memory without limit. The browser
+  does not retry a refused connection: that board keeps its content and its refresh button but
+  shows no live updates until the page is reloaded. A connection whose browser left while MAMA
+  was still checking its Cloudflare Access sign-in is no longer kept open for good.
 
 ## [0.78.0] - 2026-10-16
 
