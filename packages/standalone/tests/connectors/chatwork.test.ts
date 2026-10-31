@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { ChatworkConnector } from '../../src/connectors/chatwork/index.js';
 import type { ConnectorConfig } from '../../src/connectors/framework/types.js';
 
-const envName = 'CHATWORK_API_TOKEN';
+const envName = 'MAMA_CHATWORK_TOKEN';
 const config: ConnectorConfig = {
   enabled: true,
   pollIntervalMinutes: 5,

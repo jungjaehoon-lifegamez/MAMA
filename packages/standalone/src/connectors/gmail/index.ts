@@ -12,7 +12,13 @@ import type {
   NormalizedItem,
 } from '../framework/types.js';
 import { cliAuth } from '../framework/types.js';
-import { execGwsAsync, execGwsTextAsync, gwsTool, gwsUnavailable } from '../framework/gws-utils.js';
+import {
+  execGwsAsync,
+  execGwsTextAsync,
+  gwsSignedIn,
+  gwsTool,
+  gwsUnavailable,
+} from '../framework/gws-utils.js';
 
 interface GmailMessage {
   id: string;
@@ -78,8 +84,7 @@ export class GmailConnector implements IConnector {
 
   async authenticate(): Promise<boolean> {
     try {
-      await execGwsTextAsync(['auth', 'status']);
-      return true;
+      return await gwsSignedIn();
     } catch {
       return false;
     }

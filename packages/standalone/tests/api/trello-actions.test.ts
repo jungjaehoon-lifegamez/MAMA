@@ -92,13 +92,13 @@ const boardsConfig = {
     'board-key': { role: 'truth' as const, name: 'Board A', boardId: 'board-a' },
     'board-b-key': { role: 'truth' as const, name: 'Board B', boardId: 'board-b' },
   },
-  auth: { type: 'token' as const },
+  auth: { type: 'token' as const, tokenName: 'MAMA_TRELLO_TOKEN' },
 };
 const oneBoard = {
   enabled: true,
   pollIntervalMinutes: 5,
   channels: { 'board-key': { role: 'truth' as const, boardId: 'board-a' } },
-  auth: { type: 'token' as const },
+  auth: { type: 'token' as const, tokenName: 'MAMA_TRELLO_TOKEN' },
 };
 
 async function dispatcherFor(connector: TrelloConnector) {

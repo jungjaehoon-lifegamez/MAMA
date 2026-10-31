@@ -23,7 +23,6 @@ import {
   CRASH_LOG_NAME,
 } from '../launch-files.js';
 import { DAEMON_LOG_LIMITS, SECURITY_LOG_LIMITS } from '../../runtime/rotating-log.js';
-import { isIcalSecret, SECRET_NAMES } from '../secrets.js';
 import {
   askDaemon,
   launchdService,
@@ -163,29 +162,17 @@ export function portAnswers(port: number, host: string): Promise<boolean> {
   });
 }
 
-function managedSecret(name: string): boolean {
-  return (SECRET_NAMES as readonly string[]).includes(name) || isIcalSecret(name);
-}
-
-function secretFix(name: string): string {
-  return managedSecret(name) ? `mama secret set ${name}` : `add ${name} to auth.env`;
-}
-
 /**
  * A source's tokens are entered on the setup page by the sources section, run again for that
- * source, which needs no terminal (install.md, W2.4.5e); a name MAMA does not store goes into
- * auth.env by hand.
+ * source, which needs no terminal (install.md, W2.4.5e). Every token source is built only with
+ * the token name it reads, which auth.env holds.
  */
 function sourceSecretFixes(source: string, names: readonly string[]): string[] {
-  const managed = names.filter(managedSecret);
-  return [
-    ...(managed.length > 0
-      ? [
-          `with MAMA stopped, run mama init --section connectors --non-interactive with ${source}'s block from connectors.json in MAMA_INIT_CONNECTORS; its setup page takes ${managed.join(' and ')}`,
-        ]
-      : []),
-    ...names.filter((name) => !managedSecret(name)).map(secretFix),
-  ];
+  return names.length === 0
+    ? []
+    : [
+        `with MAMA stopped, run mama init --section connectors --non-interactive with ${source}'s block from connectors.json in MAMA_INIT_CONNECTORS; its setup page takes ${names.join(' and ')}`,
+      ];
 }
 
 /**
@@ -396,7 +383,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
           name: messenger,
           status: 'fail',
           detail: `${missing.join(' and ')} not set; boot stops at the messengers stage`,
-          fix: missing.map(secretFix).join('; '),
+          fix: missing.map((name) => `mama secret set ${name}`).join('; '),
         });
       } else if (messenger === 'telegram' && !options.offline) {
         checks.push(
@@ -954,7 +941,10 @@ function bounded<T>(ms: number, run: () => Promise<T>): Promise<T> {
 }
 
 /** Run with process.env as the daemon's process has it, then put this shell's back. */
-async function withEnvironment<T>(env: NodeJS.ProcessEnv, run: () => Promise<T>): Promise<T> {
+export async function withEnvironment<T>(
+  env: NodeJS.ProcessEnv,
+  run: () => Promise<T>
+): Promise<T> {
   const saved = { ...process.env };
   const replace = (next: NodeJS.ProcessEnv): void => {
     for (const name of Object.keys(process.env)) delete process.env[name];

@@ -97,14 +97,20 @@ export class ChatworkConnector implements IConnector {
   private pollCommitDeferred = false;
 
   constructor(config: ConnectorConfig, options: ChatworkConnectorOptions = {}) {
+    // A setting, checked when the source is built (see SlackConnector).
+    if (config.auth.tokenName !== 'MAMA_CHATWORK_TOKEN') {
+      throw new Error('Chatwork auth.tokenName must be MAMA_CHATWORK_TOKEN');
+    }
     this.config = config;
     this.http = options.fetch ?? fetch;
   }
 
   async init(): Promise<void> {
-    const token = process.env[this.config.auth.tokenName ?? 'CHATWORK_API_TOKEN'];
+    const token = process.env.MAMA_CHATWORK_TOKEN;
     if (!token) {
-      throw new Error('Chatwork API token not found. Set CHATWORK_API_TOKEN environment variable.');
+      throw new Error(
+        'Chatwork API token not found in the daemon environment (MAMA_CHATWORK_TOKEN).'
+      );
     }
     this.token = token;
   }
@@ -126,7 +132,7 @@ export class ChatworkConnector implements IConnector {
     return [
       {
         type: 'token',
-        tokenName: this.config.auth.tokenName ?? 'CHATWORK_API_TOKEN',
+        tokenName: 'MAMA_CHATWORK_TOKEN',
         description:
           'Chatwork API token from https://www.chatwork.com/service/packages/chatwork/subpackages/api/token.php',
       },

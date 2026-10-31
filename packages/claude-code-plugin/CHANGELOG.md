@@ -21,8 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Calendar, Drive or Sheets the order is the OAuth client (a Desktop app client the person
   creates in Google Cloud Console, whose JSON the agent moves to
   `~/.config/gws/client_secret.json`), then `gws` installed with the command MAMA prints, then the
-  person's login in the browser, then the source enabled. It says that a testing-mode client's
-  login ends after 7 days. Jev is still not set up from the conversation.
+  login MAMA prints, which the person completes in the browser (the agent never completes the
+  consent), then the source enabled. It says that a testing-mode client's login ends after 7
+  days. The command leaves MAMA stopped however it ends, so the skill starts MAMA again after
+  each run. Jev is still not set up from the conversation.
 
 ## [2.3.0] - 2026-10-16
 

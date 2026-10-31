@@ -1,10 +1,11 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
   cliAuth,
   type AuthRequirement,
   type ConnectorsConfig,
+  type IConnector,
 } from '../../connectors/framework/types.js';
 import { loadConnector } from '../../connectors/index.js';
 import type { W1Config } from '../../runtime/config.js';
@@ -20,6 +21,7 @@ import {
   serviceSight,
   sourceToolLines,
   sourceTools,
+  type ServiceSight,
   type SourceToolReport,
 } from '../runtime/source-tools.js';
 import { findExecutable, findIn } from '../launch-files.js';
@@ -224,9 +226,15 @@ export async function collectConnectors(
   return config;
 }
 
+/** The command the person's agent runs: the install command's wrapper, or `mama` on PATH. */
+export function mamaCommand(root: string): string {
+  return existsSync(join(root, 'bin', 'mama')) ? '~/.mama/bin/mama' : 'mama';
+}
+
 /** A source as boot builds it from connectors.json, with what it needs. */
 export interface BuiltSource {
   readonly name: string;
+  readonly source: IConnector;
   readonly needs: AuthRequirement[];
 }
 
@@ -254,7 +262,7 @@ export async function buildSources(
           timeZone,
         })
       );
-      built.push({ name, needs: source.getAuthRequirements() });
+      built.push({ name, source, needs: source.getAuthRequirements() });
     } catch (error) {
       built.push({ name, error: error as Error });
     }
@@ -264,8 +272,8 @@ export async function buildSources(
 
 /**
  * For `sources`, each tool they run as the service would find it (install.md, PR 3), with how to
- * install it and its login; `enabled` is every source that will run. start.sh is read only when
- * a source runs a tool.
+ * install it and its login, and the service's PATH it was looked for on; `enabled` is every
+ * source that will run. start.sh is read only when a source runs a tool: null when none does.
  */
 export function sourceToolReports(
   sources: readonly BuiltSource[],
@@ -273,8 +281,8 @@ export function sourceToolReports(
   install: { root: string; home: string; platform: NodeJS.Platform },
   config: W1Config,
   options: Pick<ServiceOptions, 'findExecutable' | 'nodePath' | 'cliPath' | 'toolDirectoryExists'>
-): SourceToolReport[] {
-  if (!sources.some(({ needs }) => needs.some((need) => need.type === 'cli'))) return [];
+): { service: ServiceSight; reports: SourceToolReport[] } | null {
+  if (!sources.some(({ needs }) => needs.some((need) => need.type === 'cli'))) return null;
   const { root, home, platform } = install;
   const service = serviceSight(
     root,
@@ -283,13 +291,16 @@ export function sourceToolReports(
     () => serviceLaunch(config.agent.backend, options),
     options.toolDirectoryExists
   );
-  return sourceTools(
-    sources,
+  return {
     service,
-    { root, home },
-    { inDirs: findIn, shell: options.findExecutable ?? findExecutable },
-    enabled
-  );
+    reports: sourceTools(
+      sources,
+      service,
+      { root, home },
+      { inDirs: findIn, shell: options.findExecutable ?? findExecutable },
+      enabled
+    ),
+  };
 }
 
 /**
@@ -330,8 +341,9 @@ export async function writeSourceTools(
       );
     else sources.push(source);
   }
-  const reports = sourceToolReports(sources, sources, install, config, options);
-  for (const line of sourceToolLines(reports, next)) write(line);
+  const tools = sourceToolReports(sources, sources, install, config, options);
+  for (const line of sourceToolLines(tools?.reports ?? [], next, mamaCommand(install.root)))
+    write(line);
 }
 
 export type TelegramCall = Parameters<typeof telegramCheck>[2];

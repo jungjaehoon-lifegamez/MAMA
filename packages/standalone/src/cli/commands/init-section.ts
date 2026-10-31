@@ -5,12 +5,12 @@ import { join, resolve } from 'node:path';
 import * as yaml from 'js-yaml';
 import { parseConnectorConfig } from '../../connectors/config-loader.js';
 import type { ConnectorsConfig } from '../../connectors/framework/types.js';
-import { loadConfig, parseConfig } from '../../runtime/config.js';
+import { loadConfig, parseConfig, type W1Config } from '../../runtime/config.js';
 import { planConnectors } from '../../runtime/connectors.js';
 import { findExecutable } from '../launch-files.js';
 import { CliInputError, createTerminalPrompt, nonblankLine, requireTTY } from '../prompt.js';
-import { isIcalSecret, SECRET_NAMES, updateSecrets, type SecretName } from '../secrets.js';
-import { defaultTelegramCall } from '../runtime/diagnostics.js';
+import { updateSecrets, type SecretName } from '../secrets.js';
+import { defaultTelegramCall, withEnvironment } from '../runtime/diagnostics.js';
 import { openSetupPage } from '../runtime/setup-page.js';
 import { sourceToolLines } from '../runtime/source-tools.js';
 import {
@@ -29,6 +29,7 @@ import {
   buildSources,
   type BuiltSource,
   checkBackend,
+  mamaCommand,
   terminalSignIn,
   checkTelegram,
   collectConnectors,
@@ -56,8 +57,62 @@ function mergeBlock(current: unknown, answer: Record<string, unknown>): Record<s
   return { ...kept, ...answer };
 }
 
-/** What the sources section says once a refused source's tool is in place. */
+/** What the sources section says once a refused source's tool is in place and signed in. */
 const SOURCE_NEXT = 'Then run this again.';
+
+/**
+ * The new sources' tools, before anything is written (install.md, W2.4.5e). Boot starts every
+ * enabled source: one whose tool the service cannot find fails its start (gws --version), which
+ * stops boot, and one whose tool is not signed in fails every poll. Either refuses the section,
+ * so a source is enabled only after its tool is installed and signed in. The sign-in is each
+ * source's own check (Calendar reads the calendar; the others ask gws whether Google still
+ * accepts its sign-in), run with the PATH and HOME the service gives it.
+ */
+async function checkSourceTools(
+  added: readonly BuiltSource[],
+  enabled: readonly BuiltSource[],
+  install: { root: string; home: string; config: W1Config; options: InitOptions; mama: string }
+): Promise<void> {
+  const { root, home, config, options, mama } = install;
+  const platform = options.platform ?? process.platform;
+  const tools = sourceToolReports(added, enabled, { root, home, platform }, config, options);
+  if (tools === null) return;
+  const missing = tools.reports.filter(({ servicePath }) => servicePath === null);
+  if (missing.length > 0)
+    throw new CliInputError(
+      ['Nothing was saved.', ...sourceToolLines(missing, SOURCE_NEXT, mama)].join('\n')
+    );
+  const env = {
+    HOME: home,
+    USER: process.env.USER,
+    LOGNAME: process.env.LOGNAME,
+    PATH: tools.service.path.join(':'),
+  };
+  const signedOut: string[] = [];
+  for (const { name, source, needs } of added)
+    if (
+      needs.some((need) => need.type === 'cli') &&
+      !(await withEnvironment(env, () => source.authenticate()))
+    )
+      signedOut.push(name);
+  if (signedOut.length === 0) return;
+  throw new CliInputError(
+    [
+      'Nothing was saved.',
+      ...tools.reports.flatMap(({ tool, sources, login }) => {
+        const who = sources.filter((name) => signedOut.includes(name));
+        return who.length === 0
+          ? []
+          : [
+              `${tool.command} is not signed in for ${who.join(', ')}.`,
+              tool.beforeLogin,
+              `Sign in first: ${login}`,
+            ];
+      }),
+      SOURCE_NEXT,
+    ].join('\n')
+  );
+}
 
 /**
  * The sources `--section connectors --non-interactive` sets up: MAMA_INIT_CONNECTORS, a JSON
@@ -99,14 +154,9 @@ async function sourceSecretsOnPage(
     for (const need of needs)
       if (need.type === 'token' && need.tokenName !== undefined)
         readers.set(need.tokenName, [...(readers.get(need.tokenName) ?? []), name]);
+  // Each token source is built only with its own token name (its constructor checks the block),
+  // so the page never takes the owner's bot token, MAMA_AUTH_TOKEN or the Slack app token.
   const names = [...readers.keys()];
-  // auth.env holds only the names start.sh exports; a token under another name could be taken on
-  // the page and never stored.
-  for (const name of names)
-    if (!(SECRET_NAMES as readonly string[]).includes(name) && !isIcalSecret(name))
-      throw new CliInputError(
-        `${readers.get(name)!.join(', ')} reads ${name}, which MAMA does not store; name one of ${SECRET_NAMES.join(', ')} in its auth.tokenName. Nothing was saved.`
-      );
   const secrets: Partial<Record<SecretName, string>> = {};
   if (names.length === 0) return secrets;
   let taken!: () => void;
@@ -166,9 +216,15 @@ export async function runInitSection(
   const configPath = join(root, 'config.yaml');
   if (!existsSync(configPath))
     throw new CliInputError('MAMA is not set up here; run the install command first.');
+  const mama = mamaCommand(root);
   const lock = acquireInstallLock(daemonControlPaths(root), 'init --section');
   try {
     refuseWhileRestoring(root);
+  } catch (error) {
+    lock.release();
+    throw error;
+  }
+  try {
     const config = loadConfig({ home, path: configPath });
     const secrets: Partial<Record<SecretName, string>> = {};
     let change: ((doc: Record<string, unknown>) => void) | undefined;
@@ -289,27 +345,18 @@ export async function runInitSection(
         } catch (error) {
           throw refused(error);
         }
-        // Boot builds and starts every enabled source, and a source whose tool the service cannot
-        // find fails its start (gws --version), which stops boot: such a source is not enabled.
+        // Boot builds every enabled source, then starts it.
         const enabled: BuiltSource[] = [];
         for (const source of await buildSources(plan, config, configPath)) {
-          if ('error' in source) throw refused(source.error);
-          enabled.push(source);
+          if (!('error' in source)) enabled.push(source);
+          else if (Object.hasOwn(connectors, source.name)) throw refused(source.error);
+          else
+            throw new CliInputError(
+              `${source.name}, already on in ${connectorsPath}, cannot be built (${source.error.message}), so boot would stop. Nothing was saved. Turn it off with its block and "enabled": false in MAMA_INIT_CONNECTORS beside the new one, or correct it in ${connectorsPath}.`
+            );
         }
         const added = enabled.filter(({ name }) => Object.hasOwn(connectors!, name));
-        const reports = sourceToolReports(
-          added,
-          enabled,
-          { root, home, platform: options.platform ?? process.platform },
-          config,
-          options
-        );
-        const missing = reports.filter(({ servicePath }) => servicePath === null);
-        if (missing.length > 0)
-          throw new CliInputError(
-            ['Nothing was saved.', ...sourceToolLines(missing, SOURCE_NEXT)].join('\n')
-          );
-        for (const line of sourceToolLines(reports, SOURCE_NEXT)) write(line);
+        await checkSourceTools(added, enabled, { root, home, config, options, mama });
         if (nonInteractive)
           Object.assign(secrets, await sourceSecretsOnPage(added, options, write));
       }
@@ -324,12 +371,21 @@ export async function runInitSection(
     } finally {
       for (const { temporary } of staged) rmSync(temporary, { force: true });
     }
+  } catch (error) {
+    // The section holds the install lock, so MAMA is stopped while it runs, and a refusal or an
+    // expired page leaves it stopped.
+    if (error instanceof CliInputError)
+      throw new CliInputError(
+        `${error.message}\nMAMA is still stopped; start it with ${mama} service start.`,
+        { cause: error }
+      );
+    throw error;
   } finally {
     lock.release();
   }
   // doctor checks what this command cannot see: the service's PATH for a new backend or a
   // source's tool, and the rest of the install as boot will read it.
   write(
-    `Saved ${section}. Check the install with mama doctor, then start MAMA: mama service start`
+    `Saved ${section}. Check the install with ${mama} doctor, then start MAMA: ${mama} service start`
   );
 }

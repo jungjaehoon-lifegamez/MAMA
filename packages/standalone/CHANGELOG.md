@@ -148,16 +148,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     name, checked as boot checks `connectors.json`. A source name or setting MAMA does not read is
     refused.
   - The tokens the sources read, as each source names them (Trello's key too), are entered on the
-    setup page, one field each, and go only to `auth.env`. A source that reads a token under a
-    name `auth.env` does not hold is refused before the page opens. So is a Notion, Discord or
-    Telegram source whose block names another token than the one it reads: that source now fails
-    when it is built, which the section and `mama doctor` do, instead of at its start in boot.
+    setup page, one field each, and go only to `auth.env`.
   - The other parts of `mama init --section` still need a terminal.
-- A source whose tool MAMA's service cannot find is no longer enabled, from either form of
-  `mama init --section connectors`; with a Google source and `gws` missing from start.sh's PATH,
-  boot stopped. The section saves nothing and prints how to install `gws`, the OAuth client file,
-  the login, and "Then run this again." With `gws` found, it prints the client file and the login
-  before it saves.
+- A source is enabled only once its tool is installed where MAMA's service finds it and signed
+  in, from either form of `mama init --section connectors`. With a Google source and `gws`
+  missing from start.sh's PATH, boot stopped; signed out, every poll failed. The section saves
+  nothing and prints how to install `gws`, or the OAuth client file and the login
+  (`gws auth login -s <services>`), then "Then run this again." The sign-in is each source's own
+  check, run with the service's PATH: Calendar reads the calendar, and Gmail, Drive and Sheets ask
+  `gws auth status` whether Google still accepts the sign-in.
+- Each refusal of `mama init --section`, an expired setup page included, ends by saying MAMA is
+  still stopped and how to start it. On an install the install command made, the section's lines
+  name `~/.mama/bin/mama`.
+- An enabled source already in `connectors.json` that boot cannot build refuses the section, which
+  names it and says how to turn it off: its block with `"enabled": false` in
+  `MAMA_INIT_CONNECTORS`.
 - `mama init --non-interactive` opens a setup page on this machine for the bot token and the
   pairing code, once every other answer has been checked:
   - The page listens on 127.0.0.1 at a path of 32 random bytes, and answers only a request whose
@@ -220,6 +225,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A Slack, Chatwork, Trello, Notion, Discord or Telegram source whose block names another token
+  than its own (`MAMA_SLACK_TOKEN`, `MAMA_CHATWORK_TOKEN`, `MAMA_TRELLO_TOKEN`,
+  `MAMA_NOTION_TOKEN`, `MAMA_DISCORD_TOKEN`, `MAMA_TELEGRAM_SOURCE_TOKEN`) is refused when the
+  source is built, in the section, doctor and boot. The setup page therefore never takes another
+  secret, such as the owner bot's token or `MAMA_AUTH_TOKEN`. Slack and Chatwork no longer fall
+  back to `SLACK_BOT_TOKEN` and `CHATWORK_API_TOKEN`, which `auth.env` could not hold.
+- Gmail, Drive and Sheets' sign-in check reads Google's answer: `gws auth status` exits 0 signed in
+  or not, so doctor reported a signed-out source as signed in. It now needs `token_valid: true`.
+- Calendar starts as the other Google sources do, when `gws` runs. Its calendar read is its sign-in
+  check, so a sign-in that ended (a testing-mode client's, after 7 days) fails its polls and
+  doctor's check instead of stopping MAMA at boot.
 - A backend failure such as a signed-out Claude CLI or an API error no longer arrives as MAMA's
   answer. The turn fails, its message is told it was interrupted, and `daemon.log` names the
   error. Before, the CLI's error text was sent as the reply and the run was recorded as committed

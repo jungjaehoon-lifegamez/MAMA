@@ -9,7 +9,14 @@ import type {
   ConnectorPollCursor,
 } from '../framework/types.js';
 import { cliAuth } from '../framework/types.js';
-import { execGwsAsync, gwsLogin, gwsMissing, gwsTool } from '../framework/gws-utils.js';
+import {
+  execGwsAsync,
+  execGwsTextAsync,
+  gwsLogin,
+  gwsMissing,
+  gwsTool,
+  gwsUnavailable,
+} from '../framework/gws-utils.js';
 import { readConnectorState, writeConnectorState } from '../framework/connector-state.js';
 
 interface CalendarEvent {
@@ -107,16 +114,16 @@ export class CalendarConnector implements IConnector {
     ]);
   }
 
+  /**
+   * Starting needs only gws, as for the other Google sources. The sign-in is the read check in
+   * authenticate(): a sign-in that has ended (a testing-mode client's, after 7 days) fails each
+   * poll and doctor's check, and does not stop MAMA from starting.
+   */
   async init(): Promise<void> {
     try {
-      await this.verifyAccess();
-      this.lastError = undefined;
+      await execGwsTextAsync(['--version']);
     } catch (error) {
-      this.lastError =
-        (error as NodeJS.ErrnoException).code === 'ENOENT'
-          ? `Calendar: ${gwsMissing}`
-          : `Calendar: ${gwsTool.command} cannot read the primary calendar. Sign in with Google Calendar read access (${gwsLogin}), then retry.`;
-      throw new Error(this.lastError, { cause: error });
+      throw new Error(`Calendar: ${gwsUnavailable(error)}`, { cause: error });
     }
   }
 
@@ -145,8 +152,13 @@ export class CalendarConnector implements IConnector {
   async authenticate(): Promise<boolean> {
     try {
       await this.verifyAccess();
+      this.lastError = undefined;
       return true;
-    } catch {
+    } catch (error) {
+      this.lastError =
+        (error as NodeJS.ErrnoException).code === 'ENOENT'
+          ? `Calendar: ${gwsMissing}`
+          : `Calendar: ${gwsTool.command} cannot read the primary calendar. Sign in with Google Calendar read access (${gwsLogin}), then retry.`;
       return false;
     }
   }

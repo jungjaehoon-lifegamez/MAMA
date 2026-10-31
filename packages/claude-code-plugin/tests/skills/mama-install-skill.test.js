@@ -69,8 +69,8 @@ describe('Story ONB-8: thin MAMA OS installation skill', () => {
     const steps = [
       'Move that file to `~/.config/gws/client_secret.json` with mode 0600',
       'it saves nothing and prints the command that installs it; run that command',
-      '`gws auth login -s <services>`',
-      'Run the enabling command again if it saved nothing; then start MAMA',
+      'While `gws` is not signed in, the enabling command saves nothing and prints the login (`gws auth login -s <services>`)',
+      'once `gws` is installed and signed in, it saves the source',
     ].map((step) => content.indexOf(step));
     expect(steps.every((at) => at >= 0)).toBe(true);
     expect([...steps].sort((a, b) => a - b)).toEqual(steps);
@@ -80,6 +80,17 @@ describe('Story ONB-8: thin MAMA OS installation skill', () => {
     );
     expect(content).toContain('Google ends the login after 7 days');
     expect(content).toContain('not a MAMA secret');
+    // The consent is the person's; the agent only runs the login and passes on its address.
+    expect(content).toContain('Never open or complete the Google consent yourself');
+  });
+
+  it('starts MAMA again after every run of the enabling command, which leaves it stopped', () => {
+    const content = skill();
+
+    expect(content).toContain('it leaves MAMA stopped however it ends');
+    expect(content).toContain(
+      'Start MAMA again with `~/.mama/bin/mama service start` as soon as each run ends, before you wait on the person for the next step'
+    );
   });
 
   it('keeps Jev out of the conversation until it has a form without a terminal', () => {

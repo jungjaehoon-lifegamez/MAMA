@@ -35,7 +35,7 @@ async function livePath(
     enabled: true,
     pollIntervalMinutes: 5,
     channels,
-    auth: { type: 'token' },
+    auth: { type: 'token', tokenName: 'MAMA_TRELLO_TOKEN' },
   };
   const connector = new TrelloConnector(config, async (input) => respond(new URL(String(input))));
   await connector.init();

@@ -106,24 +106,17 @@ const loaders: Record<
 };
 
 /**
- * Dynamic connector loader — avoids importing all connector deps at startup.
- * Optionally accepts a ConnectorConfig; if omitted, a minimal disabled config is used
- * (useful for CLI introspection like healthCheck or getAuthRequirements).
+ * Dynamic connector loader — avoids importing all connector deps at startup. A source is built
+ * from its connectors.json block: the token sources check the token name it gives when they are
+ * built, so there is no source without a block.
  */
 export async function loadConnector(
   name: string,
-  config?: ConnectorConfig,
+  config: ConnectorConfig,
   paths?: ConnectorLoadPaths
 ): Promise<IConnector> {
   if (!(LOADABLE_CONNECTORS as readonly string[]).includes(name)) {
     throw new Error(`Unsupported connector: ${name}`);
   }
-  const effectiveConfig: ConnectorConfig = config ?? {
-    enabled: false,
-    pollIntervalMinutes: 5,
-    channels: {},
-    auth: { type: 'none' },
-  };
-
-  return loaders[name as LoadableConnector](effectiveConfig, paths);
+  return loaders[name as LoadableConnector](config, paths);
 }

@@ -108,11 +108,17 @@ describe('SheetsConnector', () => {
   });
 
   describe('authenticate', () => {
-    it('returns true when gws auth status succeeds', async () => {
-      mockExecSync.mockReturnValue('' as unknown as ReturnType<typeof execSync>);
+    it("reads Google's answer from gws auth status, which exits 0 signed in or not", async () => {
       const connector = makeConnector(makeConfig());
       await connector.init();
-      expect(await connector.authenticate()).toBe(true);
+      for (const [status, signedIn] of [
+        ['Using keyring backend: keyring\n{"auth_method":"oauth2","token_valid":true}', true],
+        ['{"auth_method":"oauth2","token_valid":false,"token_error":"expired or revoked"}', false],
+        ['{"auth_method":"none","storage":"none"}', false],
+      ] as const) {
+        mockExecSync.mockReturnValue(status as unknown as ReturnType<typeof execSync>);
+        expect(await connector.authenticate()).toBe(signedIn);
+      }
     });
 
     it('returns false when gws auth status throws', async () => {

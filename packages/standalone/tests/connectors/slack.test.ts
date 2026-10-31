@@ -17,7 +17,7 @@ const slack = vi.hoisted(() => ({
 
 vi.mock('@slack/web-api', () => ({ WebClient: slack.WebClient }));
 
-const envName = 'SLACK_BOT_TOKEN';
+const envName = 'MAMA_SLACK_TOKEN';
 const config: ConnectorConfig = {
   enabled: true,
   pollIntervalMinutes: 5,

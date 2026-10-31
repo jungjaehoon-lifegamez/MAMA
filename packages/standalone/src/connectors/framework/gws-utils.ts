@@ -99,6 +99,17 @@ export function parseGwsOutput(raw: string): unknown {
   return result;
 }
 
+/**
+ * Whether gws holds a sign-in Google still accepts. `gws auth status` exits 0 whether or not it is
+ * signed in (gws's `handle_status_succeeds_without_credentials`); its JSON says `token_valid: true`
+ * only after Google exchanged the stored refresh token, so a missing or expired sign-in (a
+ * testing-mode client's ends after 7 days) reads false.
+ */
+export async function gwsSignedIn(): Promise<boolean> {
+  const status = (await execGwsAsync(['auth', 'status'])) as { token_valid?: unknown };
+  return status.token_valid === true;
+}
+
 /** Run non-JSON gws commands with argv and without blocking the daemon. */
 export function execGwsTextAsync(args: string[]): Promise<string> {
   return execGwsStdoutAsync(args);

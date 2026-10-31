@@ -183,7 +183,12 @@ export function sourceTools(
  * last: the service does not start while a source's tool is missing from its PATH (the source's
  * start fails boot).
  */
-export function sourceToolLines(reports: readonly SourceToolReport[], next: string): string[] {
+export function sourceToolLines(
+  reports: readonly SourceToolReport[],
+  next: string,
+  /** The command that runs this install's `mama`. */
+  mama: string
+): string[] {
   return reports.flatMap((report) => {
     const { tool, sources } = report;
     const who = sources.join(', ');
@@ -193,7 +198,7 @@ export function sourceToolLines(reports: readonly SourceToolReport[], next: stri
       return [tool.beforeLogin, `Then log in to ${tool.command} for ${who}: ${report.login}`];
     if (report.shellPath !== null)
       return [
-        `${who} run${s} ${tool.command}; this shell finds ${report.shellPath}, but the service's PATH does not name ${dirname(report.shellPath)}. mama service install adds it.`,
+        `${who} run${s} ${tool.command}; this shell finds ${report.shellPath}, but the service's PATH does not name ${dirname(report.shellPath)}. ${mama} service install adds it.`,
         tool.beforeLogin,
         `Then log in to ${tool.command} for ${who}: ${report.login}`,
         `${stops} ${next}`,
