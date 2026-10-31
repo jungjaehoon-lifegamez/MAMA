@@ -1055,8 +1055,12 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
       json(res, 503, { error: true, code: 'NOT_AVAILABLE', message: 'Report store is not wired' });
       return;
     }
+    // A client can leave while Access verification fetches signing keys; its close has then
+    // fired before the listener below, and the stream would hold a slot until restart.
+    if (res.destroyed) return;
     if (reportClients.size >= REPORT_STREAM_LIMIT) {
-      // The board shows "reconnecting"; daemon.log says why.
+      // The browser does not retry a refused stream: that board keeps its content and refresh
+      // button but gets no live update until the page is reloaded. daemon.log says why.
       console.warn(`[viewer] report_stream_limit: ${reportClients.size} streams open, one refused`);
       json(res, 503, {
         error: true,

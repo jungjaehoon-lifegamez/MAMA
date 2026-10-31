@@ -761,10 +761,12 @@ describe('browser requests another page started', () => {
         status: 403,
         identity: 'anonymous',
       });
-    // Neither the page's input nor its origin reaches the security log.
+    // The page's query and origin stay out of the security log. A path it chose is logged, and
+    // reaches the alert's Path line, bounded and redacted as every event path is.
     const contents = fs.readFileSync(securityPath(), 'utf8');
     expect(contents).not.toContain('fixture-page-input');
     expect(contents).not.toContain(headers.origin);
+    expect(rows.map((row) => row.path)).toContain('/api/viewer/tasks/fixture-commitment');
     expect(sendToOwner).toHaveBeenCalledOnce();
     expect(sendToOwner.mock.calls[0]![0]).toContain('Class: cross_origin');
   });

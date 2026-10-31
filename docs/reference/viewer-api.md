@@ -24,7 +24,9 @@ Header presence alone does not authenticate. Missing credentials return `401`.
 A data request that a page of another origin started in the browser (`Sec-Fetch-Site: cross-site`,
 or `same-site`, such as another port of the same host) returns `403` before any action runs, and is
 recorded as a `cross_origin` security event. The viewer page itself sends `same-origin`, the
-address bar `none`, and curl and Node clients no such header; those pass.
+address bar `none`, and curl and Node clients no such header; those pass. Through the tunnel, an
+`/api` address bookmarked and opened after the Access session expired comes back from the Access
+sign-in page as `cross-site` and returns `403`; open `/viewer` instead.
 
 `GET /health` returns `{"status":"ok"}` without data-route authentication. `/` redirects to
 `/viewer`; the static viewer and its assets also sit outside data-route authentication. Static files

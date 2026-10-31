@@ -226,10 +226,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the words in its record of your actions. The viewer now answers such a request with 403 and runs
   nothing. It records the request in `security-events.jsonl` as `cross_origin` and alerts you as
   for other viewer security events. A page on another port of this machine counts as another
-  website. The viewer
-  itself, a link that opens the viewer, your bookmarks, curl and local tools work as before.
+  website. The viewer itself, a link or bookmark that opens it, curl and local tools work as
+  before. Through the tunnel, a bookmark to an `/api` address opened after your Cloudflare Access
+  sign-in expired comes back from the sign-in page as another website's request and gets 403;
+  open the viewer instead.
 - The board's live updates allow 8 open connections at once. Another connection is refused with
-  503 and a line in `daemon.log`, instead of each one adding memory without limit.
+  503 and a line in `daemon.log`, instead of each one adding memory without limit. The browser
+  does not retry a refused connection: that board keeps its content and its refresh button but
+  shows no live updates until the page is reloaded. A connection whose browser left while MAMA
+  was still checking its Cloudflare Access sign-in is no longer kept open for good.
 
 ## [0.78.0] - 2026-10-16
 
