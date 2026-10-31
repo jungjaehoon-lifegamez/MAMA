@@ -94,6 +94,11 @@ describe('Story ONB-8: thin MAMA OS installation skill', () => {
     ].map((step) => content.indexOf(step));
     expect(steps.every((at) => at >= 0)).toBe(true);
     expect([...steps].sort((a, b) => a - b)).toEqual(steps);
+    // When only the shell finds gws, MAMA prints that the service install adds its folder.
+    expect(content).toContain(
+      'When your shell finds `gws` but the service does not, it saves nothing and prints that'
+    );
+    expect(content).toContain('run `~/.mama/bin/mama service install`');
     expect(content).toContain('OAuth client of type Desktop app');
     // A gmail.com client is published (no 7-day end) after one unverified-app click-through; a
     // Workspace account uses Internal (owner, 2026-10-31).

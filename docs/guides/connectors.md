@@ -79,10 +79,13 @@ your own. They need no MAMA token. Your agent sets one up in this order:
    file as `~/.config/gws/client_secret.json` (mode 0600). It is gws's own credential, not a MAMA
    secret, so it does not go through the setup page.
 
-2. **gws.** While MAMA's service cannot find `gws`, the enabling command saves nothing and prints
-   the command that installs it. On an install the install command made, that command uses MAMA's
-   own Node and puts `gws` in `~/.mama/npm`; otherwise it is `npm install -g @googleworkspace/cli`
-   or `brew install googleworkspace-cli`. The agent runs it.
+2. **gws.** While neither MAMA's service nor the agent's shell finds `gws`, the enabling command
+   saves nothing and prints the command that installs it. On an install the install command made,
+   that command uses MAMA's own Node and puts `gws` in `~/.mama/npm`; otherwise it is
+   `npm install -g @googleworkspace/cli` or `brew install googleworkspace-cli`. The agent runs it.
+   When the agent's shell finds `gws` but the service does not, the command saves nothing and
+   prints that `mama service install` adds its folder to the service's PATH, so the agent runs
+   `~/.mama/bin/mama service install` (with your own Node.js, `mama service install`).
 3. **The sign-in.** While `gws` cannot read for the new source, the enabling command saves nothing
    and prints the login, `gws auth login --scopes <scopes>`. It names the scope of every Google
    source that is on, since one sign-in serves them all: read-only for Gmail, Calendar and Sheets,

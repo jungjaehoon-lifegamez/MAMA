@@ -83,8 +83,10 @@ To set up a source from the conversation, now or whenever the person asks:
      credential, not a MAMA secret. If the client is left in Testing, Google ends the sign-in after
      7 days.
 
-  2. The tool. Run the enabling command above. While MAMA's service cannot find `gws`, it saves
-     nothing and prints the command that installs it; run that command.
+  2. The tool. Run the enabling command above. While neither MAMA's service nor your shell finds
+     `gws`, it saves nothing and prints the command that installs it; run that command. When your
+     shell finds `gws` but the service does not, it saves nothing and prints that MAMA's service
+     install adds its folder to the service's PATH; run `~/.mama/bin/mama service install`.
   3. The login. While `gws` cannot read for the new source (no sign-in, or one made for other
      services), the enabling command saves nothing and prints the login
      (`gws auth login --scopes <scopes>`), naming the scope of every Google source that is on:
