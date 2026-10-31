@@ -84,9 +84,10 @@ your own. They need no MAMA token. Your agent sets one up in this order:
    own Node and puts `gws` in `~/.mama/npm`; otherwise it is `npm install -g @googleworkspace/cli`
    or `brew install googleworkspace-cli`. The agent runs it.
 3. **The sign-in.** While `gws` cannot read for the new source, the enabling command saves nothing
-   and prints the login, `gws auth login -s <services>`. It names the service of every Google
-   source that is on, since one sign-in serves them all. The agent runs it, and you complete
-   Google's consent in your browser.
+   and prints the login, `gws auth login --scopes <scopes>`. It names the scope of every Google
+   source that is on, since one sign-in serves them all: read-only for Gmail, Calendar and Sheets,
+   and full Drive access, which large-file delivery to Drive needs. The agent runs it, and you
+   complete Google's consent in your browser.
 4. **Enabling.** The agent runs the enabling command again. It saves the source, and the agent
    starts MAMA.
 
