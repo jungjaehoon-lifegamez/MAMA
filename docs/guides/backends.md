@@ -7,7 +7,8 @@ nav_order: 2
 # Choose and authenticate a backend
 
 MAMA runs one persistent owner session with either `claude` or `codex`. Choose it
-in `mama init`, or edit `agent.backend` and `agent.model` in
+when you set up (the install command's `--backend`, and `MAMA_INIT_MODEL`), later with
+`mama init --section model`, or edit `agent.backend` and `agent.model` in
 `~/.mama/config.yaml`, then restart the daemon.
 
 | Backend  | Sign in on the daemon host                    | Runtime                                                     |

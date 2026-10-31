@@ -10,78 +10,69 @@ This walkthrough installs MAMA OS, connects Telegram and one work source, and sh
 where to inspect the results. Examples use fictional work and synthetic identifiers. This walkthrough uses Telegram;
 Discord and Slack work the same way. See the [messengers guide](../guides/messengers.md).
 
-## 1. Install
+## 1. Install through your agent
 
-Use Node.js 22.13 or later and an authenticated Claude or Codex CLI. Type:
+Before you start, create a Telegram bot with BotFather and a group for common changes, even if you
+are the only owner (a supergroup also works). Use a bot only this install uses: Telegram hands a
+bot's messages to one program at a time.
 
-```bash
-node --version
-npm install -g @jungjaehoon/mama-os
-mama
-```
+On the Mac that will run MAMA, open Claude Code or Codex and say:
 
-From a checkout, run `pnpm install` and `pnpm build`, then
-`node packages/standalone/dist/cli/index.js` in place of `mama`.
+> Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA by following its owner setup
+> guide, docs/start/owner-setup.md.
 
-**You should see:** the `mama` usage line listing `init`, `secret`, `daemon`, `replay`, `status`,
-and `stop`.
+The agent asks which backend runs MAMA (`claude` or `codex`) and which model, then runs the
+install command. It installs MAMA's own Node.js, MAMA OS and, when needed, the backend. You do not
+type in a terminal. To keep your own Node.js instead, see
+[Install with your own Node.js](owner-setup.md#install-with-your-own-nodejs).
 
-**Check:** confirm Node is at least 22.13 and the build completed. Running `mama` without a
-command prints the same usage.
+**You should see:** the agent tells you that a setup page has opened in your browser.
 
-**If not:** install the Node and pnpm versions required above, run `pnpm install`, then `pnpm
-build` again. For package-specific setup, see [Owner setup](owner-setup.md).
+**Check:** if no browser opened, the agent gives you a `file://` path to paste into the browser's
+address bar.
 
-## 2. Create the local installation
+**If not:** if the agent looked for another program called mama, give it the repository address
+above. If it stopped for a backend sign-in, follow the link it gives you; it then runs the install
+command again.
 
-Create a Telegram bot and a group with it for common changes, even if you are the only owner (a
-supergroup also works). Use a bot only this install uses: Telegram hands a bot's messages to one
-program at a time. In your terminal, type:
+## 2. Pair with your bot
 
-```bash
-mama init
-```
+On the setup page:
 
-At the prompts, enter `claude` or `codex`, the model name, your timezone (press Enter to keep this
-machine's timezone), the Telegram bot token and the two folders (press Enter to keep the
-defaults). Tokens are typed into hidden prompts. Do not paste them into chat or a configuration
-file. When asked which connectors to enable, type `slack` (or `chatwork`) and enter its token and
-channel ids. To skip a source for now, leave the connector list blank.
+1. Paste the bot token. Do not paste it into the chat with your agent or into a configuration
+   file.
+2. Send the bot a new private message (one sent before setup started is dropped). It answers with
+   a six-digit pairing code; enter it on the page. This makes you the first owner, and that private
+   chat your personal session.
+3. Add the bot to the group and make it an administrator, so it reads the group. Telegram's member
+   picker does not list bots: search for the bot's @username, or choose Add to Group on the bot's
+   profile. Then send `/bind` in the group. The bot answers that the group is now MAMA's common
+   channel. Only your `/bind` counts.
 
-Last, setup pairs you through the bot, so no chat or user ID is typed:
-
-1. Send the bot a new private message (one sent before this step is dropped). It answers with a six-digit pairing code; type that code at
-   the prompt. This makes you the first owner, and that private chat your personal session.
-2. Add the bot to the group as an administrator, so it reads the group, and send `/bind` there.
-   The bot answers that the group is now MAMA's common channel. Only your `/bind` counts.
-
-**You should see:** `Setup written. Credentials are stored only in auth.env (0600).`, then the
-owner registration, the document toolkit, the service start, and finally `MAMA is running`.
+**You should see:** the agent passes on setup's lines: `Setup written. Credentials are stored only
+in auth.env (0600).`, then the owner registration, the document toolkit, the service start, and
+finally `MAMA is running`.
 
 **Check:** `~/.mama/config.yaml` contains no tokens; `~/.mama/auth.env` holds credentials and
-has mode 0600. `mama init` writes source selections into `connectors.json`.
+has mode 0600.
 
-**If not:** `init` requires a real terminal and will refuse to overwrite an existing installation.
-For an existing `~/.mama/config.yaml`, stop and review the [setup guide](owner-setup.md) before
-changing files. For missing or invalid prompts, correct the value and run `init` again only after
-reviewing its no-overwrite message.
+**If not:** a refused token or a wrong code shows the page's form again. The page closes after 15
+minutes, and setup waits 15 minutes for `/bind`; after either, nothing is written, and the agent
+runs the install command again to start over. See the [setup guide](owner-setup.md).
 
 ## 3. Check that MAMA runs
 
-`mama init` already started MAMA as a service. Check it:
-
-```bash
-mama status
-```
+Setup already started MAMA as a service. Ask your agent to check it with `~/.mama/bin/mama status`,
+or run `mama status` in a new terminal.
 
 **You should see:** `running` from `status`; the daemon logs startup in `~/.mama/logs/daemon.log`.
 
 **Check:** the next step is the real check: send a message to the bot and confirm a reply reaches
 your Telegram chat. A running process by itself does not prove the owner flow works.
 
-**If not:** use `mama status`, then read the daemon log for
-the failed startup stage. If `init` stopped before `MAMA is running`, fix what it named and run
-`mama init` again; it continues from where it stopped.
+**If not:** use `mama status`, then read the daemon log for the failed startup stage. If setup
+stopped before `MAMA is running`, the agent fixes what it named and runs the install command
+again; setup continues from where it stopped.
 
 ## 4. Ask your first question in Telegram
 
@@ -93,16 +84,16 @@ Send a simple message to confirm the bot can reply, for example:
 
 **Check:** confirm the reply reaches the same Telegram chat and answers your message.
 
-**If not:** check that you wrote from the Telegram account you paired during `init`, the
+**If not:** check that you wrote from the Telegram account you paired during setup, the
 bot token is present, and the daemon log shows Telegram polling. See [Telegram troubleshooting](../guides/telegram.md).
 
 ## 5. Connect one source and ask about a work item
 
-If you selected Slack or Chatwork during `init`, confirm that its account and channel are
-available to the token you entered. If you did not select a source, `mama init` will not overwrite
-the installation: follow [connector configuration](../guides/connectors.md) to add one to
-`connectors.json` and set its token with `mama secret set MAMA_SLACK_TOKEN` or
-`mama secret set MAMA_CHATWORK_TOKEN` in a terminal.
+Once MAMA has answered you, your agent asks which sources MAMA should watch. Pick Slack or
+Chatwork, and tell the agent which channel or room to read; if you said "later", ask the agent for
+it now. The agent stops MAMA and enables the source, and the setup page opens again for the
+source's token: enter it there. Then the agent starts MAMA again. Confirm that the account and
+channel are available to the token you entered. See [sources](../guides/connectors.md).
 
 After the source has been collected, ask in Telegram:
 

@@ -10,7 +10,7 @@ MAMA accepts owner messages through enabled Telegram, Discord, and Slack gateway
 
 ## Configure an owner gateway
 
-`mama init` asks whether to enable optional Discord and Slack owner gateways and stores their credentials in `~/.mama/auth.env`, never in YAML. Telegram uses `MAMA_TELEGRAM_TOKEN`; Discord uses `MAMA_DISCORD_TOKEN`; Slack uses `MAMA_SLACK_TOKEN` and `MAMA_SLACK_APP_TOKEN` for Socket Mode. Set or rotate these with the CLI secret command when needed.
+`mama init --section discord` and `mama init --section slack` turn the optional Discord and Slack owner gateways on or off, at a terminal for now, and store their credentials in `~/.mama/auth.env`, never in YAML. Telegram uses `MAMA_TELEGRAM_TOKEN`; Discord uses `MAMA_DISCORD_TOKEN`; Slack uses `MAMA_SLACK_TOKEN` and `MAMA_SLACK_APP_TOKEN` for Socket Mode. Set or rotate these with the CLI secret command when needed.
 
 Each enabled gateway requires an owner destination and allowlists. Telegram uses a negative
 group or supergroup ID in `owner_chat_id`, also listed in `allowed_chats`, for the common channel.

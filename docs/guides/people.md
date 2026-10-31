@@ -74,10 +74,12 @@ Nobody reads another person's skills.
 
 ## Documents
 
-Run `mama tools install` once on the host. On macOS `mama init` runs it for you; elsewhere set
-`tools_root` in `config.yaml` first. It installs a document toolkit for every session: Python
-libraries for PowerPoint, Word, Excel and PDF files, LibreOffice and CJK fonts. Ask for a document
-in your DM or the group. On macOS MAMA can also render a document's pages to check them before
+Setup sets `tools_root` and tries to install a document toolkit for every session, on every
+platform. If the toolkit cannot install, setup goes on without it, and
+`~/.mama/bin/mama tools install` (with your own Node.js, `mama tools install`) retries it; see the
+[known limits](../start/owner-setup.md#supported-versions). The same command updates it. The
+toolkit holds Python libraries for PowerPoint, Word, Excel and PDF files, LibreOffice and CJK
+fonts. Ask for a document in your DM or the group. On macOS MAMA can also render a document's pages to check them before
 sending it; the renderer runs only there. Sessions cannot install other packages, and their shell
 has no network.
 

@@ -5,37 +5,50 @@ Codex, watch connected work, keep task revisions and evidence, answer in Telegra
 and the common group), Discord or Slack, publish reports and a board, and recall corrections.
 [mama-core](../mama-core/README.md) supplies the shared engine.
 
-Current manifest: **0.78.0**. Install with `npm install -g @jungjaehoon/mama-os` (Node.js 22.13+)
-and follow [owner setup](../../docs/start/owner-setup.md).
+Current manifest: **0.78.0**. Install it through your agent: on the Mac that will run MAMA, tell
+Claude Code or Codex "Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA by
+following its owner setup guide, docs/start/owner-setup.md". See
+[owner setup](../../docs/start/owner-setup.md), with the supported versions.
 
 ## Start and operate
 
+The agent runs the install command. It installs MAMA's own Node.js, MAMA OS and, when needed, the
+backend, then sets MAMA up and starts it:
+
+```bash
+curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | MAMA_INIT_MODEL=<model> sh -s -- --backend <claude|codex> --non-interactive
+```
+
+With your own Node.js 22.13 or newer, install with npm instead, then run setup:
+
 ```bash
 npm install -g @jungjaehoon/mama-os
-mama init
+MAMA_INIT_BACKEND=<claude|codex> MAMA_INIT_MODEL=<model> mama init --non-interactive
 ```
 
 From a checkout, run `pnpm install` and `pnpm build`, then use
-`node packages/standalone/dist/cli/index.js` in place of `mama`. Onboarding runs in a terminal, where the owner types tokens
-with echo off, or from `MAMA_INIT_*` variables with `--non-interactive`. Sign in to the backend
-first; `mama init` checks it, writes the setup, registers the first owner, installs the document
+`node packages/standalone/dist/cli/index.js` in place of `mama`. Setup reads its answers from
+`MAMA_INIT_*` variables and opens a page in the browser on this machine, where the owner enters the
+bot token and the pairing code; nothing secret goes through the chat or a terminal. Sign in to the
+backend first; setup checks it, writes the setup, registers the first owner, installs the document
 toolkit and starts the service.
 
 For Telegram's common session, create a group with the bot, even for a solo owner, and send
-`/bind` there when `mama init` asks. Private chats always enter personal sessions.
-`mama init` pairs you through a code the bot sends you and registers you as the first owner; `mama register-owner <telegram id>` registers
+`/bind` there when setup asks. Private chats always enter personal sessions.
+Setup pairs you through a code the bot sends you and registers you as the first owner; `mama register-owner <telegram id>` registers
 another owner while the daemon is stopped.
 
-| Command                                       | Purpose                                          |
-| --------------------------------------------- | ------------------------------------------------ |
-| `mama init`                                   | Set up and start MAMA, with the first owner      |
-| `mama register-owner <telegram id>`           | Register another owner while MAMA is stopped     |
-| `mama tools install`                          | Install or update the document toolkit           |
-| `mama secret set <NAME>` / `mama secret list` | Rotate a token / list names only                 |
-| `mama daemon`                                 | Run the configured daemon in the foreground      |
-| `mama backfill <file>`                        | Write a prepared past-period backfill file       |
-| `mama replay`                                 | Replay prepared historical inputs in day windows |
-| `mama status` / `mama stop`                   | Report running/stopped / stop the process        |
+| Command                                            | Purpose                                              |
+| -------------------------------------------------- | ---------------------------------------------------- |
+| `mama init --non-interactive`                      | Set up and start MAMA, with the first owner          |
+| `mama init --section connectors --non-interactive` | Enable sources, with MAMA stopped; the agent runs it |
+| `mama register-owner <telegram id>`                | Register another owner while MAMA is stopped         |
+| `mama tools install`                               | Install or update the document toolkit               |
+| `mama secret set <NAME>` / `mama secret list`      | Rotate a token / list names only                     |
+| `mama daemon`                                      | Run the configured daemon in the foreground          |
+| `mama backfill <file>`                             | Write a prepared past-period backfill file           |
+| `mama replay`                                      | Replay prepared historical inputs in day windows     |
+| `mama status` / `mama stop`                        | Report running/stopped / stop the process            |
 
 See [CLI flags](../../docs/reference/cli.md) and
 [launchd management](../../docs/guides/troubleshooting.md).
@@ -72,8 +85,8 @@ and viewer sources/assets in `ui/` and `public/viewer/`.
 ## Data, security and status
 
 OS state lives in `~/.mama/`; its database defaults to `~/.mama/memory.db`.
-`config.yaml` and `connectors.json` hold settings; terminal-entered credentials live in
-`auth.env` (0600). Both backends have workspace-only writes and credential-read exclusions.
+`config.yaml` and `connectors.json` hold settings; credentials, entered on the setup page or at a
+terminal, live in `auth.env` (0600). Both backends have workspace-only writes and credential-read exclusions.
 The viewer binds to `127.0.0.1:3847` by default; remote data access requires a bearer token
 or verified Access JWT. See [security](../../docs/guides/security.md).
 

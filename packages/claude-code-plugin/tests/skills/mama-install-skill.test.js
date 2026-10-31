@@ -64,6 +64,26 @@ describe('Story ONB-8: thin MAMA OS installation skill', () => {
     expect(content).not.toMatch(/(^|[^/])\bmama (init|service|doctor|status|update|stop)\b/);
   });
 
+  it('offers sources once MAMA has answered, from the connectors guide, and lets the person skip', () => {
+    const content = skill();
+    const answered = content.indexOf("Setup is done when MAMA answers the person's message");
+    const offer = content.indexOf('ask the person which sources MAMA should watch');
+
+    // The install itself offers none; the first reply comes first, then the offer.
+    expect(answered).toBeGreaterThanOrEqual(0);
+    expect(offer).toBeGreaterThan(answered);
+    expect(content).toContain('do not offer them before MAMA answers');
+    // The list is the guide's, not the model's memory.
+    expect(content).toContain('Name each source in the table of the [connectors guide]');
+    expect(content).toContain('read the list there, not from memory');
+    expect(content).toContain('Leave out the Kagemusha bridge');
+    // Each pick goes through the same enabling flow.
+    expect(content).toContain('Set up each source the person picks, one at a time, as below');
+    expect(content).toContain(
+      'If they decline or say later, skip this, and tell them they can ask for a source at any time'
+    );
+  });
+
   it("orders a Google source's steps: the OAuth client, the tool, the login, then enabling", () => {
     const content = skill();
     const steps = [
@@ -74,11 +94,22 @@ describe('Story ONB-8: thin MAMA OS installation skill', () => {
     ].map((step) => content.indexOf(step));
     expect(steps.every((at) => at >= 0)).toBe(true);
     expect([...steps].sort((a, b) => a - b)).toEqual(steps);
-    expect(content).toContain('OAuth client of type Desktop app');
+    // When only the shell finds gws, MAMA prints that the service install adds its folder.
     expect(content).toContain(
-      'External in testing mode with themselves as a test user, or as Internal for a Google Workspace account'
+      'When your shell finds `gws` but the service does not, it saves nothing and prints that'
     );
-    expect(content).toContain('Google ends the login after 7 days');
+    expect(content).toContain('run `~/.mama/bin/mama service install`');
+    expect(content).toContain('OAuth client of type Desktop app');
+    // A gmail.com client is published (no 7-day end) after one unverified-app click-through; a
+    // Workspace account uses Internal (owner, 2026-10-31).
+    expect(content).toContain('A gmail.com account: user type External');
+    expect(content).toContain('then press "Publish app" so the app is In production');
+    expect(content).toContain('they choose Advanced, then continue');
+    expect(content).toContain('A Google Workspace account: user type Internal');
+    expect(content).toContain(
+      'If the client is left in Testing, Google ends the sign-in after 7 days'
+    );
+    expect(content).not.toContain('External in testing mode');
     expect(content).toContain('not a MAMA secret');
     // The consent is the person's; the agent only runs the login and passes on its address.
     expect(content).toContain('Never open or complete the Google consent yourself');

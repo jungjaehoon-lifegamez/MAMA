@@ -499,10 +499,19 @@ jobs:
 
           ### Installation
 
-          ```bash
-          # MAMA OS (Always-on Agent)
-          npm install -g @jungjaehoon/mama-os
+          **MAMA OS.** On the Mac that will run MAMA, open Claude Code or Codex and say:
 
+          > Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA by following its owner setup guide, docs/start/owner-setup.md.
+
+          The agent runs the install command attached to each MAMA OS release, and you never type in a terminal:
+
+          ```bash
+          curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | MAMA_INIT_MODEL=<model> sh -s -- --backend <claude|codex> --non-interactive
+          ```
+
+          With your own Node.js 22.13 or newer: `npm install -g @jungjaehoon/mama-os`, then `MAMA_INIT_BACKEND=<claude|codex> MAMA_INIT_MODEL=<model> mama init --non-interactive`. Supported versions are listed in the [owner setup guide](https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/start/owner-setup.md#supported-versions). macOS is supported. Linux is not supported yet (over SSH or without a desktop there is no setup path), and Docker has no image yet.
+
+          ```bash
           # MCP Server (Claude Desktop/Code)
           npx @jungjaehoon/mama-server
 

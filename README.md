@@ -63,29 +63,47 @@ the rest are gathered into an hourly reminder between 09:00 and 21:00.
 
 ## Getting started
 
-You need Node.js 22.13+, a signed-in `claude` or `codex` CLI, and a Telegram bot in a group
-for common changes (Discord and Slack work too). Create that group even for a solo owner;
-setup binds it when you send `/bind` there. Private chats enter personal sessions.
+On the Mac that will run MAMA, open Claude Code or Codex and say:
 
-```bash
-npm install -g @jungjaehoon/mama-os
-mama init          # asks for settings; tokens are typed at hidden prompts
+> Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA by following its owner setup
+> guide, docs/start/owner-setup.md.
+
+Name the repository. "Install MAMA" alone can send the agent to other programs called mama. The
+agent then runs the install command, which comes with each MAMA OS release:
+
+```sh
+curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | MAMA_INIT_MODEL=<model> sh -s -- --backend <claude|codex> --non-interactive
 ```
 
-`mama init` checks the backend and the bot token first, pairs you through a code the bot sends
-you, then registers you as the first owner,
-installs the document toolkit the sessions use for office files and charts, and starts MAMA. When
-it says MAMA is running, send your bot a message. After an upgrade, run `mama tools install` again.
+In Claude Code you can add MAMA's plugin instead and say "install MAMA OS": run
+`/plugin marketplace add jungjaehoon-lifegamez/claude-plugins`, then `/plugin install mama`.
 
-To run from a checkout instead, run `pnpm install` and `pnpm build`, then use
-`node packages/standalone/dist/cli/index.js` wherever the guides say `mama`.
+You never type in a terminal. First make a Telegram bot with BotFather, and a group for common
+work, even if you are the only owner. Then:
 
-Another owner is added with `mama register-owner <telegram id>` while MAMA is stopped. See
-[owner setup](docs/start/owner-setup.md).
+1. In the conversation, choose the backend (`claude` or `codex`) and the model.
+2. On the page MAMA opens in your browser, paste the bot token. Message the bot privately; it
+   answers with a pairing code, which you enter on the page.
+3. Add the bot to the group as an administrator and send `/bind` there. Telegram's member picker
+   does not list bots: search for the bot's @username, or choose Add to Group on the bot's profile.
 
-Then send your bot a message. Setup is done when MAMA answers you, not when the process is
-running. The [first-day tutorial](docs/start/tutorial.md) walks through connecting a source,
-asking about work, giving a correction, reports, the viewer and sending files.
+MAMA installs its own Node.js, the backend if it is missing, and the document toolkit for office
+files and charts, then starts. Setup is done when MAMA answers your message to the bot. Your agent
+then asks which work sources MAMA should watch; pick some, or say "later". Discord and Slack can be
+added as messengers later.
+
+macOS is supported today; Linux and Docker are not yet. See
+[supported versions](docs/start/owner-setup.md#supported-versions).
+
+If you keep your own Node.js 22.13 or newer, `npm install -g @jungjaehoon/mama-os` installs MAMA OS
+instead; see [owner setup](docs/start/owner-setup.md#install-with-your-own-nodejs). To run from a
+checkout, run `pnpm install` and `pnpm build`, then use `node packages/standalone/dist/cli/index.js`
+wherever the guides say `mama`.
+
+Another owner is added with `mama register-owner <telegram id>` while MAMA is stopped. After an
+upgrade, run `mama tools install` again. The [first-day tutorial](docs/start/tutorial.md) walks
+through connecting a source, asking about work, giving a correction, reports, the viewer and
+sending files.
 
 Claude Code development memory is separate and needs no daemon: `/plugin install mama`, or add the
 MCP server `{"mcpServers":{"mama":{"command":"npx","args":["@jungjaehoon/mama-server"]}}}`.
@@ -128,7 +146,8 @@ graph, the wiki and logs.
 
 ## What you can connect
 
-Each source is optional; enable the ones you use in `~/.mama/connectors.json` or during `mama init`.
+Each source is optional. Your agent sets up the ones you pick once MAMA first answers you, or
+whenever you ask.
 
 | Source                                | What MAMA collects                                                   | How it connects                      |
 | ------------------------------------- | -------------------------------------------------------------------- | ------------------------------------ |
@@ -138,7 +157,7 @@ Each source is optional; enable the ones you use in `~/.mama/connectors.json` or
 | Notion                                | Pages shared with the integration                                    | API token                            |
 | Telegram (source)                     | Messages in groups you add a separate source bot to                  | Bot token                            |
 | Google Calendar, Gmail, Drive, Sheets | Changed events, mail, files and rows                                 | The logged-in `gws` command          |
-| iCal feeds                            | Events in the calendar feeds you add                                 | Private URL as a secret, set by hand |
+| iCal feeds                            | Events in the calendar feeds you add                                 | Private URL, typed on the setup page |
 | Obsidian                              | Notes in the vault folders you choose                                | Local folder                         |
 | iMessage                              | Messages in the chats you choose                                     | Local database (Full Disk Access)    |
 | Claude Code                           | Conversations in the projects you choose                             | Local folder                         |
@@ -152,8 +171,9 @@ receives reports, notifications and security alerts. See [Sources](docs/guides/c
 
 ## Security
 
-- Tokens are typed by you at a terminal prompt and stored only in `~/.mama/auth.env` (mode 0600).
-  The configuration files hold none, and the agent cannot read MAMA's credential files.
+- You enter tokens on a page MAMA opens in your browser on its own machine, never in the chat with
+  your agent. They are stored only in `~/.mama/auth.env` (mode 0600). The configuration files hold
+  none, and MAMA's agent cannot read MAMA's credential files.
 - The agent writes only inside its workspace. Files you send it are saved by MAMA into a folder the
   agent can read but not change.
 - Messages, files and pages from other people reach the agent marked as untrusted evidence, never

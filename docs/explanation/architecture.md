@@ -59,7 +59,7 @@ MAMA action calls are traced. See [backends](../guides/backends.md) and
 | State                                                      | Location or authority                                                                     |
 | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | MAMA OS configuration and credentials                      | `~/.mama/config.yaml`, `connectors.json`, and the separate `auth.env`                     |
-| Work, memory, source index, mailbox and model/tool records | Product SQLite database at `database.path`; `mama init` sets `~/.mama/memory.db`          |
+| Work, memory, source index, mailbox and model/tool records | Product SQLite database at `database.path`; setup sets `~/.mama/memory.db`                |
 | Preserved connector payloads                               | Per-connector raw storage under `~/.mama/connectors/`                                     |
 | Runtime and delivery state                                 | `~/.mama/runtime/`; the board is persisted in `~/.mama/report-slots.json`                 |
 | Owner files and generated artifacts                        | `~/.mama/workspace/`                                                                      |

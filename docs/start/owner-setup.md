@@ -10,34 +10,38 @@ MAMA OS keeps work history, answers the owner on Telegram, and publishes a board
 reports. For coding-session decisions and checkpoints, use the separate
 [Claude Code plugin](claude-code-plugin.md).
 
-## Install and sign in
+## Install
 
-Use Node.js 22.13 or newer and an authenticated Claude or Codex CLI on the machine
-that will run MAMA:
+On the Mac that will run MAMA, open Claude Code or Codex and say:
 
-```bash
-node --version
-npm install -g @jungjaehoon/mama-os
+> Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA by following its owner setup
+> guide, docs/start/owner-setup.md.
+
+Name the repository. "Install MAMA" alone can send the agent to other programs called mama. The
+agent then runs the install command, which comes with each MAMA OS release:
+
+```sh
+curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | MAMA_INIT_MODEL=<model> sh -s -- --backend <claude|codex> --non-interactive
 ```
 
-This installs the `mama` command. To work from a checkout instead, run `pnpm install`
-and `pnpm build` at the repository root and use
-`node packages/standalone/dist/cli/index.js` wherever the guides say `mama`.
+In Claude Code you can add MAMA's plugin instead and say "install MAMA OS": run
+`/plugin marketplace add jungjaehoon-lifegamez/claude-plugins`, then `/plugin install mama`. Its
+`mama-install` skill follows this guide.
 
-Sign in to the backend before setup; `mama init` checks it. For Claude, run `claude auth login`.
-For Codex, sign in to the home MAMA gives it, not the usual one:
+You never type in a terminal. You choose the backend and the model in the conversation. You enter
+the bot token and a pairing code on a page MAMA opens in your browser, and send `/bind` in
+Telegram. The next section is what the agent follows.
 
-```bash
-CODEX_HOME="$HOME/.mama/.codex" codex login
-```
-
-See [Backends](../guides/backends.md).
+macOS is supported today. Linux is not supported yet (over SSH or without a desktop there is no
+setup path). See
+[Supported versions](#supported-versions). To keep your own Node.js, see
+[Install with your own Node.js](#install-with-your-own-nodejs).
 
 ## Set up through your agent
 
-Ask Claude Code or Codex, on the machine that will run MAMA, to install MAMA. The agent runs the
-install command and you never type in a terminal. Claude Code's MAMA plugin has a `mama-install`
-skill for this; Codex follows this section. Either way, these are the steps.
+Ask Claude Code or Codex, on the machine that will run MAMA, to install MAMA OS as above. The agent
+runs the install command and you never type in a terminal. Claude Code's MAMA plugin has a
+`mama-install` skill for this; Codex follows this section. Either way, these are the steps.
 
 ### What you make first
 
@@ -53,7 +57,7 @@ The agent asks you which backend MAMA runs (`claude` or `codex`; usually the age
 which model, then runs this in the background, with its output in a file:
 
 ```sh
-curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | MAMA_INIT_MODEL=<model> sh -s -- --backend claude --non-interactive
+curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | MAMA_INIT_MODEL=<model> sh -s -- --backend <claude|codex> --non-interactive
 ```
 
 The setup reads these variables. None of them is a secret:
@@ -70,7 +74,8 @@ The setup reads these variables. None of them is a secret:
 
 ### The setup page
 
-Setup checks the backend, the model, the time zone, the folders and the tunnel first. Then it
+Setup checks the backend, the time zone, the folders and the tunnel first, and that a model is
+named; its real turn at the end tests the model. Then it
 opens a setup page in your browser on this machine, and the agent tells you so. If no browser
 opened, the agent gives you the `file://` path of `open.html` that setup printed; paste it into
 the browser's address bar. The path holds no secret. On the page:
@@ -78,8 +83,9 @@ the browser's address bar. The path holds no secret. On the page:
 1. paste the bot token;
 2. send the bot a new private message in Telegram (one sent before setup started is dropped). It
    answers with a pairing code; enter it on the page;
-3. add the bot to the common group as an administrator, so it reads the group, and send `/bind`
-   in that group.
+3. add the bot to the common group and make it an administrator, so it reads the group. Telegram's
+   member picker does not list bots: search for the bot's @username there, or open the bot's
+   profile and choose Add to Group. Then send `/bind` in that group.
 
 Enter the token and the code only on the page, never in the chat with the agent: the conversation
 reaches the model provider and the agent's transcript. The agent never opens `open.html` and never
@@ -116,11 +122,35 @@ comes from the login it started on your machine.
   setup continues from where it stopped.
 - The agent's shell does not read the PATH block the installer writes, so it runs
   `~/.mama/bin/mama` and the backend by their full paths.
-- Setup is done when MAMA answers your message to the bot. Sources, Discord, Slack and Jev are set
-  up afterwards with `mama init --section` (below), which needs you at a terminal: the agent does
-  not set them up from the conversation yet, and does not offer them during the install.
+- Setup is done when MAMA answers your message to the bot. The agent offers no source before then.
 
-Before writing anything, `mama init` checks three things:
+### Sources, after MAMA answers
+
+Once MAMA has answered you, the agent asks which work sources MAMA should watch. It names each
+source the [sources guide](../guides/connectors.md) lists, with what it reads. Pick the ones you
+want, or say "later": you can ask for a source at any time. For each one you pick:
+
+1. You and the agent agree on what it reads: the rooms, channels, folders or calendars.
+2. The agent stops MAMA and runs `~/.mama/bin/mama init --section connectors --non-interactive`
+   with the source's settings in `MAMA_INIT_CONNECTORS` (with your own Node.js, it runs the `mama`
+   npm installed). A source with a token opens the setup page again; enter the token there.
+3. The command saves nothing until the source's settings pass MAMA's checks, and a Google source's
+   tool and sign-in work. It does not try a token with its service. It leaves MAMA stopped however
+   it ends, and the agent starts MAMA again after each run.
+
+Gmail, Calendar, Drive and Sheets also need Google's `gws` command and an OAuth client of your own.
+You create the client in Google Cloud Console, the agent puts its file in place, and you sign in
+in your browser. With a gmail.com account you publish the client (In production) and click
+through Google's unverified-app warning once; a Google Workspace account uses the Internal user
+type. If the client is left in Testing, Google ends the sign-in after 7 days. See
+[Google sources](../guides/connectors.md#google-sources).
+
+Discord or Slack as the messenger you talk to MAMA in, and Jev, still need a terminal:
+`mama init --section` (below).
+
+### What setup checks and writes
+
+Before writing anything, setup checks three things:
 
 - the backend is installed, is at least the version MAMA was verified on, and is signed in;
 - Telegram accepts the token;
@@ -183,6 +213,93 @@ Each owner gets a personal member session; the common group keeps the common ses
 chats cannot serve as the common channel: they always enter that person's intake. To add more
 owners or members later, see [People and their DMs](../guides/people.md).
 
+## What the install command makes
+
+| Path                                        | What                                                                                |
+| ------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `~/.mama/node`                              | Node.js 22, the release the install command pins, checked against its SHA-256 hash  |
+| `~/.mama/npm`                               | MAMA OS, installed with that Node's npm                                             |
+| `~/.mama/bin/mama`                          | The `mama` command: MAMA OS run on that Node                                        |
+| A marked block in your shell's startup file | Puts `~/.mama/bin` first on PATH, and `~/.local/bin` when the backend was put there |
+| `/var/lib/mama/<you>` (Linux only)          | The parent of the member workspaces and document tools folders                      |
+
+MAMA's service runs its own Node, so upgrading your Node or switching it with nvm does not stop
+MAMA. Your own `node` and `npm` stay as they are.
+
+- **The PATH block** sits between `# >>> mama >>>` and `# <<< mama <<<`. It goes in `~/.zshrc` for
+  zsh; for bash, in `~/.bash_profile` on macOS or `~/.bashrc` on Linux; otherwise in `~/.profile`.
+  For fish nothing is written, and the installer prints the line to add. Each run rewrites the
+  block. New terminals read it; the agent's shell does not, so the agent uses full paths.
+- **The backend.** A `claude` or `codex` that is on PATH and runs is used as it is. Otherwise the
+  vendor's own installer puts it in `~/.local/bin`.
+- **Linux** needs one `sudo` command, which the installer shows and runs once. It makes
+  `/var/lib/mama/<you>` and turns on linger, so MAMA keeps running after you log out. If it cannot
+  run, the installer prints it. Until it runs, setup needs `MAMA_INIT_MEMBER_ROOT` and
+  `MAMA_INIT_TOOLS_ROOT` to name two other folders outside your home.
+
+The installer can run again at any time. It skips what is in place, and on an install that is set
+up it needs no options.
+
+## A new Node.js release
+
+`mama update` updates MAMA OS, not its Node. When a new release pins another Node.js, `mama update`
+and `mama doctor` say to run the install command again. The agent runs it with no options.
+
+- It downloads the new Node and checks its hash.
+- It lets running turns finish, stops MAMA, swaps the new Node in and checks that MAMA starts on
+  it.
+- A new major version first rebuilds MAMA's packages for that Node, before anything stops.
+- If a step fails, the old Node is put back and started.
+- If the move is cut off, the next run of the install command finishes or undoes it.
+
+Node.js 22 reaches its end of life on 2027-04-30.
+
+## Install with your own Node.js
+
+If you keep your own Node.js (22.13 or newer), install MAMA OS with npm instead:
+
+```bash
+npm install -g @jungjaehoon/mama-os
+```
+
+Then you or your agent run setup with its variables, and setup goes on as above from the setup
+page:
+
+```bash
+MAMA_INIT_BACKEND=<claude|codex> MAMA_INIT_MODEL=<model> mama init --non-interactive
+```
+
+If the backend is not signed in, setup names the sign-in: `claude auth login`, or for Codex,
+`CODEX_HOME="$HOME/.mama/.codex" codex login` (MAMA's own Codex home, not the usual one). Run it,
+then the same command again. See [Backends](../guides/backends.md).
+
+MAMA's service runs the Node that ran setup. An upgrade or an nvm switch can take that Node away;
+`mama doctor` checks it. `mama update` updates this install with npm.
+
+To work from a checkout instead, run `pnpm install` and `pnpm build` at the repository root and
+use `node packages/standalone/dist/cli/index.js` wherever the guides say `mama`.
+
+## Supported versions
+
+| What                         | Supported                                              | Source                                                                                                                     |
+| ---------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Node.js (install command)    | Node.js 22, the release the install command pins       | [`install/node.json`](../../packages/standalone/install/node.json), installed and run in CI on macOS and Ubuntu            |
+| Node.js (your own, with npm) | 22.13 or newer                                         | `engines` in [`package.json`](../../packages/standalone/package.json)                                                      |
+| Claude Code                  | 2.1.299 or newer                                       | [`backend-probe.ts`](../../packages/standalone/src/cli/runtime/backend-probe.ts); setup refuses an older one               |
+| Codex                        | 0.160.1 or newer                                       | [`backend-probe.ts`](../../packages/standalone/src/cli/runtime/backend-probe.ts); setup refuses an older one               |
+| macOS                        | 26.6 on Apple silicon, the version setup was proven on | A clean Mac account, set up through Claude Code (`docs/development/checks.md`); Claude Code itself needs macOS 13 or newer |
+| Linux                        | Not yet: a later release adds it                       | —                                                                                                                          |
+| Docker                       | Not yet: there is no image; a later release adds it    | —                                                                                                                          |
+
+Known limits:
+
+- **SSH and headless Linux.** There is no setup path yet. The setup page listens only on the
+  machine that runs MAMA, so a browser on another machine cannot reach it.
+- **Document tools on a Mac without Homebrew.** The tools for office files and charts install with
+  Homebrew and need python3 3.10 or newer. macOS ships python3 3.9.6. On a Mac account without its
+  own Homebrew they fail to install: setup goes on without them, and `mama doctor` warns. Once
+  Homebrew and a newer python3 are there, `mama tools install` adds them.
+
 ## Change one part later
 
 `mama init --section <part>` asks one part of the setup again and saves it:
@@ -204,6 +321,9 @@ leaves a delivery route on a messenger you turned off is refused. Tokens go only
 The folders cannot be changed this way, since member data lives in them. A `config.yaml` written
 by hand is written again in plain YAML without its comments, and the command says so.
 
+Each part asks its questions at a terminal, except sources: `--section connectors
+--non-interactive` is the form your agent runs ([Sources, after MAMA answers](#sources-after-mama-answers)).
+
 ## The running service
 
 `mama status` shows the daemon's boot stage, running turns, connectors and last error.
@@ -219,10 +339,10 @@ and distinguishes missing information from confirmed facts. Ask what evidence it
 used and compare its answer with the original. Open
 [the viewer](../guides/viewer.md) to inspect the task and board.
 
-Fresh-machine onboarding through backend login and an actual Telegram reply has
-not yet been verified end to end. A running process or healthy HTTP response does
-not establish that login, source collection or Telegram delivery works. Add a [connector](../guides/connectors.md)
-and check an actual source-backed answer before relying on reports.
+Setup through Claude Code has reached a Telegram reply on a clean Mac account; Linux and Docker
+have not been verified. A running process or healthy HTTP response does not establish that login,
+source collection or Telegram delivery works. Add a [source](../guides/connectors.md) and check an
+actual source-backed answer before relying on reports.
 
 To rotate a token, run `mama secret set MAMA_TELEGRAM_TOKEN` (or another supported
 secret name) in your terminal, then restart the daemon. `mama secret list` prints
