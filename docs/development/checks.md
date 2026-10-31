@@ -2875,3 +2875,24 @@ The implementation writes raw/index data during import only. Replay is the owner
     - Sheets `spreadsheets get` was checked on a nonexistent id: exit 1 with Google's 404 error JSON, so the command and its params are accepted. No spreadsheet is configured on this install, so a real sheet read is still unproven.
   - gws prints `Using keyring backend: keyring` on stderr and the JSON on stdout, which is what `execGws` parses.
 - Leg A environment (added 2026-10-31): macOS 26.6.2 (build 25G83), Apple silicon (arm64). Clean Standard account; Homebrew from the main account on PATH via /etc/paths.d.
+
+### `google.read`: the agent reads Google on demand through the host; gws credentials denied to agents (#551, 2026-10-31)
+
+- Result:
+  - The new host action `google.read {service, argv, params?}` runs gws through execFile, with no shell.
+    - It allows read methods only: Gmail profile, labels, messages and threads; Calendar list and events; Sheets get and values; Drive export as text.
+    - It refuses `alt` other than json, any `callback`, and any `saved_file` result. Each call runs in a fresh directory under `~/.mama/runtime/google-read`, removed afterwards.
+    - Results over 100k characters are refused with advice on narrowing. Output is quoted as external evidence and traced.
+    - It is granted to the common session (chat, delta, report) and to owner-role DMs, and refused for members (P6) and replay turns.
+  - The printed login is now `gws auth login --scopes …`: read-only for Gmail, Calendar and Sheets, and full Drive, because `deliver.drive.file` writes into an owner-named folder.
+  - Owner decision: gws's credential store (`~/.config/gws`, a configured dir or file, and legacy paths) is in the agents' read denies for both backends and the renderer, recorded in AGENTS.md. The daemon's own gws runs are unaffected.
+- Why: the owner wants the agent to act on requests instead of storing every change ("호스트 기능으로 하자"; turns: owner chat plus autonomous). Opening the shell to Google hosts was rejected because the proxy filters by host, not by binary, which leaves exfil to attacker Google accounts and readable credentials. Apps Script was rejected because it cannot do the Drive writes, adds about 500 lines and needs a public endpoint.
+- Evidence:
+  - Opus review round 1 was FIX-FIRST. JSONP `callback` or `$alt` made gws write the whole response into the daemon's directory, `~/.mama/download.json`, which the agent could read, bypassing the cap, quoting and trace. Replay turns read live mail.
+  - Both are fixed with stand-in tests, and the mutation checks fail without the fix. The re-review said MERGE, and checked that the spaced and nonexistent deny paths build valid Claude rules and Codex TOML.
+  - CI green. Merged as e0d043adf and deployed at 20:34 with a drained stop. Boot clean, every source ok, doctor all ok (backend codex 0.160.1).
+- Still open:
+  - No live gws call through `google.read` yet; the first owner turn that uses it is the proof.
+  - Check that the Codex profile carries the new denies once the next Codex session writes it.
+  - #550 (docs, merging at release) still prints `-s <services>` in connectors.md; switch it to the `--scopes` line when it is rebased.
+  - Owner decisions pending: narrowing the polling defaults, full Drive on installs that never deliver, and whether to alert on write-method requests.
