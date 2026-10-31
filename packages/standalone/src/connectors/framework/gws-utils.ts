@@ -200,7 +200,7 @@ export function gwsFailure(error: unknown): {
  * A Google source's sign-in check: one read that its own service's scope allows. `gws auth status`
  * cannot be it: it exits 0 signed in or not (gws's `handle_status_succeeds_without_credentials`),
  * and its `token_valid` says only that the sign-in can be refreshed, not which services it grants
- * (`gws auth login -s gmail` grants Gmail's scopes alone). Resolves with undefined when the read
+ * (a login with Gmail's scope alone grants Gmail alone). Resolves with undefined when the read
  * works, or with why it did not, in gws's own words: no sign-in, an ended one, a missing scope,
  * the network.
  */
