@@ -2874,3 +2874,4 @@ The implementation writes raw/index data during import only. Replay is the owner
     - Drive `about get {"fields":"user"}` exits 0 with JSON (`user`).
     - Sheets `spreadsheets get` was checked on a nonexistent id: exit 1 with Google's 404 error JSON, so the command and its params are accepted. No spreadsheet is configured on this install, so a real sheet read is still unproven.
   - gws prints `Using keyring backend: keyring` on stderr and the JSON on stdout, which is what `execGws` parses.
+- Leg A environment (added 2026-10-31): macOS 26.6.2 (build 25G83), Apple silicon (arm64). Clean Standard account; Homebrew from the main account on PATH via /etc/paths.d.
