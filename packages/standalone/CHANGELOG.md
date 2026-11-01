@@ -23,6 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sources and messengers that are on and also read it; Enter keeps it. `--section connectors` no
   longer asks for the Slack app token, which only the messenger reads. For a source whose stored
   token is refused, `mama doctor` names `MAMA_INIT_REPLACE_SECRETS`.
+- `mama uninstall --data` removes the MAMA home entry by entry, goes on past one it cannot
+  remove, and names each one. Before, on Node 22 (the Node the install command installs), the
+  first failure stopped the removal, so later entries stayed, credentials among them, and only
+  that failure was reported (#540).
+- When anything before the MAMA home cannot be removed (a person's folder or temporary files, a
+  retired folder, the common skills or a toolkit version), `mama uninstall --data` keeps the MAMA
+  home and the program, names what could not be removed, and ends with the command to run again
+  once it is cleared, with `--toolkit` when it was given. That rerun finds what is left through
+  the kept config and database, a person's temporary files included after `member_root` went.
+  Before, the home went with the config and database that name those folders, so the rerun did
+  not find them and their data stayed with nothing pointing to it (#541).
 
 ## [0.79.0] - 2026-11-01
 
