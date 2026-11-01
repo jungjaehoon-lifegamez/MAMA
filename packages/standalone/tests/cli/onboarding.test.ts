@@ -19,6 +19,7 @@ import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import { defaultToolsRoot } from '../../src/cli/commands/tools.js';
 import { runInit, type InitOptions } from '../../src/cli/commands/init.js';
 import { runSecret } from '../../src/cli/commands/secret.js';
+import { updateSecrets } from '../../src/cli/secrets.js';
 import type { PromptAdapter } from '../../src/cli/prompt.js';
 import type { OpenRun } from '../../src/cli/runtime/setup-page.js';
 import { loadConfig } from '../../src/runtime/config.js';
@@ -1304,10 +1305,80 @@ describe('mama init --section', () => {
     expect(secret('MAMA_SLACK_APP_TOKEN')).toBe('fixture-slack-app-owner');
   });
 
+  /** The terminal's questions, each answered from `answers`; `labels` keeps what each asked. */
+  function asked(answers: string[], hidden: string[]) {
+    const p = prompt(answers, hidden);
+    const labels: string[] = [];
+    const text = p.adapter.text;
+    p.adapter.text = async (label) => {
+      labels.push(label);
+      return await text(label);
+    };
+    return { ...p, labels };
+  }
+
+  it('--section slack keeps a Slack token auth.env holds unless the person replaces it (#552)', async () => {
+    await setUp();
+    // The Slack source stored the bot token; the messenger reads the same name.
+    updateSecrets(home, { MAMA_SLACK_TOKEN: 'fixture-slack-source' });
+    let p = asked(['y', '', 'channel_test', 'user_test'], ['fixture-slack-app-owner']);
+    await runInit(['--section', 'slack'], options(p.adapter));
+    expect(p.labels[1]).toBe(
+      'MAMA_SLACK_TOKEN is in auth.env already, read by the slack source and the slack messenger. Replace it [y/N]'
+    );
+    expect(secret('MAMA_SLACK_TOKEN')).toBe('fixture-slack-source');
+    expect(secret('MAMA_SLACK_APP_TOKEN')).toBe('fixture-slack-app-owner');
+    expect([p.answers, p.hidden]).toEqual([[], []]);
+    // Both stored now: one is replaced, the other kept.
+    p = asked(['y', 'y', 'n', 'channel_test', 'user_test'], ['fixture-slack-owner']);
+    await runInit(['--section', 'slack'], options(p.adapter));
+    expect(secret('MAMA_SLACK_TOKEN')).toBe('fixture-slack-owner');
+    expect(secret('MAMA_SLACK_APP_TOKEN')).toBe('fixture-slack-app-owner');
+    expect([p.answers, p.hidden]).toEqual([[], []]);
+  });
+
+  it('--section discord keeps a Discord token auth.env holds unless the person replaces it (#552)', async () => {
+    await setUp();
+    updateSecrets(home, { MAMA_DISCORD_TOKEN: 'fixture-discord-source' });
+    let p = asked(['y', 'n', 'fixture-channel', 'fixture-user'], []);
+    await runInit(['--section', 'discord'], options(p.adapter));
+    expect(p.labels[1]).toBe(
+      'MAMA_DISCORD_TOKEN is in auth.env already, read by the discord source and the discord messenger. Replace it [y/N]'
+    );
+    expect(secret('MAMA_DISCORD_TOKEN')).toBe('fixture-discord-source');
+    expect(readDoc().discord).toMatchObject({ enabled: true, owner_channel_id: 'fixture-channel' });
+    p = asked(['y', 'y', 'fixture-channel', 'fixture-user'], ['fixture-discord-owner']);
+    await runInit(['--section', 'discord'], options(p.adapter));
+    expect(secret('MAMA_DISCORD_TOKEN')).toBe('fixture-discord-owner');
+    expect([p.answers, p.hidden]).toEqual([[], []]);
+  });
+
+  it("--section connectors at a terminal keeps the messengers' tokens unless replaced, and takes no app token", async () => {
+    await setUp();
+    updateSecrets(home, {
+      MAMA_SLACK_TOKEN: 'fixture-slack-owner',
+      MAMA_SLACK_APP_TOKEN: 'fixture-slack-app-owner',
+    });
+    const auth = readFileSync(join(root, 'auth.env'), 'utf8');
+    let p = asked(['slack', '', 'channel-a'], []);
+    await runInit(['--section', 'connectors'], options(p.adapter));
+    expect(p.labels[1]).toBe(
+      'MAMA_SLACK_TOKEN is in auth.env already, read by the slack source and the slack messenger. Replace it [y/N]'
+    );
+    expect(readFileSync(join(root, 'auth.env'), 'utf8')).toBe(auth);
+    p = asked(['slack', 'y', 'channel-a'], ['fixture-slack-other']);
+    await runInit(['--section', 'connectors'], options(p.adapter));
+    expect(secret('MAMA_SLACK_TOKEN')).toBe('fixture-slack-other');
+    // The Slack source reads no app token, so the sources section leaves the messenger's alone.
+    expect(secret('MAMA_SLACK_APP_TOKEN')).toBe('fixture-slack-app-owner');
+    expect([p.answers, p.hidden]).toEqual([[], []]);
+  });
+
   it('wires every selected connector without leaking credentials', async () => {
     await setUp();
+    // The Slack app token is the messenger's alone; no source reads it.
     const sourceSecrets = Object.entries(fixtureSecrets).filter(
-      ([name]) => name !== 'MAMA_TELEGRAM_TOKEN'
+      ([name]) => name !== 'MAMA_TELEGRAM_TOKEN' && name !== 'MAMA_SLACK_APP_TOKEN'
     );
     const p = prompt(
       [
@@ -1342,8 +1413,12 @@ describe('mama init --section', () => {
       env: { HOME: home },
       encoding: 'utf8',
     });
-    for (const [name, value] of Object.entries(fixtureSecrets))
+    for (const [name, value] of [
+      ['MAMA_TELEGRAM_TOKEN', fixtureSecrets.MAMA_TELEGRAM_TOKEN],
+      ...sourceSecrets,
+    ])
       expect(auth.includes(`${name}=${value}\n`)).toBe(true);
+    expect(auth).not.toContain('MAMA_SLACK_APP_TOKEN');
     const publicFiles = ['config.yaml', 'connectors.json'].map((file) =>
       readFileSync(join(root, file), 'utf8')
     );
@@ -1782,35 +1857,53 @@ describe('a source enabled from the conversation (install.md, W2.4.5e)', () => {
     driverFailures.push(new Error('a setup page opened'));
     return { exit: Promise.resolve(0) };
   };
-  /** The person at the setup page: enters each value in turn, by its field's name. */
+  /**
+   * The person at the setup page: reads each form (`forms`) and enters each value in turn, by its
+   * field's name.
+   */
   function tokenPage(values: Record<string, string>): {
     openRun: OpenRun;
     opened: string[][];
+    forms: string[];
     replies: string[];
   } {
     const opened: string[][] = [];
+    const forms: string[] = [];
     const replies: string[] = [];
     return {
       opened,
+      forms,
       replies,
       openRun: async (command, args) => {
         opened.push([command, ...args]);
         const url = /url=(http[^"]+)"/.exec(readFileSync(args[0]!, 'utf8'))![1]!;
         void (async () => {
-          for (const [name, value] of Object.entries(values))
+          for (const [name, value] of Object.entries(values)) {
+            forms.push(await (await fetch(url)).text());
             replies.push(await post(url, { [name]: value }));
+          }
         })().catch((error: unknown) => driverFailures.push(error));
         return { exit: Promise.resolve(0) };
       },
     };
   }
-  /** `mama init --section connectors --non-interactive` with `blocks`; what it printed. */
-  async function enable(blocks: unknown, overrides: Partial<InitOptions> = {}): Promise<string[]> {
+  /**
+   * `mama init --section connectors --non-interactive` with `blocks`, and `replace` in
+   * MAMA_INIT_REPLACE_SECRETS when given; what it printed.
+   */
+  async function enable(
+    blocks: unknown,
+    overrides: Partial<InitOptions> = {},
+    replace?: string
+  ): Promise<string[]> {
     const p = prompt([], [], [false, false]);
     await runInit(
       ['--section', 'connectors', '--non-interactive'],
       options(p.adapter, {
-        env: { MAMA_INIT_CONNECTORS: JSON.stringify(blocks) },
+        env: {
+          MAMA_INIT_CONNECTORS: JSON.stringify(blocks),
+          ...(replace === undefined ? {} : { MAMA_INIT_REPLACE_SECRETS: replace }),
+        },
         openRun: noPage,
         ...overrides,
       })
@@ -1968,6 +2061,104 @@ describe('a source enabled from the conversation (install.md, W2.4.5e)', () => {
     for (const text of [readFileSync(file(), 'utf8'), ...output, ...page.replies])
       for (const value of Object.values(values)) expect(text.includes(value)).toBe(false);
     expect(output.join('\n')).not.toMatch(/http:\/\/127\.0\.0\.1/);
+  });
+
+  /** A value auth.env holds, read as start.sh reads it. */
+  const stored = (name: string) =>
+    new RegExp(`^export ${name}='([^']*)'$`, 'm').exec(
+      readFileSync(join(root, 'auth.env'), 'utf8')
+    )?.[1];
+  /** The Slack and Discord messengers on, as their terminal sections leave them. */
+  async function messengers(): Promise<void> {
+    await runInit(
+      ['--section', 'slack'],
+      options(
+        prompt(
+          ['y', 'channel-owner', 'user-owner'],
+          ['fixture-slack-messenger', 'fixture-slack-app']
+        ).adapter
+      )
+    );
+    await runInit(
+      ['--section', 'discord'],
+      options(prompt(['y', 'channel-owner', 'user-owner'], ['fixture-discord-messenger']).adapter)
+    );
+  }
+  const slack = token('MAMA_SLACK_TOKEN', { 'channel-a': { role: 'hub' } });
+  const discord = token('MAMA_DISCORD_TOKEN', { 'channel-d': { role: 'hub' } });
+  /** What the command says of a token it keeps. */
+  const kept = (name: string, messenger: string) =>
+    `${name} is in auth.env already and is kept; the ${messenger} messenger reads it too. To enter another, run this again with MAMA_INIT_REPLACE_SECRETS=${name}.`;
+
+  it('keeps the token a messenger uses: the Slack and Discord sources open no page and leave auth.env as it was (#552)', async () => {
+    await setUp();
+    await messengers();
+    const auth = readFileSync(join(root, 'auth.env'), 'utf8');
+    // A page that opened would expire at once and refuse the run.
+    const output = await enable({ slack, discord }, { setupPageMs: 1_000 });
+    expect(readFileSync(join(root, 'auth.env'), 'utf8')).toBe(auth);
+    expect(output).toEqual(
+      expect.arrayContaining([
+        kept('MAMA_SLACK_TOKEN', 'slack'),
+        kept('MAMA_DISCORD_TOKEN', 'discord'),
+      ])
+    );
+    expect(output.at(-1)).toBe(
+      'Saved connectors. Check the install with mama doctor, then start MAMA: mama service install, then mama service start'
+    );
+    const loaded = loadConnectorConfig(file());
+    expect(loaded.ok && Object.keys(loaded.config).sort()).toEqual(['discord', 'slack']);
+  });
+
+  it('asks on the page only for the tokens auth.env does not hold', async () => {
+    await setUp();
+    await messengers();
+    const page = tokenPage({ MAMA_NOTION_TOKEN: 'fixture-notion-page' });
+    const output = await enable(
+      { slack, notion: token('MAMA_NOTION_TOKEN', { workspace: { role: 'hub' } }) },
+      { openRun: page.openRun }
+    );
+    expect(output).toContain(kept('MAMA_SLACK_TOKEN', 'slack'));
+    expect(output).toContain('MAMA_NOTION_TOKEN taken');
+    await vi.waitFor(() => expect(page.replies).toHaveLength(1));
+    expect(page.forms[0]).toContain('MAMA_NOTION_TOKEN, for notion');
+    expect(page.forms[0]).not.toContain('MAMA_SLACK_TOKEN');
+    expect(page.replies[0]).toContain('Every token is taken.');
+    expect(stored('MAMA_SLACK_TOKEN')).toBe('fixture-slack-messenger');
+    expect(stored('MAMA_NOTION_TOKEN')).toBe('fixture-notion-page');
+  });
+
+  it('replaces a stored token only when MAMA_INIT_REPLACE_SECRETS names it, on a field that says the messenger changes too', async () => {
+    await setUp();
+    await messengers();
+    const switched = (name: string, source: string) =>
+      `${name}, for ${source}. It replaces the one in auth.env, which the ${source} messenger also reads: from the next start, the messenger uses the token entered here.`;
+    const page = tokenPage({ MAMA_SLACK_TOKEN: 'fixture-slack-other' });
+    expect(await enable({ slack }, { openRun: page.openRun }, 'MAMA_SLACK_TOKEN')).toContain(
+      'MAMA_SLACK_TOKEN taken'
+    );
+    expect(page.forms[0]).toContain(switched('MAMA_SLACK_TOKEN', 'slack'));
+    expect(stored('MAMA_SLACK_TOKEN')).toBe('fixture-slack-other');
+    expect(stored('MAMA_SLACK_APP_TOKEN')).toBe('fixture-slack-app');
+    const other = tokenPage({ MAMA_DISCORD_TOKEN: 'fixture-discord-other' });
+    await enable({ discord }, { openRun: other.openRun }, 'MAMA_DISCORD_TOKEN');
+    expect(other.forms[0]).toContain(switched('MAMA_DISCORD_TOKEN', 'discord'));
+    expect(stored('MAMA_DISCORD_TOKEN')).toBe('fixture-discord-other');
+    expect(stored('MAMA_SLACK_TOKEN')).toBe('fixture-slack-other');
+  });
+
+  it('refuses a replacement that no source being enabled reads, saving nothing', async () => {
+    await setUp();
+    await messengers();
+    const before = readFileSync(file(), 'utf8');
+    const auth = readFileSync(join(root, 'auth.env'), 'utf8');
+    for (const replace of ['MAMA_DISCORD_TOKEN', 'MAMA_SLACK_APP_TOKEN']) {
+      await expect(enable({ slack }, { setupPageMs: 1_000 }, replace)).rejects.toThrow(
+        `MAMA_INIT_REPLACE_SECRETS names ${replace}, which no source in MAMA_INIT_CONNECTORS reads; nothing was saved.`
+      );
+      expect(readFileSync(file(), 'utf8')).toBe(before);
+      expect(readFileSync(join(root, 'auth.env'), 'utf8')).toBe(auth);
+    }
   });
 
   it('refuses a block boot would not build, or would skip, before any page opens', async () => {

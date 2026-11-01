@@ -9,7 +9,7 @@ import { loadConfig, parseConfig, type W1Config } from '../../runtime/config.js'
 import { planConnectors } from '../../runtime/connectors.js';
 import { findExecutable, mamaCommand } from '../launch-files.js';
 import { CliInputError, createTerminalPrompt, nonblankLine, requireTTY } from '../prompt.js';
-import { updateSecrets, type SecretName } from '../secrets.js';
+import { listSecrets, updateSecrets, type SecretName } from '../secrets.js';
 import {
   defaultTelegramCall,
   readAuthEnv,
@@ -38,6 +38,7 @@ import {
   terminalSignIn,
   checkTelegram,
   collectConnectors,
+  secretReaders,
   sourceToolReports,
 } from './init-questions.js';
 
@@ -151,21 +152,43 @@ function environmentConnectors(env: NodeJS.ProcessEnv): ConnectorsConfig {
 /**
  * The secrets the sources being enabled read, each entered on the setup page (install.md,
  * W2.4.5b), one field each and named as auth.env names it. Their names come from each source's
- * own requirements, which name the tokens a block's `auth` does not (Trello's key).
+ * own requirements, which name the tokens a block's `auth` does not (Trello's key). One auth.env
+ * already holds is kept unless MAMA_INIT_REPLACE_SECRETS names it: the Slack and Discord sources
+ * read their messenger's bot token, so a token entered for the source switches the messenger too
+ * (#552).
  */
 async function sourceSecretsOnPage(
   sources: readonly BuiltSource[],
+  stored: ReadonlySet<string>,
   options: InitOptions,
   write: (line: string) => void
 ): Promise<Partial<Record<SecretName, string>>> {
+  const replace = new Set(
+    (options.env ?? process.env).MAMA_INIT_REPLACE_SECRETS?.split(',')
+      .map((name) => name.trim())
+      .filter(Boolean)
+  );
   const readers = new Map<string, string[]>();
   for (const { name, needs } of sources)
     for (const need of needs)
       if (need.type === 'token' && need.tokenName !== undefined)
         readers.set(need.tokenName, [...(readers.get(need.tokenName) ?? []), name]);
+  // A name no source here reads would be kept while the person thinks it was replaced.
+  for (const name of replace)
+    if (!readers.has(name))
+      throw new CliInputError(
+        `MAMA_INIT_REPLACE_SECRETS names ${name}, which no source in MAMA_INIT_CONNECTORS reads; nothing was saved.`
+      );
   // Each token source is built only with its own token name (its constructor checks the block),
   // so the page never takes the owner's bot token, MAMA_AUTH_TOKEN or the Slack app token.
-  const names = [...readers.keys()];
+  const names = [...readers.keys()].filter((name) => {
+    if (!stored.has(name) || replace.has(name)) return true;
+    const others = secretReaders(name, []);
+    write(
+      `${name} is in auth.env already and is kept${others ? `; ${others} reads it too` : ''}. To enter another, run this again with MAMA_INIT_REPLACE_SECRETS=${name}.`
+    );
+    return false;
+  });
   const secrets: Partial<Record<SecretName, string>> = {};
   if (names.length === 0) return secrets;
   let taken!: () => void;
@@ -173,18 +196,25 @@ async function sourceSecretsOnPage(
     taken = resolve;
   });
   const page = await openSetupPage({
-    fields: names.map((name, index) => ({
-      name,
-      label: `${name}, for ${readers.get(name)!.join(', ')}`,
-      secret: true,
-      check: async (value: string) => {
-        secrets[name as SecretName] = nonblankLine(value).trim();
-        write(`${name} taken`);
-        if (index < names.length - 1) return `${name} is taken.`;
-        taken();
-        return 'Every token is taken.';
-      },
-    })),
+    fields: names.map((name, index) => {
+      const others = secretReaders(name, []);
+      return {
+        name,
+        label: `${name}, for ${readers.get(name)!.join(', ')}${
+          stored.has(name)
+            ? `. It replaces the one in auth.env${others ? `, which ${others} also reads: from the next start, the messenger uses the token entered here` : ''}.`
+            : ''
+        }`,
+        secret: true,
+        check: async (value: string) => {
+          secrets[name as SecretName] = nonblankLine(value).trim();
+          write(`${name} taken`);
+          if (index < names.length - 1) return `${name} is taken.`;
+          taken();
+          return 'Every token is taken.';
+        },
+      };
+    }),
     write,
     platform: options.platform ?? process.platform,
     ...(options.openRun ? { openRun: options.openRun } : {}),
@@ -239,6 +269,8 @@ export async function runInitSection(
   }
   try {
     const config = loadConfig({ home, path: configPath });
+    // A secret auth.env already holds is kept unless the person asks to replace it (#552).
+    const stored = new Set(listSecrets(home));
     const secrets: Partial<Record<SecretName, string>> = {};
     let change: ((doc: Record<string, unknown>) => void) | undefined;
     let connectors: ConnectorsConfig | undefined;
@@ -282,14 +314,14 @@ export async function runInitSection(
       // The sources named are set up again; the others keep their settings.
       connectors = nonInteractive
         ? environmentConnectors(options.env ?? process.env)
-        : await collectConnectors(prompt, secrets);
+        : await collectConnectors(prompt, secrets, stored);
     } else if (section === 'discord') {
-      const discord = await askDiscord(prompt, secrets);
+      const discord = await askDiscord(prompt, secrets, stored);
       change = (doc) => {
         doc.discord = mergeBlock(doc.discord, discord);
       };
     } else if (section === 'slack') {
-      const slack = await askSlack(prompt, secrets);
+      const slack = await askSlack(prompt, secrets, stored);
       change = (doc) => {
         doc.slack = mergeBlock(doc.slack, slack);
       };
@@ -371,7 +403,7 @@ export async function runInitSection(
         const added = enabled.filter(({ name }) => Object.hasOwn(connectors!, name));
         await checkSourceTools(added, enabled, { root, home, config, options, mama });
         if (nonInteractive)
-          Object.assign(secrets, await sourceSecretsOnPage(added, options, write));
+          Object.assign(secrets, await sourceSecretsOnPage(added, stored, options, write));
       }
       if (Object.keys(secrets).length > 0) updateSecrets(home, secrets);
       if (jevKey !== undefined)

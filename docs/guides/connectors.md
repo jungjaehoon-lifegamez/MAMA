@@ -18,10 +18,17 @@ sources MAMA should watch and sets up the ones you pick; you can also ask for on
   channels too.
 - A block names its secrets and never holds one. You enter the tokens on the setup page MAMA opens
   in your browser, never in the chat, and they go only to `auth.env`.
-- The Slack and Discord sources read the same token as MAMA's Slack and Discord messengers
-  (`MAMA_SLACK_TOKEN`, `MAMA_DISCORD_TOKEN`). The setup page asks for it each time the source is
-  enabled, even to add a channel, and a token entered there replaces the messenger's
-  ([#552](https://github.com/jungjaehoon-lifegamez/MAMA/issues/552)).
+- A token `auth.env` already holds is kept: the page does not ask for it again, and the command
+  prints that it kept it. The Slack and Discord sources read the same token as MAMA's Slack and
+  Discord messengers (`MAMA_SLACK_TOKEN`, `MAMA_DISCORD_TOKEN`), so with the messenger on, the
+  source uses the messenger's bot and adding a channel asks for nothing. A source and a messenger
+  cannot use two different Slack bots, or two different Discord bots.
+- To enter another token, the agent runs the command again with the token's name in
+  `MAMA_INIT_REPLACE_SECRETS` (`MAMA_INIT_REPLACE_SECRETS=MAMA_SLACK_TOKEN`), and only when you ask
+  for it. The page then says which messenger also reads that token: from the next start, the
+  messenger uses the new bot too. If Discord refuses the new token, the Discord messenger does not
+  connect and MAMA does not start; a refused source token only makes that source's collection
+  fail.
 - The command checks each block as MAMA's start does, and a Google source's `gws` and sign-in, and
   saves nothing until those pass. A token is not tried with its service, so check on the viewer's
   Connectors page that the source collects. The command leaves MAMA stopped, and the agent starts

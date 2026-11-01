@@ -166,13 +166,19 @@ export function portAnswers(port: number, host: string): Promise<boolean> {
 /**
  * A source's tokens are entered on the setup page by the sources section, run again for that
  * source, which needs no terminal (install.md, W2.4.5e). Every token source is built only with
- * the token name it reads, which auth.env holds.
+ * the token name it reads, which auth.env holds. The page asks again for a `stored` token only
+ * when MAMA_INIT_REPLACE_SECRETS names it (#552).
  */
-function sourceSecretFixes(source: string, names: readonly string[], mama: string): string[] {
+function sourceSecretFixes(
+  source: string,
+  names: readonly string[],
+  mama: string,
+  stored = false
+): string[] {
   return names.length === 0
     ? []
     : [
-        `with MAMA stopped, run ${mama} init --section connectors --non-interactive with ${source}'s block from connectors.json in MAMA_INIT_CONNECTORS; its setup page takes ${names.join(' and ')}`,
+        `with MAMA stopped, run ${mama} init --section connectors --non-interactive with ${source}'s block from connectors.json in MAMA_INIT_CONNECTORS${stored ? ` and MAMA_INIT_REPLACE_SECRETS=${names.join(',')}` : ''}; its setup page takes ${names.join(' and ')}`,
       ];
 }
 
@@ -900,7 +906,12 @@ async function sourceChecks(
               fix:
                 [
                   ...tools.map(({ login }) => login),
-                  ...sourceSecretFixes(name, secretNames(needs), mamaCommand(dirname(configPath))),
+                  ...sourceSecretFixes(
+                    name,
+                    secretNames(needs),
+                    mamaCommand(dirname(configPath)),
+                    true
+                  ),
                 ].join('; ') || undefined,
             };
           }
