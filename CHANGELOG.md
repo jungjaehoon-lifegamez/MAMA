@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.79.1] / plugin [2.4.1] - 2026-11-01
+
+Fixes for removing MAMA and for enabling a Slack or Discord source, and a clearer first setup.
+Each package changelog lists every change.
+
+### Upgrading
+
+- An install on 0.79.0 updates with `mama update`, or `/update` in Telegram. An older install
+  follows the 0.79.0 notes below first.
+- Update the Claude Code plugin to 2.4.1. It still runs mama-server 2.6.1 on mama-core 8.9.0.
+
+### Changed
+
+- The README's Getting started and the plugin's `mama-install` skill guide setup in order: make
+  the bot with BotFather before the install command runs, choose the backend and the model, pair
+  on the setup page, then bind a group. The README has a section for an agent installing MAMA
+  (#555).
+- `MAMA_INIT_REPLACE_SECRETS` names a stored token that enabling a source should ask for again
+  (#557).
+
+### Fixed
+
+- `mama uninstall --data` goes on past an entry it cannot remove and names each one. When
+  something before the MAMA home cannot be removed, it keeps the home and the program and ends
+  with the command to run again (#540, #541, #556).
+- Enabling a Slack or Discord source keeps the token MAMA's Slack or Discord messenger already
+  reads, so it can no longer switch the messenger to another bot (#552, #557).
+- A blank token counts as missing when a source is enabled, as it does at start and in
+  `mama doctor` (#557).
+
 ## mama-os [0.79.0] / mama-core [8.9.0] / mama-server [2.6.1] / plugin [2.4.0] - 2026-11-01
 
 You can now have your agent set MAMA up: Claude Code or Codex runs one install command, you enter

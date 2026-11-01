@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.79.1] - 2026-11-01
+
 ### Fixed
 
 - Enabling a source no longer asks again for a token `auth.env` already holds, so it cannot
