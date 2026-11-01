@@ -1,87 +1,22 @@
 /**
  * Runs inside the previous release's install (run.mjs copies it there), so every import below is
- * that release's code: an install set up the way its owner would set one up, then work written
- * through its own actions. Its paths are that release's internals; when a later "previous" moves
- * one, the import fails naming it, and the fix ships with that release.
+ * that release's code: work written through its own actions, on the install its own setup made
+ * (run.mjs). Its paths are that release's internals; when a later "previous" moves one, the
+ * import fails naming it, and the fix ships with that release.
  *
- * Usage: node writer.mjs <written.json>   (HOME, MAMA_API_PORT, MAMA_UPGRADE_TOOLS and
- * MAMA_UPGRADE_MEMBERS come from run.mjs)
+ * Usage: node writer.mjs <written.json>   (HOME and MAMA_API_PORT come from run.mjs)
  */
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { writeFileSync } from 'node:fs';
 // MAMA OS's own database driver, hoisted into the install's node_modules by npm.
 import Database from 'better-sqlite3';
-import { runInit } from '@jungjaehoon/mama-os/dist/cli/commands/init.js';
-import { runRegisterOwner } from '@jungjaehoon/mama-os/dist/cli/commands/register-owner.js';
 import { bootDaemon } from '@jungjaehoon/mama-os/dist/cli/commands/daemon.js';
 
 const [writtenPath] = process.argv.slice(2);
 const home = process.env.HOME;
-const root = join(home, '.mama');
+// What the setup paired on install-check/managed.mjs's stand-in Bot API: the owner who sent the
+// bot a private message, and the group they sent /bind in. Init registered that owner.
 const ownerTelegramId = '424242';
 const commonChat = '-1001234567890';
-
-// `mama init` with an owner's answers: no optional messenger, no Jev, no tunnel, no service file
-// (the service label is global, and the check must not install one). A question this table does
-// not know fails the run, so a later release that asks something new is noticed rather than
-// answered by accident.
-const declined = [
-  /^Enable Discord owner messages/,
-  /^Enable Slack owner messages/,
-  /^Use Jev \(TypeSafe\)/,
-  /^Expose the viewer through a tunnel/,
-  /^Write ~\/Library\/LaunchAgents\/com\.mama\.server\.plist/,
-];
-function answer(label) {
-  if (/\[y\/N\]$/.test(label) && declined.some((question) => question.test(label))) {
-    return 'n';
-  }
-  if (/^Backend/.test(label)) {
-    return 'codex';
-  }
-  if (/^Model$/.test(label)) {
-    return 'fixture-model';
-  }
-  if (/^Owner timezone/.test(label)) {
-    return 'UTC';
-  }
-  if (/chat id/.test(label)) {
-    return commonChat;
-  }
-  if (/^Connectors to enable/.test(label)) {
-    return 'obsidian';
-  }
-  if (/^Obsidian vault path/.test(label)) {
-    return join(home, 'vault');
-  }
-  throw new Error(`mama init asked a question the upgrade check does not answer: ${label}`);
-}
-await runInit({
-  home,
-  prompt: {
-    stdinIsTTY: true,
-    stdoutIsTTY: true,
-    text: async (label) => answer(label),
-    secret: async (label) => {
-      if (label !== 'Telegram bot token') {
-        throw new Error(`mama init asked for a secret the upgrade check does not answer: ${label}`);
-      }
-      return 'upgrade-check-secret';
-    },
-    write: () => {},
-  },
-  toolsRoot: process.env.MAMA_UPGRADE_TOOLS,
-  // The document toolkit needs LibreOffice on the host; it is installed software, not state an
-  // upgrade has to keep.
-  installToolkit: async () => {},
-});
-
-// register-owner needs member_root; releases whose init does not write it leave it to the owner.
-const configPath = join(root, 'config.yaml');
-if (!/^member_root:/m.test(readFileSync(configPath, 'utf8'))) {
-  appendFileSync(configPath, `member_root: ${process.env.MAMA_UPGRADE_MEMBERS}\n`);
-}
-await runRegisterOwner([ownerTelegramId]);
 
 const errors = [];
 let written;
