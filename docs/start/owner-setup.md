@@ -142,7 +142,9 @@ want, or say "later": you can ask for a source at any time. For each one you pic
 1. You and the agent agree on what it reads: the rooms, channels, folders or calendars.
 2. The agent stops MAMA and runs `~/.mama/bin/mama init --section connectors --non-interactive`
    with the source's settings in `MAMA_INIT_CONNECTORS` (with your own Node.js, it runs the `mama`
-   npm installed). A source with a token opens the setup page again; enter the token there.
+   npm installed). A source whose token MAMA does not hold yet opens the setup page again; enter
+   the token there. A token MAMA holds is kept: the Slack and Discord sources use the bot of MAMA's
+   Slack or Discord messenger, and the agent has you enter another only when you ask for it.
 3. The command saves nothing until the source's settings pass MAMA's checks, and a Google source's
    tool and sign-in work. It does not try a token with its service. It leaves MAMA stopped however
    it ends, and the agent starts MAMA again after each run.

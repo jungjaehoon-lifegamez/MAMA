@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Enabling a source no longer asks again for a token `auth.env` already holds, so it cannot
+  switch a messenger to another bot (#552). The Slack and Discord sources read the same token as
+  the Slack and Discord messengers (`MAMA_SLACK_TOKEN`, `MAMA_DISCORD_TOKEN`). Before, enabling
+  the source, even to add a channel, asked for that token on the setup page, and a token entered
+  there became the messenger's at the next start. Now
+  `mama init --section connectors --non-interactive` keeps a stored token and prints that it did;
+  a blank value counts as missing, as it does for boot and `mama doctor`, and is asked for. It
+  asks for a stored token again only when `MAMA_INIT_REPLACE_SECRETS` names it, on a field that
+  says which messenger that is on also reads it, and refuses a name that no source being enabled
+  reads, before it looks for the sources' tools. At a terminal, `--section connectors`,
+  `--section slack` and `--section discord` ask before replacing a stored token, naming the
+  sources and messengers that are on and also read it; Enter keeps it. `--section connectors` no
+  longer asks for the Slack app token, which only the messenger reads. For a source whose stored
+  token is refused, `mama doctor` names `MAMA_INIT_REPLACE_SECRETS`.
+
 ## [0.79.0] - 2026-11-01
 
 ### Added

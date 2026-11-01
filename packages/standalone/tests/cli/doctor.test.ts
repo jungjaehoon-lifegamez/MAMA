@@ -746,7 +746,7 @@ describe('mama doctor', () => {
     expect(by['source chatwork']).toMatchObject({
       status: 'fail',
       detail: 'starts, but its credentials or sign-in are refused, so its polls fail',
-      fix: "with MAMA stopped, run mama init --section connectors --non-interactive with chatwork's block from connectors.json in MAMA_INIT_CONNECTORS; its setup page takes MAMA_CHATWORK_TOKEN",
+      fix: "with MAMA stopped, run mama init --section connectors --non-interactive with chatwork's block from connectors.json in MAMA_INIT_CONNECTORS and MAMA_INIT_REPLACE_SECRETS=MAMA_CHATWORK_TOKEN; its setup page takes MAMA_CHATWORK_TOKEN",
     });
     expect(by['source kagemusha']).toMatchObject({
       status: 'fail',

@@ -8,7 +8,7 @@ import {
   type IConnector,
 } from '../../connectors/framework/types.js';
 import { loadConnector } from '../../connectors/index.js';
-import type { W1Config } from '../../runtime/config.js';
+import type { MessengerName, W1Config } from '../../runtime/config.js';
 import { connectorLoadPaths, planConnectors } from '../../runtime/connectors.js';
 import { createTimeZoneSetting } from '../../runtime/timezone.js';
 import { gwsTool } from '../../connectors/framework/gws-utils.js';
@@ -25,7 +25,7 @@ import {
   type SourceToolReport,
 } from '../runtime/source-tools.js';
 import { findExecutable, findIn, mamaCommand } from '../launch-files.js';
-import { pathsFor } from './daemon.js';
+import { MESSENGER_SECRETS, pathsFor } from './daemon.js';
 import { serviceLaunch, type ServiceOptions } from './service.js';
 
 /** The questions `mama init --section` asks, and the checks it shares with the whole setup. */
@@ -63,6 +63,60 @@ const connectorSecrets: Record<string, SecretName[]> = {
 
 const noSecretConnectorNames = new Set(['obsidian', 'imessage', 'claude-code']);
 
+/**
+ * The secrets auth.env gives a value (boot and doctor read a blank one as missing), and what else
+ * reads each name besides the part being set up. The Slack and Discord sources read their
+ * messenger's bot token, so a token entered for one is the other's too (#552).
+ */
+export interface StoredSecrets {
+  readonly names: ReadonlySet<string>;
+  /** The sources and messengers on that also read `name`, as a phrase; '' when none is. */
+  readers(name: string): string;
+}
+
+/** What reads each auth.env name among `sources` and `messengers`, the ones that are on. */
+export function secretReaders(
+  sources: Iterable<string>,
+  messengers: Iterable<MessengerName>
+): (name: string) => string {
+  const on = [
+    ...[...sources].map((source) => [`the ${source} source`, connectorSecrets[source] ?? []]),
+    ...[...messengers].map((messenger) => [
+      `the ${messenger} messenger`,
+      MESSENGER_SECRETS[messenger],
+    ]),
+  ] as Array<[string, readonly string[]]>;
+  return (name) =>
+    on
+      .filter(([, names]) => names.includes(name))
+      .map(([reader]) => reader)
+      .join(' and ');
+}
+
+/**
+ * A secret for `secrets`, asked at the terminal. One auth.env already holds is kept unless the
+ * person chooses to replace it, told what else reads it (#552).
+ */
+async function askSecret(
+  prompt: PromptAdapter,
+  secrets: Partial<Record<SecretName, string>>,
+  stored: StoredSecrets,
+  name: SecretName,
+  label: string
+): Promise<void> {
+  if (stored.names.has(name)) {
+    const readers = stored.readers(name);
+    if (
+      !(await yes(
+        prompt,
+        `${name} is in auth.env already${readers ? `, read by ${readers}` : ''}. Replace it`
+      ))
+    )
+      return;
+  }
+  secrets[name] = nonblankLine(await prompt.secret(label));
+}
+
 export async function yes(prompt: PromptAdapter, label: string): Promise<boolean> {
   const value = (await prompt.text(`${label} [y/N]`)).trim().toLowerCase();
   if (['', 'n', 'no'].includes(value)) return false;
@@ -81,7 +135,8 @@ async function optionalText(prompt: PromptAdapter, label: string): Promise<strin
 
 export async function collectConnectors(
   prompt: PromptAdapter,
-  secrets: Partial<Record<SecretName, string>>
+  secrets: Partial<Record<SecretName, string>>,
+  stored: StoredSecrets
 ): Promise<ConnectorsConfig> {
   const selected = (
     await prompt.text(
@@ -95,9 +150,7 @@ export async function collectConnectors(
   const config: ConnectorsConfig = {};
   for (const name of names) {
     for (const tokenName of connectorSecrets[name])
-      secrets[tokenName] = nonblankLine(await prompt.secret(tokenName));
-    if (name === 'slack')
-      secrets.MAMA_SLACK_APP_TOKEN = nonblankLine(await prompt.secret('MAMA_SLACK_APP_TOKEN'));
+      await askSecret(prompt, secrets, stored, tokenName, tokenName);
     if (name === 'calendar')
       prompt.write(
         'Calendar currently reads the primary calendar only; its source channel id is calendar.'
@@ -469,11 +522,12 @@ export function report(
 /** Discord owner messages: off, or one owner channel and the owner's user id. */
 export async function askDiscord(
   prompt: PromptAdapter,
-  secrets: Partial<Record<SecretName, string>>
+  secrets: Partial<Record<SecretName, string>>,
+  stored: StoredSecrets
 ): Promise<Record<string, unknown>> {
   if (!(await yes(prompt, 'Enable Discord owner messages')))
     return { enabled: false, allowed_channels: [], owner_user_ids: [] };
-  secrets.MAMA_DISCORD_TOKEN ??= nonblankLine(await prompt.secret('Discord bot token'));
+  await askSecret(prompt, secrets, stored, 'MAMA_DISCORD_TOKEN', 'Discord bot token');
   const channel = await text(prompt, 'Discord owner channel id');
   const user = await text(prompt, 'Discord owner user id');
   return {
@@ -487,12 +541,13 @@ export async function askDiscord(
 /** Slack owner messages: off, or one owner channel and the owner's user id. */
 export async function askSlack(
   prompt: PromptAdapter,
-  secrets: Partial<Record<SecretName, string>>
+  secrets: Partial<Record<SecretName, string>>,
+  stored: StoredSecrets
 ): Promise<Record<string, unknown>> {
   if (!(await yes(prompt, 'Enable Slack owner messages')))
     return { enabled: false, allowed_channels: [], owner_user_ids: [] };
-  secrets.MAMA_SLACK_TOKEN ??= nonblankLine(await prompt.secret('Slack bot token'));
-  secrets.MAMA_SLACK_APP_TOKEN ??= nonblankLine(await prompt.secret('Slack Socket Mode app token'));
+  await askSecret(prompt, secrets, stored, 'MAMA_SLACK_TOKEN', 'Slack bot token');
+  await askSecret(prompt, secrets, stored, 'MAMA_SLACK_APP_TOKEN', 'Slack Socket Mode app token');
   const channel = await text(prompt, 'Slack owner channel id');
   const user = await text(prompt, 'Slack owner user id');
   return {

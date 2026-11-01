@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import * as yaml from 'js-yaml';
-import { parseConnectorConfig } from '../../connectors/config-loader.js';
+import { loadConnectorConfig, parseConnectorConfig } from '../../connectors/config-loader.js';
 import type { ConnectorsConfig } from '../../connectors/framework/types.js';
 import { loadConfig, parseConfig, type W1Config } from '../../runtime/config.js';
 import { planConnectors } from '../../runtime/connectors.js';
@@ -38,7 +38,9 @@ import {
   terminalSignIn,
   checkTelegram,
   collectConnectors,
+  secretReaders,
   sourceToolReports,
+  type StoredSecrets,
 } from './init-questions.js';
 
 /** The parts of a setup `mama init --section` asks again; the folders stay, member data is there. */
@@ -148,24 +150,76 @@ function environmentConnectors(env: NodeJS.ProcessEnv): ConnectorsConfig {
   return loaded.config;
 }
 
-/**
- * The secrets the sources being enabled read, each entered on the setup page (install.md,
- * W2.4.5b), one field each and named as auth.env names it. Their names come from each source's
- * own requirements, which name the tokens a block's `auth` does not (Trello's key).
- */
-async function sourceSecretsOnPage(
-  sources: readonly BuiltSource[],
-  options: InitOptions,
-  write: (line: string) => void
-): Promise<Partial<Record<SecretName, string>>> {
+/** The token names `sources` read, each with the sources that read it. */
+function tokenReaders(sources: readonly BuiltSource[]): Map<string, string[]> {
   const readers = new Map<string, string[]>();
   for (const { name, needs } of sources)
     for (const need of needs)
       if (need.type === 'token' && need.tokenName !== undefined)
         readers.set(need.tokenName, [...(readers.get(need.tokenName) ?? []), name]);
+  return readers;
+}
+
+/**
+ * auth.env's secrets with a value, as start.sh gives them to boot, and what else reads each name
+ * (#552). A blank value is missing to boot and doctor, so it is asked for, not kept.
+ */
+function storedSecrets(root: string, readers: (name: string) => string): StoredSecrets {
+  return {
+    names: new Set(
+      Object.entries(readAuthEnv(root))
+        .filter(([, value]) => value.trim() !== '')
+        .map(([name]) => name)
+    ),
+    readers,
+  };
+}
+
+/**
+ * MAMA_INIT_REPLACE_SECRETS, the environment form of the terminal's "Replace it": the stored
+ * tokens of `sources` the page asks for again (#552). A name no source here reads would be kept
+ * while the person thinks it was replaced, so it is refused.
+ */
+function replacedSecrets(sources: readonly BuiltSource[], env: NodeJS.ProcessEnv): Set<string> {
+  const readers = tokenReaders(sources);
+  const names = new Set(
+    env.MAMA_INIT_REPLACE_SECRETS?.split(',')
+      .map((name) => name.trim())
+      .filter(Boolean)
+  );
+  for (const name of names)
+    if (!readers.has(name))
+      throw new CliInputError(
+        `MAMA_INIT_REPLACE_SECRETS names ${name}, which no source in MAMA_INIT_CONNECTORS reads; nothing was saved.`
+      );
+  return names;
+}
+
+/**
+ * The secrets the sources being enabled read, each entered on the setup page (install.md,
+ * W2.4.5b), one field each and named as auth.env names it. Their names come from each source's
+ * own requirements, which name the tokens a block's `auth` does not (Trello's key). One auth.env
+ * already holds is kept unless `replace` names it: the Slack and Discord sources read their
+ * messenger's bot token, so a token entered for the source switches the messenger too (#552).
+ */
+async function sourceSecretsOnPage(
+  sources: readonly BuiltSource[],
+  stored: StoredSecrets,
+  replace: ReadonlySet<string>,
+  options: InitOptions,
+  write: (line: string) => void
+): Promise<Partial<Record<SecretName, string>>> {
+  const readers = tokenReaders(sources);
   // Each token source is built only with its own token name (its constructor checks the block),
   // so the page never takes the owner's bot token, MAMA_AUTH_TOKEN or the Slack app token.
-  const names = [...readers.keys()];
+  const names = [...readers.keys()].filter((name) => {
+    if (!stored.names.has(name) || replace.has(name)) return true;
+    const others = stored.readers(name);
+    write(
+      `${name} is in auth.env already and is kept${others ? `; ${others} reads it too` : ''}. To enter another, run this again with MAMA_INIT_REPLACE_SECRETS=${name}.`
+    );
+    return false;
+  });
   const secrets: Partial<Record<SecretName, string>> = {};
   if (names.length === 0) return secrets;
   let taken!: () => void;
@@ -173,18 +227,25 @@ async function sourceSecretsOnPage(
     taken = resolve;
   });
   const page = await openSetupPage({
-    fields: names.map((name, index) => ({
-      name,
-      label: `${name}, for ${readers.get(name)!.join(', ')}`,
-      secret: true,
-      check: async (value: string) => {
-        secrets[name as SecretName] = nonblankLine(value).trim();
-        write(`${name} taken`);
-        if (index < names.length - 1) return `${name} is taken.`;
-        taken();
-        return 'Every token is taken.';
-      },
-    })),
+    fields: names.map((name, index) => {
+      const others = stored.readers(name);
+      return {
+        name,
+        label: `${name}, for ${readers.get(name)!.join(', ')}${
+          stored.names.has(name)
+            ? `. It replaces the one in auth.env${others ? `, which ${others} also reads: from the next start, the messenger uses the token entered here` : ''}.`
+            : ''
+        }`,
+        secret: true,
+        check: async (value: string) => {
+          secrets[name as SecretName] = nonblankLine(value).trim();
+          write(`${name} taken`);
+          if (index < names.length - 1) return `${name} is taken.`;
+          taken();
+          return 'Every token is taken.';
+        },
+      };
+    }),
     write,
     platform: options.platform ?? process.platform,
     ...(options.openRun ? { openRun: options.openRun } : {}),
@@ -196,6 +257,19 @@ async function sourceSecretsOnPage(
     page.close();
   }
   return secrets;
+}
+
+/**
+ * auth.env's secrets for a messenger part, with the sources on in connectors.json that read the
+ * messenger's token. connectors.json is read as boot reads it; one boot would refuse stops here.
+ */
+function sourceSecrets(root: string, connectorsPath: string): StoredSecrets {
+  const loaded = loadConnectorConfig(connectorsPath, () => {});
+  if (!loaded.ok)
+    throw new CliInputError(
+      `${loaded.error.message}, so MAMA would not start; correct it, then run this again.`
+    );
+  return storedSecrets(root, secretReaders(loaded.enabledNames, []));
 }
 
 /**
@@ -239,6 +313,10 @@ export async function runInitSection(
   }
   try {
     const config = loadConfig({ home, path: configPath });
+    const connectorsPath = pathsFor(configPath, config).connectorsConfigPath;
+    // A secret auth.env already holds is kept unless the person asks to replace it (#552); the
+    // parts that ask for one read it.
+    let stored: StoredSecrets | undefined;
     const secrets: Partial<Record<SecretName, string>> = {};
     let change: ((doc: Record<string, unknown>) => void) | undefined;
     let connectors: ConnectorsConfig | undefined;
@@ -279,17 +357,25 @@ export async function runInitSection(
         doc.timezone = timezone;
       };
     } else if (section === 'connectors') {
-      // The sources named are set up again; the others keep their settings.
+      // The sources named are set up again; the others keep their settings. Their tokens are also
+      // read by the messengers that are on.
+      stored = storedSecrets(
+        root,
+        secretReaders(
+          [],
+          (['telegram', 'discord', 'slack'] as const).filter((name) => config[name]?.enabled)
+        )
+      );
       connectors = nonInteractive
         ? environmentConnectors(options.env ?? process.env)
-        : await collectConnectors(prompt, secrets);
+        : await collectConnectors(prompt, secrets, stored);
     } else if (section === 'discord') {
-      const discord = await askDiscord(prompt, secrets);
+      const discord = await askDiscord(prompt, secrets, sourceSecrets(root, connectorsPath));
       change = (doc) => {
         doc.discord = mergeBlock(doc.discord, discord);
       };
     } else if (section === 'slack') {
-      const slack = await askSlack(prompt, secrets);
+      const slack = await askSlack(prompt, secrets, sourceSecrets(root, connectorsPath));
       change = (doc) => {
         doc.slack = mergeBlock(doc.slack, slack);
       };
@@ -330,7 +416,6 @@ export async function runInitSection(
         stage(configPath, yaml.dump(doc));
       }
       if (connectors) {
-        const connectorsPath = pathsFor(configPath, config).connectorsConfigPath;
         const current = existsSync(connectorsPath)
           ? (JSON.parse(readFileSync(connectorsPath, 'utf8')) as ConnectorsConfig)
           : {};
@@ -369,9 +454,16 @@ export async function runInitSection(
             );
         }
         const added = enabled.filter(({ name }) => Object.hasOwn(connectors!, name));
+        // Checked before the sources' tools, whose sign-in check can take a while.
+        const replace = nonInteractive
+          ? replacedSecrets(added, options.env ?? process.env)
+          : new Set<string>();
         await checkSourceTools(added, enabled, { root, home, config, options, mama });
         if (nonInteractive)
-          Object.assign(secrets, await sourceSecretsOnPage(added, options, write));
+          Object.assign(
+            secrets,
+            await sourceSecretsOnPage(added, stored!, replace, options, write)
+          );
       }
       if (Object.keys(secrets).length > 0) updateSecrets(home, secrets);
       if (jevKey !== undefined)

@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the person pastes it on the setup page. After pairing it guides the group: the person makes it,
   adds the bot as an administrator and sends `/bind`. If the person leaves the backend and the
   model to it, it chooses them.
+- The `mama-install` skill says that enabling a source keeps a token MAMA already holds: the Slack
+  and Discord sources read the token of MAMA's Slack and Discord messengers. It names a token in
+  `MAMA_INIT_REPLACE_SECRETS` only when the person wants another one entered, after telling them
+  that the messenger reading it switches to the new bot too (#552). It says that a token only a
+  messenger reads cannot be entered from the conversation yet.
 
 ## [2.4.0] - 2026-11-01
 
