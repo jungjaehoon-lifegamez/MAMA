@@ -34,7 +34,39 @@ describe('Story ONB-8: thin MAMA OS installation skill', () => {
     // mama status --json went away with the rebuilt CLI; setup ends when MAMA answers the owner.
     expect(content).not.toContain('status --json');
     expect(content).toContain('MAMA answers');
-    expect(content).not.toMatch(/BotFather|allowed_chats|detect-owner|personality|wizard/i);
+    expect(content).not.toMatch(/allowed_chats|detect-owner|personality|wizard/i);
+  });
+
+  it('walks the person through BotFather before the install, and the group after pairing', () => {
+    const content = skill();
+    const botFather = content.indexOf('walk them through BotFather in Telegram');
+    const install = content.indexOf(
+      'curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh'
+    );
+    const paired = content.indexOf(
+      'Once the page says the pairing code is accepted, guide the group'
+    );
+    const answered = content.indexOf("Setup is done when MAMA answers the person's message");
+
+    // The setup page asks for the token partway through the install command, so the bot comes
+    // first (owner, 2026-11-01).
+    expect(botFather).toBeGreaterThanOrEqual(0);
+    expect(install).toBeGreaterThan(botFather);
+    expect(content).toContain('send `/newbot`');
+    expect(content).toContain('so the bot must exist by then');
+    // The token stays in Telegram until the setup page.
+    expect(content).toContain(
+      'Tell the person to leave it there for the setup page and never to put it in this chat'
+    );
+    // The group is made and the bot added only after pairing, before the first answer.
+    expect(paired).toBeGreaterThan(install);
+    expect(answered).toBeGreaterThan(paired);
+    expect(content).toContain('makes it an administrator and sends `/bind` there');
+    expect(content).toContain("Telegram's member picker does not list bots");
+  });
+
+  it('lets the person leave the backend and the model to the agent', () => {
+    expect(skill()).toContain('If the person leaves it to you, choose both yourself.');
   });
 
   it('keeps secrets and the pairing code on the setup page, out of the chat', () => {

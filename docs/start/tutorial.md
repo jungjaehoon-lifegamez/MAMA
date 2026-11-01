@@ -12,18 +12,16 @@ Discord and Slack work the same way. See the [messengers guide](../guides/messen
 
 ## 1. Install through your agent
 
-Before you start, create a Telegram bot with BotFather and a group for common changes, even if you
-are the only owner (a supergroup also works). Use a bot only this install uses: Telegram hands a
-bot's messages to one program at a time.
+You need a Mac, Claude Code or Codex signed in, and a Telegram account. On the Mac that will run
+MAMA, open Claude Code or Codex and say:
 
-On the Mac that will run MAMA, open Claude Code or Codex and say:
+> Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA
 
-> Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA by following its owner setup
-> guide, docs/start/owner-setup.md.
-
-The agent asks which backend runs MAMA (`claude` or `codex`) and which model, then runs the
-install command. It installs MAMA's own Node.js, MAMA OS and, when needed, the backend. You do not
-type in a terminal. To keep your own Node.js instead, see
+First the agent walks you through making a Telegram bot with BotFather; you keep its token for the
+setup page. Use a bot only this install uses: Telegram hands a bot's messages to one program at a
+time. The agent then asks which backend runs MAMA (`claude` or `codex`) and which model, or picks
+them, and runs the install command. It installs MAMA's own Node.js, MAMA OS and, when needed, the
+backend. You do not type in a terminal. To keep your own Node.js instead, see
 [Install with your own Node.js](owner-setup.md#install-with-your-own-nodejs).
 
 **You should see:** the agent tells you that a setup page has opened in your browser.
@@ -44,10 +42,11 @@ On the setup page:
 2. Send the bot a new private message (one sent before setup started is dropped). It answers with
    a six-digit pairing code; enter it on the page. This makes you the first owner, and that private
    chat your personal session.
-3. Add the bot to the group and make it an administrator, so it reads the group. Telegram's member
-   picker does not list bots: search for the bot's @username, or choose Add to Group on the bot's
-   profile. Then send `/bind` in the group. The bot answers that the group is now MAMA's common
-   channel. Only your `/bind` counts.
+3. Make a group for common changes, even if you are the only owner (a supergroup also works). Add
+   the bot to it and make it an administrator, so it reads the group. Telegram's member picker does
+   not list bots: search for the bot's @username, or choose Add to Group on the bot's profile. Then
+   send `/bind` in the group. The bot answers that the group is now MAMA's common channel. Only
+   your `/bind` counts.
 
 **You should see:** the agent passes on setup's lines: `Setup written. Credentials are stored only
 in auth.env (0600).`, then the owner registration, the document toolkit, the service start, and

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The `mama-install` skill walks the person through making the Telegram bot with BotFather
+  (`/newbot`, a name, then a username ending in `bot`) before it runs the install command, since
+  the setup page asks for the token partway through that command; the token stays in Telegram until
+  the person pastes it on the setup page. After pairing it guides the group: the person makes it,
+  adds the bot as an administrator and sends `/bind`. If the person leaves the backend and the
+  model to it, it chooses them.
+
 ## [2.4.0] - 2026-11-01
 
 ### Changed
