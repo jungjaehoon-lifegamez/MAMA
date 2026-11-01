@@ -1,6 +1,8 @@
 /**
  * Runs under the managed Node (~/.mama/node/bin/node) on the package install.sh installed, so
- * every import below is that package's code (run.mjs passes its folder).
+ * every import below is that package's code (run.mjs passes its folder). The upgrade check runs
+ * its init too, on the previous published release's package, so this one driver sets up both this
+ * checkout and the release before it (upgrade-check/run.mjs).
  *
  *   managed.mjs init <packageRoot>   mama init --non-interactive, stopped before the service step
  *   managed.mjs kind <packageRoot>   installKind of this HOME's install, as JSON
@@ -37,6 +39,7 @@ if (command === 'kind') {
   // The service step is the check's next step, through ~/.mama/bin/mama, as the owner runs it.
   const stop = new Error('install check: init stops before the service step');
   const token = 'install-check-secret';
+  // The upgrade check's writer.mjs names the same owner and group.
   const owner = 424242;
   const group = -1001234567890;
   const updates = [
@@ -127,6 +130,9 @@ if (command === 'kind') {
       telegramCall,
       // No browser on the runner: the redirect file is read above, as a browser would.
       openRun: async () => ({ exit: Promise.resolve(0) }),
+      // Both entries come within seconds. A release whose page this script no longer finds or
+      // fills then fails at the page's expiry in two minutes, not the owner's fifteen.
+      setupPageMs: 120_000,
       // The document toolkit installs host software (brew, LibreOffice); not this check's.
       installToolkit: async () => {},
       startService: async () => {
