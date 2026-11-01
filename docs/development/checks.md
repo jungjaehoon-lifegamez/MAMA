@@ -2914,3 +2914,15 @@ The implementation writes raw/index data during import only. Replay is the owner
   - W2.4.6.
   - Issues #540, #541 and #552.
   - Q3, a lasting Google client.
+
+### upgrade-check fixed for 0.79.0 as "previous" (#554, 2026-11-01)
+
+- Result: main's CI failed in upgrade-check right after the release (run 41219934304). The check sets up the newest published release, now 0.79.0, and its writer still drove 0.78's interactive init, where bare `mama init` is a usage error since #547.
+  - The check now sets the previous release up through install-check's `managed.mjs`: `--non-interactive` answers, with the token and code on the setup page. The source is added through that release's own `--section connectors --non-interactive`.
+  - The writer only writes data.
+  - A setup the driver can no longer fill fails loudly with one line naming `managed.mjs`. Because install-check shares the driver, the next setup change fails on its own PR, not on main after a release.
+- Evidence: CI green on 615011681. The job log shows the following:
+  - 0.79.0 set up (token and code accepted, owner registered).
+  - Work, revisions, a lesson and a pending message written and read back by this checkout.
+  - Schema migrated, and the update leg going 0.79.0 → 0.79.1, then 0.79.2 rolling back.
+  - Merged; scripts only, so no deploy.
