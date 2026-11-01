@@ -79,7 +79,10 @@ To set up a source from the conversation, now or whenever the person asks:
   so: the Slack and Discord sources read the token of MAMA's Slack and Discord messengers. Only
   when the person wants another token entered, run again with its name in
   `MAMA_INIT_REPLACE_SECRETS`, and first tell them that a messenger reading it switches to the new
-  bot too. The command saves nothing until every check passes, and it leaves MAMA stopped
+  bot too. A token only a messenger reads (Slack's app token, or a messenger's bot token while no
+  source being enabled reads it) cannot be entered from the conversation yet; tell the person so,
+  and do not look for another way in. The command saves nothing until every check passes, and it
+  leaves MAMA stopped
   however it ends. Start MAMA again with `~/.mama/bin/mama service start` as soon as each run
   ends, before you wait on the person for the next step; stop it again only for the next run.
 

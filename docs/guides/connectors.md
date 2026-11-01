@@ -25,10 +25,15 @@ sources MAMA should watch and sets up the ones you pick; you can also ask for on
   cannot use two different Slack bots, or two different Discord bots.
 - To enter another token, the agent runs the command again with the token's name in
   `MAMA_INIT_REPLACE_SECRETS` (`MAMA_INIT_REPLACE_SECRETS=MAMA_SLACK_TOKEN`), and only when you ask
-  for it. The page then says which messenger also reads that token: from the next start, the
-  messenger uses the new bot too. If Discord refuses the new token, the Discord messenger does not
-  connect and MAMA does not start; a refused source token only makes that source's collection
-  fail.
+  for it. The page then says which messenger that is on also reads that token: from the next
+  start, the messenger uses the new bot too. If Discord refuses the new token, the Discord
+  messenger does not connect and MAMA does not start. If Slack refuses it, MAMA starts, since the
+  Slack messenger connects with its app token, but the messenger cannot answer; `mama doctor`
+  names the refused token through the Slack source's check. A refused token that only a source
+  reads makes that source's collection fail.
+- A token only a messenger reads, such as the Slack app token, or a messenger's bot token while no
+  source being enabled reads it, cannot be entered from the conversation yet. Run
+  `mama init --section slack` or `mama init --section discord` in a terminal for it.
 - The command checks each block as MAMA's start does, and a Google source's `gws` and sign-in, and
   saves nothing until those pass. A token is not tried with its service, so check on the viewer's
   Connectors page that the source collects. The command leaves MAMA stopped, and the agent starts

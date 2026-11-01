@@ -503,8 +503,9 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
     the two-argument check).
   - `mama init --section connectors --non-interactive` takes `MAMA_INIT_CONNECTORS`: a JSON object
     of connector blocks in `connectors.json`'s own shape (`s/connectors/framework/types.ts`), the
-    shape `collectConnectors` builds. The tokens the blocks name (`auth.tokenName`, and Slack's
-    app token) are entered on the setup page (W2.4.5b), one field each.
+    shape `collectConnectors` builds. The tokens the sources read (`auth.tokenName`, and Trello's
+    key) are entered on the setup page (W2.4.5b), one field each. A token `auth.env` already holds
+    with a value is kept unless `MAMA_INIT_REPLACE_SECRETS` names it (#552).
     `requireTTY` (`init-section.ts:64`) applies to every other section and form. The staging, boot's
     `planConnectors` check and the renames (`:170-192`) are reused.
   - Before anything is written, `sourceTools()` (PR 3, `s/cli/runtime/source-tools.ts`, `gwsTool`)
@@ -526,7 +527,8 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
     - The whole setup's caller goes (W2.4.5c). PR 3's doctor lines stay.
   - Doctor's token fix is `mama secret set` (`diagnostics.ts:174-178`), which needs a terminal. For
     a source token, the agent runs this section again and the page takes the token; the fix names
-    that.
+    that. For a stored source token its service refuses, the fix also names
+    `MAMA_INIT_REPLACE_SECRETS` (#552).
   - Tests in `onboarding.test.ts`:
     - Gmail with gws on the service's PATH is enabled;
     - with gws only on the shell's PATH, or nowhere, the section is refused and `connectors.json`
@@ -556,6 +558,13 @@ The owner, 2026-10-30: the person never touches a terminal after the first reply
 - Answers that are not secret come from the environment, as W2.4.5e's do.
 - Each secret is entered on W2.4.5b's setup page: a new bot token, the Discord and Slack tokens, the
   Jev key, a rotated secret.
+- `MAMA_INIT_REPLACE_SECRETS` (#552) is the environment form of the terminal's "Replace it [y/N]".
+  The `discord` and `slack` parts reuse it for a stored token they would ask for again; a rotated
+  secret no part asks for comes through `mama secret set --non-interactive`. Its refusal of a name
+  no source reads (`init-section.ts`, `replacedSecrets`) names only `MAMA_INIT_CONNECTORS` and
+  widens to the part's own secrets then. Until W2.4.6, a token only a messenger reads (Slack's app
+  token, or a messenger's bot token while no source being enabled reads it) is replaced only at a
+  terminal.
 - `uninstall --data` takes no secret. It is confirmed by `--confirm-home <MAMA home path>`, which
   the agent passes after showing the plan in the conversation. That is the same path the terminal
   prompt asks the person to type back (`uninstall.ts:306-309`).

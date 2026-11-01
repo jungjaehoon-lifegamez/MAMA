@@ -173,7 +173,7 @@ function sourceSecretFixes(
   source: string,
   names: readonly string[],
   mama: string,
-  stored = false
+  stored: boolean
 ): string[] {
   return names.length === 0
     ? []
@@ -867,7 +867,7 @@ async function sourceChecks(
         ].join('; '),
         ...(context.length > 0 ? { context: context.join('; ') } : {}),
         fix: [
-          ...sourceSecretFixes(name, secrets, mamaCommand(dirname(configPath))),
+          ...sourceSecretFixes(name, secrets, mamaCommand(dirname(configPath)), false),
           ...missing.map(({ shellPath, install, login }) =>
             shellPath === null
               ? `install it: ${install.join(' or ')}; then log in: ${login}`

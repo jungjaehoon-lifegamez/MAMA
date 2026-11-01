@@ -8,7 +8,7 @@ import {
   type IConnector,
 } from '../../connectors/framework/types.js';
 import { loadConnector } from '../../connectors/index.js';
-import type { W1Config } from '../../runtime/config.js';
+import type { MessengerName, W1Config } from '../../runtime/config.js';
 import { connectorLoadPaths, planConnectors } from '../../runtime/connectors.js';
 import { createTimeZoneSetting } from '../../runtime/timezone.js';
 import { gwsTool } from '../../connectors/framework/gws-utils.js';
@@ -64,40 +64,56 @@ const connectorSecrets: Record<string, SecretName[]> = {
 const noSecretConnectorNames = new Set(['obsidian', 'imessage', 'claude-code']);
 
 /**
- * Who reads an auth.env name: `sources` and every messenger that needs it. The Slack and Discord
- * sources read their messenger's bot token (#552), so a token entered for one is the other's too.
+ * The secrets auth.env gives a value (boot and doctor read a blank one as missing), and what else
+ * reads each name besides the part being set up. The Slack and Discord sources read their
+ * messenger's bot token, so a token entered for one is the other's too (#552).
  */
-export function secretReaders(name: string, sources: readonly string[]): string {
-  return [
-    ...sources.map((source) => `the ${source} source`),
-    ...Object.entries(MESSENGER_SECRETS)
-      .filter(([, names]) => (names as readonly string[]).includes(name))
-      .map(([messenger]) => `the ${messenger} messenger`),
-  ].join(' and ');
+export interface StoredSecrets {
+  readonly names: ReadonlySet<string>;
+  /** The sources and messengers on that also read `name`, as a phrase; '' when none is. */
+  readers(name: string): string;
+}
+
+/** What reads each auth.env name among `sources` and `messengers`, the ones that are on. */
+export function secretReaders(
+  sources: Iterable<string>,
+  messengers: Iterable<MessengerName>
+): (name: string) => string {
+  const on = [
+    ...[...sources].map((source) => [`the ${source} source`, connectorSecrets[source] ?? []]),
+    ...[...messengers].map((messenger) => [
+      `the ${messenger} messenger`,
+      MESSENGER_SECRETS[messenger],
+    ]),
+  ] as Array<[string, readonly string[]]>;
+  return (name) =>
+    on
+      .filter(([, names]) => names.includes(name))
+      .map(([reader]) => reader)
+      .join(' and ');
 }
 
 /**
  * A secret for `secrets`, asked at the terminal. One auth.env already holds is kept unless the
- * person chooses to replace it, told who else reads it (#552).
+ * person chooses to replace it, told what else reads it (#552).
  */
 async function askSecret(
   prompt: PromptAdapter,
   secrets: Partial<Record<SecretName, string>>,
-  stored: ReadonlySet<string>,
+  stored: StoredSecrets,
   name: SecretName,
   label: string
 ): Promise<void> {
-  const sources = Object.keys(connectorSecrets).filter((source) =>
-    connectorSecrets[source].includes(name)
-  );
-  if (
-    stored.has(name) &&
-    !(await yes(
-      prompt,
-      `${name} is in auth.env already, read by ${secretReaders(name, sources)}. Replace it`
-    ))
-  )
-    return;
+  if (stored.names.has(name)) {
+    const readers = stored.readers(name);
+    if (
+      !(await yes(
+        prompt,
+        `${name} is in auth.env already${readers ? `, read by ${readers}` : ''}. Replace it`
+      ))
+    )
+      return;
+  }
   secrets[name] = nonblankLine(await prompt.secret(label));
 }
 
@@ -120,7 +136,7 @@ async function optionalText(prompt: PromptAdapter, label: string): Promise<strin
 export async function collectConnectors(
   prompt: PromptAdapter,
   secrets: Partial<Record<SecretName, string>>,
-  stored: ReadonlySet<string>
+  stored: StoredSecrets
 ): Promise<ConnectorsConfig> {
   const selected = (
     await prompt.text(
@@ -507,7 +523,7 @@ export function report(
 export async function askDiscord(
   prompt: PromptAdapter,
   secrets: Partial<Record<SecretName, string>>,
-  stored: ReadonlySet<string>
+  stored: StoredSecrets
 ): Promise<Record<string, unknown>> {
   if (!(await yes(prompt, 'Enable Discord owner messages')))
     return { enabled: false, allowed_channels: [], owner_user_ids: [] };
@@ -526,7 +542,7 @@ export async function askDiscord(
 export async function askSlack(
   prompt: PromptAdapter,
   secrets: Partial<Record<SecretName, string>>,
-  stored: ReadonlySet<string>
+  stored: StoredSecrets
 ): Promise<Record<string, unknown>> {
   if (!(await yes(prompt, 'Enable Slack owner messages')))
     return { enabled: false, allowed_channels: [], owner_user_ids: [] };
