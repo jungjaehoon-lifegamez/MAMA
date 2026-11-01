@@ -296,7 +296,7 @@ describe('mama uninstall', () => {
   });
 
   it('removes what it can when one entry cannot be removed, and reports it', async () => {
-    const { home, root, members, plist } = install();
+    const { home, root, members, tools, plist } = install();
     // The person's folder sits in a folder that does not allow removing it.
     chmodSync(members, 0o555);
     const out: string[] = [];
@@ -312,7 +312,82 @@ describe('mama uninstall', () => {
       chmodSync(members, 0o755);
     }
     expect(out.join('\n')).toContain(`could not remove ${join(members, PERSON)}`);
-    for (const path of [plist, root]) expect(existsSync(path)).toBe(false);
+    for (const path of [plist, join(tools, 'skills')]) expect(existsSync(path)).toBe(false);
+    // The config that names member_root stays for the rerun.
+    expect(existsSync(join(root, 'config.yaml'))).toBe(true);
+  });
+
+  it('goes on past the entries of the MAMA home it cannot remove, and names each one', async () => {
+    const { home, root } = install();
+    managed(home, root);
+    writeFileSync(join(root, 'auth.env'), 'TOKEN=fixture');
+    // Two, since readdir order differs by disk: the walk must not stop at whichever comes first.
+    const locked = [join(root, 'locked-a'), join(root, 'locked-b')];
+    for (const folder of locked) {
+      mkdirSync(folder);
+      writeFileSync(join(folder, 'file'), '');
+      chmodSync(folder, 0o500);
+    }
+    const out: string[] = [];
+    try {
+      expect(
+        await runUninstall(['--data'], {
+          ...base(home),
+          write: (line) => out.push(line),
+          prompt: prompt(root),
+        })
+      ).toBe(1);
+    } finally {
+      for (const folder of locked) chmodSync(folder, 0o700);
+    }
+    for (const folder of locked) expect(out.join('\n')).toContain(`could not remove ${folder}: `);
+    expect(out).not.toContain(`removed ${root}`);
+    for (const name of ['auth.env', 'config.yaml', 'memory.db', 'logs']) {
+      expect(existsSync(join(root, name))).toBe(false);
+    }
+    // The program stays to run the removal again.
+    expect(out).toContain(
+      `kept ${join(root, 'node')}: run mama uninstall --data again once the above is removed`
+    );
+    expect(existsSync(join(root, 'bin', 'mama'))).toBe(true);
+  });
+
+  it("keeps the MAMA home and the program when a person's folder cannot be removed, and a rerun removes the rest", async () => {
+    const { home, root, members, plist } = install();
+    managed(home, root);
+    // The person's file sits in a folder that does not allow removing it.
+    chmodSync(join(members, PERSON), 0o500);
+    const out: string[] = [];
+    try {
+      expect(
+        await runUninstall(['--data'], {
+          ...base(home),
+          write: (line) => out.push(line),
+          prompt: prompt(root),
+        })
+      ).toBe(1);
+    } finally {
+      chmodSync(join(members, PERSON), 0o700);
+    }
+    expect(out.join('\n')).toContain(`could not remove ${join(members, PERSON)}: `);
+    expect(out).toContain(
+      `kept ${root}: run mama uninstall --data again once the above is removed`
+    );
+    // The config and database that name the person's folder stay, and so does the program.
+    for (const path of ['config.yaml', 'memory.db', 'bin/mama', 'node/bin/node']) {
+      expect(existsSync(join(root, path))).toBe(true);
+    }
+    expect(existsSync(join(members, PERSON, 'state.json'))).toBe(true);
+    expect(existsSync(plist)).toBe(false);
+
+    // The rerun finds the folder through the kept config and database, and removes the rest.
+    const again = prompt(root);
+    expect(await runUninstall(['--data'], { ...base(home), prompt: again })).toBe(0);
+    expect(again.lines.join('\n')).toContain(`removes ${join(members, PERSON)} (`);
+    for (const path of [root, join(members, PERSON), join(members, '.retired-gone-1')]) {
+      expect(existsSync(path)).toBe(false);
+    }
+    expect(existsSync(join(members, 'not-mama'))).toBe(true);
   });
 
   it('refuses the home folder written in another letter case', async () => {

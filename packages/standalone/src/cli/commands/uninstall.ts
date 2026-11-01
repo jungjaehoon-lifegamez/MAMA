@@ -9,9 +9,10 @@
  *
  * The program: an `npm install -g` is npm's to remove. The install command keeps it in the MAMA
  * home instead (Node, the npm prefix and the `mama` command, docs/development/work/install.md):
- * --data removes it with the home, last, so a removal that fails part-way leaves a `mama` to run
- * again; without --data it stays and is named. Either way the startup block the install command
- * wrote is named for the owner to remove: it is the owner's file.
+ * --data removes it with the home, last. A removal that fails part-way keeps the home and the
+ * program, so a rerun has a `mama` to run and the config and database that name what is left;
+ * without --data it stays and is named. Either way the startup block the install command wrote is
+ * named for the owner to remove: it is the owner's file.
  */
 import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -39,8 +40,22 @@ interface Entry {
   what: string;
   /** How it is removed when a plain recursive removal cannot be (a read-only toolkit version). */
   remove?: (path: string) => void;
-  /** Part of the managed program: kept when anything before it could not be removed. */
-  program?: boolean;
+  /**
+   * What a rerun needs, kept when anything before it could not be removed: the MAMA home holds
+   * the config and database that name what is left, and the managed program is the `mama` to run.
+   */
+  rerun?: boolean;
+}
+
+/** Thrown by a removal that went on past the parts it could not remove, each as `path: reason`. */
+class Unremoved extends Error {
+  constructor(readonly left: string[]) {
+    super(left.join('; '));
+  }
+}
+
+function reason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 interface DataPlan {
@@ -224,15 +239,24 @@ function dataPlan(home: string, configPath: string, toolkit: boolean): DataPlan 
   plan.remove.push({
     path: root,
     what: 'the MAMA home: config, credentials, workspace, logs, backups and, by default, the database',
-    // The program goes after the rest of the home, and the home with it (below).
+    rerun: true,
+    // The program goes after the rest of the home, and the home with it (below). The rest goes
+    // entry by entry, so one that cannot be removed does not keep the others, credentials among
+    // them.
     ...(program.length === 0
       ? {}
       : {
           remove: (path: string) => {
+            const left: string[] = [];
             for (const name of readdirSync(path)) {
-              if (!MANAGED_PROGRAM.has(name))
+              if (MANAGED_PROGRAM.has(name)) continue;
+              try {
                 rmSync(join(path, name), { recursive: true, force: true });
+              } catch (error) {
+                left.push(`${join(path, name)}: ${reason(error)}`);
+              }
             }
+            if (left.length > 0) throw new Unremoved(left);
           },
         }),
   });
@@ -240,7 +264,7 @@ function dataPlan(home: string, configPath: string, toolkit: boolean): DataPlan 
     plan.remove.push({
       path,
       what: 'the managed program the install command put here (Node.js, MAMA OS and the mama command)',
-      program: true,
+      rerun: true,
       // The last one takes the emptied home with it.
       ...(index === program.length - 1
         ? {
@@ -322,12 +346,17 @@ export async function runUninstall(
     return removed;
   }
 
-  // One entry that cannot be removed does not stop the rest half-way; each failure is reported.
+  // One entry that cannot be removed does not stop the rest half-way; each failure is reported as
+  // it happens. What a rerun needs stays after one, so the rerun finds what is left.
   const failed: string[] = [];
+  const fail = (failure: string): void => {
+    failed.push(failure);
+    write(`could not remove ${failure}`);
+  };
   const lock = acquireInstallLock(control, 'uninstall');
   try {
     for (const entry of plan.remove) {
-      if (entry.program && failed.length > 0) {
+      if (entry.rerun && failed.length > 0) {
         write(`kept ${entry.path}: run mama uninstall --data again once the above is removed`);
         continue;
       }
@@ -336,7 +365,8 @@ export async function runUninstall(
         else rmSync(entry.path, { recursive: true, force: true });
         write(`removed ${entry.path}`);
       } catch (error) {
-        failed.push(`${entry.path}: ${error instanceof Error ? error.message : String(error)}`);
+        if (error instanceof Unremoved) error.left.forEach(fail);
+        else fail(`${entry.path}: ${reason(error)}`);
       }
     }
     for (const folder of plan.emptied) {
@@ -348,10 +378,10 @@ export async function runUninstall(
       }
     }
   } finally {
-    // The lock's file went with the MAMA home; closing it is all that is left.
+    // The lock's file went with the MAMA home, or stays unheld in a kept one; closing it is all
+    // that is left.
     lock.release();
   }
-  for (const failure of failed) write(`could not remove ${failure}`);
   programNotes();
   return failed.length > 0 ? 1 : 0;
 }
