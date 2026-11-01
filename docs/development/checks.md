@@ -2926,3 +2926,25 @@ The implementation writes raw/index data during import only. Replay is the owner
   - Work, revisions, a lesson and a pending message written and read back by this checkout.
   - Schema migrated, and the update leg going 0.79.0 → 0.79.1, then 0.79.2 rolling back.
   - Merged; scripts only, so no deploy.
+
+### Issues #540, #541 (uninstall) and #552 (shared source/messenger token) fixed and deployed (#556, #557, 2026-11-01)
+
+- **#557 (#552): the stored token is kept.**
+  - A Slack or Discord source keeps a token auth.env already holds with a non-blank value. It prints which source or messenger that is switched on also reads it. When every token is stored, no page opens.
+  - `MAMA_INIT_REPLACE_SECRETS` asks again, but only for names the sources being enabled read. `MAMA_TELEGRAM_TOKEN`, `MAMA_AUTH_TOKEN` and `MAMA_SLACK_APP_TOKEN` are refused.
+  - `--section slack` and `--section discord` ask "Replace it [y/N]".
+  - `--section connectors` no longer asks for the Slack app token. No source reads it, and asking overwrote the messenger's.
+- **#556 (#540, #541): partial removals.**
+  - The MAMA home is removed entry by entry for every install kind. On Node 22.23.4 a recursive rmSync had left auth.env and config.yaml behind one locked folder.
+  - When a member folder fails, the home and program are kept, so a rerun can rebuild the plan from the kept config.
+  - The temp folders are listed whenever `member_root` is set.
+  - The rerun line keeps `--toolkit`.
+- **Evidence.**
+  - An Opus review returned MERGE for #557, with three SHOULD-FIX items that were fixed. The main one: a blank value counted as stored, so MAMA would not boot.
+  - An Opus review returned FIX-FIRST for #556. Two rerun cases exited 0 and left data behind: a person's temp folder, and a dropped `--toolkit`. Both are fixed, with tests that fail on main.
+  - CodeRabbit found nothing actionable on #556.
+  - Both were deployed together with a drained stop. Boot was clean and doctor was all ok.
+- **Still open.**
+  - A Slack or Discord source and its messenger cannot run different bots. That would need split token names.
+  - A messenger-only token cannot be replaced from the conversation until W2.4.6.
+  - Half-removed program states predating #539 remain.
