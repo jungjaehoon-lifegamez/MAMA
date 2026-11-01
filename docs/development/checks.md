@@ -2948,3 +2948,16 @@ The implementation writes raw/index data during import only. Replay is the owner
   - A Slack or Discord source and its messenger cannot run different bots. That would need split token names.
   - A messenger-only token cannot be replaced from the conversation until W2.4.6.
   - Half-removed program states predating #539 remain.
+
+### Release 0.79.1: mama-os 0.79.1, plugin 2.4.1 (2026-11-01)
+
+- Result: a patch release that ships the README and skill reorder (#555), the uninstall fixes (#556) and the shared-token fix (#557).
+  - Release PR #558 merged. A dry run (41284268151) passed, then the release run (41284299353) succeeded in every job that ran: prepare, mama-os, plugin sync, Pages and create-release.
+  - mama-core 8.9.0 and mama-server 2.6.1 are unchanged and were not released.
+- Evidence:
+  - npm serves mama-os 0.79.1.
+  - The v0.79.1 release has `install.sh` attached.
+  - `releases/latest/download/install.sh` pins 0.79.1 with Node 22.23.4.
+  - The marketplace lists plugin 2.4.1.
+  - The live daemon (checkout) reports 0.79.1. It needed no restart beyond the 15:44 deploy, which already carried the code.
+- Next: the post-release run on the clean account. Its kit registry must move to 0.79.2 and 0.79.3, because the public 0.79.1 now takes the number the kit used.
