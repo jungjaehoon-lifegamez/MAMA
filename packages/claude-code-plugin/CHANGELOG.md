@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-11-01
+
 ### Changed
 
 - The `mama-install` skill walks the person through making the Telegram bot with BotFather
