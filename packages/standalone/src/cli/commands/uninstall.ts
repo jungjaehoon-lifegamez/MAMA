@@ -23,7 +23,6 @@ import { physicalReadPath } from '../../runtime/backend-security.js';
 import { memberClaudeTmpDir, memberRoomTmpRoot } from '../../runtime/member-paths.js';
 import { removeVersion } from '../../tools/document-toolkit.js';
 import { CliInputError, createTerminalPrompt, requireTTY, type PromptAdapter } from '../prompt.js';
-import { MANAGED_PROGRAM } from '../runtime/backup.js';
 import { acquireInstallLock, daemonControlPaths, lockHolder } from '../runtime/daemon-control.js';
 import { runStop } from './control.js';
 import { serviceFile, uninstallService, type ServiceOptions } from './service.js';
@@ -172,7 +171,9 @@ function dataPlan(home: string, configPath: string, toolkit: boolean): DataPlan 
   }
   if (existsSync(configPath)) {
     const config = loadConfig({ home, path: configPath });
-    if (config.member_root !== undefined && existsSync(config.member_root)) {
+    if (config.member_root !== undefined) {
+      // A person's temporary files sit outside member_root, so they are listed even after a run
+      // that could not remove them took the emptied member_root.
       for (const id of registeredPeople(config)) {
         const folder = join(config.member_root, id);
         if (existsSync(folder))
@@ -181,12 +182,14 @@ function dataPlan(home: string, configPath: string, toolkit: boolean): DataPlan 
           if (existsSync(temp)) plan.remove.push({ path: temp, what: `${id}'s temporary files` });
         }
       }
-      for (const entry of readdirSync(config.member_root)) {
-        if (entry.startsWith('.retired-')) {
-          plan.remove.push({ path: join(config.member_root, entry), what: 'a retired folder' });
+      if (existsSync(config.member_root)) {
+        for (const entry of readdirSync(config.member_root)) {
+          if (entry.startsWith('.retired-')) {
+            plan.remove.push({ path: join(config.member_root, entry), what: 'a retired folder' });
+          }
         }
+        plan.emptied.push(config.member_root);
       }
-      plan.emptied.push(config.member_root);
     }
     if (config.tools_root !== undefined && existsSync(config.tools_root)) {
       for (const entry of readdirSync(config.tools_root)) {
@@ -240,25 +243,22 @@ function dataPlan(home: string, configPath: string, toolkit: boolean): DataPlan 
     path: root,
     what: 'the MAMA home: config, credentials, workspace, logs, backups and, by default, the database',
     rerun: true,
-    // The program goes after the rest of the home, and the home with it (below). The rest goes
-    // entry by entry, so one that cannot be removed does not keep the others, credentials among
-    // them.
-    ...(program.length === 0
-      ? {}
-      : {
-          remove: (path: string) => {
-            const left: string[] = [];
-            for (const name of readdirSync(path)) {
-              if (MANAGED_PROGRAM.has(name)) continue;
-              try {
-                rmSync(join(path, name), { recursive: true, force: true });
-              } catch (error) {
-                left.push(`${join(path, name)}: ${reason(error)}`);
-              }
-            }
-            if (left.length > 0) throw new Unremoved(left);
-          },
-        }),
+    // Entry by entry, so one that cannot be removed does not keep the others, credentials among
+    // them: a recursive removal stops at its first failure on Node 22. A managed program goes
+    // after the rest, and takes the home with it (below).
+    remove: (path: string) => {
+      const left: string[] = [];
+      for (const name of readdirSync(path)) {
+        if (program.includes(join(path, name))) continue;
+        try {
+          rmSync(join(path, name), { recursive: true, force: true });
+        } catch (error) {
+          left.push(`${join(path, name)}: ${reason(error)}`);
+        }
+      }
+      if (left.length > 0) throw new Unremoved(left);
+      if (program.length === 0) rmdirSync(path);
+    },
   });
   program.forEach((path, index) =>
     plan.remove.push({
@@ -357,7 +357,7 @@ export async function runUninstall(
   try {
     for (const entry of plan.remove) {
       if (entry.rerun && failed.length > 0) {
-        write(`kept ${entry.path}: run mama uninstall --data again once the above is removed`);
+        write(`kept ${entry.path} for the rerun`);
         continue;
       }
       try {
@@ -381,6 +381,11 @@ export async function runUninstall(
     // The lock's file went with the MAMA home, or stays unheld in a kept one; closing it is all
     // that is left.
     lock.release();
+  }
+  if (failed.length > 0) {
+    write(
+      `once what could not be removed is cleared, run mama uninstall --data${toolkit ? ' --toolkit' : ''} again to finish`
+    );
   }
   programNotes();
   return failed.length > 0 ? 1 : 0;

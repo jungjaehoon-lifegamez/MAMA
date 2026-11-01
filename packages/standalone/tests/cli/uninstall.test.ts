@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runUninstall } from '../../src/cli/commands/uninstall.js';
+import { memberClaudeTmpDir } from '../../src/runtime/member-paths.js';
 import { acquireInstallLock, daemonControlPaths } from '../../src/cli/runtime/daemon-control.js';
 import type { PromptAdapter } from '../../src/cli/prompt.js';
 
@@ -120,6 +121,10 @@ function prompt(answer: string, tty = true): PromptAdapter & { lines: string[] }
 }
 
 const base = (home: string) => ({ home, platform: 'darwin' as const, write: () => {} });
+
+/** The line a run that could not remove everything ends with. */
+const rerun = (flags: string) =>
+  `once what could not be removed is cleared, run mama uninstall ${flags} again to finish`;
 
 describe('mama uninstall', () => {
   it('lists what would go with --dry-run and changes nothing', async () => {
@@ -243,9 +248,8 @@ describe('mama uninstall', () => {
     } finally {
       chmodSync(locked, 0o700);
     }
-    expect(out).toContain(
-      `kept ${join(root, 'node')}: run mama uninstall --data again once the above is removed`
-    );
+    expect(out).toContain(`kept ${join(root, 'node')} for the rerun`);
+    expect(out).toContain(rerun('--data'));
     expect(existsSync(join(root, 'node', 'bin', 'node'))).toBe(true);
     expect(existsSync(join(root, 'bin', 'mama'))).toBe(true);
   });
@@ -317,40 +321,46 @@ describe('mama uninstall', () => {
     expect(existsSync(join(root, 'config.yaml'))).toBe(true);
   });
 
-  it('goes on past the entries of the MAMA home it cannot remove, and names each one', async () => {
-    const { home, root } = install();
-    managed(home, root);
-    writeFileSync(join(root, 'auth.env'), 'TOKEN=fixture');
-    // Two, since readdir order differs by disk: the walk must not stop at whichever comes first.
-    const locked = [join(root, 'locked-a'), join(root, 'locked-b')];
-    for (const folder of locked) {
-      mkdirSync(folder);
-      writeFileSync(join(folder, 'file'), '');
-      chmodSync(folder, 0o500);
+  it.each(['the install command', 'npm'])(
+    'goes on past the entries of the MAMA home it cannot remove, and names each one (installed by %s)',
+    async (by) => {
+      const { home, root } = install();
+      if (by === 'the install command') managed(home, root);
+      writeFileSync(join(root, 'auth.env'), 'TOKEN=fixture');
+      // Two, since readdir order differs by disk: the walk must not stop at whichever comes first.
+      const locked = [join(root, 'locked-a'), join(root, 'locked-b')];
+      for (const folder of locked) {
+        mkdirSync(folder);
+        writeFileSync(join(folder, 'file'), '');
+        chmodSync(folder, 0o500);
+      }
+      const out: string[] = [];
+      try {
+        expect(
+          await runUninstall(['--data'], {
+            ...base(home),
+            write: (line) => out.push(line),
+            prompt: prompt(root),
+          })
+        ).toBe(1);
+      } finally {
+        for (const folder of locked) chmodSync(folder, 0o700);
+      }
+      for (const folder of locked) {
+        expect(out.join('\n')).toContain(`could not remove ${folder}: `);
+      }
+      expect(out).not.toContain(`removed ${root}`);
+      for (const name of ['auth.env', 'config.yaml', 'memory.db', 'logs', 'runtime']) {
+        expect(existsSync(join(root, name))).toBe(false);
+      }
+      expect(out).toContain(rerun('--data'));
+      if (by === 'the install command') {
+        // The program stays to run the removal again.
+        expect(out).toContain(`kept ${join(root, 'node')} for the rerun`);
+        expect(existsSync(join(root, 'bin', 'mama'))).toBe(true);
+      }
     }
-    const out: string[] = [];
-    try {
-      expect(
-        await runUninstall(['--data'], {
-          ...base(home),
-          write: (line) => out.push(line),
-          prompt: prompt(root),
-        })
-      ).toBe(1);
-    } finally {
-      for (const folder of locked) chmodSync(folder, 0o700);
-    }
-    for (const folder of locked) expect(out.join('\n')).toContain(`could not remove ${folder}: `);
-    expect(out).not.toContain(`removed ${root}`);
-    for (const name of ['auth.env', 'config.yaml', 'memory.db', 'logs']) {
-      expect(existsSync(join(root, name))).toBe(false);
-    }
-    // The program stays to run the removal again.
-    expect(out).toContain(
-      `kept ${join(root, 'node')}: run mama uninstall --data again once the above is removed`
-    );
-    expect(existsSync(join(root, 'bin', 'mama'))).toBe(true);
-  });
+  );
 
   it("keeps the MAMA home and the program when a person's folder cannot be removed, and a rerun removes the rest", async () => {
     const { home, root, members, plist } = install();
@@ -369,10 +379,13 @@ describe('mama uninstall', () => {
     } finally {
       chmodSync(join(members, PERSON), 0o700);
     }
-    expect(out.join('\n')).toContain(`could not remove ${join(members, PERSON)}: `);
-    expect(out).toContain(
-      `kept ${root}: run mama uninstall --data again once the above is removed`
+    // The failure first, then what it kept, then the rerun.
+    const failure = out.findIndex((line) =>
+      line.startsWith(`could not remove ${join(members, PERSON)}: `)
     );
+    expect(failure).toBeGreaterThanOrEqual(0);
+    expect(failure).toBeLessThan(out.indexOf(`kept ${root} for the rerun`));
+    expect(out.indexOf(`kept ${root} for the rerun`)).toBeLessThan(out.indexOf(rerun('--data')));
     // The config and database that name the person's folder stay, and so does the program.
     for (const path of ['config.yaml', 'memory.db', 'bin/mama', 'node/bin/node']) {
       expect(existsSync(join(root, path))).toBe(true);
@@ -388,6 +401,66 @@ describe('mama uninstall', () => {
       expect(existsSync(path)).toBe(false);
     }
     expect(existsSync(join(members, 'not-mama'))).toBe(true);
+  });
+
+  it("removes a person's temporary files on the rerun after member_root went", async () => {
+    const { home, root, members } = install();
+    rmSync(join(members, 'not-mama'), { recursive: true });
+    // The temporary files hold one that cannot be removed; member_root empties and goes.
+    const temp = memberClaudeTmpDir(PERSON);
+    roots.push(temp);
+    const locked = join(temp, 'locked');
+    mkdirSync(locked, { recursive: true });
+    writeFileSync(join(locked, 'file'), '');
+    chmodSync(locked, 0o500);
+    const out: string[] = [];
+    try {
+      expect(
+        await runUninstall(['--data'], {
+          ...base(home),
+          write: (line) => out.push(line),
+          prompt: prompt(root),
+        })
+      ).toBe(1);
+    } finally {
+      chmodSync(locked, 0o700);
+    }
+    expect(out.join('\n')).toContain(`could not remove ${temp}: `);
+    expect(existsSync(members)).toBe(false);
+    expect(existsSync(join(root, 'config.yaml'))).toBe(true);
+
+    const again = prompt(root);
+    expect(await runUninstall(['--data'], { ...base(home), prompt: again })).toBe(0);
+    expect(again.lines.join('\n')).toContain(`removes ${temp} (`);
+    for (const path of [root, temp]) expect(existsSync(path)).toBe(false);
+  });
+
+  it('names --toolkit in the rerun when it was given', async () => {
+    const { home, root, tools } = install();
+    rmSync(join(tools, 'apps'), { recursive: true });
+    mkdirSync(join(tools, 'v-1', 'program'), { recursive: true });
+    writeFileSync(join(tools, 'v-1', 'program', 'soffice'), 'binary');
+    // tools_root does not allow removing what is in it.
+    chmodSync(tools, 0o555);
+    const out: string[] = [];
+    try {
+      expect(
+        await runUninstall(['--data', '--toolkit'], {
+          ...base(home),
+          write: (line) => out.push(line),
+          prompt: prompt(root),
+        })
+      ).toBe(1);
+    } finally {
+      chmodSync(tools, 0o755);
+    }
+    expect(out.join('\n')).toContain(`could not remove ${join(tools, 'v-1')}: `);
+    expect(out).toContain(rerun('--data --toolkit'));
+    // That rerun finds the version through the kept config and removes it, then tools_root.
+    expect(
+      await runUninstall(['--data', '--toolkit'], { ...base(home), prompt: prompt(root) })
+    ).toBe(0);
+    expect(existsSync(tools)).toBe(false);
   });
 
   it('refuses the home folder written in another letter case', async () => {
