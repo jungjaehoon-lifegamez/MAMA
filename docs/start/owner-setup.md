@@ -12,29 +12,30 @@ reports. For coding-session decisions and checkpoints, use the separate
 
 ## Install
 
-On the Mac that will run MAMA, open Claude Code or Codex and say:
+You need a Mac, Claude Code or Codex signed in, and a Telegram account. On the Mac that will run
+MAMA, open Claude Code or Codex and say:
 
-> Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA by following its owner setup
-> guide, docs/start/owner-setup.md.
+> Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA
 
-Name the repository. "Install MAMA" alone can send the agent to other programs called mama. The
-agent then runs the install command, which comes with each MAMA OS release:
-
-```sh
-curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | MAMA_INIT_MODEL=<model> sh -s -- --backend <claude|codex> --non-interactive
-```
-
-In Claude Code you can add MAMA's plugin instead and say "install MAMA OS": run
+Keep the address in. "Install MAMA" alone can send the agent to other programs called mama. In
+Claude Code you can add MAMA's plugin instead and say "install MAMA OS": run
 `/plugin marketplace add jungjaehoon-lifegamez/claude-plugins`, then `/plugin install mama`. Its
 `mama-install` skill follows this guide.
 
-You never type in a terminal. You choose the backend and the model in the conversation. You enter
-the bot token and a pairing code on a page MAMA opens in your browser, and send `/bind` in
-Telegram. The next section is what the agent follows.
+You never type in a terminal. Your agent guides you through these steps, in this order:
+
+1. make a bot with BotFather in Telegram;
+2. choose the backend and the model, or let the agent pick;
+3. on the page MAMA opens in your browser, paste the bot token, message the bot, and enter the
+   code it sends;
+4. add the bot to a group as an administrator and send `/bind` there;
+5. setup is done when MAMA answers your message;
+6. then the agent asks which sources MAMA should watch; pick some, or say "later".
+
+The next section is what the agent follows.
 
 macOS is supported today. Linux is not supported yet (over SSH or without a desktop there is no
-setup path). See
-[Supported versions](#supported-versions). To keep your own Node.js, see
+setup path). See [Supported versions](#supported-versions). To keep your own Node.js, see
 [Install with your own Node.js](#install-with-your-own-nodejs).
 
 ## Set up through your agent
@@ -43,18 +44,25 @@ Ask Claude Code or Codex, on the machine that will run MAMA, to install MAMA OS 
 runs the install command and you never type in a terminal. Claude Code's MAMA plugin has a
 `mama-install` skill for this; Codex follows this section. Either way, these are the steps.
 
-### What you make first
+### The bot, before the command
 
-In Telegram:
+The setup page asks for a Telegram bot's token. The install command opens that page partway
+through, and the page waits 15 minutes, so the bot must exist by then. Before it runs the command,
+the agent walks you through making one in Telegram:
 
-- a bot, from BotFather. Use a bot only this install uses: Telegram hands a bot's messages to one
-  program at a time, so a bot another MAMA already reads cannot be paired;
-- a group for common work, even if you are the only owner.
+1. open a chat with BotFather and send `/newbot`;
+2. choose the bot's name, then its username, which ends in `bot`;
+3. BotFather answers with the bot's token. Leave it there: you paste it on the setup page, never
+   into the chat with the agent.
+
+Use a bot only this install uses: Telegram hands a bot's messages to one program at a time, so a
+bot another MAMA already reads cannot be paired. The group comes later, after pairing.
 
 ### The command
 
 The agent asks you which backend MAMA runs (`claude` or `codex`; usually the agent itself) and
-which model, then runs this in the background, with its output in a file:
+which model, or picks them if you leave it to the agent. Then it runs this in the background, with
+its output in a file:
 
 ```sh
 curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | MAMA_INIT_MODEL=<model> sh -s -- --backend <claude|codex> --non-interactive
@@ -83,9 +91,10 @@ the browser's address bar. The path holds no secret. On the page:
 1. paste the bot token;
 2. send the bot a new private message in Telegram (one sent before setup started is dropped). It
    answers with a pairing code; enter it on the page;
-3. add the bot to the common group and make it an administrator, so it reads the group. Telegram's
-   member picker does not list bots: search for the bot's @username there, or open the bot's
-   profile and choose Add to Group. Then send `/bind` in that group.
+3. once the page says the code is accepted, make a group for common work, even if you are the only
+   owner. Add the bot to it and make it an administrator, so it reads the group. Telegram's member
+   picker does not list bots: search for the bot's @username there, or open the bot's profile and
+   choose Add to Group. Then send `/bind` in that group.
 
 Enter the token and the code only on the page, never in the chat with the agent: the conversation
 reaches the model provider and the agent's transcript. The agent never opens `open.html` and never
@@ -277,7 +286,9 @@ MAMA's service runs the Node that ran setup. An upgrade or an nvm switch can tak
 `mama doctor` checks it. `mama update` updates this install with npm.
 
 To work from a checkout instead, run `pnpm install` and `pnpm build` at the repository root and
-use `node packages/standalone/dist/cli/index.js` wherever the guides say `mama`.
+use `node packages/standalone/dist/cli/index.js` wherever the guides say `mama`. A checkout updates
+by git, which leaves the document tools as they are: when a release changes them, run
+`mama tools install` after the build. `mama update` does this for the other installs.
 
 ## Supported versions
 

@@ -63,51 +63,69 @@ the rest are gathered into an hourly reminder between 09:00 and 21:00.
 
 ## Getting started
 
-On the Mac that will run MAMA, open Claude Code or Codex and say:
+### What you need
 
-> Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA by following its owner setup
-> guide, docs/start/owner-setup.md.
+- A Mac. Linux and Docker are not supported yet; see
+  [supported versions](docs/start/owner-setup.md#supported-versions).
+- Claude Code or Codex, signed in.
+- A Telegram account.
 
-Name the repository. "Install MAMA" alone can send the agent to other programs called mama. The
-agent then runs the install command, which comes with each MAMA OS release:
+Nothing else is needed beforehand. You make the bot and the group during setup, and your agent
+tells you how.
+
+### Say to your agent
+
+On that Mac, open Claude Code or Codex and say:
+
+> Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA
+
+Keep the address in. "Install MAMA" alone can send the agent to other programs called mama.
+
+### What your agent guides you through
+
+1. **Make a bot.** In Telegram, open BotFather, send `/newbot` and choose a name. BotFather gives
+   you the bot's token; you paste it on the setup page later, never into the chat. Your agent tells
+   you how before it starts the install.
+2. **Choose the backend and the model.** `claude` or `codex`, and a model, or let your agent pick.
+3. **Pair on the setup page.** MAMA opens a page in your browser. Paste the bot token there,
+   message the bot, and enter the code it sends you.
+4. **Bind a group.** Make a group for common work, even if you are the only owner. Add the bot as
+   an administrator and send `/bind` there. Telegram's member picker does not list bots: search for
+   the bot's @username, or choose Add to Group on the bot's profile.
+5. **MAMA answers.** Setup is done when MAMA answers your message to the bot.
+6. **Pick sources.** Your agent then asks which work sources MAMA should watch. Pick some, or say
+   "later".
+
+You never type in a terminal. [Your first day](docs/start/tutorial.md) goes on from here:
+connecting a source, asking about work, giving a correction, reports, the viewer and sending files.
+
+<details>
+<summary>What your agent runs</summary>
+
+Your agent runs this command; you never type it. It comes with each MAMA OS release.
 
 ```sh
 curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | MAMA_INIT_MODEL=<model> sh -s -- --backend <claude|codex> --non-interactive
 ```
 
-In Claude Code you can add MAMA's plugin instead and say "install MAMA OS": run
-`/plugin marketplace add jungjaehoon-lifegamez/claude-plugins`, then `/plugin install mama`.
+It installs MAMA's own Node.js, MAMA OS and the backend if it is missing. Then MAMA's setup opens
+the setup page, installs the document tools for office files and charts, and starts MAMA. See
+[what the install command makes](docs/start/owner-setup.md#what-the-install-command-makes).
 
-You never type in a terminal. First make a Telegram bot with BotFather, and a group for common
-work, even if you are the only owner. Then:
+</details>
 
-1. In the conversation, choose the backend (`claude` or `codex`) and the model.
-2. On the page MAMA opens in your browser, paste the bot token. Message the bot privately; it
-   answers with a pairing code, which you enter on the page.
-3. Add the bot to the group as an administrator and send `/bind` there. Telegram's member picker
-   does not list bots: search for the bot's @username, or choose Add to Group on the bot's profile.
+## For AI agents installing MAMA
 
-MAMA installs its own Node.js, the backend if it is missing, and the document toolkit for office
-files and charts, then starts. Setup is done when MAMA answers your message to the bot. Your agent
-then asks which work sources MAMA should watch; pick some, or say "later". Discord and Slack can be
-added as messengers later.
+When a person asks you to install MAMA OS from this repository, follow
+[docs/start/owner-setup.md, "Set up through your agent"](docs/start/owner-setup.md#set-up-through-your-agent).
+The install command is the latest release's `install.sh`:
+`https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh`, run as that
+section shows.
 
-macOS is supported today; Linux and Docker are not yet. See
-[supported versions](docs/start/owner-setup.md#supported-versions).
-
-If you keep your own Node.js 22.13 or newer, `npm install -g @jungjaehoon/mama-os` installs MAMA OS
-instead; see [owner setup](docs/start/owner-setup.md#install-with-your-own-nodejs). To run from a
-checkout, run `pnpm install` and `pnpm build`, then use `node packages/standalone/dist/cli/index.js`
-wherever the guides say `mama`.
-
-Another owner is added with `mama register-owner <telegram id>` while MAMA is stopped. After an
-upgrade, run `mama tools install` again. The [first-day tutorial](docs/start/tutorial.md) walks
-through connecting a source, asking about work, giving a correction, reports, the viewer and
-sending files.
-
-Claude Code development memory is separate and needs no daemon: `/plugin install mama`, or add the
-MCP server `{"mcpServers":{"mama":{"command":"npx","args":["@jungjaehoon/mama-server"]}}}`.
-See [Claude Code plugin](docs/start/claude-code-plugin.md).
+- Secrets go only on the setup page MAMA opens in the person's browser.
+- Never ask for, read or repeat the bot token or the pairing code in the chat.
+- Run MAMA by its full path, `~/.mama/bin/mama`, and the backend by its full path too: your shell
+  does not read the PATH block the installer writes.
 
 ## How it works
 
@@ -163,10 +181,11 @@ whenever you ask.
 | Claude Code                           | Conversations in the projects you choose                             | Local folder                         |
 | Kagemusha bridge                      | A read-only view of a local Kagemusha database                       | Local database                       |
 
-**Messengers.** You talk to MAMA in Telegram, Discord or Slack. In Telegram, each person you
-register has a DM with MAMA, and owners and members also use the common group; Discord and Slack
-keep one owner channel. Messages from anyone else are ignored and logged. You choose which messenger
-receives reports, notifications and security alerts. See [Sources](docs/guides/connectors.md) and
+**Messengers.** You talk to MAMA in Telegram, Discord or Slack. Setup uses Telegram; Discord and
+Slack can be added later. In Telegram, each person you register has a DM with MAMA, and owners and
+members also use the common group; Discord and Slack keep one owner channel. Messages from anyone
+else are ignored and logged. You choose which messenger receives reports, notifications and
+security alerts. See [Sources](docs/guides/connectors.md) and
 [Messengers](docs/guides/messengers.md).
 
 ## Security
@@ -194,6 +213,23 @@ receives reports, notifications and security alerts. See [Sources](docs/guides/c
    messenger.
 
 Details: [Security guide](docs/guides/security.md), [Viewer](docs/guides/viewer.md).
+
+## More ways to install and run
+
+- **The Claude Code plugin.** Run `/plugin marketplace add jungjaehoon-lifegamez/claude-plugins`,
+  then `/plugin install mama`, and say "install MAMA OS". Its `mama-install` skill guides you the
+  same way.
+- **Your own Node.js** (22.13 or newer): `npm install -g @jungjaehoon/mama-os` installs MAMA OS
+  instead; see [Install with your own Node.js](docs/start/owner-setup.md#install-with-your-own-nodejs).
+- **A checkout.** Run `pnpm install` and `pnpm build`, then use
+  `node packages/standalone/dist/cli/index.js` wherever the guides say `mama`. A checkout updates
+  by git, so when a release changes the document tools, run `mama tools install` yourself;
+  `mama update` does this for the other installs.
+- **Another owner** is added with `mama register-owner <telegram id>` while MAMA is stopped; see
+  [People and DMs](docs/guides/people.md).
+- **Claude Code development memory** is separate and needs no daemon: `/plugin install mama`, or
+  add the MCP server `{"mcpServers":{"mama":{"command":"npx","args":["@jungjaehoon/mama-server"]}}}`.
+  See [Claude Code plugin](docs/start/claude-code-plugin.md).
 
 ## Packages
 

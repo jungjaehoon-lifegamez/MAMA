@@ -14,25 +14,29 @@ model receive the information needed for each task.
 
 ## Start here
 
-On the Mac that will run MAMA, open Claude Code or Codex and say:
+You need a Mac, Claude Code or Codex signed in, and a Telegram account. On the Mac that will run
+MAMA, open Claude Code or Codex and say:
 
-> Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA by following its owner setup
-> guide, docs/start/owner-setup.md.
+> Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA
 
-Name the repository: "install MAMA" alone can send the agent to other programs called mama. The
-agent runs the install command, and you never type in a terminal:
+Keep the address in. "Install MAMA" alone can send the agent to other programs called mama. You
+never type in a terminal. Your agent guides you through these steps, in this order:
 
-```sh
-curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | MAMA_INIT_MODEL=<model> sh -s -- --backend <claude|codex> --non-interactive
-```
+1. make a bot with BotFather in Telegram;
+2. choose the backend and the model, or let the agent pick;
+3. on the page MAMA opens in your browser, paste the bot token, message the bot, and enter the
+   code it sends;
+4. add the bot to a group as an administrator and send `/bind` there;
+5. setup is done when MAMA answers your message;
+6. then the agent asks which sources MAMA should watch; pick some, or say "later".
 
 In Claude Code, MAMA's plugin has a `mama-install` skill that does the same: run
 `/plugin marketplace add jungjaehoon-lifegamez/claude-plugins`, then `/plugin install mama`. macOS
 is supported today; Linux and Docker are not yet.
 
 - [Your first day with MAMA](start/tutorial.md) walks through setup and a first owner conversation.
-- [Owner setup](start/owner-setup.md) is the setup your agent follows, with what it installs and
-  the supported versions.
+- [Owner setup](start/owner-setup.md) is the setup your agent follows, with the install command,
+  what it installs and the supported versions.
 - [Development memory](start/claude-code-plugin.md) sets up the Claude Code plugin and MCP server.
 
 ## Guides
