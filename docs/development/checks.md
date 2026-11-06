@@ -2961,3 +2961,15 @@ The implementation writes raw/index data during import only. Replay is the owner
   - The marketplace lists plugin 2.4.1.
   - The live daemon (checkout) reports 0.79.1. It needed no restart beyond the 15:44 deploy, which already carried the code.
 - Next: the post-release run on the clean account. Its kit registry must move to 0.79.2 and 0.79.3, because the public 0.79.1 now takes the number the kit used.
+
+### Ledger upkeep U1–U3: "Done when" measured (2026-11-06)
+
+- Result: all three pass their counts. U1 16 of 16 closing transitions checked (100%), U2 5 of 5 qualifying turns (100%), U3 every daily order's subjects checked (2 orders, 6 subjects, at 00:44 KST on 11-03 and 11-05). No subject was lost, and the owner sent no manual "compare with the board" in U3's week.
+- Evidence (live DB read-only, SQL written apart from the scanners):
+  - U1 (10-29 16:36 → 11-05 16:36 KST): 14 summaries came from `upkeep:close` runs (151–22,047 characters) and 2 from a `work.no_update` naming the item.
+  - U2 (10-29 21:57 → 11-05 21:57): 16 owner-message turns (9 common, 7 owner-role DM). The 5 that read common sources and cited none were all on 11-02. The other 11 used no `source.search` or `source.read`.
+  - U3: the daemon ran from 10-30 06:08 to 11-06 without a restart, so a morning with no order had no subject. Of the owner's 23 messages that week, none asked for a board comparison; the 7 keyword hits are a personal job's fixed text.
+- Still open:
+  - U2's second condition (a repeated question about a written-back matter needs fewer `source.search` calls) is not measured: no repeat after a write-back was found, and chat bodies live in the raw store.
+  - The U1 count ignores `applies_until`, and U2's common filter treats every non-chat source as read connector-wide.
+  - A zero-subject scan leaves no log line, so U3's empty mornings rest on uptime, not on a logged scan.
