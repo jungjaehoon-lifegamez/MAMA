@@ -56,7 +56,7 @@ pairing code, and closes after the code, or after 15 minutes if unused; a source
 kind of page when the agent enables it. Tokens are written only to
 `~/.mama/auth.env` with mode 0600; `config.yaml` and `connectors.json` carry
 settings and credential variable names. Rotate a token with `mama secret set <NAME>`
-in a terminal, then restart the daemon. `mama secret list` prints names only. MAMA's
+(at a terminal, or with `--non-interactive` and the value on the setup page), then restart the daemon. `mama secret list` prints names only. MAMA's
 agent does not receive or type tokens.
 
 The daemon reads the Telegram bot token from `MAMA_TELEGRAM_TOKEN`, loaded by

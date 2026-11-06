@@ -80,8 +80,7 @@ To set up a source from the conversation, now or whenever the person asks:
   when the person wants another token entered, run again with its name in
   `MAMA_INIT_REPLACE_SECRETS`, and first tell them that a messenger reading it switches to the new
   bot too. A token only a messenger reads (Slack's app token, or a messenger's bot token while no
-  source being enabled reads it) cannot be entered from the conversation yet; tell the person so,
-  and do not look for another way in. The command saves nothing until every check passes, and it
+  source being enabled reads it) is entered with the messenger's own part, below. The command saves nothing until every check passes, and it
   leaves MAMA stopped
   however it ends. Start MAMA again with `~/.mama/bin/mama service start` as soon as each run
   ends, before you wait on the person for the next step; stop it again only for the next run.
@@ -119,10 +118,24 @@ To set up a source from the conversation, now or whenever the person asks:
   4. Enabling. Run the enabling command again; once `gws` is installed and signed in, it saves
      the source. Then start MAMA.
 
-Jev is not set up from the conversation yet: it needs the person at a terminal, which this
-install does not use. Do not offer it. If the person asks for it, say that MAMA cannot turn it on
-through you yet, and that MAMA works without it.
+To change another part of the setup later, when the person asks: every part of
+`~/.mama/bin/mama init --section <part> --non-interactive` runs the same way as the sources' one,
+with MAMA stopped, in the background, and MAMA started again as soon as it ends. Its answers come
+from variables, as the
+[Change one part later](https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/start/owner-setup.md#change-one-part-later)
+table names them, and every token or key is entered on the setup page: a new Telegram bot token
+(`telegram`), the Discord or Slack tokens (`MAMA_INIT_DISCORD=on` or `MAMA_INIT_SLACK=on` with the
+owner channel and user ids), the Jev key. A stored token is kept unless `MAMA_INIT_REPLACE_SECRETS`
+names it. A secret no part asks for is replaced with
+`~/.mama/bin/mama secret set <NAME> --non-interactive`, its value on the setup page too; then
+restart MAMA with `~/.mama/bin/mama service restart`.
 
-If the person asks about Jev (TypeSafe): with it, the owner agent can judge many messages or items
-without reading them all, and the text in those calls goes to the Jev service. MAMA works the same
-without it.
+Jev (TypeSafe) stays off; do not offer it. If the person asks about it: with it, the owner agent
+can judge many messages or items without reading them all, and the text in those calls goes to the
+Jev service. MAMA works the same without it. If they choose it, run the jev part with
+`MAMA_INIT_JEV=on`; the person enters the Jev API key on the setup page.
+
+To remove MAMA, when the person asks: run `~/.mama/bin/mama uninstall --dry-run --data` and show
+them what it would remove and what stays. Only once they confirm in the conversation, run
+`~/.mama/bin/mama uninstall --data --confirm-home <the MAMA home path it printed>`. It cannot be
+undone.

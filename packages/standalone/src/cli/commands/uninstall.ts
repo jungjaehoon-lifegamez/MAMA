@@ -1,6 +1,7 @@
 /**
- * `mama uninstall [--dry-run] [--data [--toolkit]]`: stop MAMA and remove its service. With
- * --data, once the MAMA home's path has been typed back, also remove what MAMA created: the MAMA
+ * `mama uninstall [--dry-run] [--data [--toolkit] [--confirm-home <path>]]`: stop MAMA and remove
+ * its service. With --data, once the MAMA home's path has been typed back (or, without a terminal,
+ * given with --confirm-home), also remove what MAMA created: the MAMA
  * home, the folder of each person it registered under `member_root` (and the folders it retired),
  * and the common skills under `tools_root` (with --toolkit, the toolkit's versions too). A folder
  * MAMA did not create is never removed whole: `member_root` and `tools_root` go only once empty, so
@@ -22,12 +23,12 @@ import { defaultConfigPath, loadConfig, type W1Config } from '../../runtime/conf
 import { physicalReadPath } from '../../runtime/backend-security.js';
 import { memberClaudeTmpDir, memberRoomTmpRoot } from '../../runtime/member-paths.js';
 import { removeVersion } from '../../tools/document-toolkit.js';
-import { CliInputError, createTerminalPrompt, requireTTY, type PromptAdapter } from '../prompt.js';
+import { CliInputError, createTerminalPrompt, type PromptAdapter } from '../prompt.js';
 import { acquireInstallLock, daemonControlPaths, lockHolder } from '../runtime/daemon-control.js';
 import { runStop } from './control.js';
 import { serviceFile, uninstallService, type ServiceOptions } from './service.js';
 
-const USAGE = 'Usage: mama uninstall [--dry-run] [--data [--toolkit]]';
+const USAGE = 'Usage: mama uninstall [--dry-run] [--data [--toolkit] [--confirm-home <path>]]';
 const PRINCIPAL_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 export interface UninstallOptions extends ServiceOptions {
@@ -95,16 +96,32 @@ function startupBlocks(home: string): string[] {
   );
 }
 
-function parseArgs(args: readonly string[]): { dryRun: boolean; data: boolean; toolkit: boolean } {
-  const flags = new Set(args);
+function parseArgs(args: readonly string[]): {
+  dryRun: boolean;
+  data: boolean;
+  toolkit: boolean;
+  /** The MAMA home's path, given in place of typing it back at a terminal. */
+  confirmHome: string | undefined;
+} {
+  const rest = [...args];
+  let confirmHome: string | undefined;
+  const at = rest.indexOf('--confirm-home');
+  if (at !== -1) {
+    confirmHome = rest[at + 1];
+    if (confirmHome === undefined || confirmHome.startsWith('--')) throw new CliInputError(USAGE);
+    rest.splice(at, 2);
+  }
+  const flags = new Set(rest);
   for (const arg of flags) {
     if (!['--dry-run', '--data', '--toolkit'].includes(arg)) throw new CliInputError(USAGE);
   }
-  if (flags.has('--toolkit') && !flags.has('--data')) throw new CliInputError(USAGE);
+  if ((flags.has('--toolkit') || confirmHome !== undefined) && !flags.has('--data'))
+    throw new CliInputError(USAGE);
   return {
     dryRun: flags.has('--dry-run'),
     data: flags.has('--data'),
     toolkit: flags.has('--toolkit'),
+    confirmHome,
   };
 }
 
@@ -283,7 +300,7 @@ export async function runUninstall(
   args: readonly string[],
   options: UninstallOptions = {}
 ): Promise<number> {
-  const { dryRun, data, toolkit } = parseArgs(args);
+  const { dryRun, data, toolkit, confirmHome } = parseArgs(args);
   const home = options.home ?? homedir();
   const configPath = options.configPath ?? defaultConfigPath(home);
   const write = options.write ?? ((line: string) => console.log(line));
@@ -323,13 +340,22 @@ export async function runUninstall(
     return 0;
   }
 
+  // The MAMA home's path confirms the removal: typed back at a terminal, or, from the person's
+  // agent once it has shown the plan in the conversation, given with --confirm-home.
   if (plan && plan.remove.length > 0) {
-    const prompt = options.prompt ?? createTerminalPrompt();
-    requireTTY(prompt);
-    notes('removes', (line) => prompt.write(line));
-    const typed = (
-      await prompt.text(`This cannot be undone. Type ${plan.root} to remove it`)
-    ).trim();
+    let typed: string;
+    if (confirmHome === undefined) {
+      const prompt = options.prompt ?? createTerminalPrompt();
+      if (!prompt.stdinIsTTY || !prompt.stdoutIsTTY)
+        throw new CliInputError(
+          `Without a terminal, confirm with --confirm-home ${plan.root}, after mama uninstall --dry-run --data${toolkit ? ' --toolkit' : ''} has shown what goes; nothing was removed.`
+        );
+      notes('removes', (line) => prompt.write(line));
+      typed = (await prompt.text(`This cannot be undone. Type ${plan.root} to remove it`)).trim();
+    } else {
+      notes('removes', write);
+      typed = confirmHome;
+    }
     if (typed !== plan.root) throw new CliInputError('Not confirmed; nothing was removed.');
   }
 

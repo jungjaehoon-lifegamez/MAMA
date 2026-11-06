@@ -158,6 +158,41 @@ function person(entries: { tokens?: string[]; codes?: string[]; after?: () => vo
   };
 }
 
+/** An opener that must not run: no token is asked for. */
+const noPage: OpenRun = async () => {
+  driverFailures.push(new Error('a setup page opened'));
+  return { exit: Promise.resolve(0) };
+};
+/**
+ * The person at the setup page: reads each form (`forms`) and enters each value in turn, by its
+ * field's name.
+ */
+function tokenPage(values: Record<string, string> | Array<[string, string]>): {
+  openRun: OpenRun;
+  opened: string[][];
+  forms: string[];
+  replies: string[];
+} {
+  const opened: string[][] = [];
+  const forms: string[] = [];
+  const replies: string[] = [];
+  return {
+    opened,
+    forms,
+    replies,
+    openRun: async (command, args) => {
+      opened.push([command, ...args]);
+      const url = /url=(http[^"]+)"/.exec(readFileSync(args[0]!, 'utf8'))![1]!;
+      void (async () => {
+        for (const [name, value] of Array.isArray(values) ? values : Object.entries(values)) {
+          forms.push(await (await fetch(url)).text());
+          replies.push(await post(url, { [name]: value }));
+        }
+      })().catch((error: unknown) => driverFailures.push(error));
+      return { exit: Promise.resolve(0) };
+    },
+  };
+}
 /** What the `gws` stand-in answers a read its sign-in does not grant, as Google does. */
 const SCOPE_REFUSED =
   '{"error":{"code":403,"message":"Request had insufficient authentication scopes."}}';
@@ -1596,6 +1631,36 @@ describe('secret rotation', () => {
     expect(readdirSync(join(root, 'runtime'))).toEqual([]);
   });
 
+  it('replaces a secret without a terminal, its value entered on the setup page (install.md, W2.4.6)', async () => {
+    updateSecrets(home, { MAMA_SLACK_APP_TOKEN: 'fixture-old', MAMA_AUTH_TOKEN: 'fixture-other' });
+    const p = prompt([], [], [false, false]);
+    const page = tokenPage({ MAMA_SLACK_APP_TOKEN: 'fixture-new' });
+    await runSecret(['set', 'MAMA_SLACK_APP_TOKEN', '--non-interactive'], {
+      home,
+      prompt: p.adapter,
+      platform: 'linux',
+      openRun: page.openRun,
+    });
+    await vi.waitFor(() => expect(page.replies).toHaveLength(1));
+    expect(page.forms[0]).toContain('It replaces the one in auth.env.');
+    expect(page.replies[0]).toContain('MAMA_SLACK_APP_TOKEN is taken.');
+    expect(p.output).toContain(
+      'Updated MAMA_SLACK_APP_TOKEN. Restart the daemon to use the new value.'
+    );
+    const auth = readFileSync(join(root, 'auth.env'), 'utf8');
+    expect(auth).toContain("MAMA_SLACK_APP_TOKEN='fixture-new'");
+    expect(auth).toContain("MAMA_AUTH_TOKEN='fixture-other'");
+    // A name outside the allowlist, or an extra argument, is refused before any page opens.
+    for (const args of [
+      ['set', 'PATH', '--non-interactive'],
+      ['set', 'MAMA_SLACK_TOKEN', '--non-interactive', 'extra'],
+      ['set', 'MAMA_SLACK_TOKEN', '--interactive'],
+    ])
+      await expect(
+        runSecret(args, { home, prompt: p.adapter, platform: 'linux', openRun: noPage })
+      ).rejects.toThrow(/Allowed secret names|Usage: mama secret set <NAME> \[--non-interactive\]/);
+  });
+
   it.each(['MAMA_CF_ACCESS_ISSUER', 'PATH', 'NOT_ALLOWED', 'MAMA_SLACK_TOKEN=bad'])(
     'rejects names outside the secret allowlist %#',
     async (name) => {
@@ -1901,41 +1966,6 @@ describe('a source enabled from the conversation (install.md, W2.4.5e)', () => {
   /** A finished setup with no source, as the whole setup leaves it. */
   const setUp = () =>
     runInit(['--non-interactive'], options(prompt([], [], [false, false]).adapter));
-  /** An opener that must not run: no token is asked for. */
-  const noPage: OpenRun = async () => {
-    driverFailures.push(new Error('a setup page opened'));
-    return { exit: Promise.resolve(0) };
-  };
-  /**
-   * The person at the setup page: reads each form (`forms`) and enters each value in turn, by its
-   * field's name.
-   */
-  function tokenPage(values: Record<string, string>): {
-    openRun: OpenRun;
-    opened: string[][];
-    forms: string[];
-    replies: string[];
-  } {
-    const opened: string[][] = [];
-    const forms: string[] = [];
-    const replies: string[] = [];
-    return {
-      opened,
-      forms,
-      replies,
-      openRun: async (command, args) => {
-        opened.push([command, ...args]);
-        const url = /url=(http[^"]+)"/.exec(readFileSync(args[0]!, 'utf8'))![1]!;
-        void (async () => {
-          for (const [name, value] of Object.entries(values)) {
-            forms.push(await (await fetch(url)).text());
-            replies.push(await post(url, { [name]: value }));
-          }
-        })().catch((error: unknown) => driverFailures.push(error));
-        return { exit: Promise.resolve(0) };
-      },
-    };
-  }
   /**
    * `mama init --section connectors --non-interactive` with `blocks`, and `replace` in
    * MAMA_INIT_REPLACE_SECRETS when given; what it printed.
@@ -2375,15 +2405,274 @@ describe('a source enabled from the conversation (install.md, W2.4.5e)', () => {
     expect(readFileSync(join(root, 'auth.env'), 'utf8')).toBe(auth);
   });
 
-  it('is the only part without a terminal; the terminal form still needs one', async () => {
+  it('needs a terminal for every part without --non-interactive, and takes nothing after it', async () => {
     await setUp();
     const p = prompt([], [], [false, false]);
-    await expect(
-      runInit(['--section', 'telegram', '--non-interactive'], options(p.adapter))
-    ).rejects.toThrow('mama init --section telegram has no --non-interactive form yet');
-    await expect(runInit(['--section', 'connectors'], options(p.adapter))).rejects.toThrow(/TTY/);
+    for (const part of ['telegram', 'connectors', 'jev'])
+      await expect(runInit(['--section', part], options(p.adapter))).rejects.toThrow(/TTY/);
     await expect(
       runInit(['--section', 'connectors', '--non-interactive', 'extra'], options(p.adapter))
-    ).rejects.toThrow(/mama init --section connectors --non-interactive/);
+    ).rejects.toThrow(/mama init --section <telegram\|.*> \[--non-interactive\]/);
+  });
+});
+
+describe('later setup changes from the conversation (install.md, W2.4.6)', () => {
+  const readDoc = () =>
+    yaml.load(readFileSync(join(root, 'config.yaml'), 'utf8')) as Record<string, unknown>;
+  const secret = (name: string) =>
+    new RegExp(`^export ${name}='([^']*)'$`, 'm').exec(
+      readFileSync(join(root, 'auth.env'), 'utf8')
+    )?.[1];
+  const setUp = () =>
+    runInit(['--non-interactive'], options(prompt([], [], [false, false]).adapter));
+  /**
+   * `mama init --section <part> --non-interactive` with stdin and stdout not a TTY, the answers in
+   * `env` and the person at `openRun` (none by default: no page may open); what it printed.
+   */
+  async function section(
+    part: string,
+    env: NodeJS.ProcessEnv,
+    overrides: Partial<InitOptions> = {}
+  ): Promise<string[]> {
+    const p = prompt([], [], [false, false]);
+    await runInit(
+      ['--section', part, '--non-interactive'],
+      options(p.adapter, { env, openRun: noPage, ...overrides })
+    );
+    return p.output;
+  }
+  const stopped =
+    'MAMA is still stopped; start it with mama service install, then mama service start.';
+
+  it('takes a new bot token on the setup page, asking again there for one Telegram refuses', async () => {
+    await setUp();
+    const before = readFileSync(join(root, 'config.yaml'), 'utf8');
+    const page = tokenPage([
+      ['MAMA_TELEGRAM_TOKEN', 'fixture-refused'],
+      ['MAMA_TELEGRAM_TOKEN', 'fixture-bot-two'],
+    ]);
+    const output = await section(
+      'telegram',
+      {},
+      {
+        openRun: page.openRun,
+        telegramCall: (token, method, params) =>
+          token === 'fixture-refused'
+            ? Promise.resolve({ ok: false, error_code: 401 })
+            : telegram.call(token, method, params),
+      }
+    );
+    await vi.waitFor(() => expect(page.replies).toHaveLength(2));
+    expect(page.forms[0]).toContain('for a bot already in the common group');
+    expect(page.replies[0]).toContain(
+      'Telegram refused the bot token; copy it again from BotFather.'
+    );
+    expect(page.replies[1]).toContain('The bot token is taken.');
+    expect(output).toContain('Telegram refused the bot token; copy it again from BotFather.');
+    expect(output).toContain('MAMA_TELEGRAM_TOKEN taken');
+    expect(secret('MAMA_TELEGRAM_TOKEN')).toBe('fixture-bot-two');
+    expect(readFileSync(join(root, 'config.yaml'), 'utf8')).toBe(before);
+    // A bot outside the common group is refused on the page, which then expires: nothing changes.
+    await expect(
+      section(
+        'telegram',
+        {},
+        {
+          openRun: tokenPage({ MAMA_TELEGRAM_TOKEN: 'fixture-bot-three' }).openRun,
+          setupPageMs: 300,
+          telegramCall: (token, method, params) =>
+            method === 'getChatMember'
+              ? Promise.resolve({ ok: true, result: { status: 'left' } })
+              : telegram.call(token, method, params),
+        }
+      )
+    ).rejects.toThrow(/the setup page expired at .*; nothing was written/);
+    expect(secret('MAMA_TELEGRAM_TOKEN')).toBe('fixture-bot-two');
+  });
+
+  it('sets the backend and model from the environment, naming a signed-out login without running it', async () => {
+    await setUp();
+    const before = readDoc().agent as Record<string, unknown>;
+    await expect(section('model', { MAMA_INIT_BACKEND: 'claude' })).rejects.toThrow(
+      `mama init --section model --non-interactive needs MAMA_INIT_MODEL\n${stopped}`
+    );
+    await expect(
+      section(
+        'model',
+        { MAMA_INIT_BACKEND: 'claude', MAMA_INIT_MODEL: 'fixture-model-2' },
+        {
+          probeRun: (command, args) =>
+            args[0] === 'auth'
+              ? ({ ...probeOk(command, args), stdout: '{"loggedIn":false}' } as never)
+              : probeOk(command, args),
+          signIn: () => {
+            throw new Error('a login ran');
+          },
+        }
+      )
+    ).rejects.toThrow(
+      `claude is not signed in. Run: '${join(home, 'bin', 'claude')}' auth login, then run this again.`
+    );
+    expect(readDoc().agent).toEqual(before);
+    await section('model', { MAMA_INIT_BACKEND: 'claude', MAMA_INIT_MODEL: 'fixture-model-2' });
+    expect(readDoc().agent).toEqual({ ...before, backend: 'claude', model: 'fixture-model-2' });
+  });
+
+  it('sets the timezone from MAMA_INIT_TIMEZONE, refusing a zone the setup refuses', async () => {
+    await setUp();
+    const before = readFileSync(join(root, 'config.yaml'), 'utf8');
+    await expect(section('timezone', {})).rejects.toThrow(/needs MAMA_INIT_TIMEZONE/);
+    await expect(section('timezone', { MAMA_INIT_TIMEZONE: 'Mars/Base' })).rejects.toThrow(
+      /not a valid IANA time zone/
+    );
+    expect(readFileSync(join(root, 'config.yaml'), 'utf8')).toBe(before);
+    await section('timezone', { MAMA_INIT_TIMEZONE: 'Asia/Tokyo' });
+    expect(readDoc().timezone).toBe('Asia/Tokyo');
+  });
+
+  it('turns Discord on with its token on the page, keeps a stored one, replaces it when asked, and turns it off', async () => {
+    await setUp();
+    const on = {
+      MAMA_INIT_DISCORD: 'on',
+      MAMA_INIT_DISCORD_CHANNEL_ID: 'fixture-channel',
+      MAMA_INIT_DISCORD_USER_ID: 'fixture-user',
+    };
+    await expect(section('discord', { ...on, MAMA_INIT_DISCORD: 'yes' })).rejects.toThrow(
+      'MAMA_INIT_DISCORD must be on or off.'
+    );
+    await expect(
+      section('discord', { MAMA_INIT_DISCORD: 'on', MAMA_INIT_DISCORD_CHANNEL_ID: 'c' })
+    ).rejects.toThrow(/needs MAMA_INIT_DISCORD_USER_ID/);
+    const first = tokenPage({ MAMA_DISCORD_TOKEN: 'fixture-discord' });
+    await section('discord', on, { openRun: first.openRun });
+    await vi.waitFor(() => expect(first.replies).toHaveLength(1));
+    expect(first.forms[0]).toContain('Discord bot token (MAMA_DISCORD_TOKEN)');
+    expect(first.replies[0]).toContain('Every token is taken.');
+    expect(readDoc().discord).toMatchObject({
+      enabled: true,
+      owner_channel_id: 'fixture-channel',
+      allowed_channels: ['fixture-channel'],
+      owner_user_ids: ['fixture-user'],
+    });
+    expect(secret('MAMA_DISCORD_TOKEN')).toBe('fixture-discord');
+    // Asked again, the stored token is kept and no page opens.
+    expect(
+      await section('discord', { ...on, MAMA_INIT_DISCORD_CHANNEL_ID: 'fixture-channel-2' })
+    ).toContain(
+      'MAMA_DISCORD_TOKEN is in auth.env already and is kept. To enter another, run this again with MAMA_INIT_REPLACE_SECRETS=MAMA_DISCORD_TOKEN.'
+    );
+    expect(readDoc().discord).toMatchObject({ owner_channel_id: 'fixture-channel-2' });
+    // A name the part does not ask for is refused before anything else.
+    await expect(
+      section('discord', { ...on, MAMA_INIT_REPLACE_SECRETS: 'MAMA_SLACK_APP_TOKEN' })
+    ).rejects.toThrow(
+      `MAMA_INIT_REPLACE_SECRETS names MAMA_SLACK_APP_TOKEN, which mama init --section discord does not ask for (it asks for MAMA_DISCORD_TOKEN); mama secret set MAMA_SLACK_APP_TOKEN --non-interactive replaces a secret on its own. Nothing was saved.\n${stopped}`
+    );
+    const again = tokenPage({ MAMA_DISCORD_TOKEN: 'fixture-discord-two' });
+    await section(
+      'discord',
+      { ...on, MAMA_INIT_REPLACE_SECRETS: 'MAMA_DISCORD_TOKEN' },
+      { openRun: again.openRun }
+    );
+    await vi.waitFor(() => expect(again.replies).toHaveLength(1));
+    expect(again.forms[0]).toContain('It replaces the one in auth.env.');
+    expect(secret('MAMA_DISCORD_TOKEN')).toBe('fixture-discord-two');
+    await section('discord', { MAMA_INIT_DISCORD: 'off' });
+    expect(readDoc().discord).toMatchObject({ enabled: false });
+    expect(secret('MAMA_DISCORD_TOKEN')).toBe('fixture-discord-two');
+  });
+
+  it('replaces the Slack app token alone, which no source reads', async () => {
+    await setUp();
+    const on = {
+      MAMA_INIT_SLACK: 'on',
+      MAMA_INIT_SLACK_CHANNEL_ID: 'fixture-channel',
+      MAMA_INIT_SLACK_USER_ID: 'fixture-user',
+    };
+    const both = tokenPage({
+      MAMA_SLACK_TOKEN: 'fixture-bot',
+      MAMA_SLACK_APP_TOKEN: 'fixture-app',
+    });
+    await section('slack', on, { openRun: both.openRun });
+    await vi.waitFor(() => expect(both.replies).toHaveLength(2));
+    expect(both.replies).toEqual([
+      expect.stringContaining('MAMA_SLACK_TOKEN is taken.'),
+      expect.stringContaining('Every token is taken.'),
+    ]);
+    const app = tokenPage({ MAMA_SLACK_APP_TOKEN: 'fixture-app-2' });
+    const output = await section(
+      'slack',
+      { ...on, MAMA_INIT_REPLACE_SECRETS: 'MAMA_SLACK_APP_TOKEN' },
+      { openRun: app.openRun }
+    );
+    expect(output).toContain(
+      'MAMA_SLACK_TOKEN is in auth.env already and is kept. To enter another, run this again with MAMA_INIT_REPLACE_SECRETS=MAMA_SLACK_TOKEN.'
+    );
+    await vi.waitFor(() => expect(app.replies).toHaveLength(1));
+    expect(app.forms).toHaveLength(1);
+    expect(secret('MAMA_SLACK_TOKEN')).toBe('fixture-bot');
+    expect(secret('MAMA_SLACK_APP_TOKEN')).toBe('fixture-app-2');
+  });
+
+  it('refuses turning Discord off while a delivery route uses it, or with a token to replace', async () => {
+    await setUp();
+    await section(
+      'discord',
+      {
+        MAMA_INIT_DISCORD: 'on',
+        MAMA_INIT_DISCORD_CHANNEL_ID: 'fixture-channel',
+        MAMA_INIT_DISCORD_USER_ID: 'fixture-user',
+      },
+      { openRun: tokenPage({ MAMA_DISCORD_TOKEN: 'fixture-discord' }).openRun }
+    );
+    const doc = readDoc();
+    doc.delivery = { ...(doc.delivery as object), reports: 'discord' };
+    writeFileSync(join(root, 'config.yaml'), yaml.dump(doc));
+    // Off, the part asks for no token, so naming one to replace is refused.
+    await expect(
+      section('discord', {
+        MAMA_INIT_DISCORD: 'off',
+        MAMA_INIT_REPLACE_SECRETS: 'MAMA_DISCORD_TOKEN',
+      })
+    ).rejects.toThrow(/does not ask for; mama secret set MAMA_DISCORD_TOKEN --non-interactive/);
+    await expect(section('discord', { MAMA_INIT_DISCORD: 'off' })).rejects.toThrow(
+      /delivery\.reports targets discord.*set that route in config\.yaml/
+    );
+    expect(readDoc().discord).toMatchObject({ enabled: true });
+  });
+
+  it('turns Jev on with its key on the page, and off and on again keeping the key file', async () => {
+    await setUp();
+    await expect(section('jev', { MAMA_INIT_JEV: 'y' })).rejects.toThrow(
+      'MAMA_INIT_JEV must be on or off.'
+    );
+    const page = tokenPage({ 'jev-key': 'fixture-jev-key' });
+    const output = await section('jev', { MAMA_INIT_JEV: 'on' }, { openRun: page.openRun });
+    expect(output).toContain('Get a Jev API key from TypeSafe: https://docs.typesafe.ai');
+    await vi.waitFor(() => expect(page.replies).toHaveLength(1));
+    expect(page.replies[0]).toContain('The Jev API key is taken.');
+    expect(loadConfig({ home }).jev).toMatchObject({ enabled: true });
+    expect(readFileSync(join(root, 'jev-key'), 'utf8')).toBe('fixture-jev-key\n');
+    expect(statSync(join(root, 'jev-key')).mode & 0o777).toBe(0o600);
+    expect(readFileSync(join(root, 'auth.env'), 'utf8')).not.toContain('fixture-jev-key');
+    await section('jev', { MAMA_INIT_JEV: 'off' });
+    expect(readDoc().jev).toMatchObject({ enabled: false });
+    await section('jev', { MAMA_INIT_JEV: 'on' });
+    expect(readDoc().jev).toMatchObject({ enabled: true });
+    expect(readFileSync(join(root, 'jev-key'), 'utf8')).toBe('fixture-jev-key\n');
+  });
+
+  it('refuses MAMA_INIT_REPLACE_SECRETS on a part that asks for no secret', async () => {
+    await setUp();
+    for (const [part, env] of [
+      ['timezone', { MAMA_INIT_TIMEZONE: 'Asia/Tokyo' }],
+      ['jev', { MAMA_INIT_JEV: 'off' }],
+      ['model', { MAMA_INIT_BACKEND: 'codex', MAMA_INIT_MODEL: 'fixture-model' }],
+    ] as const)
+      await expect(
+        section(part, { ...env, MAMA_INIT_REPLACE_SECRETS: 'MAMA_TELEGRAM_TOKEN' })
+      ).rejects.toThrow(
+        `MAMA_INIT_REPLACE_SECRETS names MAMA_TELEGRAM_TOKEN, which mama init --section ${part} does not ask for; mama secret set MAMA_TELEGRAM_TOKEN --non-interactive replaces a secret on its own. Nothing was saved.`
+      );
   });
 });
