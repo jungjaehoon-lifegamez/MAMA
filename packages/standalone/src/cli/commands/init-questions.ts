@@ -506,7 +506,7 @@ export async function checkTelegram(
   // A new bot the common group cannot be shown to hold, or to read, would leave that channel silent.
   if (options.groupRequired && check.status !== 'ok')
     throw new CliInputError(
-      `${check.detail}${check.fix ? `: ${check.fix}` : ''}; the token was not saved. Run this again once that is fixed.`
+      `${check.detail}${check.fix ? `: ${check.fix}` : ''}; the token was not saved. Fix that, then ${options.next}.`
     );
   report(check, write);
 }

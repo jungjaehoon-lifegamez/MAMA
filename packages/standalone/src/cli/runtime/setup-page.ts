@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isAllowedHost } from '../../api/viewer-request-security.js';
-import { CliInputError } from '../prompt.js';
+import { CliInputError, nonblankLine } from '../prompt.js';
 
 /**
  * The setup page (install.md, W2.4.5b): a page on this machine, served by the running command,
@@ -326,4 +326,67 @@ export async function openSetupPage(options: {
     write(`setup page: the browser did not open (${failure}); ${wayIn}`);
   }
   return { stopped, close };
+}
+
+/** A secret the setup page takes in one field; `check`, when given, may refuse it. */
+export interface PageSecret {
+  readonly name: string;
+  readonly label: string;
+  /** Rejects with a CliInputError the page shows above the same field again. */
+  check?(value: string): Promise<void>;
+}
+
+/**
+ * Take `secrets` on the setup page, one field after another, each a nonblank line, and return
+ * them by name once every one is taken; `done` is what the page says after the last. A refusal is
+ * also written, so whoever runs the command sees it. The page is closed either way.
+ */
+export async function takeSecrets(
+  secrets: readonly PageSecret[],
+  done: string,
+  options: {
+    write: (line: string) => void;
+    platform: NodeJS.Platform;
+    openRun?: OpenRun;
+    lifetimeMs?: number;
+  }
+): Promise<Record<string, string>> {
+  const { write } = options;
+  const taken: Record<string, string> = {};
+  let allTaken!: () => void;
+  const all = new Promise<void>((resolve) => {
+    allTaken = resolve;
+  });
+  const page = await openSetupPage({
+    fields: secrets.map(({ name, label, check }, index) => ({
+      name,
+      label,
+      secret: true,
+      check: async (entered: string) => {
+        let value: string;
+        try {
+          value = nonblankLine(entered).trim();
+          await check?.(value);
+        } catch (error) {
+          if (error instanceof CliInputError) write(error.message);
+          throw error;
+        }
+        taken[name] = value;
+        write(`${name} taken`);
+        if (index < secrets.length - 1) return `${name} is taken.`;
+        allTaken();
+        return done;
+      },
+    })),
+    write,
+    platform: options.platform,
+    ...(options.openRun ? { openRun: options.openRun } : {}),
+    ...(options.lifetimeMs === undefined ? {} : { lifetimeMs: options.lifetimeMs }),
+  });
+  try {
+    await Promise.race([all, page.stopped]);
+  } finally {
+    page.close();
+  }
+  return taken;
 }

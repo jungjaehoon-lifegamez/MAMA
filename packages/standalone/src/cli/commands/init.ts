@@ -431,7 +431,7 @@ export async function viewerHealth(port: number): Promise<boolean> {
 /** How much longer than the daemon's own turn limit init waits for the backend check. */
 const PROBE_MARGIN_MS = 60_000;
 
-const initUsage = `Usage: mama init --non-interactive | mama init --section <${initSections.join('|')}> | mama init --section connectors --non-interactive`;
+const initUsage = `Usage: mama init --non-interactive | mama init --section <${initSections.join('|')}> [--non-interactive]`;
 
 export async function runInit(
   args: readonly string[] = [],

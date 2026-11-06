@@ -90,8 +90,8 @@ describe('Story ONB-8: thin MAMA OS installation skill', () => {
     );
     expect(content).toContain('~/.mama/bin/mama stop');
     expect(content).toContain('~/.mama/bin/mama service start');
-    // Only the sources' section runs without a terminal; the others still need one (W2.4.6).
-    expect(content.match(/--section \S+/g)).toEqual(['--section connectors']);
+    // Every part runs without a terminal (W2.4.6); the skill names the sources' one and the pattern.
+    expect(content.match(/--section \S+/g)).toEqual(['--section connectors', '--section <part>']);
     // Bare `mama` in the agent's shell may be another program; a named command is the wrapper's.
     expect(content).not.toMatch(/(^|[^/])\bmama (init|service|doctor|status|update|stop)\b/);
   });
@@ -156,11 +156,28 @@ describe('Story ONB-8: thin MAMA OS installation skill', () => {
     );
   });
 
-  it('keeps Jev out of the conversation until it has a form without a terminal', () => {
+  it('changes the setup, rotates a secret and removes MAMA from the conversation, secrets on the page (W2.4.6)', () => {
     const content = skill();
 
-    expect(content).toContain('Jev is not set up from the conversation yet');
-    expect(content).toContain('Do not offer it.');
+    expect(content).toContain('~/.mama/bin/mama init --section <part> --non-interactive');
+    expect(content).toContain('every token or key is entered on the setup page');
+    expect(content).toContain('~/.mama/bin/mama secret set <NAME> --non-interactive');
+    expect(content).not.toContain('cannot be entered from the conversation yet');
+    // The removal is shown first, and confirmed by the person in the conversation.
+    expect(content).toContain('~/.mama/bin/mama uninstall --dry-run --data');
+    expect(content).toContain(
+      'Only once they confirm in the conversation, run `~/.mama/bin/mama uninstall --data --confirm-home'
+    );
+  });
+
+  it('keeps Jev off unless the person chooses it, with its key on the setup page', () => {
+    const content = skill();
+
+    expect(content).not.toContain('Jev is not set up from the conversation yet');
+    expect(content).toContain('do not offer it.');
+    expect(content).toContain(
+      '`MAMA_INIT_JEV=on`; the person enters the Jev API key on the setup page'
+    );
     // What Jev sends out stays explained, for when the person asks.
     expect(content).toContain('goes to the Jev service');
     expect(content).toContain('MAMA works the same without it');

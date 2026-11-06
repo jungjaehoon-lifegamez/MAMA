@@ -38,17 +38,17 @@ For Telegram's common session, create a group with the bot, even for a solo owne
 Setup pairs you through a code the bot sends you and registers you as the first owner; `mama register-owner <telegram id>` registers
 another owner while the daemon is stopped.
 
-| Command                                            | Purpose                                              |
-| -------------------------------------------------- | ---------------------------------------------------- |
-| `mama init --non-interactive`                      | Set up and start MAMA, with the first owner          |
-| `mama init --section connectors --non-interactive` | Enable sources, with MAMA stopped; the agent runs it |
-| `mama register-owner <telegram id>`                | Register another owner while MAMA is stopped         |
-| `mama tools install`                               | Install or update the document toolkit               |
-| `mama secret set <NAME>` / `mama secret list`      | Rotate a token / list names only                     |
-| `mama daemon`                                      | Run the configured daemon in the foreground          |
-| `mama backfill <file>`                             | Write a prepared past-period backfill file           |
-| `mama replay`                                      | Replay prepared historical inputs in day windows     |
-| `mama status` / `mama stop`                        | Report running/stopped / stop the process            |
+| Command                                                           | Purpose                                               |
+| ----------------------------------------------------------------- | ----------------------------------------------------- |
+| `mama init --non-interactive`                                     | Set up and start MAMA, with the first owner           |
+| `mama init --section <part> --non-interactive`                    | Change one part, with MAMA stopped; the agent runs it |
+| `mama register-owner <telegram id>`                               | Register another owner while MAMA is stopped          |
+| `mama tools install`                                              | Install or update the document toolkit                |
+| `mama secret set <NAME> [--non-interactive]` / `mama secret list` | Rotate a token / list names only                      |
+| `mama daemon`                                                     | Run the configured daemon in the foreground           |
+| `mama backfill <file>`                                            | Write a prepared past-period backfill file            |
+| `mama replay`                                                     | Replay prepared historical inputs in day windows      |
+| `mama status` / `mama stop`                                       | Report running/stopped / stop the process             |
 
 See [CLI flags](../../docs/reference/cli.md) and
 [launchd management](../../docs/guides/troubleshooting.md).

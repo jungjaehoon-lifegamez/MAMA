@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `mama init --section <part> --non-interactive` for every part, not only `connectors`, so the
+  person's agent changes the setup without a terminal. The answers that are not secret come from
+  the environment: `MAMA_INIT_BACKEND` and `MAMA_INIT_MODEL` (`model`, which names a signed-out
+  backend's login instead of running it), `MAMA_INIT_TIMEZONE`, `MAMA_INIT_DISCORD` or
+  `MAMA_INIT_SLACK` (`on` or `off`, with `_CHANNEL_ID` and `_USER_ID` when on) and `MAMA_INIT_JEV`.
+  Each secret is entered on the setup page: a new bot token (refused tokens are asked for again on
+  the page), the Discord and Slack tokens and the Jev key. A stored Discord or Slack token is kept
+  unless `MAMA_INIT_REPLACE_SECRETS` names it, which now replaces the Slack app token too; a name
+  the part does not ask for is refused.
+- `mama secret set <NAME> --non-interactive`, with the value on the setup page.
+- `mama uninstall --data --confirm-home <path>`: without a terminal, the MAMA home's path given by
+  the person's agent, after it has shown the plan, confirms the removal in place of typing it back.
+
 ## [0.79.1] - 2026-11-01
 
 ### Fixed
