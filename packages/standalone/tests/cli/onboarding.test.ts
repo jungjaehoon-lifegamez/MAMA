@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import { defaultToolsRoot } from '../../src/cli/commands/tools.js';
 import { runInit, type InitOptions } from '../../src/cli/commands/init.js';
+import { initSections } from '../../src/cli/commands/init-section.js';
 import { runSecret } from '../../src/cli/commands/secret.js';
 import { updateSecrets } from '../../src/cli/secrets.js';
 import type { PromptAdapter } from '../../src/cli/prompt.js';
@@ -2408,7 +2409,7 @@ describe('a source enabled from the conversation (install.md, W2.4.5e)', () => {
   it('needs a terminal for every part without --non-interactive, and takes nothing after it', async () => {
     await setUp();
     const p = prompt([], [], [false, false]);
-    for (const part of ['telegram', 'connectors', 'jev'])
+    for (const part of initSections)
       await expect(runInit(['--section', part], options(p.adapter))).rejects.toThrow(/TTY/);
     await expect(
       runInit(['--section', 'connectors', '--non-interactive', 'extra'], options(p.adapter))
@@ -2472,21 +2473,28 @@ describe('later setup changes from the conversation (install.md, W2.4.6)', () =>
     expect(output).toContain('MAMA_TELEGRAM_TOKEN taken');
     expect(secret('MAMA_TELEGRAM_TOKEN')).toBe('fixture-bot-two');
     expect(readFileSync(join(root, 'config.yaml'), 'utf8')).toBe(before);
-    // A bot outside the common group is refused on the page, which then expires: nothing changes.
+    // A bot outside the common group is refused on the page, which says to enter another there,
+    // and then expires: nothing changes.
+    const outside = tokenPage({ MAMA_TELEGRAM_TOKEN: 'fixture-bot-three' });
+    const p = prompt([], [], [false, false]);
     await expect(
-      section(
-        'telegram',
-        {},
-        {
-          openRun: tokenPage({ MAMA_TELEGRAM_TOKEN: 'fixture-bot-three' }).openRun,
+      runInit(
+        ['--section', 'telegram', '--non-interactive'],
+        options(p.adapter, {
+          env: {},
+          openRun: outside.openRun,
           setupPageMs: 300,
           telegramCall: (token, method, params) =>
             method === 'getChatMember'
               ? Promise.resolve({ ok: true, result: { status: 'left' } })
               : telegram.call(token, method, params),
-        }
+        })
       )
     ).rejects.toThrow(/the setup page expired at .*; nothing was written/);
+    const refusal =
+      /the bot is not in the common group.*; the token was not saved\. Fix that, then enter it again on this page\./;
+    expect(outside.replies[0]).toMatch(refusal);
+    expect(p.output.join('\n')).toMatch(refusal);
     expect(secret('MAMA_TELEGRAM_TOKEN')).toBe('fixture-bot-two');
   });
 

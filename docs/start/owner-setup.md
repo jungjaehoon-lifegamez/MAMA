@@ -346,9 +346,10 @@ the conversation:
 | `timezone`         | `MAMA_INIT_TIMEZONE`                                                                                                                               |
 | `connectors`       | `MAMA_INIT_CONNECTORS` ([Sources, after MAMA answers](#sources-after-mama-answers))                                                                |
 | `discord`, `slack` | `MAMA_INIT_DISCORD` (`on` or `off`), and with `on`, `MAMA_INIT_DISCORD_CHANNEL_ID` and `MAMA_INIT_DISCORD_USER_ID`; Slack's are `MAMA_INIT_SLACK…` |
-| `jev`              | `MAMA_INIT_JEV` (`on` or `off`); you enter the key on the page when `~/.mama/jev-key` is missing                                                   |
+| `jev`              | `MAMA_INIT_JEV` (`on` or `off`); you enter the key on the page when `~/.mama/jev-key` is missing (remove that file first to enter another)         |
 
-A token `auth.env` already holds is kept and not asked for. `MAMA_INIT_REPLACE_SECRETS`, a
+A token `auth.env` already holds is kept and not asked for, except Telegram's, which that part
+always asks for. `MAMA_INIT_REPLACE_SECRETS`, a
 comma-separated list of the part's token names, asks for those again. At a terminal, each part
 asks its questions instead.
 

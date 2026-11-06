@@ -398,6 +398,7 @@ export async function runInitSection(
           { groupRequired: true, next }
         );
       if (nonInteractive) {
+        // The part always asks for the bot token, so naming it to replace changes nothing.
         replaceOnly(['MAMA_TELEGRAM_TOKEN']);
         page.push({
           name: 'MAMA_TELEGRAM_TOKEN',
@@ -601,10 +602,12 @@ export async function runInitSection(
   } catch (error) {
     // The section holds the install lock, so MAMA is stopped while it runs, and a refusal or an
     // expired page leaves it stopped.
+    const stopped = `MAMA is still stopped; start it with ${start}.`;
     if (error instanceof CliInputError)
-      throw new CliInputError(`${error.message}\nMAMA is still stopped; start it with ${start}.`, {
-        cause: error,
-      });
+      throw new CliInputError(`${error.message}\n${stopped}`, { cause: error });
+    // An unexpected failure (one inside a check on the setup page, say) is raised as it is, and
+    // still leaves MAMA stopped.
+    write(stopped);
     throw error;
   } finally {
     lock.release();
