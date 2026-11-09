@@ -32,8 +32,10 @@ sources MAMA should watch and sets up the ones you pick; you can also ask for on
   names the refused token through the Slack source's check. A refused token that only a source
   reads makes that source's collection fail.
 - A token only a messenger reads, such as the Slack app token, or a messenger's bot token while no
-  source being enabled reads it, cannot be entered from the conversation yet. Run
-  `mama init --section slack` or `mama init --section discord` in a terminal for it.
+  source being enabled reads it, is entered with the messenger's own part:
+  `mama init --section slack --non-interactive` or `--section discord`, with
+  `MAMA_INIT_REPLACE_SECRETS` naming a stored one ([owner gateway](messengers.md)). A secret no part
+  asks for is replaced with `mama secret set <NAME> --non-interactive`.
 - The command checks each block as MAMA's start does, and a Google source's `gws` and sign-in, and
   saves nothing until those pass. A token is not tried with its service, so check on the viewer's
   Connectors page that the source collects. The command leaves MAMA stopped, and the agent starts

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The `mama-install` skill changes the setup later from the conversation: every
+  `mama init --section <part> --non-interactive`, `mama secret set <NAME> --non-interactive` and,
+  once the person confirms the plan, `mama uninstall --data --confirm-home <path>`, with every
+  secret on the setup page. Jev is turned on this way when the person chooses it.
+
 ## [2.4.1] - 2026-11-01
 
 ### Changed

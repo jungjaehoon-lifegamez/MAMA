@@ -156,8 +156,9 @@ through Google's unverified-app warning once; a Google Workspace account uses th
 type. If the client is left in Testing, Google ends the sign-in after 7 days. See
 [Google sources](../guides/connectors.md#google-sources).
 
-Discord or Slack as the messenger you talk to MAMA in, and Jev, still need a terminal:
-`mama init --section` (below).
+Discord or Slack as the messenger you talk to MAMA in, and Jev, are set up the same way, by your
+agent with `mama init --section <part> --non-interactive`; see
+[Change one part later](#change-one-part-later).
 
 ### What setup checks and writes
 
@@ -182,7 +183,7 @@ write. On Linux they must exist first. The installer creates them once with `sud
 Jev (TypeSafe) stays off in setup. With it, the agent can ask Jev typed questions inside its
 scripts (the `judge` action) to narrow many messages or items without reading them all. Owner text
 in those calls goes to the Jev service, so it is off unless you choose it. `mama init --section jev`
-turns it on, asks for a Jev API key, stored in `~/.mama/jev-key` (0600), and sets
+turns it on, asks for a Jev API key on the setup page, stored in `~/.mama/jev-key` (0600), and sets
 `jev.enabled: true` in `config.yaml`; the same section turns it off. MAMA works the same without it.
 
 The optional tunnel variables name the Cloudflare Access issuer, audience and viewer hostname.
@@ -334,8 +335,23 @@ leaves a delivery route on a messenger you turned off is refused. Tokens go only
 The folders cannot be changed this way, since member data lives in them. A `config.yaml` written
 by hand is written again in plain YAML without its comments, and the command says so.
 
-Each part asks its questions at a terminal, except sources: `--section connectors
---non-interactive` is the form your agent runs ([Sources, after MAMA answers](#sources-after-mama-answers)).
+Your agent runs each part with `--non-interactive`. The answers that are not secret come from
+variables, and each token or key is entered on the setup page that opens in your browser, never in
+the conversation:
+
+| Part               | What the agent passes                                                                                                                              |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `telegram`         | Nothing; you enter the new bot token on the page                                                                                                   |
+| `model`            | `MAMA_INIT_BACKEND` and `MAMA_INIT_MODEL`; a backend that is not signed in names its login                                                         |
+| `timezone`         | `MAMA_INIT_TIMEZONE`                                                                                                                               |
+| `connectors`       | `MAMA_INIT_CONNECTORS` ([Sources, after MAMA answers](#sources-after-mama-answers))                                                                |
+| `discord`, `slack` | `MAMA_INIT_DISCORD` (`on` or `off`), and with `on`, `MAMA_INIT_DISCORD_CHANNEL_ID` and `MAMA_INIT_DISCORD_USER_ID`; Slack's are `MAMA_INIT_SLACK…` |
+| `jev`              | `MAMA_INIT_JEV` (`on` or `off`); you enter the key on the page when `~/.mama/jev-key` is missing (remove that file first to enter another)         |
+
+A token `auth.env` already holds is kept and not asked for, except Telegram's, which that part
+always asks for. `MAMA_INIT_REPLACE_SECRETS`, a
+comma-separated list of the part's token names, asks for those again. At a terminal, each part
+asks its questions instead.
 
 ## The running service
 
@@ -357,7 +373,8 @@ have not been verified. A running process or healthy HTTP response does not esta
 source collection or Telegram delivery works. Add a [source](../guides/connectors.md) and check an
 actual source-backed answer before relying on reports.
 
-To rotate a token, run `mama secret set MAMA_TELEGRAM_TOKEN` (or another supported
-secret name) in your terminal, then restart the daemon. `mama secret list` prints
+To rotate a token, your agent runs `mama secret set MAMA_TELEGRAM_TOKEN --non-interactive` (or
+another supported secret name) and you enter the new value on the setup page; at a terminal,
+`mama secret set MAMA_TELEGRAM_TOKEN` asks for it. Then restart the daemon. `mama secret list` prints
 names only. For launchd restart/stop and setup errors, see
 [Troubleshooting](../guides/troubleshooting.md).

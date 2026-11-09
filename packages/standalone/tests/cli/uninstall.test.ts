@@ -156,7 +156,9 @@ describe('mama uninstall', () => {
     const { home, root, members, plist } = install();
     await expect(
       runUninstall(['--data'], { ...base(home), prompt: prompt(root, false) })
-    ).rejects.toThrow('requires a TTY');
+    ).rejects.toThrow(
+      `Without a terminal, confirm with --confirm-home ${root}, after mama uninstall --dry-run --data has shown what goes; nothing was removed.`
+    );
     await expect(
       runUninstall(['--data'], { ...base(home), prompt: prompt('yes') })
     ).rejects.toThrow('Not confirmed; nothing was removed.');
@@ -180,6 +182,33 @@ describe('mama uninstall', () => {
     // What MAMA did not create stays, and so does the folder that holds it.
     expect(existsSync(join(members, 'not-mama'))).toBe(true);
     expect(existsSync(join(tools, 'apps', 'toolkit'))).toBe(true);
+  });
+
+  it('removes the data without a terminal once --confirm-home gives the MAMA home, after printing the plan (install.md, W2.4.6)', async () => {
+    const { home, root, members, plist } = install();
+    // stdin and stdout are not a TTY, as when the person's agent runs it; nothing is asked.
+    const quiet = { ...prompt('', false), text: async () => Promise.reject(new Error('asked')) };
+    for (const wrong of [`${root}/`, join(home, 'other'), 'yes'])
+      await expect(
+        runUninstall(['--data', '--confirm-home', wrong], { ...base(home), prompt: quiet })
+      ).rejects.toThrow('Not confirmed; nothing was removed.');
+    for (const path of [plist, root, members]) expect(existsSync(path)).toBe(true);
+    const lines: string[] = [];
+    expect(
+      await runUninstall(['--confirm-home', root, '--data'], {
+        ...base(home),
+        prompt: quiet,
+        write: (line) => lines.push(line),
+      })
+    ).toBe(0);
+    expect(lines).toContain(`removed ${root}`);
+    // The plan comes before the first removal.
+    const planned = lines.findIndex((line) =>
+      line.startsWith(`removes ${join(members, PERSON)} (`)
+    );
+    expect(planned).toBeGreaterThanOrEqual(0);
+    expect(planned).toBeLessThan(lines.findIndex((line) => line.startsWith('removed ')));
+    for (const path of [plist, root, join(members, PERSON)]) expect(existsSync(path)).toBe(false);
   });
 
   /** The program the install command keeps in the MAMA home, and its startup block. */
@@ -544,5 +573,12 @@ describe('mama uninstall', () => {
     const { home } = install();
     await expect(runUninstall(['--toolkit'], base(home))).rejects.toThrow('Usage: mama uninstall');
     await expect(runUninstall(['--all'], base(home))).rejects.toThrow('Usage: mama uninstall');
+    // --confirm-home confirms --data only, and takes the path after it.
+    for (const args of [
+      ['--confirm-home', home],
+      ['--data', '--confirm-home'],
+      ['--data', '--confirm-home', '--toolkit'],
+    ])
+      await expect(runUninstall(args, base(home))).rejects.toThrow('Usage: mama uninstall');
   });
 });
