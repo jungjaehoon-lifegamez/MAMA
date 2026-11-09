@@ -2973,3 +2973,13 @@ The implementation writes raw/index data during import only. Replay is the owner
   - U2's second condition (a repeated question about a written-back matter needs fewer `source.search` calls) is not measured: no repeat after a write-back was found, and chat bodies live in the raw store.
   - The U1 count ignores `applies_until`, and U2's common filter treats every non-chat source as read connector-wide.
   - A zero-subject scan leaves no log line, so U3's empty mornings rest on uptime, not on a logged scan.
+
+### W2.4.6: later setup changes from the conversation (2026-11-09)
+
+- Result: every `mama init --section` part, `mama secret set` and `mama uninstall --data` now run without a terminal (#559, merged c9f42b59c, deployed 09:42 KST). Answers that are not secret come from `MAMA_INIT_*`. Secrets go on the setup page. `MAMA_INIT_REPLACE_SECRETS` names only the part's own secrets. Uninstall is confirmed with `--confirm-home <path>` after the plan is printed.
+- Evidence:
+  - The done command passes: `onboarding.test.ts` and `uninstall.test.ts`, 132 of 132.
+  - CI is green. An Opus review returned MERGE; its fixes and the CodeRabbit finding are in the PR.
+  - Built CLI on a temp HOME with no terminal: `secret set --non-interactive` took the value over a page POST and wrote auth.env 0600.
+  - Live home, MAMA stopped: `init --section timezone --non-interactive` refuses with no variable and with `Not/AZone`, both followed by the stopped note. `Asia/Seoul` saved, and config.yaml stayed byte-identical. Doctor was ok. After the restart, 8 boot stages ran with no new errors; the 3 telegram reconciliation lines appear on every boot since before this change.
+- Still open: no person has driven these from an agent conversation yet. The telegram, discord, slack and jev page fields and `--confirm-home` are proven by unit tests only. Leg B uses `--confirm-home` first.

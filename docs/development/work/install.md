@@ -543,7 +543,7 @@ Each item ends with its done command. Each names its `## [Unreleased]` entry; th
     name gws's OAuth client file.
   - Done: `cd packages/standalone && npx vitest run tests/cli/onboarding.test.ts tests/cli/doctor.test.ts`.
 
-## W2.4.6: later setup changes from the conversation (follow-up, not PR 5)
+## W2.4.6: later setup changes from the conversation (follow-up, not PR 5; merged, #559)
 
 The owner, 2026-10-30: the person never touches a terminal after the first reply either.
 
@@ -686,7 +686,8 @@ The steps:
    A second entry eight days later records whether the testing-mode client's polls still work.
    The toolkit's `brew install` on this Standard account is recorded (I7).
 
-7. **Leg B.** `mama uninstall --data` is run at a terminal (it needs one until W2.4.6).
+7. **Leg B.** `mama uninstall --data` is run from the conversation: a dry run first, then
+   `--confirm-home <path>` once the person confirms (W2.4.6).
    Claude Code then installs with the `codex` backend. The managed home is signed in from the
    agent's background shell with `codex login`, or with `--device-auth` and device code login on.
 8. **Leg C.** `mama uninstall --data` and `claude auth logout` are run. The person asks Codex to
