@@ -11,7 +11,11 @@ import type { OwnerMessageInput, TurnIntake } from '../../gateways/turn-contract
 import { TelegramGateway, type TelegramGatewayOptions } from '../../gateways/telegram.js';
 import { DiscordGateway, type DiscordGatewayOptions } from '../../gateways/discord.js';
 import { SlackGateway, type SlackGatewayOptions } from '../../gateways/slack.js';
-import { OwnerMessageLedger, outboundLedgerKey } from '../../gateways/telegram-message-ledger.js';
+import {
+  OwnerMessageLedger,
+  outboundLedgerKey,
+  type OwnerSendOptions,
+} from '../../gateways/telegram-message-ledger.js';
 import {
   sourceDeltaStimulusId,
   stimulusFailureReason,
@@ -111,7 +115,7 @@ export interface DaemonGateway {
   start(): Promise<void>;
   stop(): Promise<void>;
   deliverResponse(sourceRef: string, response: string): Promise<void>;
-  sendToOwner(text: string, idempotencyKey: string): Promise<void>;
+  sendToOwner(text: string, idempotencyKey: string, options?: OwnerSendOptions): Promise<void>;
   sendFile(
     path: string,
     caption: string | undefined,
@@ -743,7 +747,9 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       }
       const selected = gateways.get(config.delivery?.notifications ?? 'telegram');
       if (!selected) throw new Error('Notification delivery messenger is not available');
-      await selected.sendToOwner(content, row.stimulusId);
+      // A pass over a parked row lands here again with the stored result; a notification whose
+      // first send may not have arrived goes out again instead of being refused on every pass.
+      await selected.sendToOwner(content, row.stimulusId, { resendUncertain: true });
     };
     // Viewer and agent security alerts take the security route, resolved when an alert is sent
     // because the messengers start after the owner runtime.

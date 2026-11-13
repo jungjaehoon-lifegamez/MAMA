@@ -43,6 +43,12 @@ export interface OwnerMessageLedgerEntry {
   sharedReplyKey?: string;
 }
 
+/** How a host notification to the owner treats a stored send whose arrival is unknown. */
+export interface OwnerSendOptions {
+  /** Send it again from the first unconfirmed chunk instead of refusing. */
+  resendUncertain?: boolean;
+}
+
 export interface OwnerDeliveryBinding {
   principalId?: string;
   deliveryTarget: string;

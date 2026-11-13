@@ -6,7 +6,11 @@ import { WebClient } from '@slack/web-api';
 import { BaseGateway } from './base-gateway.js';
 import type { JsonValue } from '@jungjaehoon/mama-core/knowledge';
 import type { OwnerMessageInput, TurnIntake } from './turn-contract.js';
-import { DEFAULT_INTERRUPTED_NOTICE, OwnerMessageLedger } from './telegram-message-ledger.js';
+import {
+  DEFAULT_INTERRUPTED_NOTICE,
+  OwnerMessageLedger,
+  type OwnerSendOptions,
+} from './telegram-message-ledger.js';
 import { splitForSlack } from './message-splitter.js';
 import {
   OWNER_FILE_MAX_UPLOAD_BYTES,
@@ -199,7 +203,12 @@ export class SlackGateway extends BaseGateway {
     if (entry.state === 'processing') this.ledger.markReady(sourceRef, response);
     await this.runInDestination(channel, () => this.sendChunks(channel, sourceRef, response));
   }
-  async sendMessage(channel: string, text: string, idempotencyKey?: string): Promise<void> {
+  async sendMessage(
+    channel: string,
+    text: string,
+    idempotencyKey?: string,
+    options?: OwnerSendOptions
+  ): Promise<void> {
     this.requireConnected();
     this.requireAllowed(channel);
     const key = `outbound:${createHash('sha256')
@@ -213,15 +222,17 @@ export class SlackGateway extends BaseGateway {
     });
     if (!claim.claimed) {
       if (claim.entry.state === 'delivered') return;
-      throw new Error('Slack message delivery is already in progress or uncertain');
-    }
-    this.ledger.markReady(key, text);
-    await this.runInDestination(channel, () => this.sendChunks(channel, key, text));
+      if (!(options?.resendUncertain && claim.entry.state === 'ready'))
+        throw new Error('Slack message delivery is already in progress or uncertain');
+    } else this.ledger.markReady(key, text);
+    await this.runInDestination(channel, () =>
+      this.sendChunks(channel, key, text, options?.resendUncertain === true)
+    );
   }
-  async sendToOwner(text: string, key: string): Promise<void> {
+  async sendToOwner(text: string, key: string, options?: OwnerSendOptions): Promise<void> {
     const channel = this.options.config.ownerChannelId;
     if (!channel) throw new Error('slack.owner_channel_id is required');
-    await this.sendMessage(channel, text, key);
+    await this.sendMessage(channel, text, key, options);
   }
   sendFile(
     path: string,
@@ -364,11 +375,24 @@ export class SlackGateway extends BaseGateway {
       this.activeInputs.delete(ref);
     }
   }
-  private async sendChunks(channel: string, key: string, text: string): Promise<void> {
+  private async sendChunks(
+    channel: string,
+    key: string,
+    text: string,
+    resendUncertain = false
+  ): Promise<void> {
     const entry = this.ledger.get(key)!;
     // Another response call may have completed while this batch waited in the destination queue.
     if (entry.state === 'delivered') return;
-    if (entry.deliveryUncertain) throw new Error('Slack response delivery is uncertain');
+    if (entry.deliveryUncertain) {
+      if (!resendUncertain) throw new Error('Slack response delivery is uncertain');
+      // Owner decision 2026-11-13: a notification that may not have arrived is sent again; a
+      // duplicate costs less than a lost one. Confirmed chunks are not repeated. This runs in the
+      // destination queue, so a send still in flight has settled before it is read here.
+      this.log(
+        `slack outbound sent again after an uncertain send key=${key} from_chunk=${entry.nextChunkIndex ?? 0}`
+      );
+    }
     const chunks = splitForSlack(text);
     for (let i = entry.nextChunkIndex ?? 0; i < chunks.length; i++) {
       this.ledger.markDeliveryProgress(key, i, true);

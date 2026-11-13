@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A source-change notification whose send may not have arrived is sent again on each later pass,
+  from the first unconfirmed chunk, until a send is confirmed, on Telegram, Discord and Slack.
+  Before, the pass asked for the send every five seconds and the delivery ledger refused it each
+  time, so the notification never arrived and its input never closed. A notification can now
+  arrive more than once, when a send that reported a failure did reach the messenger (owner,
+  2026-11-13). Reports and files are unchanged.
 - Enabling a source no longer asks again for a token `auth.env` already holds, so it cannot
   switch a messenger to another bot (#552). The Slack and Discord sources read the same token as
   the Slack and Discord messengers (`MAMA_SLACK_TOKEN`, `MAMA_DISCORD_TOKEN`). Before, enabling

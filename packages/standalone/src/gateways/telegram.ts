@@ -44,6 +44,7 @@ import {
 import {
   TelegramMessageLedger,
   type OwnerMessageLedger,
+  type OwnerSendOptions,
   type TelegramMessageLedgerEntry,
   DEFAULT_INTERRUPTED_NOTICE,
   outboundLedgerKey,
@@ -363,18 +364,29 @@ export class TelegramGateway extends BaseGateway {
     await this.deliverReadyEntry(sourceRef);
   }
 
-  async sendMessage(chatId: string, text: string, idempotencyKey?: string): Promise<void> {
+  async sendMessage(
+    chatId: string,
+    text: string,
+    idempotencyKey?: string,
+    options?: OwnerSendOptions
+  ): Promise<void> {
     if (!this.bot || !this.connected) throw new Error('Telegram gateway not connected');
     this.requireAllowedChat(chatId);
     const trimmed = text.trim();
     if (!trimmed) return;
-    await this.runInChatQueue(chatId, () => this.sendMessageNow(chatId, trimmed, idempotencyKey));
+    await this.runInChatQueue(chatId, () =>
+      this.sendMessageNow(chatId, trimmed, idempotencyKey, options)
+    );
   }
 
-  async sendToOwner(text: string, idempotencyKey: string): Promise<void> {
+  async sendToOwner(
+    text: string,
+    idempotencyKey: string,
+    options?: OwnerSendOptions
+  ): Promise<void> {
     const ownerChatId = this.config.ownerChatId?.trim();
     if (!ownerChatId) throw new Error('telegram.owner_chat_id is required for delta delivery');
-    await this.sendMessage(ownerChatId, text, idempotencyKey);
+    await this.sendMessage(ownerChatId, text, idempotencyKey, options);
   }
 
   /** Host receipt only. The dispatcher never exposes arbitrary member text/destination input. */
@@ -1197,7 +1209,8 @@ export class TelegramGateway extends BaseGateway {
   private async sendMessageNow(
     chatId: string,
     text: string,
-    idempotencyKey?: string
+    idempotencyKey?: string,
+    options?: OwnerSendOptions
   ): Promise<void> {
     if (!this.bot) throw new Error('Telegram gateway not connected');
     const chunks = formatTelegramMessage(text, TELEGRAM_MAX_LENGTH, 'html-v1');
@@ -1219,6 +1232,15 @@ export class TelegramGateway extends BaseGateway {
     if (isPersonalTurnTextKey(idempotencyKey) && existing.state === 'failed')
       throw new TelegramJobDeliveryRejected('Personal job DM delivery was already rejected');
     if (existing.state !== 'ready') this.messageLedger.markReady(key, text, 'html-v1');
+    else if (existing.deliveryUncertain && options?.resendUncertain) {
+      // Owner decision 2026-11-13: a notification that may not have arrived is sent again; a
+      // duplicate costs less than a lost one. Confirmed chunks are not repeated.
+      const from = existing.nextChunkIndex ?? 0;
+      this.messageLedger.markDeliveryProgress(key, from, false);
+      this.log(
+        `telegram outbound sent again after an uncertain send idempotency_key=${JSON.stringify(idempotencyKey)} from_chunk=${from}`
+      );
+    }
     await this.deliverOutboundEntry(key, chatId);
   }
 

@@ -289,6 +289,46 @@ describe('Discord owner gateway', () => {
     await gateway.stop();
   });
 
+  it('sends an uncertain owner notification again when asked to', async () => {
+    const ledgerPath = join(root, 'ledger.json');
+    const gateway = new DiscordGateway({
+      token: 'fixture-token',
+      intake: {
+        recordOwnerReply: () => {},
+        acceptOwnerMessage: () => ({ state: 'accepted' }) as never,
+      },
+      config: {
+        enabled: true,
+        ownerChannelId: 'channel_test',
+        allowedChannels: ['channel_test'],
+        ownerUserIds: ['user_owner'],
+      },
+      messageLedgerPath: ledgerPath,
+    });
+    await gateway.start();
+    const send = vi
+      .fn<() => Promise<{ id: string }>>()
+      .mockRejectedValueOnce(new Error('send failed'))
+      .mockResolvedValue({ id: 'message_sent' });
+    (mocks.clients[0] as MockClient).channels.fetch.mockResolvedValue({
+      isSendable: () => true,
+      send,
+    });
+    await expect(gateway.sendToOwner('notice', 'source_delta:fixture')).rejects.toThrow(
+      'send failed'
+    );
+    await expect(gateway.sendToOwner('notice', 'source_delta:fixture')).rejects.toThrow(
+      /uncertain/
+    );
+    expect(send).toHaveBeenCalledOnce();
+    await gateway.sendToOwner('notice', 'source_delta:fixture', { resendUncertain: true });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(new OwnerMessageLedger(ledgerPath).listUndelivered()).toEqual([]);
+    await gateway.sendToOwner('notice', 'source_delta:fixture', { resendUncertain: true });
+    expect(send).toHaveBeenCalledTimes(2);
+    await gateway.stop();
+  });
+
   it('keeps same-named attachments from overwriting each other', async () => {
     const accepted: Array<{ payload?: { attachments?: Array<{ path?: string }> } }> = [];
     vi.stubGlobal(
