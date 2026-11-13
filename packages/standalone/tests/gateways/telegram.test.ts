@@ -382,6 +382,38 @@ describe('TelegramGateway', () => {
     await restarted.stop();
   });
 
+  it('sends an uncertain owner notification again from the unconfirmed chunk when asked to', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'outbound-resend-'));
+    temporaryRoots.push(root);
+    const ledgerPath = join(root, 'ledger.json');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const gateway = await gatewayFor(intakeFor([]), ledgerPath);
+    seams.api.sendMessage
+      .mockResolvedValueOnce({ message_id: 301 })
+      .mockRejectedValueOnce(new Error('send failed'))
+      .mockResolvedValueOnce({ message_id: 302 });
+    const body = 'x'.repeat(5000);
+    await expect(gateway.sendToOwner(body, 'source_delta:fixture')).rejects.toThrow('send failed');
+    await gateway.stop();
+    const restarted = await gatewayFor(intakeFor([]), ledgerPath);
+    await expect(restarted.sendToOwner(body, 'source_delta:fixture')).rejects.toThrow(/uncertain/);
+    expect(seams.api.sendMessage).toHaveBeenCalledTimes(2);
+    await restarted.sendToOwner(body, 'source_delta:fixture', { resendUncertain: true });
+    expect(seams.api.sendMessage).toHaveBeenCalledTimes(3);
+    expect(seams.api.sendMessage.mock.calls[2]![1]).toBe(seams.api.sendMessage.mock.calls[1]![1]);
+    const entry = JSON.parse(readFileSync(ledgerPath, 'utf8')).entries[0];
+    expect(entry).toMatchObject({
+      state: 'delivered',
+      messageIds: [301, 302],
+    });
+    expect(log.mock.calls.map(([line]) => String(line))).toContain(
+      'telegram outbound sent again after an uncertain send idempotency_key="source_delta:fixture" from_chunk=1'
+    );
+    await restarted.sendToOwner(body, 'source_delta:fixture', { resendUncertain: true });
+    expect(seams.api.sendMessage).toHaveBeenCalledTimes(3);
+    await restarted.stop();
+  });
+
   it('recovers ready outbound chunks after a definitive Telegram API rejection', async () => {
     const root = mkdtempSync(join(tmpdir(), 'outbound-rejected-'));
     temporaryRoots.push(root);

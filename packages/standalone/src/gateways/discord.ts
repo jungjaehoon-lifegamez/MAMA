@@ -5,7 +5,11 @@ import { AttachmentBuilder, Client, Events, GatewayIntentBits, Partials } from '
 import { BaseGateway } from './base-gateway.js';
 import type { JsonValue } from '@jungjaehoon/mama-core/knowledge';
 import type { OwnerMessageInput, TurnIntake } from './turn-contract.js';
-import { DEFAULT_INTERRUPTED_NOTICE, OwnerMessageLedger } from './telegram-message-ledger.js';
+import {
+  DEFAULT_INTERRUPTED_NOTICE,
+  OwnerMessageLedger,
+  type OwnerSendOptions,
+} from './telegram-message-ledger.js';
 import { splitForDiscord } from './message-splitter.js';
 import {
   OWNER_FILE_MAX_UPLOAD_BYTES,
@@ -172,7 +176,12 @@ export class DiscordGateway extends BaseGateway {
     await this.runInDestination(channelId, () => this.sendChunks(channelId, sourceRef, response));
   }
 
-  async sendMessage(channelId: string, text: string, idempotencyKey?: string): Promise<void> {
+  async sendMessage(
+    channelId: string,
+    text: string,
+    idempotencyKey?: string,
+    options?: OwnerSendOptions
+  ): Promise<void> {
     this.requireConnected();
     this.requireAllowed(channelId);
     const key = `outbound:${createHash('sha256')
@@ -186,16 +195,22 @@ export class DiscordGateway extends BaseGateway {
     });
     if (!claim.claimed) {
       if (claim.entry.state === 'delivered') return;
-      throw new Error('Discord message delivery is already in progress or uncertain');
-    }
-    this.ledger.markReady(key, text);
-    await this.runInDestination(channelId, () => this.sendChunks(channelId, key, text));
+      if (!(options?.resendUncertain && claim.entry.state === 'ready'))
+        throw new Error('Discord message delivery is already in progress or uncertain');
+    } else this.ledger.markReady(key, text);
+    await this.runInDestination(channelId, () =>
+      this.sendChunks(channelId, key, text, options?.resendUncertain === true)
+    );
   }
 
-  async sendToOwner(text: string, idempotencyKey: string): Promise<void> {
+  async sendToOwner(
+    text: string,
+    idempotencyKey: string,
+    options?: OwnerSendOptions
+  ): Promise<void> {
     const channel = this.options.config.ownerChannelId;
     if (!channel) throw new Error('discord.owner_channel_id is required');
-    await this.sendMessage(channel, text, idempotencyKey);
+    await this.sendMessage(channel, text, idempotencyKey, options);
   }
 
   sendFile(
@@ -335,11 +350,24 @@ export class DiscordGateway extends BaseGateway {
     }
   }
 
-  private async sendChunks(channelId: string, key: string, text: string): Promise<void> {
+  private async sendChunks(
+    channelId: string,
+    key: string,
+    text: string,
+    resendUncertain = false
+  ): Promise<void> {
     const entry = this.ledger.get(key)!;
     // Another response call may have completed while this batch waited in the destination queue.
     if (entry.state === 'delivered') return;
-    if (entry.deliveryUncertain) throw new Error('Discord response delivery is uncertain');
+    if (entry.deliveryUncertain) {
+      if (!resendUncertain) throw new Error('Discord response delivery is uncertain');
+      // Owner decision 2026-11-13: a notification that may not have arrived is sent again; a
+      // duplicate costs less than a lost one. Confirmed chunks are not repeated. This runs in the
+      // destination queue, so a send still in flight has settled before it is read here.
+      this.log(
+        `discord outbound sent again after an uncertain send key=${key} from_chunk=${entry.nextChunkIndex ?? 0}`
+      );
+    }
     const channel = await this.client.channels.fetch(channelId);
     if (!channel?.isSendable()) throw new Error('Discord target channel cannot receive messages');
     const chunks = splitForDiscord(text);

@@ -223,7 +223,9 @@ describe('live delta reports', () => {
     const { daemon } = await boot('[notify] Route this', 'live', false, false, 'discord');
     daemon.owner.acceptSourceDelta(delta());
     await vi.waitFor(() =>
-      expect(telegram.sendMessage).toHaveBeenCalledWith('Route this', expect.any(String))
+      expect(telegram.sendMessage).toHaveBeenCalledWith('Route this', expect.any(String), {
+        resendUncertain: true,
+      })
     );
   });
   it('delivers the interrupted notice when an accepted owner turn fails without restarting', async () => {
@@ -354,7 +356,7 @@ describe('live delta reports', () => {
     expect(telegram.sendMessage).toHaveBeenCalledTimes(sent === null ? 0 : 1);
   });
 
-  it('keeps a failed send uncertain and reports a bounded reason', async () => {
+  it('reports a failed send with a bounded reason and sends the notification again on the next pass', async () => {
     const { daemon, prompts, logs, failures } = await boot('[notify] The file arrived.');
     telegram.sendMessage.mockRejectedValue(new Error(`send failed\n${'x'.repeat(900)}`));
     const id = sourceDeltaStimulusId(delta());
@@ -374,14 +376,17 @@ describe('live delta reports', () => {
     expect(logs).toContain(
       `stimulus failed kind=source_delta id=${id} model_run_id=run:1 reason=${reason}`
     );
-    await daemon.owner.runtime.drainOnce();
-    expect(telegram.sendMessage).toHaveBeenCalledOnce();
+    // Each later pass sends the stored notification again, without a new turn, until it arrives.
+    telegram.sendMessage.mockResolvedValue({ message_id: 102 });
+    await vi.waitFor(async () => {
+      await daemon.owner.runtime.drainOnce();
+      expect(daemon.owner.runtime.mailbox?.readInput(id, 'owner')?.status).toBe('acked');
+    });
+    expect(telegram.sendMessage).toHaveBeenLastCalledWith(-7, 'The file arrived.');
     expect(prompts).toHaveLength(1);
-    expect(daemon.owner.runtime.mailbox?.readInput(id, 'owner')?.status).toBe('claimed');
-    // Restarting Telegram must not recover an outbound delta as an owner reply.
-    await daemon.gateway!.stop();
-    await daemon.gateway!.start();
-    expect(telegram.sendMessage).toHaveBeenCalledOnce();
+    const sends = telegram.sendMessage.mock.calls.length;
+    await daemon.owner.runtime.drainOnce();
+    expect(telegram.sendMessage).toHaveBeenCalledTimes(sends);
   });
 
   it('delivers each distinct delta once without queuing board events', async () => {

@@ -97,7 +97,8 @@ goes to the record check, unless it came in more than a day ago. Once its follow
 has a place the input closes with `stimulus closed after uncertain ... follow_up=`.
 To retry an interrupted request, send it again.
 
-If delivery is uncertain, check its original operation before sending again. Keep
+A source-change notification whose send is uncertain is sent again on each later pass until a
+send is confirmed, so it can arrive more than once. For a report or a file, check its original operation before sending again. Keep
 IDs in private diagnostics and provide a redacted error plus the reproduction
 steps when reporting a defect.
 

@@ -237,6 +237,41 @@ describe('Slack owner gateway', () => {
     await gateway.stop();
   });
 
+  it('sends an uncertain owner notification again when asked to', async () => {
+    const ledgerPath = join(root, 'ledger.json');
+    const gateway = new SlackGateway({
+      token: 'fixture-bot',
+      appToken: 'fixture-app',
+      intake: {
+        recordOwnerReply: () => {},
+        acceptOwnerMessage: () => ({ state: 'accepted' }) as never,
+      },
+      config: {
+        enabled: true,
+        ownerChannelId: 'channel_test',
+        allowedChannels: ['channel_test'],
+        ownerUserIds: ['user_owner'],
+      },
+      messageLedgerPath: ledgerPath,
+    });
+    await gateway.start();
+    const send = (mocks.webClients[0] as MockWebClient).chat.postMessage;
+    send.mockRejectedValueOnce(new Error('send failed'));
+    await expect(gateway.sendToOwner('notice', 'source_delta:fixture')).rejects.toThrow(
+      'send failed'
+    );
+    await expect(gateway.sendToOwner('notice', 'source_delta:fixture')).rejects.toThrow(
+      /uncertain/
+    );
+    expect(send).toHaveBeenCalledOnce();
+    await gateway.sendToOwner('notice', 'source_delta:fixture', { resendUncertain: true });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(new OwnerMessageLedger(ledgerPath).listUndelivered()).toEqual([]);
+    await gateway.sendToOwner('notice', 'source_delta:fixture', { resendUncertain: true });
+    expect(send).toHaveBeenCalledTimes(2);
+    await gateway.stop();
+  });
+
   it('keeps same-named attachments from overwriting each other', async () => {
     const accepted: Array<{ payload?: { attachments?: Array<{ path?: string }> } }> = [];
     vi.stubGlobal(
