@@ -2983,3 +2983,15 @@ The implementation writes raw/index data during import only. Replay is the owner
   - Built CLI on a temp HOME with no terminal: `secret set --non-interactive` took the value over a page POST and wrote auth.env 0600.
   - Live home, MAMA stopped: `init --section timezone --non-interactive` refuses with no variable and with `Not/AZone`, both followed by the stopped note. `Asia/Seoul` saved, and config.yaml stayed byte-identical. Doctor was ok. After the restart, 8 boot stages ran with no new errors; the 3 telegram reconciliation lines appear on every boot since before this change.
 - Still open: no person has driven these from an agent conversation yet. The telegram, discord, slack and jev page fields and `--confirm-home` are proven by unit tests only. Leg B uses `--confirm-home` first.
+
+### Uncertain notification resend (2026-11-13)
+
+- Result: a source-change notification whose send may not have arrived is sent again on each pass until a send is confirmed (#560, merged 5d6df15e9, deployed 22:44 KST). Owner chose a possible duplicate over a lost notification. Serves the Report check.
+- Evidence:
+  - Before: one input (accepted 2026-11-11, Telegram network failure) was reconciled every five seconds and refused by the delivery ledger each time; over 7,200 `delta report route=notify` lines for one id, no error line, the notification never delivered.
+  - Standalone suite, typecheck, lint and CI are green; Codex and CodeRabbit reviews had no findings.
+  - Live after the restart: all eight boot stages, then `telegram outbound sent again after an uncertain send … from_chunk=0` once and `telegram outbound delivered` for that id. The input reads back `acked` with native delivery `settled`, no input is left pending or claimed, the notify line stopped growing, and the log has no error line since boot.
+- Still open:
+  - The owner has not confirmed the message in the chat; delivery rests on the Telegram message id in the log.
+  - The daemon was down about 29 hours (machine reboot 2026-11-12 16:31 until the 2026-11-13 21:50 login): it is a launchd user agent and starts only at login. Reports in that window were not sent.
+  - Three failed `file:` deliveries from October stay in the ledger as uncertain. The `mama` on PATH is an old global install (0.53.2-local.11) and reports the daemon as stopped.
