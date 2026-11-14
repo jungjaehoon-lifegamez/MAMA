@@ -3040,3 +3040,17 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Reviews: Codex P2 and an Opus review found that a `node` folder already in a hand-picked tools_root was overwritten, adopted by the toolkit and removed by uninstall; CodeRabbit found a copy without its execute bit kept as unchanged. Both fixed in the PR (only a folder MAMA wrote counts as MAMA's; the version is written first). Left as noted: a Node under HOME that needs libraries beside it passes the run check but fails in a member's shell, visibly.
 - Merged b646bfc6a, deployed 17:46 KST: all eight boot stages, `members' node: v25.8.0 at <tools_root>/node/bin/node (linked)` (the live daemon runs Homebrew's Node), no error line.
 - Still open: the test account runs the unpublished 0.79.1001 and its `~/.npmrc` names a stopped local registry. A Homebrew Node that `brew cleanup` removes leaves the link dangling until the next boot.
+
+### W2.4 step 4: `/update`, signed-out backend and rollback on the clean account (2026-11-14)
+
+- Result: R7 and R3's rollback pass on the clean account; candidates were this checkout's build served from a local registry as 0.79.1002, a 0.79.1003 that exits at boot, and 0.79.1004. Serves the shared install (W2.3).
+- Evidence:
+  - After the 16:54 CLI update (0.78.0 → 0.79.1001) the update snapshot and the old package folder are gone.
+  - R7, backend signed out (`claude auth logout`, `loggedIn: false`): the owner's `/update` in the common group at 18:11 ran 0.79.1001 → 0.79.1002, steps 5–14 and `updated: … it runs` arrived in that chat, `model_runs` stayed at 201 (no model turn), the snapshot and old folder were removed.
+  - Rollback: `/update` at 18:22 went to 0.79.1003, which exited at every boot (`crash.log`); after the ten-minute boot wait the updater rolled back: `rolled back: 0.79.1002 runs again`, `the database was kept: 0.79.1003 did not migrate it`; all eight boot stages, `npm ls` shows 0.79.1002, no candidate folder or snapshot left, inputs 86 and model runs 201 as before; every progress message from `starting` to `rolled back` arrived. A CLI `mama update` started during it was refused: `Already updating since 18:22:07`.
+  - DM path: the owner's `/update` in the DM ran 0.79.1002 → 0.79.1004 at 18:35 with all progress in the DM; a CLI `mama update 0.79.1004` afterwards printed `already on 0.79.1004`.
+- Still open:
+  - The drain wait during a running turn was not exercised: no turn was running at any of the three drains.
+  - The first DM `/update` after the rollback was answered `busy` (the daemon log has `update requested result=busy` before the `started` one); why the job still counted as running three minutes after the rollback is not known.
+  - Progress sends: on the 18:11 run the first send failed (`fetch failed`) and the last was logged as a 3-second timeout though it arrived.
+  - A member being refused `/update` was not tried: the account has no member without the owner role.
