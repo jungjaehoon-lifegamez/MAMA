@@ -4,9 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## mama-os [0.80.0] / mama-core [8.9.1] / mama-server [2.6.2] / plugin [2.5.0] - 2026-11-14
 
-MAMA now runs on Linux: it was proven on a clean Ubuntu 24.04, where members' shells, updates and
-setup had failed. When MAMA was down long enough to miss a report, it tells you which reports it
-missed. Your agent can change any part of the setup later without a terminal. People in your team
+When MAMA was down long enough to miss a report, it now tells you which reports it missed. The
+first run on a clean Ubuntu 24.04 found that members' shells, updates and setup failed on Linux;
+those are fixed, though Linux is not supported yet (document rendering and a full install run
+remain). Your agent can change any part of the setup later without a terminal. People in your team
 get MAMA's own Node.js in their shell. Each package changelog lists every change.
 
 ### Upgrading
