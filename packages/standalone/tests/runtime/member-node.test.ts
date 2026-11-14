@@ -3,7 +3,11 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { memberNodeBin, syncMemberNode } from '../../src/runtime/member-node.js';
+import {
+  isManagedMemberNode,
+  memberNodeBin,
+  syncMemberNode,
+} from '../../src/runtime/member-node.js';
 import { assertToolsOwnership } from '../../src/runtime/tools-paths.js';
 
 let root: string;
@@ -79,4 +83,32 @@ it('refuses a node folder another account could change', () => {
   fs.rmSync(join(tools, 'node', 'bin'), { recursive: true });
   fs.symlinkSync(home, join(tools, 'node', 'bin'));
   expect(() => assertToolsOwnership(tools)).toThrow(/symlinks are not allowed/);
+});
+
+it("leaves a node folder MAMA did not write alone, and never counts it as MAMA's", () => {
+  // A hand-picked tools_root that already holds a Node tarball of the person's own.
+  fs.mkdirSync(join(tools, 'node', 'bin'), { recursive: true });
+  fs.writeFileSync(join(tools, 'node', 'bin', 'node'), 'their own node', { mode: 0o755 });
+  expect(isManagedMemberNode(join(tools, 'node'))).toBe(false);
+  expect(() => syncMemberNode(tools, homeNode('v22.0.1'), 'v22.0.1', home)).toThrow(
+    /MAMA did not write/
+  );
+  expect(fs.readFileSync(join(tools, 'node', 'bin', 'node'), 'utf8')).toBe('their own node');
+  fs.writeFileSync(join(tools, 'node', 'version'), 'v22.0.1\n');
+  fs.writeFileSync(join(tools, 'node', 'bin', 'npm'), 'npm');
+  expect(isManagedMemberNode(join(tools, 'node'))).toBe(false);
+});
+
+it("counts the folder as MAMA's once its version is written, even before the node", () => {
+  const source = homeNode('v22.0.1');
+  syncMemberNode(tools, source, 'v22.0.1', home);
+  expect(isManagedMemberNode(join(tools, 'node'))).toBe(true);
+  // A crash after the version and before the rename: the next boot puts the node back.
+  fs.rmSync(join(tools, 'node', 'bin', 'node'));
+  expect(isManagedMemberNode(join(tools, 'node'))).toBe(true);
+  expect(syncMemberNode(tools, source, 'v22.0.1', home).how).toBe('copied');
+  // An empty folder from a crash before the version is MAMA's too.
+  fs.rmSync(join(tools, 'node'), { recursive: true });
+  fs.mkdirSync(join(tools, 'node', 'bin'), { recursive: true });
+  expect(isManagedMemberNode(join(tools, 'node'))).toBe(true);
 });

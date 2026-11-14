@@ -8,6 +8,7 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   readlinkSync,
   realpathSync,
   renameSync,
@@ -35,6 +36,38 @@ function within(parent: string, child: string): boolean {
   return path === '' || (path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path));
 }
 
+const VERSION_TEMP =
+  /^version\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const NODE_TEMP = /^\.node-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+/**
+ * Whether `<tools_root>/node` holds only what syncMemberNode writes: a hand-picked tools_root may
+ * already have a `node` folder of the person's own, which boot must not overwrite, adopt or remove.
+ * A folder with a `node` but no `version` was not written here (the version is written first).
+ */
+export function isManagedMemberNode(dir: string): boolean {
+  try {
+    if (lstatSync(dir).isSymbolicLink() || !statSync(dir).isDirectory()) return false;
+    const entries = readdirSync(dir);
+    if (!entries.every((name) => name === 'version' || name === 'bin' || VERSION_TEMP.test(name)))
+      return false;
+    const bin = join(dir, 'bin');
+    const binEntries = entries.includes('bin')
+      ? lstatSync(bin).isDirectory()
+        ? readdirSync(bin)
+        : undefined
+      : [];
+    if (binEntries === undefined) return false;
+    if (!binEntries.every((name) => name === 'node' || NODE_TEMP.test(name))) return false;
+    if (!entries.includes('version')) return !binEntries.includes('node');
+    const version = join(dir, 'version');
+    return lstatSync(version).isFile() && /^v\d+\.\d+\.\d+/.test(readFileSync(version, 'utf8'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
 export interface MemberNode {
   path: string;
   version: string;
@@ -60,6 +93,10 @@ export function syncMemberNode(
   const target = join(bin, 'node');
   const versionFile = join(dir, 'version');
   const link = !within(realpathSync(home), source);
+  if (existsSync(dir) && !isManagedMemberNode(dir))
+    throw new Error(
+      `${dir} holds files MAMA did not write; move them out of tools_root so members get MAMA's Node`
+    );
   const recorded = existsSync(versionFile) ? readFileSync(versionFile, 'utf8').trim() : undefined;
   let present: boolean;
   try {
@@ -75,6 +112,11 @@ export function syncMemberNode(
   mkdirSync(bin, { recursive: true, mode: 0o755 });
   chmodSync(dir, 0o755);
   chmodSync(bin, 0o755);
+  // The version first: it marks the folder as this host's before any node is written. A crash
+  // before the rename leaves a version with an old or missing node, which the next boot replaces.
+  const versionTemp = `${versionFile}.${randomUUID()}`;
+  writeFileSync(versionTemp, `${version}\n`, { mode: 0o644 });
+  renameSync(versionTemp, versionFile);
   const temp = join(bin, `.node-${randomUUID()}`);
   try {
     if (link) symlinkSync(source, temp);
@@ -90,8 +132,5 @@ export function syncMemberNode(
   } finally {
     rmSync(temp, { force: true });
   }
-  const versionTemp = `${versionFile}.${randomUUID()}`;
-  writeFileSync(versionTemp, `${version}\n`, { mode: 0o644 });
-  renameSync(versionTemp, versionFile);
   return { path: target, version, how: link ? 'linked' : 'copied' };
 }
