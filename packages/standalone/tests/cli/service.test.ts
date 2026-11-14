@@ -314,6 +314,8 @@ describe('mama service on Linux', () => {
     expect(unit).toContain('Restart=on-failure');
     // A SIGTERM stop exits 143; without this the unit reads failed after every stop.
     expect(unit).toContain('SuccessExitStatus=143');
+    // A SIGTERM from anything but systemd's own stop still brings the daemon back.
+    expect(unit).toContain('RestartForceExitStatus=143');
     expect(unit).toContain('KillMode=mixed');
     expect(unit).toContain('TimeoutStopSec=60');
     expect(calls).toContain('systemctl --user daemon-reload');
