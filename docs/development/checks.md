@@ -3005,3 +3005,13 @@ The implementation writes raw/index data during import only. Replay is the owner
   - Live: all eight boot stages, the record written at start and advancing each minute; this restart passed no report hour and sent nothing.
   - Restart test at 11:23 (owner, menu Restart): the previous daemon shut down cleanly (database disconnected 11:23:24); boot 11:23:44, console login for the owner's account at 11:23 with no one typing; the daemon started 11:24:08 under launchd (runs = 1), all eight boot stages, Telegram polling started, no error line, viewer 302; the record moved 11:24:45 → 11:25:45. The stop passed no report hour, so no notice was sent, as designed.
 - Still open: a live downtime notice (a stop that passes a report hour) has not happened yet. Cause of the 11-12 restart unknown (no clean shutdown, no panic report).
+
+### Operations cleanup: CLI, file receipts, prompt warning, docs (2026-11-14)
+
+- Result: four small items from the 11-13 check are settled; no product code changed.
+- Evidence:
+  - `mama` on the owner's PATH now runs the live checkout: `~/.local/bin/mama` (ahead of Homebrew) execs the Node and program of `start.sh`; `mama status` reads the running daemon (pid, 0.79.1, connectors). Homebrew's 0.53.2 stays, because the clean account's install proof starts with it on PATH (install.md, finding D).
+  - The three failed `file:exec-…` receipts (10-22, 10-27) were removed from the owner-message ledger with the daemon stopped (116 → 113 entries, copy kept in the session scratchpad); the next boot logged no `requires reconciliation` line, all eight stages, Telegram polling. Failed file receipts are never pruned (only delivered ones are), so one more would stay the same way.
+  - The per-turn "System prompt exceeds truncation threshold" warning (217 lines in the current log) truncates nothing: MAMA states its owner and member prompts as priority-1 layers, which `composeLayers` never trims, and no `Truncated layers` line was ever logged. It is noise from core's default budget.
+  - `install.md` PR 3 now reads merged (#543); `plan.md` lists Q3 as the open owner decision.
+- Still open: whether to silence the prompt warning (a consumer budget through `setPromptBudget`, or removing it).

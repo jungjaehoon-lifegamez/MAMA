@@ -237,7 +237,10 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
 
 ## Owner decisions still open
 
-None. The history rewrite the owner decided on 2026-10-08 is done
+- Q3, which lasting Google client MAMA relies on: until there is one, a Google source needs a new
+  login every 7 days ([routes](work/install.md#open-owner-decisions)).
+
+The history rewrite the owner decided on 2026-10-08 is done
 ([check](checks.md#history-rewrite-two-project-names-and-an-asset-name-2026-10-08)).
 
 ## History

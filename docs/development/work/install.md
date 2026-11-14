@@ -222,8 +222,8 @@ running Node is refused at step 2, before any change.
 
 ## PR 3: tools a source needs (I4)
 
-In progress on `feat/source-tools`, by another worker. Its follow-up, naming the OAuth client step
-in gws's requirement, is one of W2.4.5e's changed lines.
+Merged (#543, 2026-10-30). Its follow-up, naming the OAuth client step in gws's requirement, is
+one of W2.4.5e's changed lines.
 
 - A source names its tool with `type: 'cli'` (`s/connectors/gmail/index.ts:68-77`, and calendar,
   drive, sheets). gws's requirement, with its install methods, moves to one export in
