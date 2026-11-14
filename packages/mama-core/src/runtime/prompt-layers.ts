@@ -293,6 +293,8 @@ export const PROMPT_LAYER_SEPARATOR = '\n\n---\n\n';
 /**
  * Join the stated layers into one prompt, trimming the expendable ones if the budget
  * says so. Empty layers never reach the model, and an empty list is an empty prompt.
+ * The diagnostic names what was trimmed. A prompt over the thresholds with nothing it
+ * may trim (priority-1 layers only) says nothing: no turn could act on the warning.
  */
 export function composeLayers(
   layers: readonly PromptLayer[],
@@ -304,9 +306,6 @@ export function composeLayers(
   }
   const monitor = new PromptSizeMonitor();
   const checkResult = monitor.check([...stated]);
-  if (checkResult.warning) {
-    onDiagnostic?.(checkResult.warning);
-  }
   let effective = stated;
   if (!checkResult.withinBudget) {
     const { layers: trimmed, result } = monitor.enforce([...stated]);

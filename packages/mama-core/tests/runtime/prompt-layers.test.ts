@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { PromptSizeMonitor } from '../../src/runtime/prompt-layers.js';
+import { composeLayers, PromptSizeMonitor } from '../../src/runtime/prompt-layers.js';
 import type { PromptLayer } from '../../src/runtime/prompt-layers.js';
 import { forceFallbackMode, resetTokenEstimator } from '../../src/runtime/token-estimator.js';
 
@@ -253,5 +253,34 @@ describe('PromptSizeMonitor', () => {
       expect(monitorResult.withinBudget).toBe(false);
       expect(monitorResult.warning).toContain('still exceeds limit');
     });
+  });
+});
+
+describe('composeLayers', () => {
+  beforeEach(() => {
+    resetTokenEstimator();
+    forceFallbackMode();
+  });
+
+  it('reports nothing for a prompt over the thresholds that has nothing it may trim', () => {
+    // 16000 chars → 6400 tokens (> 6250 truncate), all priority 1: nothing is trimmed.
+    const diagnostics: string[] = [];
+    const layers: PromptLayer[] = [
+      { name: 'standing', content: 'x'.repeat(10000), priority: 1 },
+      { name: 'policy', content: 'y'.repeat(6000), priority: 1 },
+    ];
+    const prompt = composeLayers(layers, (message) => diagnostics.push(message));
+    expect(prompt).toBe(`${'x'.repeat(10000)}\n\n---\n\n${'y'.repeat(6000)}`);
+    expect(diagnostics).toEqual([]);
+  });
+
+  it('reports the layers it trimmed', () => {
+    const diagnostics: string[] = [];
+    const layers: PromptLayer[] = [
+      { name: 'standing', content: 'x'.repeat(15000), priority: 1 },
+      { name: 'rules', content: 'r'.repeat(2000), priority: 5 },
+    ];
+    composeLayers(layers, (message) => diagnostics.push(message));
+    expect(diagnostics).toEqual(['Truncated layers: rules']);
   });
 });
