@@ -67,7 +67,6 @@ live check passes.
   weaker nested sandbox, the choice goes to the owner and into AGENTS.md first. The backend's OAuth
   token variables are stripped from its environment (`s/runtime/backend-security.ts:104-106`), so
   a token login inside the container is also an AGENTS.md change.
-- L5: SteamOS or a native Ubuntu host, decided on the facts wave 3 measures first.
 - E4 (Discord and Slack), T1 (members without the owner role), INTENT.md's wording.
 
 ## Wave 1 — this Mac, no new environment
@@ -235,11 +234,11 @@ live check passes.
 - Enabling a source checks the tools it needs (`gws` today); the install guide lists supported
   versions of Node, the backends, the Linux distribution and Docker.
 
-## Wave 3 — Linux on the Steam Deck (L1–L5, I3)
+## Wave 3 — Linux on Ubuntu 24.04 (L1–L5, I3)
 
-- First measure and record: SteamOS version, the read-only system root, `sudo` for the default user,
-  `bwrap` and `socat` and whether unprivileged user namespaces work (Ubuntu 24.04 restricts them by
-  default), LibreOffice availability, systemd user services and linger. These decide L5.
+- First measure and record on the test host (G1): `bwrap` and `socat` and whether unprivileged user
+  namespaces work (Ubuntu 24.04 restricts them by default), LibreOffice availability, systemd user
+  services and linger.
 - `document.render` on Linux under `bwrap` with the macOS profile's denies; tests show both hold.
 - The toolkit names or installs the Linux packages; iMessage is offered only on macOS (enabled on
   Linux it fails the boot today, `s/runtime/connectors.ts:209`).
@@ -250,7 +249,7 @@ live check passes.
 - Image: Node 22, the toolkit with LibreOffice and Noto CJK, `gws`, `bwrap` and `socat`, the backend
   CLIs, a non-root user, an init process (`init: true`) for orphaned children, a `HEALTHCHECK` that
   passes only when `mama status` reports boot complete (`/health` answers from the viewer stage,
-  before connectors and messengers start), version tags, published by the release workflow. amd64 is tested on the Steam Deck;
+  before connectors and messengers start), version tags, published by the release workflow. amd64 is tested on the G1 test host, under Docker Engine inside its Ubuntu;
   arm64 is offered only after the same run on arm64, otherwise labelled experimental.
 - Compose volumes: the MAMA home, `member_root`, `tools_root` (common skills live there), the
   backend credentials and the `gws` credential store (`~/.config/gws`, or
@@ -288,5 +287,4 @@ live check passes.
 
 ## Order
 
-W1.1 → W1.2 → W1.3 → W1.4 → W1.5 → W1.6, release; W2.1, W2.2 → W2.3 → W2.4, release; wave 3 (Steam
-Deck access); wave 4; wave 5 alongside waves 3 and 4; G1–G4; 1.0.
+W1.1 → W1.2 → W1.3 → W1.4 → W1.5 → W1.6, release; W2.1, W2.2 → W2.3 → W2.4, release; wave 3; wave 4; wave 5 alongside waves 3 and 4; G1–G4; 1.0.

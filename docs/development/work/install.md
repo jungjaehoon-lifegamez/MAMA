@@ -132,7 +132,7 @@ running Node is refused at step 2, before any change.
   SSH and headless Linux have no setup path; PR 4 says so, since Linux is not in wave 2's
   supported versions.
 - W2.4 assumes Ubuntu 24.04: glibc, systemd user units, a writable `/var`, `sudo` for the person.
-  Wave 3 measures SteamOS (L5) and confirms each, and owns `bwrap`, `socat` and LibreOffice (L2,
+  Wave 3 confirms each on the Ubuntu 24.04 test host (G1, L5), and owns `bwrap`, `socat` and LibreOffice (L2,
   I3); the script installs no system packages.
 
 ## How it is delivered and run
