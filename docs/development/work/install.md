@@ -686,17 +686,16 @@ The steps:
    A second entry eight days later records whether the testing-mode client's polls still work.
    The toolkit's `brew install` on this Standard account is recorded (I7).
 
-7. **Leg B.** `mama uninstall --data` is run from the conversation: a dry run first, then
-   `--confirm-home <path>` once the person confirms (W2.4.6).
-   Claude Code then installs with the `codex` backend. The managed home is signed in from the
-   agent's background shell with `codex login`, or with `--device-auth` and device code login on.
-8. **Leg C.** `mama uninstall --data` and `claude auth logout` are run. The person asks Codex to
-   install MAMA by following owner-setup.md on `main` (W2.4.5c; Codex has no plugin), with the
-   `claude` backend:
-   - `claude auth login` from Codex's shell: the browser sign-in, and a code written to its stdin
-     if the CLI asks for one;
-   - whether Codex's background run survives across turns until init ends;
-   - Codex's sandbox and approval mode, which may deny the page's listener and `open`.
+7. **Legs B and C move to G1** (owner, 2026-11-14). The Codex backend already runs the live
+   daemon every day (its turns, sandbox, web search and managed home), so a staged run adds only
+   the install-time pieces, which G1's fresh-install runs exercise with a person new to MAMA:
+   - one G1 run picks the `codex` backend, and the managed home is signed in from the agent's
+     background shell (`codex login`, or `--device-auth`);
+   - one G1 run ends with `mama uninstall --data` from the conversation: a dry run first, then
+     `--confirm-home <path>` once the person confirms (W2.4.6);
+   - one G1 run uses Codex as the installing agent, following owner-setup.md (W2.4.5c), with the
+     `claude` backend signed in through the browser (Q2), recording Codex's sandbox and approval
+     mode and whether its background run lasts until init ends.
 
 **After the release:** W2.3's registry update. Then `mama uninstall --data`, the backend removed
 by its vendor's steps, and leg A against npmjs.
@@ -714,7 +713,7 @@ by its vendor's steps, and leg A against npmjs.
   - In Telegram they make the bot and the group, message the bot, and send `/bind`.
   - In a browser they sign in a backend that is not the installing agent's.
 
-  `start.sh` pins `~/.mama/node/bin/node`. Legs B and C reach the same reply. Linux closes with
+  `start.sh` pins `~/.mama/node/bin/node`. The G1 runs of item 7 reach the same reply. Linux closes with
   wave 3, Docker with wave 4.
 
 - **I4 (the command part):**
@@ -756,8 +755,9 @@ by its vendor's steps, and leg A against npmjs.
 ## Order of work
 
 PR 1 → PR 2 → PR 5, with PR 3 in parallel → leg A, steps 1–5 (W2.3's candidate proof among them)
-→ PR 3 merged → W2.4.5e → step 6 → legs B and C → PR 4 → the wave 2 release → the post-release runs → I1, I4
-and I5 marked for macOS in v1.md, evidence in checks.md.
+→ PR 3 merged → W2.4.5e → PR 4 → the wave 2 release → the post-release runs → I1, I4
+and I5 marked for macOS in v1.md, evidence in checks.md. Steps 2–5 ran on 2026-11-14. Step 6
+waits for Q3, and legs B and C are G1 runs (item 7).
 
 ## Plan corrections
 
@@ -789,7 +789,7 @@ The owner answered Q1 and Q2 on 2026-10-30:
 
 - Q1: setup changes after the first reply are made without a terminal too (W2.4.6).
 - Q2: Claude's sign-in under Codex goes through the browser (the [Backend CLI](#backend-cli)
-  table, leg C).
+  table; a G1 run, item 7).
 
 - **Q3. Which lasting Google client does MAMA rely on?** Until there is one, a Gmail, Calendar,
   Drive or Sheets source needs a re-login every 7 days, because the person's own client sits in
