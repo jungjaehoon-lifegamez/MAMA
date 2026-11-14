@@ -164,6 +164,10 @@ their own. The member's Claude CLI reads the owner's credential store
 the owner's managed Codex home, copied again after each refresh. The owner still signs in to its
 managed Codex home directly; nothing is copied into it.
 
+Owner decision 2026-11-14: member shells get MAMA's own Node.js. The daemon's Node is given at
+`<tools_root>/node/bin` on every session's PATH (a copy of a Node under HOME, which members cannot
+read, or a link to one outside it); only `node`, no npm or npx. The HOME deny is unchanged.
+
 Owner decision 2026-10-12 (P10): owners are members. Each person, owners included, has a member
 session in its own workspace under the member root, with the member tools above; the `owner` role
 adds reads of common records through MAMA actions (not native reads), the owner policy and owner

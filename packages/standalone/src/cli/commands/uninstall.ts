@@ -213,6 +213,8 @@ function dataPlan(home: string, configPath: string, toolkit: boolean): DataPlan 
         const path = join(config.tools_root, entry);
         if (entry === 'skills') {
           plan.remove.push({ path, what: 'the common skills' });
+        } else if (entry === 'node') {
+          plan.remove.push({ path, what: "the members' copy of Node.js" });
         } else if (!toolkit) {
           continue;
         } else if (entry.startsWith('v-')) {

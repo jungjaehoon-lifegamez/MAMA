@@ -167,7 +167,8 @@ function claimToolkitRoot(root: string): void {
     const path = join(root, name);
     const meta = lstatSync(path);
     let managed = false;
-    if (['apps', 'fonts', '.leases'].includes(name)) managed = meta.isDirectory();
+    // node is the host's copy of its Node.js for members' shells (member-node.ts).
+    if (['apps', 'fonts', '.leases', 'node'].includes(name)) managed = meta.isDirectory();
     else if (name === 'skills') managed = isManagedSkills(path);
     else if (TOOLKIT_VERSION_NAME.test(name))
       managed = meta.isDirectory() && isManagedVersion(path, name);
