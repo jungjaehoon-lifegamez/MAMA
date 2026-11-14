@@ -575,6 +575,8 @@ describe('mama backup --restart', () => {
     expect(calls).toEqual([
       'systemctl --user is-active mama.service []',
       'systemctl --user stop mama.service []',
+      // A stop's exit 143 left an older unit reading "failed"; the stop clears it.
+      'systemctl --user reset-failed mama.service []',
       `systemctl --user start mama.service [${basename(archive)}]`,
     ]);
 

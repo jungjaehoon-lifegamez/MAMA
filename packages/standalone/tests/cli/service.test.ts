@@ -312,6 +312,10 @@ describe('mama service on Linux', () => {
     expect(unit).toContain('ExecStart="%h/.mama/start.sh"');
     expect(unit).toContain('WorkingDirectory=%h/.mama');
     expect(unit).toContain('Restart=on-failure');
+    // A SIGTERM stop exits 143; without this the unit reads failed after every stop.
+    expect(unit).toContain('SuccessExitStatus=143');
+    // A SIGTERM from anything but systemd's own stop still brings the daemon back.
+    expect(unit).toContain('RestartForceExitStatus=143');
     expect(unit).toContain('KillMode=mixed');
     expect(unit).toContain('TimeoutStopSec=60');
     expect(calls).toContain('systemctl --user daemon-reload');
@@ -327,6 +331,8 @@ describe('mama service on Linux', () => {
       )
     ).toBe(0);
     expect(calls).toContain(`loginctl enable-linger ${userInfo().username}`);
+    // Rewriting the unit also clears a failed state an older version's stop left.
+    expect(calls).toContain('systemctl --user reset-failed mama.service');
     // With systemd's marker present, linger is not touched again.
     writeFileSync(join(lingerRoot, userInfo().username), '');
     calls.length = 0;
@@ -344,6 +350,10 @@ describe('mama service on Linux', () => {
       await runStop([], { home, configPath, write: (l) => lines.push(l), run, settleMs: 1 })
     ).toBe(0);
     expect(calls).toContain('systemctl --user stop mama.service');
+    // The stop's exit 143 left a unit written before SuccessExitStatus reading "failed".
+    expect(calls.lastIndexOf('systemctl --user reset-failed mama.service')).toBeGreaterThan(
+      calls.indexOf('systemctl --user stop mama.service')
+    );
     expect(lines).toEqual(['stopped (systemd unit stopped)']);
     lines.length = 0;
     await runStatus([], { home, configPath, write: (l) => lines.push(l), run });

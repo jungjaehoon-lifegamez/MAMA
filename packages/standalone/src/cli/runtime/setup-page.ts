@@ -1,6 +1,6 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -48,6 +48,21 @@ export interface SetupField {
  * `xdg-open` without a desktop runs the browser itself, in the foreground, until it quits.
  */
 export type OpenRun = (command: string, args: string[]) => Promise<{ exit: Promise<number> }>;
+
+/** Whether this Linux is WSL: its kernel names Microsoft. */
+export function isWsl(read: () => string = () => readFileSync('/proc/version', 'utf8')): boolean {
+  try {
+    return /microsoft/i.test(read());
+  } catch {
+    // No /proc/version: not a Linux kernel WSL runs.
+    return false;
+  }
+}
+
+/** The Windows path of a WSL file, for explorer.exe. */
+function windowsPath(file: string): string {
+  return execFileSync('wslpath', ['-w', file], { encoding: 'utf8' }).trim();
+}
 
 export const defaultOpenRun: OpenRun = (command, args) =>
   new Promise((resolve, reject) => {
@@ -134,6 +149,10 @@ export async function openSetupPage(options: {
   fields: readonly SetupField[];
   write: (line: string) => void;
   platform: NodeJS.Platform;
+  /** Linux under WSL (read from /proc/version when not given): the page opens through explorer.exe. */
+  wsl?: boolean;
+  /** Tests replace wslpath. */
+  windowsPath?: (file: string) => string;
   openRun?: OpenRun;
   lifetimeMs?: number;
 }): Promise<SetupPage> {
@@ -306,14 +325,18 @@ export async function openSetupPage(options: {
     stop(new CliInputError(`the setup page expired at ${until}; nothing was written`));
   }, lifetimeMs);
 
-  const command = options.platform === 'darwin' ? 'open' : 'xdg-open';
+  // WSL has no xdg-open; Windows interop opens the file in the Windows browser, whose 127.0.0.1
+  // reaches this page under WSL's localhost forwarding. explorer.exe exits 1 even when it opens.
+  const wsl = options.platform === 'linux' && (options.wsl ?? isWsl());
+  const command = options.platform === 'darwin' ? 'open' : wsl ? 'explorer.exe' : 'xdg-open';
   // The file's path holds no secret: it is the way in when no browser opened.
   const wayIn = `open ${pathToFileURL(file).href} in the browser; it closes at ${until}`;
   try {
-    const { exit } = await (options.openRun ?? defaultOpenRun)(command, [file]);
+    const target = wsl ? (options.windowsPath ?? windowsPath)(file) : file;
+    const { exit } = await (options.openRun ?? defaultOpenRun)(command, [target]);
     write(`setup page: opened in the browser from ${file}; it closes at ${until}`);
     void exit.then((status) => {
-      if (status !== 0 && !closed)
+      if (status !== 0 && !closed && !wsl)
         write(
           `setup page: ${command} exited ${status}, so the browser may not have opened; ${wayIn}`
         );

@@ -633,7 +633,7 @@ export function nodeCheck(node: string, cli: string, run: ProbeRun, root: string
   return { name: 'node', status: 'ok', detail: `${version} loads SQLite`, context: node };
 }
 
-function sandboxCheck(
+export function sandboxCheck(
   platform: NodeJS.Platform,
   servicePath: string[],
   locate: (name: string, dirs: string[]) => string | undefined,
@@ -662,7 +662,9 @@ function sandboxCheck(
       name: 'sandbox',
       status: 'fail',
       detail: `${[!bwrap && 'bwrap', !socat && 'socat'].filter(Boolean).join(' and ')} not on the service's PATH`,
-      fix: 'install bubblewrap and socat',
+      fix: locate('apt-get', servicePath)
+        ? 'sudo apt-get install -y bubblewrap socat'
+        : 'install bubblewrap and socat with your package manager',
     };
   }
   const relay = run(socat, ['-V']);

@@ -1,3 +1,7 @@
+import {
+  MEMBER_CLAUDE_TMP_PARENT,
+  MEMBER_ROOM_TMP_PARENT,
+} from '../../src/runtime/backend-security.js';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   mkdirSync,
@@ -530,7 +534,16 @@ it.each(['codex', 'claude'] as const)(
             (path) => toolsRoot === path || toolsRoot.startsWith(`${path}/`)
           )
         ).toBe(false);
-        expect(driver.processEnv.TMPDIR).toBe(join(paths.workspaceDir, '.tmp'));
+        if (backend === 'codex')
+          expect(driver.processEnv.TMPDIR).toBe(join(paths.workspaceDir, '.tmp'));
+        else {
+          // Claude's Linux sandbox binds claude-http-<16 hex>.sock in TMPDIR (AF_UNIX: 108 bytes).
+          const tmp = driver.processEnv.TMPDIR!;
+          expect(
+            tmp.startsWith(MEMBER_CLAUDE_TMP_PARENT) || tmp.startsWith(MEMBER_ROOM_TMP_PARENT)
+          ).toBe(true);
+          expect(Buffer.byteLength(`${tmp}/claude-socks-0123456789abcdef.sock`)).toBeLessThan(108);
+        }
         if (backend === 'codex')
           expect(driver.shellEnvironment?.TMPDIR).toBe(join(paths.workspaceDir, '.tmp'));
         else {
