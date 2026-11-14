@@ -3025,7 +3025,16 @@ The implementation writes raw/index data during import only. Replay is the owner
   - Step 2: `mama doctor` in the tmux session: no fail (config, schema core 106/106, member_root, node v22.23.4 with SQLite, backend claude 2.1.316 signed in, sandbox, telegram, daemon, service launchd); warnings: toolkit not installed, release check `ETIMEDOUT`. `start.sh` execs `~/.mama/node/bin/node`, its PATH has no per-terminal folder, and the service's `claude` is `~/.local/bin/claude`. `mama update --dry-run` against npmjs printed `0.78.0 → 0.79.1 (npm install, prefix ~/.mama/npm)` and the staged steps.
   - Step 3: an owner DM went to a new member session (`member-agent:<principal>`), whose Bash ran `node --version; command -v node`, both exit 0: `v25.8.0`, `/opt/homebrew/bin/node`. The common session, asked the same in the group, got `v22.23.4`, `~/.mama/node/bin/node`. Members are denied the home directory (`ownerDataReadPaths` starts with `homedir()`, `s/runtime/backend-security.ts`), so `~/.mama/node/bin` on the daemon's PATH is unreadable and the shell takes the next `node`. No error line in the log for either turn.
 - Still open:
-  - New row: on a host whose only Node is the managed one, a member's `node` is not found; here it is a different major (25 against the pinned 22). Where the managed Node must live, or how members reach it, is not decided.
+  - On a host whose only Node is the managed one, a member's `node` is not found; here it was a different major (25 against the pinned 22). Owner decision 2026-11-14: members get MAMA's Node (fixed below, #563).
   - `mama doctor` run from SSH reports the backend not signed in while the service, in the GUI session, is signed in.
   - The account's `~/.npmrc` still names the 10-31 local registry (`127.0.0.1:4873`), which is why the daemon's release check times out. It stays for step 4 and is removed after it.
   - Steps 4 and 5 need candidate builds served by a local registry, `/update` from the owner, and a reboot.
+
+### Members' shells run MAMA's Node (#563, 2026-11-14)
+
+- Result: a member session's shell now runs the daemon's own Node.js; verified on the clean account before merge. Serves the shared install (I1, I6) and the owner decision of 2026-11-14.
+- Evidence:
+  - Boot puts the daemon's Node at `<tools_root>/node/bin/node` ahead of the host PATH: copied when it is under HOME (kept only if the copy runs as the same version), linked when it is outside (Homebrew's `node` needs `libnode.dylib` beside it; a lone copy failed with dyld in the first test run).
+  - Tests: four new in `member-node.test.ts`, PATH expectations updated; standalone suite 2987 passed.
+  - Clean account: this build served from a local registry as 0.79.1001; `mama update` from the tmux session went 0.78.0 → 0.79.1001 (drain, backup, swap, start), all eight boot stages, `members' node: v22.23.4 at …/tools/node/bin/node (copied)`. An owner DM then ran `node --version; command -v node` in the member session: `v22.23.4`, `…/tools/node/bin/node`, exit 0 (16:24 the same turn gave v25.8.0 from Homebrew). No error line in the log. This update also stands as step 4's first leg (N → N+1, from the conversation-free CLI); `/update` and the N+2 rollback are still to run.
+- Still open: the test account runs the unpublished 0.79.1001 and its `~/.npmrc` names a stopped local registry. A Homebrew Node that `brew cleanup` removes leaves the link dangling until the next boot.
