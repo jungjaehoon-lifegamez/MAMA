@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.80.0] / mama-core [8.9.1] / mama-server [2.6.2] / plugin [2.5.0] - 2026-11-14
+
+When MAMA was down long enough to miss a report, it now tells you which reports it missed. The
+first run on a clean Ubuntu 24.04 found that members' shells, updates and setup failed on Linux;
+those are fixed, though Linux is not supported yet (document rendering and a full install run
+remain). Your agent can change any part of the setup later without a terminal. People in your team
+get MAMA's own Node.js in their shell. Each package changelog lists every change.
+
+### Upgrading
+
+- An install on 0.79.0 or 0.79.1 updates with `mama update`, or `/update` in Telegram. Run
+  `mama update` from a shell where the backend (`claude` or `codex`) is on PATH; from a shell
+  without it, the update stops at the service files and rolls back.
+- On Linux, Claude's shell sandbox needs `bubblewrap` and `socat`:
+  `sudo apt-get install -y bubblewrap socat`. Setup now checks for them before it writes anything;
+  an install made without them answered no message.
+- Update the Claude Code plugin to 2.5.0. It runs mama-server 2.6.2 on mama-core 8.9.1.
+
+### Added
+
+- After a stop that passed report hours, MAMA tells you when it stopped and started and which
+  reports and reminders were not sent (#561).
+- Every part of the setup can be changed from the conversation, with secrets on the setup page,
+  and MAMA's data can be removed from it after you confirm the plan (#559).
+
+### Fixed
+
+- Linux: members' shells start (the sandbox's socket path was too long), updates no longer roll
+  back on systemd, setup refuses a host without the sandbox's tools and names the command, and on
+  WSL setup opens its page in the Windows browser (#564).
+- A member's shell runs MAMA's Node.js, which it could not read under your home folder (#563).
+- A source-change notification whose send may have failed is sent again until it is confirmed
+  (#560).
+- The "System prompt exceeds truncation threshold" line no longer appears on every turn; nothing
+  was ever trimmed (#562).
+
 ## mama-os [0.79.1] / plugin [2.4.1] - 2026-11-01
 
 Fixes for removing MAMA and for enabling a Slack or Discord source, and a clearer first setup.

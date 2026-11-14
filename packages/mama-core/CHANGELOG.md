@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.9.1] - 2026-11-14
+
 ### Changed
 
 - `composeLayers` reports only the layers it trimmed. It no longer passes the size warnings
