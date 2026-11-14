@@ -103,7 +103,7 @@ export function syncMemberNode(
     const meta = lstatSync(target);
     present = link
       ? meta.isSymbolicLink() && readlinkSync(target) === source
-      : meta.isFile() && meta.size === statSync(source).size;
+      : meta.isFile() && (meta.mode & 0o111) !== 0 && meta.size === statSync(source).size;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     present = false;

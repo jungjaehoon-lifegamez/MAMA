@@ -45,6 +45,10 @@ it('copies a Node under HOME to tools_root, where members can run it', () => {
   expect(fs.readdirSync(memberNodeBin(tools))).toEqual(['node']);
   expect(() => assertToolsOwnership(tools)).not.toThrow();
   expect(syncMemberNode(tools, source, 'v22.0.1', home).how).toBe('unchanged');
+  // A copy that lost its execute bit is replaced, not kept.
+  fs.chmodSync(first.path, 0o644);
+  expect(syncMemberNode(tools, source, 'v22.0.1', home).how).toBe('copied');
+  expect(fs.statSync(first.path).mode & 0o777).toBe(0o755);
   // A moved Node (another pin) replaces the copy at the next boot.
   fs.writeFileSync(source, '#!/bin/sh\necho v22.0.12\n');
   expect(syncMemberNode(tools, source, 'v22.0.12', home).how).toBe('copied');
