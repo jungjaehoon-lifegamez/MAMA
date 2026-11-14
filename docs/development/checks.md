@@ -3050,7 +3050,8 @@ The implementation writes raw/index data during import only. Replay is the owner
   - Rollback: `/update` at 18:22 went to 0.79.1003, which exited at every boot (`crash.log`); after the ten-minute boot wait the updater rolled back: `rolled back: 0.79.1002 runs again`, `the database was kept: 0.79.1003 did not migrate it`; all eight boot stages, `npm ls` shows 0.79.1002, no candidate folder or snapshot left, inputs 86 and model runs 201 as before; every progress message from `starting` to `rolled back` arrived. A CLI `mama update` started during it was refused: `Already updating since 18:22:07`.
   - DM path: the owner's `/update` in the DM ran 0.79.1002 → 0.79.1004 at 18:35 with all progress in the DM; a CLI `mama update 0.79.1004` afterwards printed `already on 0.79.1004`.
 - Still open:
-  - The drain wait during a running turn was not exercised: no turn was running at any of the three drains.
+  - (Closed below.) The drain wait during a running turn was not exercised in these three runs.
   - The first DM `/update` after the rollback was answered `busy` (the daemon log has `update requested result=busy` before the `started` one); why the job still counted as running three minutes after the rollback is not known.
   - Progress sends: on the 18:11 run the first send failed (`fetch failed`) and the last was logged as a 3-second timeout though it arrived.
   - A member being refused `/update` was not tried: the account has no member without the owner role.
+- Drain during a turn (18:48, CLI `mama update 0.79.1005` started while an owner DM ran `sleep 60` in the shell): `1 turn running; inputs 1 claimed`, `draining … waiting for 1 turn running`, the turn completed at 18:49:33 (run `committed`, reply delivered), then `drained: nothing runs; stopping`, snapshot, `updated: 0.79.1004 → 0.79.1005` at 18:49:42; snapshot and old folder removed. The account's test `~/.npmrc` is removed; it runs the unpublished 0.79.1005.
