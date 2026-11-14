@@ -3066,3 +3066,12 @@ The implementation writes raw/index data during import only. Replay is the owner
   - Next run: `the move … was cut off, and is undone: MAMA runs on Node.js 22.23.5 again. Run this installer again to move it.` (exit 1), service started on 22.23.5, hold and journal removed. A third run moved it to 22.23.4: all eight boot stages, members' Node re-copied.
 - Deviations: the install command ran from a local copy of the script, not `curl …/releases/latest/download/install.sh` (no release carries another pin); the reboot was replaced by the LaunchAgent bootstrap a login performs; the kill landed after both renames, not between them.
 - Still open: a stale `update.holder.json` stays after the killed move (it did not block the next runs).
+
+### Wave 3 test host: WSL2 Ubuntu 24.04, reachable over SSH (2026-11-14)
+
+- Result: the G1 Linux and Docker host (owner decision 2026-11-14) is set up and reachable from the development Mac; nothing of MAMA is installed on it yet.
+- Evidence:
+  - Windows 11 (build 26200), WSL 2.5.9, kernel 6.6.87.2-microsoft-standard-WSL2. The owner's existing `Ubuntu` distribution had broken packages and a Node from nodesource, so a separate clean `Ubuntu-24.04` (24.04.5 LTS, x86_64) was installed for the runs.
+  - Baseline on the clean distribution: systemd `degraded` (only `getty@tty1` failed, usual on WSL), linger off, no `node`, `npm`, `bwrap`, `socat` or `soffice`; Python 3.12.3, git and curl present; unprivileged user namespaces work (`unshare -Ur`), and the WSL kernel has no `apparmor_restrict_unprivileged_userns` (a stock Ubuntu 24.04 host restricts them, so the guide covers that case separately).
+  - Access: `.wslconfig` with `networkingMode=mirrored` and `vmIdleTimeout=-1` (the owner's `nestedVirtualization=true` kept), a Hyper-V firewall rule for TCP 2222, `openssh-server` on 2222 with keys only and a dedicated key. A socket on `[::]:2222` alone refused LAN connections in mirrored mode; binding `0.0.0.0:2222` as well fixed it.
+- Still open: whether the VM stays up with no session open (`vmIdleTimeout=-1`) and after Windows sleeps; Docker Desktop's WSL integration may claim `docker` in this distribution before wave 4.
