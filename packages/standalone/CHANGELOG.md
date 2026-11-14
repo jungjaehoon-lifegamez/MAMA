@@ -31,6 +31,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Linux, found on the first run on Ubuntu 24.04 (WSL2):
+  - A member's shell runs. Claude's Linux sandbox binds its bridge sockets in `TMPDIR`, and a
+    member's was under its workspace, a 151-byte socket path past the 108-byte limit, so every
+    member Bash failed with "Failed to create bridge sockets". A member's Claude now gets its short
+    private temporary folder; the sandboxed shell's own `TMPDIR` is unchanged.
+  - Init refuses a Claude backend whose shell sandbox cannot start (no `bwrap` or `socat`) before
+    anything is written, with the command to run (`sudo apt-get install -y bubblewrap socat` where
+    apt exists); doctor names the same command. Before, the service started and every turn failed.
+  - An update no longer rolls back on systemd. A stop exits 143 by design, which the unit counted
+    as a failure, so the update's doctor step read the service as failed; the unit now has
+    `SuccessExitStatus=143`, and a stop or a rewritten unit clears a failed state an older unit left.
+  - On WSL, init opens the setup page in the Windows browser through `explorer.exe`.
 - A member's shell runs MAMA's Node.js. Members are denied the home directory, so the install's
   `~/.mama/node` could not run there, and `node` in a member's shell was whatever came next on
   PATH: Homebrew's v25 on the test Mac, nothing on a host without another Node. Boot now gives

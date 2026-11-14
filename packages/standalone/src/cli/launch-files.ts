@@ -264,6 +264,11 @@ export function systemdUnit(): string {
     'ExecStart="%h/.mama/start.sh"',
     'Restart=on-failure',
     'RestartSec=10',
+    // The daemon exits 143 after a SIGTERM by design; counted as a failure, the unit read "failed"
+    // after every stop and the updater's doctor step rolled each Linux update back. A SIGTERM
+    // systemd did not send still restarts it (daemon.ts, onSigterm); its own stop never does.
+    'SuccessExitStatus=143',
+    'RestartForceExitStatus=143',
     `TimeoutStopSec=${SERVICE_STOP_SECONDS}`,
     'KillMode=mixed',
     '',

@@ -244,7 +244,17 @@ function driverOptions(
     processEnv: {
       ...backendEnvironment(),
       ...(path === undefined ? {} : { PATH: path }),
-      ...(options.principal === undefined ? {} : { TMPDIR: join(options.workspaceDir, '.tmp') }),
+      // A member's Claude CLI binds its Linux sandbox's bridge sockets in TMPDIR; under the
+      // workspace that path passes the 108-byte AF_UNIX limit and no shell starts. The CLI's own
+      // short private folder fits, and the sandboxed shell gets CLAUDE_CODE_TMPDIR/claude-<uid>.
+      ...(options.principal === undefined
+        ? {}
+        : {
+            TMPDIR:
+              options.backend === 'claude'
+                ? claudeTmpDir(options)
+                : join(options.workspaceDir, '.tmp'),
+          }),
       // A member's own config dir keeps its sessions and CLI state out of the owner's. The
       // credential store follows the CLI's own key rule: an explicit store dir, else the config
       // dir, else '' for the default; so the member signs in with the owner's login.

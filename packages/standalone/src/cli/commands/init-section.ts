@@ -423,7 +423,8 @@ export async function runInitSection(
           locate,
           options.probeRun,
           'run this again',
-          nonInteractive ? undefined : { run: options.signIn ?? terminalSignIn, write }
+          nonInteractive ? undefined : { run: options.signIn ?? terminalSignIn, write },
+          options.platform ?? process.platform
         );
       let backend: 'claude' | 'codex';
       let model: string;

@@ -12,6 +12,7 @@ import {
   openSetupPage,
   type SetupField,
   type SetupPage,
+  isWsl,
 } from '../../src/cli/runtime/setup-page.js';
 
 const TOKEN = 'fixture-page-token';
@@ -209,6 +210,41 @@ describe('the setup page', () => {
     expect(missing[0]).toMatch(
       /^setup page: the browser did not open \(xdg-open is not installed\); open file:\/\/.+\/open\.html in the browser; it closes at \d\d:\d\d$/
     );
+  });
+
+  it('opens the page through explorer.exe on WSL, whatever its exit status', async () => {
+    const lines: string[] = [];
+    const opened: string[][] = [];
+    const page = await openSetupPage({
+      fields: [field('token', true, '', [])],
+      write: (line) => lines.push(line),
+      platform: 'linux',
+      wsl: true,
+      windowsPath: (file) => `\\\\wsl.localhost\\Ubuntu-24.04${file.replaceAll('/', '\\')}`,
+      openRun: async (command, args) => {
+        opened.push([command, ...args]);
+        // explorer.exe exits 1 even when the browser opened.
+        return { exit: Promise.resolve(1) };
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    page.close();
+    expect(opened[0]![0]).toBe('explorer.exe');
+    expect(opened[0]![1]).toMatch(/^\\\\wsl\.localhost\\Ubuntu-24\.04\\.+\\open\.html$/);
+    expect(lines.some((line) => line.includes('exited'))).toBe(false);
+    expect(lines[0]).toMatch(/^setup page: opened in the browser from /);
+  });
+
+  it('reads WSL from the kernel version', () => {
+    expect(isWsl(() => 'Linux version 6.6.87.2-microsoft-standard-WSL2 (root@x) #1 SMP')).toBe(
+      true
+    );
+    expect(isWsl(() => 'Linux version 6.8.0-49-generic (buildd@lcy02) #49-Ubuntu SMP')).toBe(false);
+    expect(
+      isWsl(() => {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      })
+    ).toBe(false);
   });
 
   it('takes entries while an opener stays in the foreground', async () => {

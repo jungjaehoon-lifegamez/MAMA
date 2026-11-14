@@ -393,6 +393,13 @@ async function stopNow(
       );
       return 1;
     }
+    // A unit written before SuccessExitStatus=143 reads "failed" after this stop, which doctor
+    // (and so the updater) counts as a failure; a stop meant to happen is cleared.
+    const reset = run('systemctl', ['--user', 'reset-failed', SYSTEMD_UNIT]);
+    if (reset.error || reset.status !== 0)
+      write(
+        `the unit may still read failed; clear it with: systemctl --user reset-failed ${SYSTEMD_UNIT}`
+      );
   }
   const unloaded = service.loaded
     ? ' (launchd service unloaded)'

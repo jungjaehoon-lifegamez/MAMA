@@ -523,7 +523,9 @@ export async function runInit(
             join(root, '.codex'),
             locate,
             options.probeRun,
-            'run the install command again'
+            'run the install command again',
+            undefined,
+            platform
           ),
         roots: (
           memberAnswer: string,
