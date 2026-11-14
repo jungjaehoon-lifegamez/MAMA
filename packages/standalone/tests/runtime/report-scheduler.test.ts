@@ -25,6 +25,8 @@ function setup() {
   const logs: string[] = [];
   const held: Array<[string, string]> = [];
   const statePath = join(root, 'runtime', 'report-schedule-state.json');
+  const alivePath = join(root, 'runtime', 'report-schedule-alive.json');
+  const keys: string[] = [];
   let pending = false;
   let send = async (text: string) => {
     sent.push(text);
@@ -38,6 +40,7 @@ function setup() {
     },
     timeZone: createTimeZoneSetting('Asia/Seoul'),
     statePath,
+    alivePath,
     intake: {
       acceptScheduled: (input: ScheduledInput) => {
         queued.push(input);
@@ -49,7 +52,10 @@ function setup() {
       held.push([report, hourKey]);
       return pending;
     },
-    sendToOwner: (text: string, _key: string) => send(text),
+    sendToOwner: (text: string, key: string) => {
+      keys.push(key);
+      return send(text);
+    },
     retireUndelivered: (key: string) => retired.push(key),
     log: (line: string) => logs.push(line),
     onError: (error: unknown) => {
@@ -64,7 +70,9 @@ function setup() {
     retired,
     logs,
     held,
+    keys,
     statePath,
+    alivePath,
     setPending: (value: boolean) => {
       pending = value;
     },
@@ -585,6 +593,69 @@ describe('KST report scheduler', () => {
     expect(() =>
       scheduledReportOrder({ report: 'daily', hourKey: '2026-09-29:23' }, new Date(), options)
     ).toThrow(/day/);
+  });
+
+  it('records when it last ran and tells the owner, after a restart, which report hours passed with nothing sent', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-12T07:21:00Z')); // 16:21 KST
+    const before = setup();
+    before.scheduler.start();
+    expect(JSON.parse(readFileSync(before.alivePath, 'utf8'))).toEqual({
+      aliveAt: Date.parse('2026-11-12T07:21:00Z'),
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    const lastAlive = Date.parse('2026-11-12T07:22:00Z');
+    expect(JSON.parse(readFileSync(before.alivePath, 'utf8'))).toEqual({ aliveAt: lastAlive });
+    before.scheduler.stop();
+    expect(before.sent).toEqual([]);
+
+    vi.setSystemTime(new Date('2026-11-13T12:50:00Z')); // 21:50 KST, the next day
+    const after = setup();
+    after.scheduler.start();
+    await vi.waitFor(() => expect(after.sent).toHaveLength(1));
+    expect(after.sent[0]).toBe(
+      [
+        'MAMA was not running from 2026-11-12 16:22 to 2026-11-13 21:50 (Asia/Seoul).',
+        'Not sent in that time: 4 full reports (2026-11-12 18:00, 2026-11-13 08:00, 2026-11-13 13:00, 2026-11-13 18:00) and 14 reminder hours.',
+        'The next full report covers everything since the last one sent.',
+      ].join('\n')
+    );
+    expect(after.keys).toEqual([`downtime:${lastAlive}`]);
+    expect(after.logs).toContain(
+      `daemon was not running from=2026-11-12T07:22:00.000Z to=2026-11-13T12:50:00.000Z missed_full=4 missed_reminder=14`
+    );
+    expect(JSON.parse(readFileSync(after.alivePath, 'utf8'))).toEqual({
+      aliveAt: Date.parse('2026-11-13T12:50:00Z'),
+    });
+    after.scheduler.stop();
+  });
+
+  it('says nothing on a first start or a restart that passed no report hour', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-12T13:30:00Z')); // 22:30 KST
+    const first = setup();
+    first.scheduler.start();
+    first.scheduler.stop();
+    // A restart within the hour, and one across 23:00 and midnight, which are not report hours.
+    for (const now of ['2026-11-12T13:31:00Z', '2026-11-12T15:10:00Z']) {
+      vi.setSystemTime(new Date(now));
+      const restarted = setup();
+      restarted.scheduler.start();
+      await vi.advanceTimersByTimeAsync(0);
+      restarted.scheduler.stop();
+      expect(restarted.sent).toEqual([]);
+      expect(restarted.logs.filter((line) => line.startsWith('daemon was not running'))).toEqual(
+        []
+      );
+    }
+    expect(first.sent).toEqual([]);
+  });
+
+  it('surfaces a corrupt record of when it last ran', () => {
+    const ctx = setup();
+    mkdirSync(join(root, 'runtime'), { recursive: true });
+    writeFileSync(ctx.alivePath, '{"aliveAt":"yesterday"}');
+    expect(() => createReportScheduler(ctx.options)).toThrow(/alive/);
   });
 
   it('surfaces corrupt schedule state instead of silently forgetting delivered hours', () => {

@@ -26,6 +26,11 @@ export interface ReportSchedulerOptions {
   config: W1ReportsConfig;
   timeZone: TimeZoneSetting;
   statePath: string;
+  /**
+   * When the schedule last ran, written at start and every minute. A start compares it with the
+   * time now and tells the owner which report hours passed with nothing sent.
+   */
+  alivePath: string;
   intake: Pick<StimulusIntake, 'acceptScheduled'>;
   /**
    * Write a daily wiki page at reports.daily_hour; only with the wiki enabled. `written` says
@@ -73,6 +78,22 @@ function loadState(path: string): ReportScheduleState {
   return state as ReportScheduleState;
 }
 
+function readAlive(path: string): number | null {
+  if (!existsSync(path)) return null;
+  const record: unknown = JSON.parse(readFileSync(path, 'utf8'));
+  const aliveAt = (record as { aliveAt?: unknown } | null)?.aliveAt;
+  if (!Number.isSafeInteger(aliveAt) || (aliveAt as number) < 0)
+    throw new Error('Invalid report schedule alive record');
+  return aliveAt as number;
+}
+
+function writeJson(path: string, value: unknown): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = `${path}.tmp`;
+  writeFileSync(temporary, JSON.stringify(value, null, 2), 'utf8');
+  renameSync(temporary, path);
+}
+
 /**
  * When the latest report sent that covers this kind was queued: a reminder is covered by a later
  * reminder or full report, as tick treats a full report sent in its hour. 0 when nothing covers it.
@@ -86,22 +107,73 @@ function coveredUntil(state: ReportScheduleState, report: 'full' | 'reminder' | 
 /** Produce scheduled owner turns; the mailbox holds the one-at-a-time boundary. */
 export function createReportScheduler(options: ReportSchedulerOptions) {
   let state = loadState(options.statePath);
+  const lastAlive = readAlive(options.alivePath);
   let timer: ReturnType<typeof setInterval> | undefined;
-  const tick = (now = new Date()): void => {
+  const localTime = (now: Date) => {
     const parts = new Intl.DateTimeFormat('en-CA', {
       timeZone: options.timeZone.get(),
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
       hour: '2-digit',
+      minute: '2-digit',
       hourCycle: 'h23',
     }).formatToParts(now);
     const part = (type: Intl.DateTimeFormatPartTypes) =>
       parts.find((entry) => entry.type === type)!.value;
-    const hour = Number(part('hour'));
     const day = `${part('year')}-${part('month')}-${part('day')}`;
-    const hourKey = `${day}:${part('hour')}`;
-    const full = options.config.full_report_hours.includes(hour);
+    return {
+      hour: Number(part('hour')),
+      day,
+      hourKey: `${day}:${part('hour')}`,
+      minute: `${day} ${part('hour')}:${part('minute')}`,
+    };
+  };
+  const reportOfHour = (hour: number): 'full' | 'reminder' | null =>
+    options.config.full_report_hours.includes(hour)
+      ? 'full'
+      : hour >= options.config.reminder_start_hour && hour <= options.config.reminder_end_hour
+        ? 'reminder'
+        : null;
+  /**
+   * Tell the owner which report hours passed while the schedule was not running: those after the
+   * hour it last ran in and before the hour it starts in, which runs as usual. Quarter-hour steps
+   * reach every local hour, half-hour zones included. A start that passed none says nothing.
+   */
+  const reportDowntime = async (from: number, to: number): Promise<void> => {
+    const skip = new Set([localTime(new Date(from)).hourKey, localTime(new Date(to)).hourKey]);
+    const missed: Array<{ report: 'full' | 'reminder'; at: string }> = [];
+    for (let at = from; at < to; at += 15 * 60_000) {
+      const local = localTime(new Date(at));
+      if (skip.has(local.hourKey)) continue;
+      skip.add(local.hourKey);
+      const report = reportOfHour(local.hour);
+      if (report) missed.push({ report, at: `${local.day} ${local.hourKey.slice(11)}:00` });
+    }
+    if (missed.length === 0) return;
+    const full = missed.filter((entry) => entry.report === 'full').map((entry) => entry.at);
+    const reminders = missed.length - full.length;
+    options.log(
+      `daemon was not running from=${new Date(from).toISOString()} to=${new Date(to).toISOString()} missed_full=${full.length} missed_reminder=${reminders}`
+    );
+    const sentences = [
+      ...(full.length > 0
+        ? [`${full.length} full report${full.length === 1 ? '' : 's'} (${full.join(', ')})`]
+        : []),
+      ...(reminders > 0 ? [`${reminders} reminder hour${reminders === 1 ? '' : 's'}`] : []),
+    ];
+    await options.sendToOwner(
+      [
+        `MAMA was not running from ${localTime(new Date(from)).minute} to ${localTime(new Date(to)).minute} (${options.timeZone.get()}).`,
+        `Not sent in that time: ${sentences.join(' and ')}.`,
+        'The next full report covers everything since the last one sent.',
+      ].join('\n'),
+      `downtime:${from}`
+    );
+  };
+  const tick = (now = new Date()): void => {
+    const { hour, day, hourKey } = localTime(now);
+    const full = reportOfHour(hour) === 'full';
     const reportDue = full
       ? state.lastFullKey !== hourKey
       : hour >= options.config.reminder_start_hour &&
@@ -153,14 +225,19 @@ export function createReportScheduler(options: ReportSchedulerOptions) {
     tick,
     start: () => {
       if (timer !== undefined) return;
+      const startedAt = Date.now();
+      writeJson(options.alivePath, { aliveAt: startedAt });
       timer = setInterval(() => {
         try {
+          writeJson(options.alivePath, { aliveAt: Date.now() });
           tick();
         } catch (error) {
           options.onError(error);
         }
       }, 60_000);
       timer.unref();
+      if (lastAlive !== null)
+        void reportDowntime(lastAlive, startedAt).catch((error: unknown) => options.onError(error));
     },
     // The daemon stops producers first, then drains the owner before Telegram.
     stop: () => {
@@ -201,10 +278,7 @@ export function createReportScheduler(options: ReportSchedulerOptions) {
           : report === 'full'
             ? { ...state, lastFullKey: hourKey, lastFullAt: row.occurredAt }
             : { ...state, lastReminderKey: hourKey, lastReminderAt: row.occurredAt };
-      mkdirSync(dirname(options.statePath), { recursive: true });
-      const temporary = `${options.statePath}.tmp`;
-      writeFileSync(temporary, JSON.stringify(next, null, 2), 'utf8');
-      renameSync(temporary, options.statePath);
+      writeJson(options.statePath, next);
       state = next;
     },
   };

@@ -1256,6 +1256,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
             }),
         timeZone,
         statePath: join(paths.runtimeRoot, 'report-schedule-state.json'),
+        alivePath: join(paths.runtimeRoot, 'report-schedule-alive.json'),
         intake: {
           acceptScheduled: (input) => {
             const receipt = owner!.intake.acceptScheduled(input);

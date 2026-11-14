@@ -76,6 +76,11 @@ The scheduler checks every minute. It records an hour as sent only after deliver
 through `delivery.reports` succeeds; pending reports prevent another scheduled report
 from starting. See the [messengers guide](messengers.md) for route setup.
 
+Report hours that pass while MAMA is not running are not sent late. When MAMA starts again, it
+tells you through the same route when it stopped and started and which full reports and how many
+reminder hours were missed; the next full report covers everything since the last one sent. A
+restart that passes no report hour, such as an update, sends nothing.
+
 ## Check a discrepancy
 
 Name the affected work and what is wrong in your owner chat. Ask MAMA to compare its

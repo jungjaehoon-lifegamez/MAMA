@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- When MAMA starts after being down, the owner is told when it stopped and started and which
+  report hours passed with nothing sent: the full reports by hour and the number of reminder
+  hours. The report schedule writes `runtime/report-schedule-alive.json` every minute for this. A
+  restart that passes no report hour, such as an update, sends nothing. Before, a 29-hour stop
+  (2026-11-12) left the owner with no notice at all.
+
 - `mama init --section <part> --non-interactive` for every part, not only `connectors`, so the
   person's agent changes the setup without a terminal. The answers that are not secret come from
   the environment: `MAMA_INIT_BACKEND` and `MAMA_INIT_MODEL` (`model`, which names a signed-out
