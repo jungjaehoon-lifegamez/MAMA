@@ -3016,3 +3016,16 @@ The implementation writes raw/index data during import only. Replay is the owner
   - `install.md` PR 3 now reads merged (#543); `plan.md` lists Q3 as the open owner decision.
 - The prompt warning is gone (#562, merged 25c19fbca, deployed 12:28 KST): `composeLayers` reports only the layers it trimmed. The 13:00 full report opened a new owner session, which logged the warning before, and logged no size warning.
 - Still open: the core change waits for the next mama-core release.
+
+### W2.4 live proof steps 2 and 3 on the clean account (2026-11-14)
+
+- Result: step 2 passes; step 3 finds that a member session's shell cannot run the managed Node and silently runs another `node`. The install on the account is the 10-31 leg A one (mama-os 0.78.0), driven over SSH from the owner's account. Serves the shared install (I1, I6).
+- Evidence:
+  - Access: a key for the test account only, Remote Login allowing that account, and a tmux session started from an SSH login where the owner unlocked the account's keychain. A plain SSH session cannot read the keychain, so Claude Code reads as signed out there.
+  - Step 2: `mama doctor` in the tmux session: no fail (config, schema core 106/106, member_root, node v22.23.4 with SQLite, backend claude 2.1.316 signed in, sandbox, telegram, daemon, service launchd); warnings: toolkit not installed, release check `ETIMEDOUT`. `start.sh` execs `~/.mama/node/bin/node`, its PATH has no per-terminal folder, and the service's `claude` is `~/.local/bin/claude`. `mama update --dry-run` against npmjs printed `0.78.0 → 0.79.1 (npm install, prefix ~/.mama/npm)` and the staged steps.
+  - Step 3: an owner DM went to a new member session (`member-agent:<principal>`), whose Bash ran `node --version; command -v node`, both exit 0: `v25.8.0`, `/opt/homebrew/bin/node`. The common session, asked the same in the group, got `v22.23.4`, `~/.mama/node/bin/node`. Members are denied the home directory (`ownerDataReadPaths` starts with `homedir()`, `s/runtime/backend-security.ts`), so `~/.mama/node/bin` on the daemon's PATH is unreadable and the shell takes the next `node`. No error line in the log for either turn.
+- Still open:
+  - New row: on a host whose only Node is the managed one, a member's `node` is not found; here it is a different major (25 against the pinned 22). Where the managed Node must live, or how members reach it, is not decided.
+  - `mama doctor` run from SSH reports the backend not signed in while the service, in the GUI session, is signed in.
+  - The account's `~/.npmrc` still names the 10-31 local registry (`127.0.0.1:4873`), which is why the daemon's release check times out. It stays for step 4 and is removed after it.
+  - Steps 4 and 5 need candidate builds served by a local registry, `/update` from the owner, and a reboot.
