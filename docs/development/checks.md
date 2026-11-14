@@ -2995,3 +2995,12 @@ The implementation writes raw/index data during import only. Replay is the owner
   - The owner has not confirmed the message in the chat; delivery rests on the Telegram message id in the log.
   - The daemon was down about 29 hours (machine reboot 2026-11-12 16:31 until the 2026-11-13 21:50 login): it is a launchd user agent and starts only at login. Reports in that window were not sent.
   - Three failed `file:` deliveries from October stay in the ledger as uncertain. The `mama` on PATH is an old global install (0.53.2-local.11) and reports the daemon as stopped.
+
+### Host restart: FileVault off, automatic login, downtime notice (2026-11-14)
+
+- Result: the host now restarts into a running daemon, and a stop that passes report hours is reported to the owner (#561, merged a511bed3a, deployed 11:19 KST). Serves the Report check.
+- Evidence:
+  - The 2026-11-12 16:31 restart sat at the FileVault unlock screen until 2026-11-13 21:46 (powerd started then); nothing on the disk runs before unlock. The owner turned FileVault off and set automatic login (owner decision 2026-11-14); read back: `fdesetup status` Off, `autoLoginUser` set to the owner's account.
+  - #561: the report schedule writes `runtime/report-schedule-alive.json` each minute; on start it names the missed full reports and reminder hours, keeps an undelivered notice and retries it. Codex's two findings and CodeRabbit's one are fixed in the PR; CI green.
+  - Live: all eight boot stages, the record written at start and advancing each minute; this restart passed no report hour and sent nothing.
+- Still open: no real restart has been run since the change, so automatic login starting the daemon and a live downtime notice are unproven. Cause of the 11-12 restart unknown (no clean shutdown, no panic report).
