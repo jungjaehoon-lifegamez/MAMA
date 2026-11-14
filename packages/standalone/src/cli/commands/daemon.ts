@@ -1256,6 +1256,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
             }),
         timeZone,
         statePath: join(paths.runtimeRoot, 'report-schedule-state.json'),
+        alivePath: join(paths.runtimeRoot, 'report-schedule-alive.json'),
         intake: {
           acceptScheduled: (input) => {
             const receipt = owner!.intake.acceptScheduled(input);
@@ -1271,7 +1272,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
               )
               .get(OWNER_PRINCIPAL_ID, report, hourKey)
           ),
-        sendToOwner: (text, key) => gateways.get(reportRoute)!.sendToOwner(text, key),
+        sendToOwner: (text, key, sendOptions) =>
+          gateways.get(reportRoute)!.sendToOwner(text, key, sendOptions),
         // Every messenger keys outbound text the same way in the one shared ledger.
         retireUndelivered: (key) => messageLedger!.retireUndelivered(outboundLedgerKey(key)),
         log: (line) => logger.info(line),

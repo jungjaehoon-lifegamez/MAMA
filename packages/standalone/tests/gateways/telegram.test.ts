@@ -259,6 +259,7 @@ describe('TelegramGateway', () => {
     const scheduler = createReportScheduler({
       config: { full_report_hours: [13], reminder_start_hour: 9, reminder_end_hour: 21 },
       statePath,
+      alivePath: join(root, 'alive.json'),
       intake: { acceptScheduled: () => ({ state: 'accepted', inputId: 'fixture' }) },
       hasPendingReport: () => false,
       sendToOwner: (text, key) => gateway.sendToOwner(text, key),
