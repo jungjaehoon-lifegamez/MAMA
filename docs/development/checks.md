@@ -3014,4 +3014,5 @@ The implementation writes raw/index data during import only. Replay is the owner
   - The three failed `file:exec-…` receipts (10-22, 10-27) were removed from the owner-message ledger with the daemon stopped (116 → 113 entries, copy kept in the session scratchpad); the next boot logged no `requires reconciliation` line, all eight stages, Telegram polling. Failed file receipts are never pruned (only delivered ones are), so one more would stay the same way.
   - The per-turn "System prompt exceeds truncation threshold" warning (217 lines in the current log) truncates nothing: MAMA states its owner and member prompts as priority-1 layers, which `composeLayers` never trims, and no `Truncated layers` line was ever logged. It is noise from core's default budget.
   - `install.md` PR 3 now reads merged (#543); `plan.md` lists Q3 as the open owner decision.
-- Still open: whether to silence the prompt warning (a consumer budget through `setPromptBudget`, or removing it).
+- The prompt warning is gone (#562, merged 25c19fbca, deployed 12:28 KST): `composeLayers` reports only the layers it trimmed. The 13:00 full report opened a new owner session, which logged the warning before, and logged no size warning.
+- Still open: the core change waits for the next mama-core release.
