@@ -3,6 +3,7 @@ import { memberSystemLayers } from './member-system-prompt.js';
 import { backendEnvironment, credentialReadPaths, normalizeReadPaths } from './backend-security.js';
 import { memberClaudeTmpDir, ensureMemberClaudeTmpDir } from './member-paths.js';
 import { assertToolsOwnership, assertToolsReadable } from './tools-paths.js';
+import { memberNodeBin } from './member-node.js';
 import { findExecutable } from '../cli/launch-files.js';
 import { untrustedToolData } from '../utils/untrusted-content.js';
 import { webFetchTurnMode, writeWebFetchTurnMode } from './web-fetch-scope.js';
@@ -228,7 +229,7 @@ function driverOptions(
   // Pin the stable path once the host owns the root; installation can fill it later.
   const path =
     options.toolsRoot && existsSync(options.toolsRoot)
-      ? `${join(options.toolsRoot, 'current', 'bin')}:${process.env.PATH ?? ''}`
+      ? `${join(options.toolsRoot, 'current', 'bin')}:${memberNodeBin(options.toolsRoot)}:${process.env.PATH ?? ''}`
       : process.env.PATH;
   const configDir = options.claudeConfigDir;
   if (options.backend === 'codex' && !process.env.PATH?.trim()) {

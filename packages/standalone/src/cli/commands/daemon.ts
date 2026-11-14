@@ -1,5 +1,6 @@
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import { readDocumentToolkit } from '../../tools/document-toolkit.js';
+import { syncMemberNode } from '../../runtime/member-node.js';
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -698,6 +699,10 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
     logger.info(
       `document toolkit: ${readDocumentToolkit(config.tools_root, (error) => logger.error(error.message)) ? 'present' : 'absent (run mama tools install)'}`
     );
+    if (config.tools_root !== undefined && existsSync(config.tools_root)) {
+      const node = syncMemberNode(config.tools_root);
+      logger.info(`members' node: ${node.version} at ${node.path} (${node.how})`);
+    } else logger.info("members' node: none (tools_root is not set or missing)");
     const timeZone = createTimeZoneSetting(config.timezone);
     validateDeliveryRoutes(config);
     declareModelCache();

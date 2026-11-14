@@ -493,7 +493,7 @@ it.each(['codex', 'claude'] as const)(
       );
       expect(owner.deniedReadPaths).not.toContain(f.options.workspaceDir);
       expect(owner.processEnv.TMPDIR).toBe(process.env.TMPDIR);
-      const toolPath = `${join(toolsRoot, 'current', 'bin')}:${process.env.PATH}`;
+      const toolPath = `${join(toolsRoot, 'current', 'bin')}:${join(toolsRoot, 'node', 'bin')}:${process.env.PATH}`;
       expect(owner.processEnv.PATH).toBe(toolPath);
       if (backend === 'codex') expect(owner.shellEnvironment).toEqual({ PATH: toolPath });
       const paths = memberPaths(f.root, f.member);

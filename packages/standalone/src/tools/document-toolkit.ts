@@ -27,6 +27,7 @@ import {
 import { liveToolkitLease, onToolkitSignal, tryToolkitLock } from './toolkit-process.js';
 import { runCommand, type CommandRunner } from './command-runner.js';
 import { renderEnvironment, renderOffice, sandboxedCommand } from './office-render.js';
+import { isManagedMemberNode } from '../runtime/member-node.js';
 import {
   TOOLKIT_ASSETS,
   TOOLKIT_INSTALL_COMMAND,
@@ -168,6 +169,8 @@ function claimToolkitRoot(root: string): void {
     const meta = lstatSync(path);
     let managed = false;
     if (['apps', 'fonts', '.leases'].includes(name)) managed = meta.isDirectory();
+    // The host's Node.js for members' shells, only as member-node.ts writes it.
+    else if (name === 'node') managed = isManagedMemberNode(path);
     else if (name === 'skills') managed = isManagedSkills(path);
     else if (TOOLKIT_VERSION_NAME.test(name))
       managed = meta.isDirectory() && isManagedVersion(path, name);

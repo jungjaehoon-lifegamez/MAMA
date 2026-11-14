@@ -27,6 +27,7 @@ import { CliInputError, createTerminalPrompt, type PromptAdapter } from '../prom
 import { acquireInstallLock, daemonControlPaths, lockHolder } from '../runtime/daemon-control.js';
 import { runStop } from './control.js';
 import { serviceFile, uninstallService, type ServiceOptions } from './service.js';
+import { isManagedMemberNode } from '../../runtime/member-node.js';
 
 const USAGE = 'Usage: mama uninstall [--dry-run] [--data [--toolkit] [--confirm-home <path>]]';
 const PRINCIPAL_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -213,6 +214,8 @@ function dataPlan(home: string, configPath: string, toolkit: boolean): DataPlan 
         const path = join(config.tools_root, entry);
         if (entry === 'skills') {
           plan.remove.push({ path, what: 'the common skills' });
+        } else if (entry === 'node' && isManagedMemberNode(path)) {
+          plan.remove.push({ path, what: "the members' Node.js" });
         } else if (!toolkit) {
           continue;
         } else if (entry.startsWith('v-')) {

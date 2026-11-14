@@ -81,7 +81,8 @@ platform. If the toolkit cannot install, setup goes on without it, and
 toolkit holds Python libraries for PowerPoint, Word, Excel and PDF files, LibreOffice and CJK
 fonts. Ask for a document in your DM or the group. On macOS MAMA can also render a document's pages to check them before
 sending it; the renderer runs only there. Sessions cannot install other packages, and their shell
-has no network.
+has no network. Every session's shell also has MAMA's own Node.js as `node`, from
+`<tools_root>/node/bin`; npm and npx are not there.
 
 ## Export and erase your records
 

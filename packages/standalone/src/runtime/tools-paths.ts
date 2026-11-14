@@ -1,6 +1,6 @@
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { physicalReadPath } from './backend-security.js';
-import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readlinkSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 /** A shared parent must never supply executable code owned/writable by someone else. */
@@ -80,6 +80,29 @@ export function assertToolsOwnership(root: string): void {
       if (lstatSync(path).isSymbolicLink())
         throw new Error(`Unsafe tools_root version ${path}: symlinks are not allowed`);
       directory(path);
+    } else if (entry === 'node') {
+      // Every session's PATH names node/bin, so nothing in it may be another account's.
+      for (const part of [path, join(path, 'bin')]) {
+        if (!existsSync(part)) continue;
+        if (lstatSync(part).isSymbolicLink())
+          throw new Error(`Unsafe tools_root node ${part}: symlinks are not allowed`);
+        directory(part);
+      }
+      const bin = join(path, 'bin');
+      if (existsSync(bin))
+        for (const name of readdirSync(bin)) {
+          const meta = lstatSync(join(bin, name));
+          // A link names a Node outside HOME by its absolute real path (member-node.ts).
+          const link = meta.isSymbolicLink() && isAbsolute(readlinkSync(join(bin, name)));
+          if (
+            !(meta.isFile() || link) ||
+            meta.uid !== uid ||
+            (meta.isFile() && (meta.mode & 0o022) !== 0)
+          )
+            throw new Error(
+              `Unsafe tools_root node ${join(bin, name)}: require a file of uid ${uid} without group/other write, or its link to an absolute path`
+            );
+        }
     }
   }
 }

@@ -562,7 +562,7 @@ describe('managed document toolkit session PATH', () => {
       const expected =
         state === 'missing-root'
           ? process.env.PATH
-          : `${join(toolsRoot, 'current', 'bin')}${delimiter}${process.env.PATH}`;
+          : `${join(toolsRoot, 'current', 'bin')}${delimiter}${join(toolsRoot, 'node', 'bin')}${delimiter}${process.env.PATH}`;
       expect(driver.processEnv.PATH).toBe(expected);
       expect(driver.command).toBe(join(hostBin, backend));
       if (backend === 'codex') expect(driver.shellEnvironment?.PATH).toBe(expected);
