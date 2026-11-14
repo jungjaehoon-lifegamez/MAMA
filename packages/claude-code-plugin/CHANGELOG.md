@@ -7,12 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-11-14
+
 ### Changed
 
 - The `mama-install` skill changes the setup later from the conversation: every
   `mama init --section <part> --non-interactive`, `mama secret set <NAME> --non-interactive` and,
   once the person confirms the plan, `mama uninstall --data --confirm-home <path>`, with every
   secret on the setup page. Jev is turned on this way when the person chooses it.
+- The MCP server is pinned to `@jungjaehoon/mama-server@2.6.2`, published with mama-core 8.9.1,
+  the core the hooks install.
 
 ## [2.4.1] - 2026-11-01
 
