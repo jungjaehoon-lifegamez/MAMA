@@ -3055,3 +3055,14 @@ The implementation writes raw/index data during import only. Replay is the owner
   - Progress sends: on the 18:11 run the first send failed (`fetch failed`) and the last was logged as a 3-second timeout though it arrived.
   - A member being refused `/update` was not tried: the account has no member without the owner role.
 - Drain during a turn (18:48, CLI `mama update 0.79.1005` started while an owner DM ran `sleep 60` in the shell): `1 turn running; inputs 1 claimed`, `draining … waiting for 1 turn running`, the turn completed at 18:49:33 (run `committed`, reply delivered), then `drained: nothing runs; stopping`, snapshot, `updated: 0.79.1004 → 0.79.1005` at 18:49:42; snapshot and old folder removed. The account's test `~/.npmrc` is removed; it runs the unpublished 0.79.1005.
+
+### W2.4 step 5: moving the managed Node on the clean account (2026-11-14)
+
+- Result: re-running the install command moves the managed Node and the service comes back; a move cut off midway starts nothing at login and the next run undoes it. Serves the shared install (I6).
+- Evidence:
+  - Move up: `install.sh` with the pin changed to 22.23.5 (version and the four SHA-256 from nodejs.org's `SHASUMS256.txt`), run with no flags in the account's tmux session: `MAMA runs Node.js 22.23.4 …; this installer pins 22.23.5, so it moves MAMA to it`, download, drained stop, swap, `moved: MAMA runs on Node.js 22.23.5`, the package left at 0.79.1005. Status shows Node v22.23.5, all eight boot stages, no `node.old`, journal or hold left, and boot re-copied members' Node (`v22.23.5 … (copied)`).
+  - Cut-off move back to the repo's pin (22.23.4): `update --node` killed with SIGKILL once `node.old` appeared. The renames had both happened; `update.hold` and `node-move.json` (prepare, step 4) stayed. `mama status` said stopped and named the unfinished move with the install command; doctor failed on it.
+  - Login after the cut: loading the LaunchAgent as a login does (`launchctl bootstrap gui/<uid>`) ran `start.sh` once, which exited 0 on the hold; no daemon started.
+  - Next run: `the move … was cut off, and is undone: MAMA runs on Node.js 22.23.5 again. Run this installer again to move it.` (exit 1), service started on 22.23.5, hold and journal removed. A third run moved it to 22.23.4: all eight boot stages, members' Node re-copied.
+- Deviations: the install command ran from a local copy of the script, not `curl …/releases/latest/download/install.sh` (no release carries another pin); the reboot was replaced by the LaunchAgent bootstrap a login performs; the kill landed after both renames, not between them.
+- Still open: a stale `update.holder.json` stays after the killed move (it did not block the next runs).
