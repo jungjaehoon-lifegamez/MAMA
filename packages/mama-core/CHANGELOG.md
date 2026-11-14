@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `composeLayers` reports only the layers it trimmed. It no longer passes the size warnings
+  ("approaching limit", "exceeds truncation threshold") to its diagnostic, which a prompt made of
+  priority-1 layers only, as MAMA's are, raised on every turn though nothing could be trimmed.
+  `PromptSizeMonitor.check()` still returns them.
+
 ## [8.9.0] - 2026-11-01
 
 ### Added
