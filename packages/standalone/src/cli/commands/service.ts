@@ -282,6 +282,9 @@ export async function installService(
   if (manager === 'systemd') {
     check(run, 'systemctl', ['--user', 'daemon-reload']);
     check(run, 'systemctl', ['--user', 'enable', SYSTEMD_UNIT]);
+    // An update rewrites the unit after an older version stopped it: a unit written before
+    // SuccessExitStatus=143 reads "failed" from that stop, which the update's doctor step refuses.
+    run('systemctl', ['--user', 'reset-failed', SYSTEMD_UNIT]);
     const user = userInfo().username;
     // Linger is on exactly when systemd's marker file exists; reading it needs no session.
     if (!existsSync(join(options.lingerRoot ?? '/var/lib/systemd/linger', user))) {

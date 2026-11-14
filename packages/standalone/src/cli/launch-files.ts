@@ -264,6 +264,9 @@ export function systemdUnit(): string {
     'ExecStart="%h/.mama/start.sh"',
     'Restart=on-failure',
     'RestartSec=10',
+    // The daemon exits 143 after a SIGTERM stop by design; counted as a failure, the unit read
+    // "failed" after every stop and the updater's doctor step rolled each Linux update back.
+    'SuccessExitStatus=143',
     `TimeoutStopSec=${SERVICE_STOP_SECONDS}`,
     'KillMode=mixed',
     '',

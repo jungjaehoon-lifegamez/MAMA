@@ -15,7 +15,8 @@ import { gwsTool } from '../../connectors/framework/gws-utils.js';
 import { backendEnvironment } from '../../runtime/backend-security.js';
 import { CliInputError, nonblankLine, type PromptAdapter } from '../prompt.js';
 import { shellQuote, type SecretName } from '../secrets.js';
-import { probeBackend, type ProbeRun } from '../runtime/backend-probe.js';
+import { defaultProbeRun, probeBackend, type ProbeRun } from '../runtime/backend-probe.js';
+import { sandboxCheck } from '../runtime/diagnostics.js';
 import { telegramCheck } from '../runtime/diagnostics.js';
 import {
   serviceSight,
@@ -432,7 +433,8 @@ export function checkBackend(
   locate: (name: string) => string | undefined,
   run: ProbeRun | undefined,
   next: string,
-  signIn?: { run: BackendSignIn; write: (line: string) => void }
+  signIn?: { run: BackendSignIn; write: (line: string) => void },
+  platform: NodeJS.Platform = process.platform
 ): void {
   const executable = locate(backend);
   const command = executable === undefined ? backend : shellQuote(executable);
@@ -483,6 +485,23 @@ export function checkBackend(
   }
   if (!probe.loggedIn) {
     throw new CliInputError(`${backend} is not signed in. Run: ${login}, then ${next}.`);
+  }
+  // Claude refuses to start without its shell sandbox (failIfUnavailable), so on Linux every turn
+  // would fail without bwrap and socat; doctor's check, before anything is written.
+  if (backend === 'claude' && platform === 'linux') {
+    const dirs = (process.env.PATH ?? '').split(':').filter(Boolean);
+    const probe = run ?? defaultProbeRun;
+    // With the daemon's environment, as the backend's own checks above.
+    const sandbox = sandboxCheck(
+      platform,
+      dirs,
+      (name) => locate(name),
+      (command, args) => probe(command, args, env)
+    );
+    if (sandbox.status !== 'ok')
+      throw new CliInputError(
+        `Claude's shell sandbox cannot start: ${sandbox.detail}. Run: ${sandbox.fix}, then ${next}.`
+      );
   }
 }
 
