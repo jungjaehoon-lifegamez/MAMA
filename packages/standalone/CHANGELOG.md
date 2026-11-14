@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - When MAMA starts after being down, the owner is told when it stopped and started and which
   report hours passed with nothing sent: the full reports by hour and the number of reminder
-  hours. The report schedule writes `runtime/report-schedule-alive.json` every minute for this. A
+  hours. The report schedule writes `runtime/report-schedule-alive.json` every minute for this,
+  and keeps a notice there until it is delivered, trying again each minute and after a restart. A
   restart that passes no report hour, such as an update, sends nothing. Before, a 29-hour stop
   (2026-11-12) left the owner with no notice at all.
 

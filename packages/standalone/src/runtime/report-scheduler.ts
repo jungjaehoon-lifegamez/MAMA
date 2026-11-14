@@ -44,7 +44,11 @@ export interface ReportSchedulerOptions {
    * would only write a second text under the same delivery key.
    */
   hasPendingReport: (report: 'full' | 'reminder' | 'daily', hourKey: string) => boolean;
-  sendToOwner: (text: string, idempotencyKey: string) => Promise<void>;
+  sendToOwner: (
+    text: string,
+    idempotencyKey: string,
+    sendOptions?: { resendUncertain?: boolean }
+  ) => Promise<void>;
   /** Drop the owner-message receipt a superseded report left undelivered under this key. */
   retireUndelivered: (idempotencyKey: string) => void;
   log: (line: string) => void;
@@ -78,13 +82,34 @@ function loadState(path: string): ReportScheduleState {
   return state as ReportScheduleState;
 }
 
-function readAlive(path: string): number | null {
+/** A stretch the schedule was not running, kept until its notice to the owner is delivered. */
+interface Downtime {
+  from: number;
+  to: number;
+}
+
+interface AliveRecord {
+  aliveAt: number;
+  unsent: Downtime[];
+}
+
+function readAlive(path: string): AliveRecord | null {
   if (!existsSync(path)) return null;
-  const record: unknown = JSON.parse(readFileSync(path, 'utf8'));
-  const aliveAt = (record as { aliveAt?: unknown } | null)?.aliveAt;
-  if (!Number.isSafeInteger(aliveAt) || (aliveAt as number) < 0)
+  const record = JSON.parse(readFileSync(path, 'utf8')) as {
+    aliveAt?: unknown;
+    unsent?: unknown;
+  } | null;
+  const time = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0;
+  const unsent = record?.unsent ?? [];
+  if (
+    !time(record?.aliveAt) ||
+    !Array.isArray(unsent) ||
+    !unsent.every(
+      (entry: { from?: unknown; to?: unknown } | null) => time(entry?.from) && time(entry?.to)
+    )
+  )
     throw new Error('Invalid report schedule alive record');
-  return aliveAt as number;
+  return { aliveAt: record!.aliveAt as number, unsent: unsent as Downtime[] };
 }
 
 function writeJson(path: string, value: unknown): void {
@@ -108,6 +133,8 @@ function coveredUntil(state: ReportScheduleState, report: 'full' | 'reminder' | 
 export function createReportScheduler(options: ReportSchedulerOptions) {
   let state = loadState(options.statePath);
   const lastAlive = readAlive(options.alivePath);
+  let unsent: Downtime[] = lastAlive?.unsent ?? [];
+  let sending = false;
   let timer: ReturnType<typeof setInterval> | undefined;
   const localTime = (now: Date) => {
     const parts = new Intl.DateTimeFormat('en-CA', {
@@ -136,40 +163,64 @@ export function createReportScheduler(options: ReportSchedulerOptions) {
         ? 'reminder'
         : null;
   /**
-   * Tell the owner which report hours passed while the schedule was not running: those after the
-   * hour it last ran in and before the hour it starts in, which runs as usual. Quarter-hour steps
-   * reach every local hour, half-hour zones included. A start that passed none says nothing.
+   * The report hours a stop passed with nothing sent: those after the hour the schedule last ran in
+   * and before the hour of its first tick, a minute after the start, which runs as usual. A start
+   * in an hour's last minute leaves that hour to the gap. Quarter-hour steps reach every local
+   * hour, half-hour zones included.
    */
-  const reportDowntime = async (from: number, to: number): Promise<void> => {
-    const skip = new Set([localTime(new Date(from)).hourKey, localTime(new Date(to)).hourKey]);
+  const missedHours = ({ from, to }: Downtime) => {
+    const skip = new Set([
+      localTime(new Date(from)).hourKey,
+      localTime(new Date(to + 60_000)).hourKey,
+    ]);
     const missed: Array<{ report: 'full' | 'reminder'; at: string }> = [];
-    for (let at = from; at < to; at += 15 * 60_000) {
+    for (let at = from; at < to + 60_000; at += 15 * 60_000) {
       const local = localTime(new Date(at));
       if (skip.has(local.hourKey)) continue;
       skip.add(local.hourKey);
       const report = reportOfHour(local.hour);
       if (report) missed.push({ report, at: `${local.day} ${local.hourKey.slice(11)}:00` });
     }
-    if (missed.length === 0) return;
+    return missed;
+  };
+  const downtimeNotice = (downtime: Downtime): string => {
+    const missed = missedHours(downtime);
     const full = missed.filter((entry) => entry.report === 'full').map((entry) => entry.at);
     const reminders = missed.length - full.length;
-    options.log(
-      `daemon was not running from=${new Date(from).toISOString()} to=${new Date(to).toISOString()} missed_full=${full.length} missed_reminder=${reminders}`
-    );
     const sentences = [
       ...(full.length > 0
         ? [`${full.length} full report${full.length === 1 ? '' : 's'} (${full.join(', ')})`]
         : []),
       ...(reminders > 0 ? [`${reminders} reminder hour${reminders === 1 ? '' : 's'}`] : []),
     ];
-    await options.sendToOwner(
-      [
-        `MAMA was not running from ${localTime(new Date(from)).minute} to ${localTime(new Date(to)).minute} (${options.timeZone.get()}).`,
-        `Not sent in that time: ${sentences.join(' and ')}.`,
-        'The next full report covers everything since the last one sent.',
-      ].join('\n'),
-      `downtime:${from}`
-    );
+    return [
+      `MAMA was not running from ${localTime(new Date(downtime.from)).minute} to ${localTime(new Date(downtime.to)).minute} (${options.timeZone.get()}).`,
+      `Not sent in that time: ${sentences.join(' and ')}.`,
+      'The next full report covers everything since the last one sent.',
+    ].join('\n');
+  };
+  const writeAlive = (aliveAt: number) =>
+    writeJson(options.alivePath, { aliveAt, ...(unsent.length > 0 ? { unsent } : {}) });
+  /**
+   * Send each notice still owed, oldest first, and keep it in the record until it is delivered: a
+   * failed send is tried again at the next minute, also after a restart. A send whose arrival is
+   * unknown goes out again (owner, 2026-11-13).
+   */
+  const sendDowntimeNotices = async (): Promise<void> => {
+    if (sending) return;
+    sending = true;
+    try {
+      while (unsent.length > 0) {
+        const downtime = unsent[0]!;
+        await options.sendToOwner(downtimeNotice(downtime), `downtime:${downtime.from}`, {
+          resendUncertain: true,
+        });
+        unsent = unsent.slice(1);
+        writeAlive(Date.now());
+      }
+    } finally {
+      sending = false;
+    }
   };
   const tick = (now = new Date()): void => {
     const { hour, day, hourKey } = localTime(now);
@@ -226,18 +277,35 @@ export function createReportScheduler(options: ReportSchedulerOptions) {
     start: () => {
       if (timer !== undefined) return;
       const startedAt = Date.now();
-      writeJson(options.alivePath, { aliveAt: startedAt });
+      if (lastAlive !== null) {
+        const downtime = { from: lastAlive.aliveAt, to: startedAt };
+        const missed = missedHours(downtime);
+        if (missed.length > 0) {
+          options.log(
+            `daemon was not running from=${new Date(downtime.from).toISOString()} to=${new Date(downtime.to).toISOString()} missed_full=${missed.filter((entry) => entry.report === 'full').length} missed_reminder=${missed.filter((entry) => entry.report === 'reminder').length}`
+          );
+          unsent = [...unsent, downtime];
+        }
+      }
+      writeAlive(startedAt);
+      const notify = () =>
+        void sendDowntimeNotices().catch((error: unknown) => options.onError(error));
       timer = setInterval(() => {
+        // A failed record write is reported, and the reports still run.
         try {
-          writeJson(options.alivePath, { aliveAt: Date.now() });
+          writeAlive(Date.now());
+        } catch (error) {
+          options.onError(error);
+        }
+        try {
           tick();
         } catch (error) {
           options.onError(error);
         }
+        notify();
       }, 60_000);
       timer.unref();
-      if (lastAlive !== null)
-        void reportDowntime(lastAlive, startedAt).catch((error: unknown) => options.onError(error));
+      notify();
     },
     // The daemon stops producers first, then drains the owner before Telegram.
     stop: () => {

@@ -624,10 +624,79 @@ describe('KST report scheduler', () => {
     expect(after.logs).toContain(
       `daemon was not running from=2026-11-12T07:22:00.000Z to=2026-11-13T12:50:00.000Z missed_full=4 missed_reminder=14`
     );
-    expect(JSON.parse(readFileSync(after.alivePath, 'utf8'))).toEqual({
-      aliveAt: Date.parse('2026-11-13T12:50:00Z'),
-    });
+    // Delivered, so the record no longer owes it.
+    expect(Object.keys(JSON.parse(readFileSync(after.alivePath, 'utf8')))).toEqual(['aliveAt']);
     after.scheduler.stop();
+  });
+
+  it('keeps an undelivered notice, sends it again each minute and after a restart, and only once delivered stops', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-12T07:21:00Z')); // 16:21 KST
+    const before = setup();
+    before.scheduler.start();
+    before.scheduler.stop();
+    vi.setSystemTime(new Date('2026-11-12T10:10:00Z')); // 19:10 KST: 17:00 and 18:00 passed
+    const failing = setup();
+    failing.setSend(async () => {
+      throw new Error('network down');
+    });
+    const errors: unknown[] = [];
+    const scheduler = createReportScheduler({
+      ...failing.options,
+      onError: (error: unknown) => errors.push(error),
+    });
+    scheduler.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(failing.keys).toEqual(['downtime:1794468060000']);
+    expect(errors).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(failing.keys).toEqual(['downtime:1794468060000', 'downtime:1794468060000']);
+    scheduler.stop();
+    expect(JSON.parse(readFileSync(failing.alivePath, 'utf8')).unsent).toEqual([
+      { from: 1794468060000, to: Date.parse('2026-11-12T10:10:00Z') },
+    ]);
+
+    // Restarted in the same hour: the owed notice goes out, and no new one is added.
+    vi.setSystemTime(new Date('2026-11-12T10:20:00Z'));
+    const restarted = setup();
+    restarted.scheduler.start();
+    await vi.waitFor(() => expect(restarted.sent).toHaveLength(1));
+    expect(restarted.sent[0]).toMatch(
+      /^MAMA was not running from 2026-11-12 16:21 to 2026-11-12 19:10 \(Asia\/Seoul\)\.\nNot sent in that time: 1 full report \(2026-11-12 18:00\) and 1 reminder hour\./
+    );
+    expect(restarted.keys).toEqual(['downtime:1794468060000']);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(restarted.sent).toHaveLength(1);
+    restarted.scheduler.stop();
+  });
+
+  it('counts the hour it starts in when its first tick falls in the next hour', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-12T07:21:00Z')); // 16:21 KST
+    setup().scheduler.start();
+    vi.setSystemTime(new Date('2026-11-12T09:59:30Z')); // 18:59:30 KST
+    const restarted = setup();
+    restarted.scheduler.start();
+    await vi.waitFor(() => expect(restarted.sent).toHaveLength(1));
+    expect(restarted.sent[0]).toContain('1 full report (2026-11-12 18:00) and 1 reminder hour.');
+    restarted.scheduler.stop();
+  });
+
+  it('still runs the reports when the record of when it last ran cannot be written', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T04:00:00Z')); // 13:00 KST
+    const ctx = setup();
+    const errors: unknown[] = [];
+    const scheduler = createReportScheduler({
+      ...ctx.options,
+      onError: (error: unknown) => errors.push(error),
+    });
+    scheduler.start();
+    mkdirSync(`${ctx.alivePath}.tmp`);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(errors).toHaveLength(1);
+    expect(ctx.queued).toHaveLength(1);
+    scheduler.stop();
   });
 
   it('says nothing on a first start or a restart that passed no report hour', async () => {
