@@ -194,11 +194,19 @@ export async function installService(
   // A command the running service already finds stays found when this shell's PATH lacks it: an
   // update or a reinstall run from a non-login shell (an SSH session without ~/.local/bin) would
   // otherwise refuse the backend the service runs today (2026-11-14, WSL).
-  const startDirs = startScriptPath(reading, home, options.platform ?? process.platform);
   const locate = options.findExecutable ?? findExecutable;
+  const startDirs = (): string[] => {
+    try {
+      return startScriptPath(reading, home, options.platform ?? process.platform);
+    } catch {
+      // A PATH line with broken quoting names no folder; --replace below is how it gets repaired,
+      // so the lookup must not stop that (Codex review).
+      return [];
+    }
+  };
   const { backend, gws, nodePath, cliPath, executablePaths } = serviceLaunch(config.agent.backend, {
     ...options,
-    findExecutable: (name) => locate(name) ?? findIn(name, startDirs),
+    findExecutable: (name) => locate(name) ?? findIn(name, startDirs()),
   });
   if (!backend) {
     throw new CliInputError(

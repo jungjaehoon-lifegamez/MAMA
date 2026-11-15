@@ -7,7 +7,10 @@ import { linuxSandboxArgs } from '../../src/tools/office-render.js';
 
 let root: string;
 beforeEach(() => {
-  root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'office-linux-')));
+  // Outside /tmp: the sandbox gives /tmp a private tmpfs and so skips covers under it, which on
+  // Linux (where tmpdir() is /tmp) would leave nothing for these tests to see (Codex review).
+  const base = process.platform === 'linux' ? '/var/tmp' : tmpdir();
+  root = fs.realpathSync(fs.mkdtempSync(join(base, 'office-linux-')));
 });
 afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true });

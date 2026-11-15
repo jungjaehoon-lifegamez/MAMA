@@ -248,6 +248,17 @@ describe('mama service install on macOS', () => {
     expect(readFileSync(join(root, 'start.sh'), 'utf8')).toContain(bin);
   });
 
+  it('still repairs a start.sh whose PATH line has broken quoting', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    launchd('unloaded');
+    const { home, root } = install();
+    writeFileSync(join(root, 'start.sh'), "#!/bin/sh\nexport PATH='/broken\n", { mode: 0o700 });
+    await installService(['--replace'], options(home, [], { platform: 'darwin' }));
+    const written = readFileSync(join(root, 'start.sh'), 'utf8');
+    expect(written).not.toContain("'/broken");
+    expect(written).toMatch(/^export PATH='[^']+'$/m);
+  });
+
   it('refuses before writing anything when the backend cannot be found', async () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     const { home, root } = install();
