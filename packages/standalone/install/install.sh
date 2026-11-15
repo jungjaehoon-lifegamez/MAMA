@@ -195,32 +195,41 @@ mama_install() {
       [ -n "$(find "/var/lib/mama/$user" -prune -type d -user "$(id -u)" -perm 0700 2>/dev/null)" ] &&
       [ -e "/var/lib/systemd/linger/$user" ] &&
       { ! command -v apt-get >/dev/null 2>&1 ||
-        { command -v bwrap >/dev/null 2>&1 && command -v socat >/dev/null 2>&1; }; }; then
-      say "/var/lib/mama/$user is in place and linger is on."
+        { command -v bwrap >/dev/null 2>&1 && command -v socat >/dev/null 2>&1 &&
+          python3 -c 'import ensurepip' >/dev/null 2>&1; }; }; then
+      say "/var/lib/mama/$user is in place, linger is on and the sandbox's packages are there."
     else
-      privileged="umask 022; install -d -m 0755 /var/lib/mama; install -d -o $user -m 0700 /var/lib/mama/$user; loginctl enable-linger $user"
+      # The folders and linger first, each checked; then, with apt, the packages. Exit 0 is both,
+      # 20 the folders and linger without the packages, anything else the folders or linger failed
+      # (or the password was refused). One call, so one password.
+      privileged="umask 022 && install -d -m 0755 /var/lib/mama && install -d -o $user -m 0700 /var/lib/mama/$user && loginctl enable-linger $user || exit 10"
       packages=''
       if command -v apt-get >/dev/null 2>&1; then
         packages=' and installs bubblewrap and socat (the shell sandbox) and python3-venv (the document tools)'
-        privileged="$privileged; DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap socat python3-venv"
+        privileged="$privileged; export DEBIAN_FRONTEND=noninteractive; apt-get -o DPkg::Lock::Timeout=300 update -qq && apt-get -o DPkg::Lock::Timeout=300 install -y bubblewrap socat python3-venv || exit 20"
       fi
       say "MAMA keeps member workspaces and document tools under /var/lib/mama/$user, and linger keeps it running after you log out. One privileged command makes them$packages:"
       say "  sudo sh -c '$privileged'"
-      # A terminal: sudo asks there. None, in a desktop session: pkexec asks in a window. Neither:
-      # sudo without a prompt, which runs only where no password is needed.
-      if (: </dev/tty) 2>/dev/null; then
-        elevate=sudo
-      elif command -v pkexec >/dev/null 2>&1 && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }; then
+      # A desktop session: pkexec asks in a window, even when this shell has a terminal, since that
+      # terminal may be the person's agent's (I1; review). Otherwise a terminal: sudo asks there.
+      # Neither: sudo without a prompt, which runs only where no password is needed.
+      if command -v pkexec >/dev/null 2>&1 && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }; then
         elevate=pkexec
-        say "A password window opens for it."
+        say "A password window should open for it; if none does, run the line above in a terminal."
       else
         elevate=sudo
       fi
-      if command -v "$elevate" >/dev/null 2>&1 && "$elevate" sh -c "$privileged" </dev/null; then
-        say "Done."
+      status=0
+      if command -v "$elevate" >/dev/null 2>&1; then
+        "$elevate" sh -c "$privileged" </dev/null || status=$?
       else
-        say "That did not run. Run it later, or set MAMA_INIT_MEMBER_ROOT and MAMA_INIT_TOOLS_ROOT to two folders outside your home."
+        status=127
       fi
+      case $status in
+        0) say "Done." ;;
+        20) say "The folders and linger are done; the packages did not install (apt's error is above). Run the apt-get part of the line above later; setup names it again if Claude's sandbox needs it." ;;
+        *) say "That did not run. Run it later, or set MAMA_INIT_MEMBER_ROOT and MAMA_INIT_TOOLS_ROOT to two folders outside your home." ;;
+      esac
     fi
   fi
 

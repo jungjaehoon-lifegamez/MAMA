@@ -405,7 +405,7 @@ describe('install.sh', () => {
   });
 
   const linuxCommand =
-    'umask 022; install -d -m 0755 /var/lib/mama; install -d -o fixture -m 0700 /var/lib/mama/fixture; loginctl enable-linger fixture; DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap socat python3-venv';
+    'umask 022 && install -d -m 0755 /var/lib/mama && install -d -o fixture -m 0700 /var/lib/mama/fixture && loginctl enable-linger fixture || exit 10; export DEBIAN_FRONTEND=noninteractive; apt-get -o DPkg::Lock::Timeout=300 update -qq && apt-get -o DPkg::Lock::Timeout=300 install -y bubblewrap socat python3-venv || exit 20';
 
   it('Linux: shows the one privileged call, with the apt packages, and runs it', async () => {
     seedInstall();
@@ -428,12 +428,33 @@ describe('install.sh', () => {
         ...display,
       });
       expect(result.status, result.output).toBe(0);
-      expect(result.output).toContain('A password window opens for it.');
+      expect(result.output).toContain('A password window should open for it');
       expect(calls().filter((call) => call.startsWith('pkexec'))).toEqual([
         `pkexec sh -c ${linuxCommand}`,
       ]);
       expect(calls().filter((call) => call.startsWith('sudo'))).toEqual([]);
     }
+  });
+
+  it('Linux: names the packages apart when only apt failed, and a refused window as not run', async () => {
+    seedInstall();
+    let result = await run(['--backend', 'codex', '--no-init'], {
+      FAKE_UNAME_S: 'Linux',
+      FAKE_SUDO_STATUS: '20',
+    });
+    expect(result.status, result.output).toBe(0);
+    expect(result.output).toContain(
+      'The folders and linger are done; the packages did not install'
+    );
+    rmSync(log, { force: true });
+    // A dismissed pkexec window exits 126.
+    result = await run(['--backend', 'codex', '--no-init'], {
+      FAKE_UNAME_S: 'Linux',
+      DISPLAY: ':0',
+      FAKE_SUDO_STATUS: '126',
+    });
+    expect(result.status, result.output).toBe(0);
+    expect(result.output).toContain('That did not run');
   });
 
   it('Linux: a refused sudo prints the command and goes on', async () => {

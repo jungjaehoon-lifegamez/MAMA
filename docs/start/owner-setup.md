@@ -45,11 +45,14 @@ Ubuntu 24.04 on x86-64 is the Linux MAMA is tested on. Run setup in a desktop se
 page opens in a browser on the same machine.
 
 Ask your agent to install MAMA OS as above. On Linux the install command needs administrator
-rights once. In a desktop session a password window opens for it; enter your password there, not in
-the chat. That one step makes `/var/lib/mama/<you>`, turns on linger, and installs `bubblewrap` and
-`socat` (Claude's shell sandbox, without which every message fails) and `python3-venv` (the
-document tools). See [What the install command makes](#what-the-install-command-makes). Without a
-desktop, run in a terminal the `sudo` line the command prints.
+rights once. In a desktop session a password window opens for it (pkexec); enter your password
+there, not in the chat. That one step makes `/var/lib/mama/<you>`, turns on linger, and installs
+`bubblewrap` and `socat` (Claude's shell sandbox, without which every message fails) and
+`python3-venv` (the document tools). See
+[What the install command makes](#what-the-install-command-makes). The command prints the same step
+as a `sudo` line: without a desktop, or when no window appears, run that line in a terminal. If
+only the packages failed (for example, another install held apt), the folders and linger are done,
+and setup names the packages again when it needs them.
 
 For office files and page checks, the document tools also need LibreOffice and the Noto CJK fonts.
 Setup goes on without them, and `mama doctor` warns. To add them:
@@ -270,7 +273,7 @@ MAMA. Your own `node` and `npm` stay as they are.
 - **The backend.** A `claude` or `codex` that is on PATH and runs is used as it is. Otherwise the
   vendor's own installer puts it in `~/.local/bin`.
 - **Linux** needs administrator rights once, which the installer asks for in a password window
-  (pkexec) when it runs without a terminal in a desktop session, and through `sudo` at a terminal.
+  (pkexec) in a desktop session, and through `sudo` otherwise.
   It makes `/var/lib/mama/<you>`, turns on linger, so MAMA keeps running after you log out, and
   with apt installs `bubblewrap`, `socat` and `python3-venv`. If it cannot run, the installer
   prints it. Until it runs, setup needs `MAMA_INIT_MEMBER_ROOT` and
