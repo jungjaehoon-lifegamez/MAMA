@@ -331,8 +331,18 @@ export async function openSetupPage(options: {
   const command = options.platform === 'darwin' ? 'open' : wsl ? 'explorer.exe' : 'xdg-open';
   // The file's path holds no secret: it is the way in when no browser opened.
   const wayIn = `open ${pathToFileURL(file).href} in the browser; it closes at ${until}`;
+  let target = file;
+  if (wsl) {
+    try {
+      target = (options.windowsPath ?? windowsPath)(file);
+    } catch (error) {
+      write(
+        `setup page: the browser did not open (wslpath could not name the file for Windows: ${(error as Error).message}); ${wayIn}`
+      );
+      return { stopped, close };
+    }
+  }
   try {
-    const target = wsl ? (options.windowsPath ?? windowsPath)(file) : file;
     const { exit } = await (options.openRun ?? defaultOpenRun)(command, [target]);
     write(`setup page: opened in the browser from ${file}; it closes at ${until}`);
     void exit.then((status) => {

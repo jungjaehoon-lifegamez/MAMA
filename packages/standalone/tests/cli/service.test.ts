@@ -230,6 +230,45 @@ describe('mama service install on macOS', () => {
     );
   });
 
+  it("finds the backend on start.sh's PATH when this shell's PATH lacks it", async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    launchd('unloaded');
+    const { home, root } = install();
+    // The service's own PATH names a folder with the backend; this shell (an SSH session) does not.
+    const bin = join(home, 'service-bin');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, 'claude'), '#!/bin/sh\n', { mode: 0o755 });
+    // A non-executable file of that name earlier on the PATH is passed over.
+    const stale = join(home, 'stale-bin');
+    mkdirSync(stale, { recursive: true });
+    writeFileSync(join(stale, 'claude'), 'not a program', { mode: 0o644 });
+    writeFileSync(
+      join(root, 'start.sh'),
+      `#!/bin/sh\nexport PATH='${stale}:${bin}:/usr/bin:/bin'\n`,
+      {
+        mode: 0o700,
+      }
+    );
+    await installService(
+      ['--replace'],
+      options(home, [], { platform: 'darwin', findExecutable: () => undefined })
+    );
+    const written = readFileSync(join(root, 'start.sh'), 'utf8');
+    expect(written).toContain(bin);
+    expect(written).not.toContain(stale);
+  });
+
+  it('still repairs a start.sh whose PATH line has broken quoting', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    launchd('unloaded');
+    const { home, root } = install();
+    writeFileSync(join(root, 'start.sh'), "#!/bin/sh\nexport PATH='/broken\n", { mode: 0o700 });
+    await installService(['--replace'], options(home, [], { platform: 'darwin' }));
+    const written = readFileSync(join(root, 'start.sh'), 'utf8');
+    expect(written).not.toContain("'/broken");
+    expect(written).toMatch(/^export PATH='[^']+'$/m);
+  });
+
   it('refuses before writing anything when the backend cannot be found', async () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     const { home, root } = install();

@@ -37,7 +37,7 @@ it('refuses a Claude backend on Linux without bwrap and socat, naming the comman
       'linux'
     )
   ).toThrow(
-    "Claude's shell sandbox cannot start: bwrap and socat not on the service's PATH. Run: sudo apt-get install -y bubblewrap socat, then run the install command again."
+    "Claude's shell sandbox cannot start: bwrap and socat not on this PATH. Run: sudo apt-get install -y bubblewrap socat, then run the install command again."
   );
   const other = host({ bwrap: true, socat: false, aptGet: false });
   expect(() =>
@@ -50,9 +50,7 @@ it('refuses a Claude backend on Linux without bwrap and socat, naming the comman
       undefined,
       'linux'
     )
-  ).toThrow(
-    /socat not on the service's PATH\. Run: install bubblewrap and socat with your package manager/
-  );
+  ).toThrow(/socat not on this PATH\. Run: install bubblewrap and socat with your package manager/);
 });
 
 it('passes once the sandbox starts, and never checks it on macOS or for Codex', () => {

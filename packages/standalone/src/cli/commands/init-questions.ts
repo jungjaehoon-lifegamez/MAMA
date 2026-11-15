@@ -137,16 +137,21 @@ async function optionalText(prompt: PromptAdapter, label: string): Promise<strin
 export async function collectConnectors(
   prompt: PromptAdapter,
   secrets: Partial<Record<SecretName, string>>,
-  stored: StoredSecrets
+  stored: StoredSecrets,
+  platform: NodeJS.Platform = process.platform
 ): Promise<ConnectorsConfig> {
+  // iMessage is offered only where its database exists (L4).
+  const offered: readonly string[] = connectorNames.filter(
+    (name) => name !== 'imessage' || platform === 'darwin'
+  );
   const selected = (
     await prompt.text(
-      `Connectors to enable (${connectorNames.join(', ')}; comma-separated, blank for none)`
+      `Connectors to enable (${offered.join(', ')}; comma-separated, blank for none)`
     )
   ).trim();
   const names = selected === '' ? [] : [...new Set(selected.split(',').map((name) => name.trim()))];
-  if (names.some((name) => !(connectorNames as readonly string[]).includes(name))) {
-    throw new CliInputError(`Choose connectors from: ${connectorNames.join(', ')}`);
+  if (names.some((name) => !offered.includes(name))) {
+    throw new CliInputError(`Choose connectors from: ${offered.join(', ')}`);
   }
   const config: ConnectorsConfig = {};
   for (const name of names) {
@@ -500,7 +505,7 @@ export function checkBackend(
     );
     if (sandbox.status !== 'ok')
       throw new CliInputError(
-        `Claude's shell sandbox cannot start: ${sandbox.detail}. Run: ${sandbox.fix}, then ${next}.`
+        `Claude's shell sandbox cannot start: ${sandbox.detail.replace("the service's PATH", 'this PATH')}. Run: ${sandbox.fix}, then ${next}.`
       );
   }
 }

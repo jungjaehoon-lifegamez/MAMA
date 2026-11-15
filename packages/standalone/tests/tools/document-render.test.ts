@@ -289,9 +289,22 @@ describe('host document renderer', () => {
     expect(readFileSync(join(workspace, result.pdf), 'utf8')).toBe('original pdf bytes');
   });
 
+  it('renders on Linux under bwrap, with every command inside it (L1)', async () => {
+    const host = fakeRenderer();
+    writeFileSync(join(workspace, 'original.pdf'), 'original pdf bytes');
+    await createDocumentRenderer({ toolsRoot: tools, run: host.run, platform: 'linux' }).render(
+      workspace,
+      'original.pdf'
+    );
+    expect(host.calls.length).toBeGreaterThan(0);
+    for (const call of host.calls) {
+      expect(call.command).toBe('/usr/bin/bwrap');
+      expect(call.args).toEqual(expect.arrayContaining(['--unshare-net', '--ro-bind', '--tmpfs']));
+      expect(call.args.indexOf('--')).toBeGreaterThan(0);
+    }
+  });
+
   it.each([
-    ['linux', 'draft.docx'],
-    ['linux', 'original.pdf'],
     ['win32', 'draft.docx'],
     ['win32', 'original.pdf'],
   ] as const)(
@@ -305,7 +318,7 @@ describe('host document renderer', () => {
           run: host.run,
           platform,
         }).render(workspace, input)
-      ).rejects.toThrow(/sandbox-exec.*read.*network/i);
+      ).rejects.toThrow(/sandbox.*read denies.*network deny/i);
       expect(host.calls).toHaveLength(0);
       expect(readdirSync(workspace)).toEqual([input]);
       expect(existsSync(join(tools, '.leases'))).toBe(false);

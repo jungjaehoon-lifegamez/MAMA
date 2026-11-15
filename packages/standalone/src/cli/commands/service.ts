@@ -1,14 +1,17 @@
 import {
+  accessSync,
   chmodSync,
+  constants,
   existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { gwsTool } from '../../connectors/framework/gws-utils.js';
 import { defaultConfigPath, loadConfig } from '../../runtime/config.js';
 import { CliInputError } from '../prompt.js';
@@ -20,6 +23,7 @@ import {
   startPathEntries,
   startPathValue,
   startScript,
+  startScriptPath,
   systemdUnit,
 } from '../launch-files.js';
 import {
@@ -169,6 +173,21 @@ export function serviceLaunch(
   };
 }
 
+/** The first absolute folder of `dirs` with an executable `name`, as findExecutable checks it. */
+function executableIn(name: string, dirs: readonly string[]): string | undefined {
+  for (const dir of dirs) {
+    if (!isAbsolute(dir)) continue;
+    const path = join(dir, name);
+    try {
+      accessSync(path, constants.X_OK);
+      if (statSync(path).isFile()) return path;
+    } catch {
+      /* Try the next folder. */
+    }
+  }
+  return undefined;
+}
+
 export async function installService(
   args: readonly string[],
   options: ServiceOptions = {}
@@ -186,18 +205,31 @@ export async function installService(
   const configPath = options.configPath ?? defaultConfigPath(home);
   const config = loadConfig({ home, path: configPath });
   const root = dirname(configPath);
-  const { backend, gws, nodePath, cliPath, executablePaths } = serviceLaunch(
-    config.agent.backend,
-    options
-  );
+  const startPath = join(root, 'start.sh');
+  const existing = existsSync(startPath) ? readFileSync(startPath, 'utf8') : null;
+  const reading = existing === null ? null : readStartScript(existing, home);
+  // A command the running service already finds stays found when this shell's PATH lacks it: an
+  // update or a reinstall run from a non-login shell (an SSH session without ~/.local/bin) would
+  // otherwise refuse the backend the service runs today (2026-11-14, WSL).
+  const locate = options.findExecutable ?? findExecutable;
+  const startDirs = (): string[] => {
+    try {
+      return startScriptPath(reading, home, options.platform ?? process.platform);
+    } catch {
+      // A PATH line with broken quoting names no folder; --replace below is how it gets repaired,
+      // so the lookup must not stop that (Codex review).
+      return [];
+    }
+  };
+  const { backend, gws, nodePath, cliPath, executablePaths } = serviceLaunch(config.agent.backend, {
+    ...options,
+    findExecutable: (name) => locate(name) ?? executableIn(name, startDirs()),
+  });
   if (!backend) {
     throw new CliInputError(
       `${config.agent.backend} is not on this PATH; install it or add it to PATH, then run mama service install again`
     );
   }
-  const startPath = join(root, 'start.sh');
-  const existing = existsSync(startPath) ? readFileSync(startPath, 'utf8') : null;
-  const reading = existing === null ? null : readStartScript(existing, home);
   const script = startScript({
     home,
     nodePath,

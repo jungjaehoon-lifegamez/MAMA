@@ -63,13 +63,17 @@ describe('IMessageConnector', () => {
   });
 
   it('opens the configured database and requires selected chats', async () => {
-    const connector = new IMessageConnector(makeConfig(), databasePath);
+    const connector = new IMessageConnector(makeConfig(), databasePath, 'darwin');
     await expect(connector.init()).resolves.toBeUndefined();
     expect(await connector.authenticate()).toBe(true);
     await connector.dispose();
 
-    const unscoped = new IMessageConnector(makeConfig({}), databasePath);
+    const unscoped = new IMessageConnector(makeConfig({}), databasePath, 'darwin');
     await expect(unscoped.init()).rejects.toThrow(/explicitly configured chat identifiers/i);
+    // Messages keeps its database on macOS only (L4).
+    await expect(new IMessageConnector(makeConfig(), databasePath, 'linux').init()).rejects.toThrow(
+      /macOS only/
+    );
   });
 
   it('converts Core Data dates and reads only the configured chat', async () => {
@@ -78,7 +82,8 @@ describe('IMessageConnector', () => {
         'chat-fixture-1': { role: 'truth' },
         'chat-fixture-2': { role: 'ignore' },
       }),
-      databasePath
+      databasePath,
+      'darwin'
     );
     await connector.init();
     const items = await connector.poll(new Date('2024-01-01T00:00:00.000Z'));
@@ -93,7 +98,7 @@ describe('IMessageConnector', () => {
   });
 
   it('does not return messages from a chat that is not configured', async () => {
-    const connector = new IMessageConnector(makeConfig(), databasePath);
+    const connector = new IMessageConnector(makeConfig(), databasePath, 'darwin');
     await connector.init();
     const items = await connector.poll(new Date(0));
     expect(items.every((item) => item.channel === 'chat-fixture-1')).toBe(true);
@@ -102,7 +107,7 @@ describe('IMessageConnector', () => {
   });
 
   it('includes a message at the cursor millisecond instead of skipping its cursor second', async () => {
-    const connector = new IMessageConnector(makeConfig(), databasePath);
+    const connector = new IMessageConnector(makeConfig(), databasePath, 'darwin');
     await connector.init();
     const items = await connector.poll(new Date('2024-01-01T00:00:01.000Z'));
     expect(items.map((item) => item.sourceId)).toContain('imessage:1');
@@ -110,7 +115,7 @@ describe('IMessageConnector', () => {
   });
 
   it('surfaces a failed SQLite query instead of returning a partial poll', async () => {
-    const connector = new IMessageConnector(makeConfig(), databasePath);
+    const connector = new IMessageConnector(makeConfig(), databasePath, 'darwin');
     await connector.init();
     const other = new Database(databasePath);
     other.exec('DROP TABLE message');
@@ -124,7 +129,7 @@ describe('IMessageConnector', () => {
   });
 
   it('describes Full Disk Access for the daemon process', () => {
-    const connector = new IMessageConnector(makeConfig(), databasePath);
+    const connector = new IMessageConnector(makeConfig(), databasePath, 'darwin');
     expect(connector.getAuthRequirements()[0]?.description).toContain('daemon process');
   });
 });

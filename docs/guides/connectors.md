@@ -58,7 +58,7 @@ A `connectors.json` edited by hand is checked when MAMA starts and by `mama doct
 | `obsidian`    | Markdown notes in selected vault paths                            | None                                   | `vaultPath` on each channel                         |
 | `discord`     | Messages from selected channels                                   | `MAMA_DISCORD_TOKEN`                   | Channel IDs                                         |
 | `telegram`    | Text messages from selected chats                                 | `MAMA_TELEGRAM_SOURCE_TOKEN`           | Chat IDs                                            |
-| `imessage`    | Text messages from selected chats                                 | None                                   | Chat IDs                                            |
+| `imessage`    | Text messages from selected chats (macOS only)                    | None                                   | Chat IDs                                            |
 | `claude-code` | User and assistant messages in selected Claude Code projects      | None                                   | Project directory names and display aliases         |
 
 Tokens belong in `~/.mama/auth.env`, never in `connectors.json`. Restart through `start.sh` after
@@ -365,7 +365,9 @@ relative to that vault; it does not publish the absolute vault path.
 
 ### iMessage
 
-iMessage reads text messages from selected chats in `~/Library/Messages/chat.db`. The daemon process
+iMessage is a source on macOS only: it reads the database Messages keeps there, and setup does not
+offer it on Linux or Docker. It reads text messages from selected chats in
+`~/Library/Messages/chat.db`. The daemon process
 needs Full Disk Access in System Settings > Privacy & Security. Select chat identifiers explicitly.
 
 ```json
