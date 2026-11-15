@@ -3099,3 +3099,19 @@ The implementation writes raw/index data during import only. Replay is the owner
   - Registry: `@jungjaehoon/mama-core` 8.9.1, `mama-server` 2.6.2 depending on exactly mama-core 8.9.1, `mama-os` 0.80.0 on `^8.9.1`; GitHub release `v0.80.0` with `install.sh`.
   - W2.3's registry update: the WSL2 Ubuntu host updated from npmjs, 0.79.1008 → 0.80.0, the systemd unit rewritten, the service active.
 - Still open: the clean Mac account stays on 0.79.1005 and stopped while the WSL install holds the test bot; its npm update runs when it takes the bot back. The live owner daemon runs the checkout, which already had these changes.
+
+### Wave 3: Linux document rendering and iMessage macOS only (L1, L4; #566, 2026-11-15)
+
+- Result: `document.render` works on Linux under `bwrap`, and iMessage is offered on macOS only; with the setup fixes from the same host, merged as fe93cd21f and deployed on the development Mac at 20:49 KST (all eight boot stages). L1 and L4 are done in v1.md; the README count is 16 / 52.
+- Evidence (WSL2 Ubuntu 24.04.5, LibreOffice 24.2.7, Noto CJK):
+  - `mama tools install` finished; its smoke render (PPTX → PDF → check) ran inside bwrap, before and after the `/run` fix.
+  - An owner DM asked for a two-slide Korean PPTX rendered before sending: python-pptx made it, `document.render` returned 2 pages in Noto Sans CJK, the agent fixed the table alignment, rendered again, and `deliver.telegram.file` sent it.
+  - Probes through `linuxSandboxArgs`: a file under HOME is not visible, `/etc` is read-only, the rest of `/tmp` is hidden, connections fail, the render folder is writable.
+  - Opus review found the sandbox could still `connect()` to pathname unix sockets under `/run`; measured: the system D-Bus socket answered from inside. Fixed (private `/run`, bus and agent variables dropped from the render environment, `/usr/bin/bwrap` by absolute path); after it the bus is not found and `/run` lists empty.
+  - `mama service install --replace` from an SSH shell without `~/.local/bin` on PATH finished, where it refused before (the update's step 10).
+  - CI: all checks; the real-bwrap test runs on the Ubuntu runner, which has bwrap. Codex's two findings (test fixtures under `/tmp` on Linux; broken PATH quoting) and CodeRabbit's (an executable in the fallback lookup, the `/sys` interface count) were fixed in the PR.
+  - In the same session on the WSL host: the downtime notice fired live for the first time (`missed_full=3 missed_reminder=8` after the PC slept), and an owner correction (no Markdown) was saved as a preference and held on the next turn (0 Markdown marks).
+- Still open:
+  - L5 (G1's Linux run on a fresh distribution).
+  - The installer's sudo step does not install `bubblewrap socat python3-venv`; init names the command.
+  - WSL host notes: WSLg mounts over `/run/user/<uid>` after a reboot, so `systemctl --user` fails over SSH; remote SSH forwarding stopped working after the reboot; the PC sleeping drops the host.
