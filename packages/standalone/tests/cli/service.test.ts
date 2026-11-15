@@ -238,14 +238,24 @@ describe('mama service install on macOS', () => {
     const bin = join(home, 'service-bin');
     mkdirSync(bin, { recursive: true });
     writeFileSync(join(bin, 'claude'), '#!/bin/sh\n', { mode: 0o755 });
-    writeFileSync(join(root, 'start.sh'), `#!/bin/sh\nexport PATH='${bin}:/usr/bin:/bin'\n`, {
-      mode: 0o700,
-    });
+    // A non-executable file of that name earlier on the PATH is passed over.
+    const stale = join(home, 'stale-bin');
+    mkdirSync(stale, { recursive: true });
+    writeFileSync(join(stale, 'claude'), 'not a program', { mode: 0o644 });
+    writeFileSync(
+      join(root, 'start.sh'),
+      `#!/bin/sh\nexport PATH='${stale}:${bin}:/usr/bin:/bin'\n`,
+      {
+        mode: 0o700,
+      }
+    );
     await installService(
       ['--replace'],
       options(home, [], { platform: 'darwin', findExecutable: () => undefined })
     );
-    expect(readFileSync(join(root, 'start.sh'), 'utf8')).toContain(bin);
+    const written = readFileSync(join(root, 'start.sh'), 'utf8');
+    expect(written).toContain(bin);
+    expect(written).not.toContain(stale);
   });
 
   it('still repairs a start.sh whose PATH line has broken quoting', async () => {

@@ -1,20 +1,22 @@
 import {
+  accessSync,
   chmodSync,
+  constants,
   existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { gwsTool } from '../../connectors/framework/gws-utils.js';
 import { defaultConfigPath, loadConfig } from '../../runtime/config.js';
 import { CliInputError } from '../prompt.js';
 import {
   findExecutable,
-  findIn,
   launchAgent,
   readStartScript,
   stableNodePath,
@@ -171,6 +173,21 @@ export function serviceLaunch(
   };
 }
 
+/** The first absolute folder of `dirs` with an executable `name`, as findExecutable checks it. */
+function executableIn(name: string, dirs: readonly string[]): string | undefined {
+  for (const dir of dirs) {
+    if (!isAbsolute(dir)) continue;
+    const path = join(dir, name);
+    try {
+      accessSync(path, constants.X_OK);
+      if (statSync(path).isFile()) return path;
+    } catch {
+      /* Try the next folder. */
+    }
+  }
+  return undefined;
+}
+
 export async function installService(
   args: readonly string[],
   options: ServiceOptions = {}
@@ -206,7 +223,7 @@ export async function installService(
   };
   const { backend, gws, nodePath, cliPath, executablePaths } = serviceLaunch(config.agent.backend, {
     ...options,
-    findExecutable: (name) => locate(name) ?? findIn(name, startDirs()),
+    findExecutable: (name) => locate(name) ?? executableIn(name, startDirs()),
   });
   if (!backend) {
     throw new CliInputError(

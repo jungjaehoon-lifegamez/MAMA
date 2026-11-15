@@ -65,8 +65,21 @@ it.skipIf(process.platform !== 'linux' || spawnSync('bwrap', ['--version']).stat
       'ok'
     );
     expect(run('echo x > /etc/mama-probe').status).not.toBe(0);
-    // No interface but loopback: any outbound connection fails.
-    expect(run('cat /sys/class/net/*/operstate | wc -l').stdout.trim()).toBe('1');
+    // No route out: a connection to an address fails (sysfs keeps the host's view of the
+    // interfaces, so counting them there says nothing about the sandbox's namespace).
+    expect(
+      spawnSync(
+        'bwrap',
+        [
+          ...args,
+          '--',
+          'python3',
+          '-c',
+          "import socket;socket.create_connection(('192.0.2.1', 80), 2)",
+        ],
+        { encoding: 'utf8' }
+      ).status
+    ).not.toBe(0);
     // A pathname unix socket outside the sandbox cannot be reached (the D-Bus buses under /run).
     if (fs.existsSync('/run/dbus/system_bus_socket'))
       expect(
