@@ -79,6 +79,8 @@ export interface DiagnosticsOptions {
   home?: string;
   configPath?: string;
   platform?: NodeJS.Platform;
+  /** Whether doctor runs in an SSH session (SSH_CONNECTION is set); tests set it. */
+  sshSession?: boolean;
   run?: ProbeRun;
   serviceRun?: ServiceRun;
   /** No network call: Telegram is not asked and sources are not started. */
@@ -193,6 +195,7 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
   const configPath = options.configPath ?? join(home, '.mama', 'config.yaml');
   const root = dirname(configPath);
   const platform = options.platform ?? process.platform;
+  const sshSession = options.sshSession ?? Boolean(process.env.SSH_CONNECTION);
   const run = options.run ?? defaultProbeRun;
   const locate = options.findIn ?? findIn;
   const checks: Check[] = [];
@@ -361,7 +364,14 @@ export async function runDiagnostics(options: DiagnosticsOptions = {}): Promise<
           status: 'fail',
           detail: `${backend} ${probe.version} is not signed in for the service`,
           code: 'backend.signed_out',
-          fix: backend === 'claude' ? 'claude auth login' : `CODEX_HOME='${codexHome}' codex login`,
+          // Claude keeps its macOS login in the login keychain, which an SSH session cannot read,
+          // so doctor over SSH reads a signed-in service as signed out (measured 2026-11-14).
+          fix:
+            backend === 'claude' && platform === 'darwin' && sshSession
+              ? 'this SSH session cannot read the login keychain where Claude keeps its login; run mama doctor in a terminal of the logged-in desktop session, or unlock the keychain in this session (security unlock-keychain), before signing in again'
+              : backend === 'claude'
+                ? 'claude auth login'
+                : `CODEX_HOME='${codexHome}' codex login`,
         });
       } else {
         checks.push({

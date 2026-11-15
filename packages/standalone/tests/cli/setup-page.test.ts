@@ -235,6 +235,29 @@ describe('the setup page', () => {
     expect(lines[0]).toMatch(/^setup page: opened in the browser from /);
   });
 
+  it('names wslpath when it cannot give the Windows path, with the way in', async () => {
+    const lines: string[] = [];
+    const opened: string[][] = [];
+    const page = await openSetupPage({
+      fields: [field('token', true, '', [])],
+      write: (line) => lines.push(line),
+      platform: 'linux',
+      wsl: true,
+      windowsPath: () => {
+        throw new Error('spawnSync wslpath ENOENT');
+      },
+      openRun: async (command, args) => {
+        opened.push([command, ...args]);
+        return { exit: Promise.resolve(0) };
+      },
+    });
+    page.close();
+    expect(opened).toEqual([]);
+    expect(lines[0]).toMatch(
+      /^setup page: the browser did not open \(wslpath could not name the file for Windows: spawnSync wslpath ENOENT\); open file:\/\/.+open\.html in the browser/
+    );
+  });
+
   it('reads WSL from the kernel version', () => {
     expect(isWsl(() => 'Linux version 6.6.87.2-microsoft-standard-WSL2 (root@x) #1 SMP')).toBe(
       true

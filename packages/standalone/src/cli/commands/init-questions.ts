@@ -505,7 +505,7 @@ export function checkBackend(
     );
     if (sandbox.status !== 'ok')
       throw new CliInputError(
-        `Claude's shell sandbox cannot start: ${sandbox.detail}. Run: ${sandbox.fix}, then ${next}.`
+        `Claude's shell sandbox cannot start: ${sandbox.detail.replace("the service's PATH", 'this PATH')}. Run: ${sandbox.fix}, then ${next}.`
       );
   }
 }

@@ -230,6 +230,24 @@ describe('mama service install on macOS', () => {
     );
   });
 
+  it("finds the backend on start.sh's PATH when this shell's PATH lacks it", async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    launchd('unloaded');
+    const { home, root } = install();
+    // The service's own PATH names a folder with the backend; this shell (an SSH session) does not.
+    const bin = join(home, 'service-bin');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, 'claude'), '#!/bin/sh\n', { mode: 0o755 });
+    writeFileSync(join(root, 'start.sh'), `#!/bin/sh\nexport PATH='${bin}:/usr/bin:/bin'\n`, {
+      mode: 0o700,
+    });
+    await installService(
+      ['--replace'],
+      options(home, [], { platform: 'darwin', findExecutable: () => undefined })
+    );
+    expect(readFileSync(join(root, 'start.sh'), 'utf8')).toContain(bin);
+  });
+
   it('refuses before writing anything when the backend cannot be found', async () => {
     Object.defineProperty(process, 'platform', { value: 'darwin' });
     const { home, root } = install();

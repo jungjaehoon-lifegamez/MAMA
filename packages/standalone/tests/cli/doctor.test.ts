@@ -491,12 +491,30 @@ describe('mama doctor', () => {
       detail: 'claude 2.1.200 is older than 2.1.299',
       code: 'backend.too_old',
     });
-    by = byName(await runDiagnostics({ ...base(install()), run: host({ loggedIn: false }) }));
+    by = byName(
+      await runDiagnostics({
+        ...base(install()),
+        run: host({ loggedIn: false }),
+        platform: 'darwin',
+        sshSession: false,
+      })
+    );
     expect(by.backend).toMatchObject({
       status: 'fail',
       fix: 'claude auth login',
       code: 'backend.signed_out',
     });
+    // Over SSH on macOS the login keychain is unreadable, so the fix names that, not a new login.
+    by = byName(
+      await runDiagnostics({
+        ...base(install()),
+        run: host({ loggedIn: false }),
+        platform: 'darwin',
+        sshSession: true,
+      })
+    );
+    expect(by.backend).toMatchObject({ status: 'fail', code: 'backend.signed_out' });
+    expect(by.backend!.fix).toMatch(/SSH session cannot read the login keychain/);
     by = byName(await runDiagnostics(base(install({ gone: true }))));
     expect(by.node).toMatchObject({ status: 'fail', detail: 'the Node start.sh runs is gone' });
     by = byName(await runDiagnostics({ ...base(install()), run: host({ sqlite: false }) }));

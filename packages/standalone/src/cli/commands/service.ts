@@ -14,12 +14,14 @@ import { defaultConfigPath, loadConfig } from '../../runtime/config.js';
 import { CliInputError } from '../prompt.js';
 import {
   findExecutable,
+  findIn,
   launchAgent,
   readStartScript,
   stableNodePath,
   startPathEntries,
   startPathValue,
   startScript,
+  startScriptPath,
   systemdUnit,
 } from '../launch-files.js';
 import {
@@ -186,18 +188,23 @@ export async function installService(
   const configPath = options.configPath ?? defaultConfigPath(home);
   const config = loadConfig({ home, path: configPath });
   const root = dirname(configPath);
-  const { backend, gws, nodePath, cliPath, executablePaths } = serviceLaunch(
-    config.agent.backend,
-    options
-  );
+  const startPath = join(root, 'start.sh');
+  const existing = existsSync(startPath) ? readFileSync(startPath, 'utf8') : null;
+  const reading = existing === null ? null : readStartScript(existing, home);
+  // A command the running service already finds stays found when this shell's PATH lacks it: an
+  // update or a reinstall run from a non-login shell (an SSH session without ~/.local/bin) would
+  // otherwise refuse the backend the service runs today (2026-11-14, WSL).
+  const startDirs = startScriptPath(reading, home, options.platform ?? process.platform);
+  const locate = options.findExecutable ?? findExecutable;
+  const { backend, gws, nodePath, cliPath, executablePaths } = serviceLaunch(config.agent.backend, {
+    ...options,
+    findExecutable: (name) => locate(name) ?? findIn(name, startDirs),
+  });
   if (!backend) {
     throw new CliInputError(
       `${config.agent.backend} is not on this PATH; install it or add it to PATH, then run mama service install again`
     );
   }
-  const startPath = join(root, 'start.sh');
-  const existing = existsSync(startPath) ? readFileSync(startPath, 'utf8') : null;
-  const reading = existing === null ? null : readStartScript(existing, home);
   const script = startScript({
     home,
     nodePath,

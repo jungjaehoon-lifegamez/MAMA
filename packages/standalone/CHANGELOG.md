@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - iMessage is a source on macOS only: setup does not offer it elsewhere, refuses it before saving
   anything, and the connector names the reason if a hand-edited config enables it on Linux.
 
+### Fixed
+
+- `mama update` and `mama service install` find the backend the service already runs on
+  `start.sh`'s PATH when the shell running them lacks it. Before, an update from a non-login shell
+  (an SSH session without `~/.local/bin`) stopped at the service files and rolled back.
+- `mama doctor` over SSH on macOS says the session cannot read the login keychain, where Claude
+  keeps its login, instead of telling you to sign in again to a service that is signed in.
+- Setup's sandbox refusal names the PATH it read ("this PATH"), and on WSL a `wslpath` failure is
+  named as such, with the file to open, instead of "explorer.exe is not installed".
+
 ## [0.80.0] - 2026-11-14
 
 ### Added
