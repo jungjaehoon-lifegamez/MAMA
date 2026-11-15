@@ -11,6 +11,9 @@ export function requireOfficeSandbox(platform: NodeJS.Platform = process.platfor
     );
 }
 
+/** Where the distributions MAMA supports install bubblewrap. */
+export const LINUX_BWRAP = '/usr/bin/bwrap';
+
 function within(parent: string, child: string): boolean {
   const path = relative(parent, child);
   return path === '' || (path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path));
@@ -35,7 +38,7 @@ export function linuxSandboxArgs(
         .map((path) => realpathSync(path))
     ),
   ]
-    .filter((path) => !within('/tmp', path))
+    .filter((path) => !within('/tmp', path) && !within('/run', path))
     .sort((a, b) => a.length - b.length);
   const covers: string[] = [];
   for (const path of denied) {
@@ -52,6 +55,15 @@ export function linuxSandboxArgs(
     '/proc',
     '--tmpfs',
     '/tmp',
+    // Pathname unix sockets (the D-Bus system and session buses, systemd's private socket, agent
+    // sockets, docker.sock) live under /run; a read-only bind does not stop a connect, and through
+    // the session bus a renderer could start a process outside the sandbox (review, measured on
+    // Ubuntu 24.04: the system bus answered). /var/run is a link to /run on the hosts we run on.
+    '--tmpfs',
+    '/run',
+    ...(existsSync('/var/run') && !lstatSync('/var/run').isSymbolicLink()
+      ? ['--tmpfs', '/var/run']
+      : []),
     ...covers.flatMap((path) =>
       lstatSync(path).isDirectory() ? ['--tmpfs', path] : ['--ro-bind', '/dev/null', path]
     ),
@@ -103,8 +115,16 @@ export function renderEnvironment(
   fontconfig: string,
   temp: string
 ): NodeJS.ProcessEnv {
+  // No address of a bus or agent outside the sandbox (review): their sockets are covered on Linux,
+  // and a renderer has no use for them anywhere.
+  const {
+    DBUS_SESSION_BUS_ADDRESS: _bus,
+    XDG_RUNTIME_DIR: _runtime,
+    SSH_AUTH_SOCK: _agent,
+    ...environment
+  } = backendEnvironment();
   return {
-    ...backendEnvironment(),
+    ...environment,
     HOME: temp,
     TMPDIR: temp,
     XDG_CACHE_HOME: join(temp, 'cache'),
@@ -131,8 +151,10 @@ export async function sandboxedCommand(options: {
   requireOfficeSandbox(options.platform);
   const run = options.run ?? runCommand;
   if ((options.platform ?? process.platform) === 'linux')
+    // An absolute path, as macOS names /usr/bin/sandbox-exec: a bare name would resolve through
+    // the render environment's PATH, where another file named bwrap would run unsandboxed.
     return run(
-      'bwrap',
+      LINUX_BWRAP,
       [
         ...linuxSandboxArgs(options.temp, options.output, options.deniedReadPaths),
         '--',

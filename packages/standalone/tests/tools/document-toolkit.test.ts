@@ -741,7 +741,7 @@ describe('host document toolkit installer', () => {
     );
     expect(rendered.length).toBeGreaterThan(0);
     for (const call of rendered) {
-      expect(call.command).toBe('bwrap');
+      expect(call.command).toBe('/usr/bin/bwrap');
       expect(call.args).toContain('--unshare-net');
     }
   });

@@ -298,7 +298,7 @@ describe('host document renderer', () => {
     );
     expect(host.calls.length).toBeGreaterThan(0);
     for (const call of host.calls) {
-      expect(call.command).toBe('bwrap');
+      expect(call.command).toBe('/usr/bin/bwrap');
       expect(call.args).toEqual(expect.arrayContaining(['--unshare-net', '--ro-bind', '--tmpfs']));
       expect(call.args.indexOf('--')).toBeGreaterThan(0);
     }

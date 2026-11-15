@@ -11,8 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `document.render` works on Linux. Each render step (LibreOffice and the toolkit's Python) runs
   under `bwrap` with the same limits as macOS's `sandbox-exec` profile: no network, the system
-  read-only, a private empty `/tmp`, every denied folder and file hidden, and only the render's
-  folders writable. `mama tools install` smoke-renders on Linux too; it needs LibreOffice and the
+  read-only, private empty `/tmp` and `/run` (so no D-Bus bus or agent socket is reachable), every
+  denied folder and file hidden, and only the render's folders writable; `bwrap` runs by its
+  absolute path. `mama tools install` smoke-renders on Linux too; it needs LibreOffice and the
   Noto CJK fonts from the system packages. Proven on Ubuntu 24.04: an owner DM made a two-slide
   Korean PPTX, rendered and fixed it, and sent it.
 

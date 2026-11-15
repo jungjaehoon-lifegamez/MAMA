@@ -36,7 +36,9 @@ it('covers denied folders and files, writes only the render folders, and has no 
   ]);
   expect(args.slice(0, 3)).toEqual(['--ro-bind', '/', '/']);
   expect(args).toContain('--unshare-net');
-  expect(mounts(args, '--tmpfs')).toEqual(['/tmp', home, memberRoot]);
+  // /run holds the pathname sockets (D-Bus buses, agents) a read-only bind still lets connect.
+  expect(mounts(args, '--tmpfs').slice(0, 2)).toEqual(['/tmp', '/run']);
+  expect(mounts(args, '--tmpfs')).toEqual(expect.arrayContaining([home, memberRoot]));
   // A file is covered by /dev/null; a missing path and one under a covered folder are skipped.
   expect(args.join(' ')).toContain(`--ro-bind /dev/null ${secret}`);
   expect(mounts(args, '--bind')).toEqual([temp]);
@@ -62,5 +64,20 @@ it.skipIf(process.platform !== 'linux' || spawnSync('bwrap', ['--version']).stat
     expect(run('echo x > /etc/mama-probe').status).not.toBe(0);
     // No interface but loopback: any outbound connection fails.
     expect(run('cat /sys/class/net/*/operstate | wc -l').stdout.trim()).toBe('1');
+    // A pathname unix socket outside the sandbox cannot be reached (the D-Bus buses under /run).
+    if (fs.existsSync('/run/dbus/system_bus_socket'))
+      expect(
+        spawnSync(
+          'bwrap',
+          [
+            ...args,
+            '--',
+            'python3',
+            '-c',
+            "import socket;s=socket.socket(socket.AF_UNIX);s.connect('/run/dbus/system_bus_socket')",
+          ],
+          { encoding: 'utf8' }
+        ).status
+      ).not.toBe(0);
   }
 );
