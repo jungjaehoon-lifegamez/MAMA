@@ -3115,3 +3115,12 @@ The implementation writes raw/index data during import only. Replay is the owner
   - L5 (G1's Linux run on a fresh distribution).
   - The installer's sudo step does not install `bubblewrap socat python3-venv`; init names the command.
   - WSL host notes: WSLg mounts over `/run/user/<uid>` after a reboot, so `systemctl --user` fails over SSH; remote SSH forwarding stopped working after the reboot; the PC sleeping drops the host.
+
+### Linux password window, Linux setup docs; release mama-os 0.81.0, plugin 2.5.1 (#568, 2026-11-15)
+
+- Result: on Linux the install command's one administrator step runs through `pkexec` in a desktop session (a password window, nothing typed in a terminal; owner decision 2026-11-15, I1), installs `bubblewrap socat python3-venv` with apt, and reports the folders and linger apart from the packages. owner-setup has "On Linux"; Linux stays "in testing" (G4). Released with #566 as mama-os 0.81.0 and plugin 2.5.1.
+- Evidence:
+  - Installer tests: the privileged line, the pkexec path with `DISPLAY` and with `WAYLAND_DISPLAY`, the sudo path without a desktop, an apt-only failure, a dismissed window; `dash -n` on Ubuntu. Opus review: a shell with a terminal took sudo even on a desktop (the prompt could reach the agent's PTY) and the step's status was apt's alone; both fixed with `apt-get update` first and a five-minute lock wait. Codex and CodeRabbit asked for the python3-venv skip check, fixed.
+  - Release workflow: mama-os 0.81.0 and the plugin published; `create-release` first failed its npm check during registry lag and passed on rerun; GitHub release `v0.81.0` with `install.sh` (pkexec, `MAMA_OS_VERSION=0.81.0`).
+  - WSL host from npmjs: 0.80.0 → 0.81.0 from a shell where `claude` was not on PATH, which rolled back before #566.
+- Still open: the real pkexec window is unseen (the WSL host has neither pkexec nor a polkit agent); L5, the G1 Linux run on a fresh distribution.
