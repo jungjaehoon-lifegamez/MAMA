@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `document.render` works on Linux. Each render step (LibreOffice and the toolkit's Python) runs
+  under `bwrap` with the same limits as macOS's `sandbox-exec` profile: no network, the system
+  read-only, a private empty `/tmp`, every denied folder and file hidden, and only the render's
+  folders writable. `mama tools install` smoke-renders on Linux too; it needs LibreOffice and the
+  Noto CJK fonts from the system packages. Proven on Ubuntu 24.04: an owner DM made a two-slide
+  Korean PPTX, rendered and fixed it, and sent it.
+
+### Changed
+
+- iMessage is a source on macOS only: setup does not offer it elsewhere, refuses it before saving
+  anything, and the connector names the reason if a hand-edited config enables it on Linux.
+
 ## [0.80.0] - 2026-11-14
 
 ### Added

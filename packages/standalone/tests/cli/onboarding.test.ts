@@ -1514,6 +1514,15 @@ describe('mama init --section', () => {
     expect(p.hidden).toEqual([]);
   });
 
+  it('offers iMessage on macOS only, and refuses it elsewhere before saving', async () => {
+    await setUp();
+    const p = prompt(['imessage'], []);
+    await expect(
+      runInit(['--section', 'connectors'], options(p.adapter, { platform: 'linux' }))
+    ).rejects.toThrow(/Choose connectors from: (?:(?!imessage).)*$/m);
+    expect(p.output.join('\n')).not.toMatch(/imessage/);
+  });
+
   it('asks the fields the Google, vault, and project sources need', async () => {
     await setUp();
     const vaultPath = join(home, 'fixture-vault');
@@ -1533,7 +1542,8 @@ describe('mama init --section', () => {
     );
     await runInit(
       ['--section', 'connectors'],
-      options(p.adapter, { findExecutable: shell(gwsIn('shell-bin')) })
+      // iMessage is offered on macOS only (L4).
+      options(p.adapter, { findExecutable: shell(gwsIn('shell-bin')), platform: 'darwin' })
     );
     const loaded = loadConnectorConfig(join(root, 'connectors.json'));
     expect(loaded.ok).toBe(true);
@@ -1990,6 +2000,25 @@ describe('a source enabled from the conversation (install.md, W2.4.5e)', () => {
     );
     return p.output;
   }
+
+  it('refuses iMessage from the conversation off macOS before saving anything', async () => {
+    await setUp();
+    const before = existsSync(file()) ? readFileSync(file(), 'utf8') : null;
+    await expect(
+      enable(
+        {
+          imessage: {
+            enabled: true,
+            pollIntervalMinutes: 5,
+            channels: { 'chat-fixture-1': { role: 'hub' } },
+            auth: { type: 'none' },
+          },
+        },
+        { platform: 'linux' }
+      )
+    ).rejects.toThrow(/Nothing was saved\. iMessage reads the macOS Messages database/);
+    expect(existsSync(file()) ? readFileSync(file(), 'utf8') : null).toBe(before);
+  });
 
   it('enables Gmail only once gws is signed in, naming the OAuth client and one login for every Google source before that', async () => {
     await setUp();

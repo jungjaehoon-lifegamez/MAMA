@@ -714,7 +714,7 @@ describe('host document toolkit installer', () => {
     ).rejects.toThrow(/soffice.*PATH/);
   });
 
-  it('installs the libraries on Linux without running an unsandboxed renderer', async () => {
+  it('installs on Linux and smoke-renders only inside bwrap (L1)', async () => {
     mkdirSync(join(tools, 'fonts'), { recursive: true });
     for (const family of ['Sans', 'Serif'])
       writeFileSync(join(tools, 'fonts', `Noto${family}CJK.ttc`), 'fixture font');
@@ -734,10 +734,16 @@ describe('host document toolkit installer', () => {
     });
     expect(readDocumentToolkit(tools)?.versionDir).toBe(result.versionDir);
     expect(host.calls.some((call) => call.args.includes('--require-hashes'))).toBe(true);
-    expect(host.calls.some((call) => call.args.includes('--convert-to'))).toBe(false);
-    expect(host.calls.some((call) => call.args.some((arg) => arg.endsWith('rasterize.py')))).toBe(
-      false
+    // The smoke render runs, and every office or smoke command runs inside bwrap.
+    const rendered = host.calls.filter(
+      (call) =>
+        call.args.includes('--convert-to') || call.args.some((arg) => arg.endsWith('smoke.py'))
     );
+    expect(rendered.length).toBeGreaterThan(0);
+    for (const call of rendered) {
+      expect(call.command).toBe('bwrap');
+      expect(call.args).toContain('--unshare-net');
+    }
   });
 
   it('treats an absent toolkit as unavailable', () => {

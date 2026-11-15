@@ -43,12 +43,16 @@ export class IMessageConnector implements IConnector {
 
   constructor(
     private config: ConnectorConfig,
-    dbPath?: string
+    dbPath?: string,
+    private readonly platform: NodeJS.Platform = process.platform
   ) {
     this.dbPath = dbPath ?? join(homedir(), 'Library', 'Messages', 'chat.db');
   }
 
   async init(): Promise<void> {
+    if (this.platform !== 'darwin') {
+      throw new Error('iMessage reads the macOS Messages database; it is a source on macOS only');
+    }
     if (this.getChatIds().length === 0) {
       throw new Error('iMessage requires explicitly configured chat identifiers');
     }

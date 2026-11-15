@@ -468,8 +468,8 @@ export async function installDocumentToolkit(
       ],
       { env }
     );
-    // Libraries remain installable elsewhere; rendering requires the macOS host sandbox.
-    if (platform === 'darwin') {
+    // Rendering runs under sandbox-exec on macOS and bwrap on Linux; elsewhere only the libraries.
+    if (platform === 'darwin' || platform === 'linux') {
       const stagedSmoke = join(temp, 'smoke.py');
       cpSync(join(TOOLKIT_ASSETS, 'smoke.py'), stagedSmoke);
       const deniedReadPaths = [

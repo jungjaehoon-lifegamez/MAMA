@@ -79,8 +79,10 @@ platform. If the toolkit cannot install, setup goes on without it, and
 `~/.mama/bin/mama tools install` (with your own Node.js, `mama tools install`) retries it; see the
 [known limits](../start/owner-setup.md#supported-versions). The same command updates it. The
 toolkit holds Python libraries for PowerPoint, Word, Excel and PDF files, LibreOffice and CJK
-fonts. Ask for a document in your DM or the group. On macOS MAMA can also render a document's pages to check them before
-sending it; the renderer runs only there. Sessions cannot install other packages, and their shell
+fonts. Ask for a document in your DM or the group. MAMA can also render a document's pages to check them before sending
+it, on macOS and on Linux (with LibreOffice and the Noto CJK fonts installed there, for example
+`sudo apt-get install libreoffice-writer libreoffice-calc libreoffice-impress fonts-noto-cjk`);
+the renderer runs in a sandbox with no network that cannot read your home folder. Sessions cannot install other packages, and their shell
 has no network. Every session's shell also has MAMA's own Node.js as `node`, from
 `<tools_root>/node/bin`; npm and npx are not there.
 

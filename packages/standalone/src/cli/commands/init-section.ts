@@ -86,6 +86,11 @@ async function checkSourceTools(
 ): Promise<void> {
   const { root, home, config, options, mama } = install;
   const platform = options.platform ?? process.platform;
+  // iMessage reads the Messages database macOS keeps; nowhere else has one (L4).
+  if (platform !== 'darwin' && added.some(({ name }) => name === 'imessage'))
+    throw new CliInputError(
+      'Nothing was saved. iMessage reads the macOS Messages database, so it is a source on macOS only.'
+    );
   const tools = sourceToolReports(added, enabled, { root, home, platform }, config, options);
   if (tools === null) return;
   const missing = tools.reports.filter(({ servicePath }) => servicePath === null);
@@ -459,7 +464,7 @@ export async function runInitSection(
       );
       connectors = nonInteractive
         ? environmentConnectors(env)
-        : await collectConnectors(prompt, secrets, stored);
+        : await collectConnectors(prompt, secrets, stored, options.platform ?? process.platform);
     } else if (section === 'discord' || section === 'slack') {
       const messengerStored = sourceSecrets(root, connectorsPath);
       let block: Record<string, unknown>;
