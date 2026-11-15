@@ -44,24 +44,19 @@ you start. Over SSH or without a desktop there is no setup path yet. See
 Ubuntu 24.04 on x86-64 is the Linux MAMA is tested on. Run setup in a desktop session: the setup
 page opens in a browser on the same machine.
 
-1. Install the tools Claude's shell sandbox needs, or every message fails:
+Ask your agent to install MAMA OS as above. On Linux the install command needs administrator
+rights once. In a desktop session a password window opens for it; enter your password there, not in
+the chat. That one step makes `/var/lib/mama/<you>`, turns on linger, and installs `bubblewrap` and
+`socat` (Claude's shell sandbox, without which every message fails) and `python3-venv` (the
+document tools). See [What the install command makes](#what-the-install-command-makes). Without a
+desktop, run in a terminal the `sudo` line the command prints.
 
-   ```bash
-   sudo apt-get install -y bubblewrap socat
-   ```
+For office files and page checks, the document tools also need LibreOffice and the Noto CJK fonts.
+Setup goes on without them, and `mama doctor` warns. To add them:
 
-   Setup checks for them and stops with this command when one is missing.
-
-2. For office files and page checks, also install the document tools' system parts. Setup goes on
-   without them, and `mama doctor` warns:
-
-   ```bash
-   sudo apt-get install -y python3-venv libreoffice-writer libreoffice-calc libreoffice-impress fonts-noto-cjk
-   ```
-
-3. Then ask your agent to install MAMA OS as above. The install command asks for `sudo` once, to
-   make `/var/lib/mama/<you>` and turn on linger (see
-   [What the install command makes](#what-the-install-command-makes)).
+```bash
+sudo apt-get install -y libreoffice-writer libreoffice-calc libreoffice-impress fonts-noto-cjk
+```
 
 MAMA then runs as a systemd user service, `mama.service`, which keeps running after you log out.
 `mama status`, `mama stop` and `mama service restart` work as on macOS. `systemctl --user status
@@ -274,9 +269,11 @@ MAMA. Your own `node` and `npm` stay as they are.
   block. New terminals read it; the agent's shell does not, so the agent uses full paths.
 - **The backend.** A `claude` or `codex` that is on PATH and runs is used as it is. Otherwise the
   vendor's own installer puts it in `~/.local/bin`.
-- **Linux** needs one `sudo` command, which the installer shows and runs once. It makes
-  `/var/lib/mama/<you>` and turns on linger, so MAMA keeps running after you log out. If it cannot
-  run, the installer prints it. Until it runs, setup needs `MAMA_INIT_MEMBER_ROOT` and
+- **Linux** needs administrator rights once, which the installer asks for in a password window
+  (pkexec) when it runs without a terminal in a desktop session, and through `sudo` at a terminal.
+  It makes `/var/lib/mama/<you>`, turns on linger, so MAMA keeps running after you log out, and
+  with apt installs `bubblewrap`, `socat` and `python3-venv`. If it cannot run, the installer
+  prints it. Until it runs, setup needs `MAMA_INIT_MEMBER_ROOT` and
   `MAMA_INIT_TOOLS_ROOT` to name two other folders outside your home.
 
 The installer can run again at any time. It skips what is in place, and on an install that is set

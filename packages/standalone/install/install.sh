@@ -175,8 +175,11 @@ mama_install() {
   PATH=$HOME/.local/bin:$PATH
   export PATH
 
-  # Linux: the parent of member_root and tools_root, and linger, in one sudo call. sudo keeps the
-  # umask 077 above; 022 inside, or the parent would be 0700 and init's folder check would fail.
+  # Linux: the parent of member_root and tools_root, linger and, with apt, the packages Claude's
+  # shell sandbox and the document tools need, in one privileged call. It keeps the umask 077 above;
+  # 022 inside, or the parent would be 0700 and init's folder check would fail. With no terminal
+  # (the person's agent runs this) in a desktop session, pkexec asks for the password in a window,
+  # so the person types nothing in a terminal (I1; owner, 2026-11-15).
   if [ "$os" = linux ]; then
     user=$(id -un)
     # default-roots.ts's pattern, ^[A-Za-z0-9][A-Za-z0-9._-]*$, spelled out: a range in a
@@ -190,13 +193,30 @@ mama_install() {
       say "The user name $user has characters MAMA's default folders do not take, so nothing is run with sudo; set MAMA_INIT_MEMBER_ROOT and MAMA_INIT_TOOLS_ROOT to two folders outside your home instead."
     elif [ -n "$(find /var/lib/mama -prune -type d -user 0 -perm 0755 2>/dev/null)" ] &&
       [ -n "$(find "/var/lib/mama/$user" -prune -type d -user "$(id -u)" -perm 0700 2>/dev/null)" ] &&
-      [ -e "/var/lib/systemd/linger/$user" ]; then
+      [ -e "/var/lib/systemd/linger/$user" ] &&
+      { ! command -v apt-get >/dev/null 2>&1 ||
+        { command -v bwrap >/dev/null 2>&1 && command -v socat >/dev/null 2>&1; }; }; then
       say "/var/lib/mama/$user is in place and linger is on."
     else
       privileged="umask 022; install -d -m 0755 /var/lib/mama; install -d -o $user -m 0700 /var/lib/mama/$user; loginctl enable-linger $user"
-      say "MAMA keeps member workspaces and document tools under /var/lib/mama/$user, and linger keeps it running after you log out. This needs sudo once:"
+      packages=''
+      if command -v apt-get >/dev/null 2>&1; then
+        packages=' and installs bubblewrap and socat (the shell sandbox) and python3-venv (the document tools)'
+        privileged="$privileged; DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap socat python3-venv"
+      fi
+      say "MAMA keeps member workspaces and document tools under /var/lib/mama/$user, and linger keeps it running after you log out. One privileged command makes them$packages:"
       say "  sudo sh -c '$privileged'"
-      if command -v sudo >/dev/null 2>&1 && sudo sh -c "$privileged" </dev/null; then
+      # A terminal: sudo asks there. None, in a desktop session: pkexec asks in a window. Neither:
+      # sudo without a prompt, which runs only where no password is needed.
+      if (: </dev/tty) 2>/dev/null; then
+        elevate=sudo
+      elif command -v pkexec >/dev/null 2>&1 && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }; then
+        elevate=pkexec
+        say "A password window opens for it."
+      else
+        elevate=sudo
+      fi
+      if command -v "$elevate" >/dev/null 2>&1 && "$elevate" sh -c "$privileged" </dev/null; then
         say "Done."
       else
         say "That did not run. Run it later, or set MAMA_INIT_MEMBER_ROOT and MAMA_INIT_TOOLS_ROOT to two folders outside your home."

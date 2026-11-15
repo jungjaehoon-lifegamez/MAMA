@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- On Linux the install command's one administrator step also installs `bubblewrap`, `socat` and
+  `python3-venv` where apt exists, and runs through `pkexec` when there is no terminal in a desktop
+  session, so a password window opens and the person types nothing in a terminal (owner,
+  2026-11-15). At a terminal it uses `sudo` as before.
+
 ### Added
 
 - `document.render` works on Linux. Each render step (LibreOffice and the toolkit's Python) runs
