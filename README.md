@@ -65,7 +65,8 @@ the rest are gathered into an hourly reminder between 09:00 and 21:00.
 
 ### What you need
 
-- A Mac. Linux and Docker are not supported yet; see
+- A Mac. Linux (Ubuntu 24.04) is in testing (see
+  [On Linux](docs/start/owner-setup.md#on-linux)); Docker is not supported yet. See
   [supported versions](docs/start/owner-setup.md#supported-versions).
 - Claude Code or Codex, signed in.
 - A Telegram account.
@@ -237,10 +238,10 @@ These are the current package versions.
 
 | Package                                                     | Role                             | Version |
 | ----------------------------------------------------------- | -------------------------------- | ------- |
-| [MAMA OS](packages/standalone/README.md)                    | Owner agent and `mama` command   | 0.80.0  |
+| [MAMA OS](packages/standalone/README.md)                    | Owner agent and `mama` command   | 0.81.0  |
 | [mama-core](packages/mama-core/README.md)                   | Shared engine and public exports | 8.9.1   |
 | [Public MCP server](packages/mcp-server/README.md)          | Development memory over stdio    | 2.6.2   |
-| [Claude Code plugin](packages/claude-code-plugin/README.md) | Development commands and hooks   | 2.5.0   |
+| [Claude Code plugin](packages/claude-code-plugin/README.md) | Development commands and hooks   | 2.5.1   |
 
 ## Roadmap
 

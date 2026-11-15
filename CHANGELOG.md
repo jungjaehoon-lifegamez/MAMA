@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.81.0] / plugin [2.5.1] - 2026-11-15
+
+MAMA now renders documents on Linux, inside a sandbox with the same limits as on macOS, and the
+Linux install asks for your password in a window instead of a terminal. Linux (Ubuntu 24.04) is
+still in testing: the fresh-install check from the docs has not run yet. Each package changelog
+lists every change.
+
+### Upgrading
+
+- An install on 0.80.0 updates with `mama update`, or `/update` in Telegram. From a non-login
+  shell this now works too: the backend is found on the service's own PATH.
+- On Linux, document rendering needs LibreOffice and the Noto CJK fonts:
+  `sudo apt-get install -y libreoffice-writer libreoffice-calc libreoffice-impress fonts-noto-cjk`,
+  then `mama tools install`.
+- Update the Claude Code plugin to 2.5.1. It still runs mama-server 2.6.2 on mama-core 8.9.1.
+
+### Added
+
+- Document rendering on Linux, under `bwrap`: no network, the system read-only, private `/tmp` and
+  `/run`, your home and other people's folders hidden (#566).
+- On Linux the install command's one administrator step opens a password window in a desktop
+  session, and installs `bubblewrap`, `socat` and `python3-venv` (#568). Setup on Linux is
+  described under "On Linux" in the setup guide.
+
+### Changed
+
+- iMessage is offered on macOS only (#566).
+
+### Fixed
+
+- `mama update` from a shell without the backend on PATH no longer rolls back (#566).
+- `mama doctor` over SSH on macOS names the unreadable login keychain instead of asking you to
+  sign in again (#566).
+
 ## mama-os [0.80.0] / mama-core [8.9.1] / mama-server [2.6.2] / plugin [2.5.0] - 2026-11-14
 
 When MAMA was down long enough to miss a report, it now tells you which reports it missed. The

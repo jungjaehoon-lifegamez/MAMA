@@ -32,6 +32,12 @@ read `open.html` and never POST to the setup page. The page is the person's.
    curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | MAMA_INIT_MODEL=<model> sh -s -- --backend <claude|codex> --non-interactive
    ```
 
+   On Linux (Ubuntu 24.04, in testing) the command needs administrator rights once. When its
+   output says a password window should open, tell the person to enter their computer's password
+   in that window, never in this chat. If no window appears, or the output says the step did not
+   run, pass on the `sudo` line it printed; the person runs it. If it says only the packages did
+   not install, the rest is done, and setup names the packages again if they are needed.
+
    Read the file as it grows. When it says the setup page opened, tell the person it is open in
    their browser. If the browser did not open, give them the `file://` path of `open.html` that
    the output names, to paste into the address bar; the path holds no secret.

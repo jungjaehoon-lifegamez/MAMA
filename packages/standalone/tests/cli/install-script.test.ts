@@ -149,6 +149,9 @@ beforeEach(() => {
   stub('uname', 'case "$1" in -s) echo "$FAKE_UNAME_S" ;; -m) echo "$FAKE_UNAME_M" ;; esac');
   stub('id', '[ "$1" = -un ] && { echo "$FAKE_USER"; exit 0; }; exec /usr/bin/id "$@"');
   stub('sudo', 'echo "sudo $*" >> "$STUB_LOG"; exit "$FAKE_SUDO_STATUS"');
+  // Present on every host the tests run on, so the Linux command is the same on macOS and Ubuntu.
+  stub('apt-get', 'echo "apt-get $*" >> "$STUB_LOG"; exit 0');
+  stub('pkexec', 'echo "pkexec $*" >> "$STUB_LOG"; exit "$FAKE_SUDO_STATUS"');
   stub(
     'codex',
     'echo "codex $*" >> "$STUB_LOG"; [ "$1" = --version ] && echo "codex-cli 0.160.1"; exit 0'
@@ -401,14 +404,57 @@ describe('install.sh', () => {
     expect(calls().filter((call) => call.startsWith('sudo'))).toEqual([]);
   });
 
-  it('Linux: shows the one sudo call and runs it', async () => {
+  const linuxCommand =
+    'umask 022 && install -d -m 0755 /var/lib/mama && install -d -o fixture -m 0700 /var/lib/mama/fixture && loginctl enable-linger fixture || exit 10; export DEBIAN_FRONTEND=noninteractive; apt-get -o DPkg::Lock::Timeout=300 update -qq && apt-get -o DPkg::Lock::Timeout=300 install -y bubblewrap socat python3-venv || exit 20';
+
+  it('Linux: shows the one privileged call, with the apt packages, and runs it', async () => {
     seedInstall();
     const result = await run(['--backend', 'codex', '--no-init'], { FAKE_UNAME_S: 'Linux' });
     expect(result.status, result.output).toBe(0);
-    const command =
-      'umask 022; install -d -m 0755 /var/lib/mama; install -d -o fixture -m 0700 /var/lib/mama/fixture; loginctl enable-linger fixture';
-    expect(result.output).toContain(`sudo sh -c '${command}'`);
-    expect(calls().filter((call) => call.startsWith('sudo'))).toEqual([`sudo sh -c ${command}`]);
+    expect(result.output).toContain(`sudo sh -c '${linuxCommand}'`);
+    // No terminal and no desktop: sudo without a prompt.
+    expect(calls().filter((call) => call.startsWith('sudo'))).toEqual([
+      `sudo sh -c ${linuxCommand}`,
+    ]);
+    expect(calls().filter((call) => call.startsWith('pkexec'))).toEqual([]);
+  });
+
+  it('Linux: with no terminal in a desktop session, pkexec asks in a window (I1)', async () => {
+    seedInstall();
+    for (const display of [{ DISPLAY: ':0' }, { WAYLAND_DISPLAY: 'wayland-0' }]) {
+      rmSync(log, { force: true });
+      const result = await run(['--backend', 'codex', '--no-init'], {
+        FAKE_UNAME_S: 'Linux',
+        ...display,
+      });
+      expect(result.status, result.output).toBe(0);
+      expect(result.output).toContain('A password window should open for it');
+      expect(calls().filter((call) => call.startsWith('pkexec'))).toEqual([
+        `pkexec sh -c ${linuxCommand}`,
+      ]);
+      expect(calls().filter((call) => call.startsWith('sudo'))).toEqual([]);
+    }
+  });
+
+  it('Linux: names the packages apart when only apt failed, and a refused window as not run', async () => {
+    seedInstall();
+    let result = await run(['--backend', 'codex', '--no-init'], {
+      FAKE_UNAME_S: 'Linux',
+      FAKE_SUDO_STATUS: '20',
+    });
+    expect(result.status, result.output).toBe(0);
+    expect(result.output).toContain(
+      'The folders and linger are done; the packages did not install'
+    );
+    rmSync(log, { force: true });
+    // A dismissed pkexec window exits 126.
+    result = await run(['--backend', 'codex', '--no-init'], {
+      FAKE_UNAME_S: 'Linux',
+      DISPLAY: ':0',
+      FAKE_SUDO_STATUS: '126',
+    });
+    expect(result.status, result.output).toBe(0);
+    expect(result.output).toContain('That did not run');
   });
 
   it('Linux: a refused sudo prints the command and goes on', async () => {

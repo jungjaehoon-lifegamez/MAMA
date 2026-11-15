@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-11-15
+
+### Changed
+
+- The `mama-install` skill passes on the Linux password window the install command opens for its
+  one administrator step, and the `sudo` line when there is no desktop.
+
 ## [2.5.0] - 2026-11-14
 
 ### Changed
