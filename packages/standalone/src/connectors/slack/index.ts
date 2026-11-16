@@ -93,6 +93,8 @@ export class SlackConnector implements IConnector {
   private lastPollTime: Date | null = null;
   private lastPollCount = 0;
   private lastError: string | undefined;
+  /** This poll's failed channels and the since they must be read from again (v1 X1). */
+  private partialProblem: { error: string; readFrom: Date } | undefined;
 
   constructor(config: ConnectorConfig, options: SlackConnectorOptions = {}) {
     // A setting, checked when the source is built, before it runs (see NotionConnector): the
@@ -179,7 +181,8 @@ export class SlackConnector implements IConnector {
     if (!this.client) throw new Error('SlackConnector not initialized');
 
     const items: NormalizedItem[] = [];
-    let hadError = false;
+    const failedChannels = new Map<string, string>();
+    let polledChannels = 0;
     const oldest = (since.getTime() / 1000).toFixed(6);
     // History is read back THREAD_LOOKBACK_MS so a thread started before `since` still shows its
     // newest reply time; only messages after `since` become items.
@@ -187,6 +190,9 @@ export class SlackConnector implements IConnector {
 
     for (const [channelId, channelConfig] of Object.entries(this.config.channels)) {
       if (channelConfig.role === 'ignore') continue;
+      polledChannels += 1;
+      // A channel that fails part-way keeps none of its items: the next poll reads it from `since`.
+      const channelItems: NormalizedItem[] = [];
       try {
         const activeThreads: string[] = [];
         let cursor: string | undefined;
@@ -206,7 +212,7 @@ export class SlackConnector implements IConnector {
               activeThreads.push(message.ts);
             }
             const item = await this.messageItem(channelId, channelConfig, message, since);
-            if (item) items.push(item);
+            if (item) channelItems.push(item);
           }
           cursor = result.response_metadata?.next_cursor || undefined;
         } while (cursor !== undefined);
@@ -227,23 +233,42 @@ export class SlackConnector implements IConnector {
               // the channel (thread_broadcast) is a channel message and comes from history too.
               if (reply.ts === threadTs || reply.subtype === 'thread_broadcast') continue;
               const item = await this.messageItem(channelId, channelConfig, reply, since);
-              if (item) items.push(item);
+              if (item) channelItems.push(item);
             }
             replyCursor = result.response_metadata?.next_cursor || undefined;
           } while (replyCursor !== undefined);
         }
+        items.push(...channelItems);
       } catch (error) {
-        hadError = true;
-        this.lastError = error instanceof Error ? error.message : String(error);
+        failedChannels.set(channelId, error instanceof Error ? error.message : String(error));
       }
     }
 
-    if (hadError) throw new Error('Slack poll failed for one or more configured channels');
+    const failures = [...failedChannels].map(
+      ([channelId, reason]) => `Channel ${channelId}: ${reason}`
+    );
+    if (polledChannels > 0 && failedChannels.size === polledChannels) {
+      // Nothing was read: the scheduler keeps its cursor and tries every channel again.
+      this.lastError = failures.join('; ');
+      this.partialProblem = undefined;
+      throw new Error(
+        `Slack poll failed for ${failedChannels.size} of ${polledChannels} configured channels; ${this.lastError}`
+      );
+    }
     items.sort((left, right) => left.timestamp.getTime() - right.timestamp.getTime());
     this.lastPollTime = new Date();
     this.lastPollCount = items.length;
-    this.lastError = undefined;
+    // The channels that answered are recorded; the scheduler's cursor stays at this since until the
+    // failed ones answer, and what they read twice is one version in the raw store.
+    this.lastError = failures.length > 0 ? `skipped ${failures.join('; skipped ')}` : undefined;
+    this.partialProblem =
+      this.lastError === undefined ? undefined : { error: this.lastError, readFrom: since };
+    if (this.lastError !== undefined) console.warn(`[slack] ${this.lastError}`);
     return items;
+  }
+
+  partialFailure(): { error: string; readFrom: Date } | undefined {
+    return this.partialProblem;
   }
 
   /** One person's message after `since`, from history or a thread; null for anything else. */

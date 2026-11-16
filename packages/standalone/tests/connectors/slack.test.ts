@@ -102,6 +102,45 @@ describe('SlackConnector', () => {
     });
   });
 
+  it('records the channels that answer and holds the cursor for a failed one (X1)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    slack.history.mockImplementation(async ({ channel }: { channel: string }) => {
+      if (channel === 'second') throw new Error('not_in_channel');
+      return { messages: [{ ts: ts(5), user: 'user-key', text: 'kept' }] };
+    });
+    slack.usersInfo.mockResolvedValue({ user: { real_name: 'actor-a' } });
+    const connector = new SlackConnector({
+      ...config,
+      channels: { first: { role: 'hub' }, second: { role: 'hub' } },
+    });
+    await connector.init();
+    const items = await connector.poll(SINCE);
+    expect(items.map((item) => item.content)).toEqual(['kept']);
+    expect((await connector.healthCheck()).error).toBe('skipped Channel second: not_in_channel');
+    expect(connector.partialFailure()).toEqual({
+      error: 'skipped Channel second: not_in_channel',
+      readFrom: SINCE,
+    });
+    expect(warn).toHaveBeenCalledWith('[slack] skipped Channel second: not_in_channel');
+    // Once every channel answers, nothing is held.
+    slack.history.mockResolvedValue({ messages: [] });
+    await connector.poll(SINCE);
+    expect(connector.partialFailure()).toBeUndefined();
+    expect((await connector.healthCheck()).error).toBeUndefined();
+  });
+
+  it('fails the poll, naming each channel, when no channel answers', async () => {
+    slack.history.mockRejectedValue(new Error('ratelimited'));
+    const connector = new SlackConnector({
+      ...config,
+      channels: { first: { role: 'hub' }, second: { role: 'hub' } },
+    });
+    await connector.init();
+    await expect(connector.poll(SINCE)).rejects.toThrow(
+      'Slack poll failed for 2 of 2 configured channels; Channel first: ratelimited; Channel second: ratelimited'
+    );
+  });
+
   it('keeps live Slack message file ids in observation metadata', async () => {
     slack.history.mockResolvedValue({
       messages: [
@@ -317,28 +356,6 @@ describe('SlackConnector', () => {
     );
   });
 
-  it('fails the whole poll when one room fails without advancing poll state', async () => {
-    slack.history.mockImplementation(async ({ channel }: { channel: string }) => {
-      if (channel === 'failed-channel') throw new Error('room request failed');
-      return { messages: [], response_metadata: { next_cursor: '' } };
-    });
-    const connector = new SlackConnector({
-      ...config,
-      channels: {
-        'working-channel': { role: 'hub' },
-        'failed-channel': { role: 'hub' },
-      },
-    });
-    await connector.init();
-
-    await expect(connector.poll(new Date(0))).rejects.toThrow(/one or more configured channels/i);
-    expect(await connector.healthCheck()).toMatchObject({
-      lastPollTime: null,
-      lastPollCount: 0,
-      error: 'room request failed',
-    });
-  });
-
   it('reads replies posted only in a thread that started before the poll window', async () => {
     const parent = ts(-5 * 24 * 60 * 60);
     slack.history.mockResolvedValue({
@@ -509,10 +526,12 @@ describe('SlackConnector', () => {
     const connector = new SlackConnector(config);
     await connector.init();
 
-    await expect(connector.poll(SINCE)).rejects.toThrow(/one or more configured channels/i);
+    await expect(connector.poll(SINCE)).rejects.toThrow(
+      'Slack poll failed for 1 of 1 configured channels; Channel channel-key: thread request failed'
+    );
     expect(await connector.healthCheck()).toMatchObject({
       lastPollTime: null,
-      error: 'thread request failed',
+      error: 'Channel channel-key: thread request failed',
     });
   });
 });
