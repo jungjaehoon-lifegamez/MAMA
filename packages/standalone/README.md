@@ -56,9 +56,9 @@ See [CLI flags](../../docs/reference/cli.md) and
 ## Current surface
 
 - **Messengers:** in Telegram, a DM per registered person and the common group; Discord and
-  Slack keep one owner channel ([messengers](../../docs/guides/messengers.md)).
+  Slack keep one owner channel, experimental ([messengers](../../docs/guides/messengers.md)).
 - **People:** each person's DM session has its own records, scheduled jobs, notices and skills;
-  an owner's DM also reads the common records. Members without the owner role work in the group
+  an owner's DM also reads the common records. Members without the owner role (experimental) work in the group
   in a session of their own ([people and DMs](../../docs/guides/people.md)).
 - **Sources:** Chatwork, Slack, Discord, Telegram groups, Trello, Notion, Google Calendar, Gmail,
   Drive and Sheets through `gws`, iCal feeds, Obsidian, iMessage, Claude Code and a read-only

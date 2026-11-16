@@ -549,7 +549,7 @@ export async function askDiscord(
   secrets: Partial<Record<SecretName, string>>,
   stored: StoredSecrets
 ): Promise<Record<string, unknown>> {
-  if (!(await yes(prompt, 'Enable Discord owner messages')))
+  if (!(await yes(prompt, 'Enable Discord owner messages (experimental: not yet run live)')))
     return { enabled: false, allowed_channels: [], owner_user_ids: [] };
   await askSecret(prompt, secrets, stored, 'MAMA_DISCORD_TOKEN', 'Discord bot token');
   const channel = await text(prompt, 'Discord owner channel id');
@@ -568,7 +568,7 @@ export async function askSlack(
   secrets: Partial<Record<SecretName, string>>,
   stored: StoredSecrets
 ): Promise<Record<string, unknown>> {
-  if (!(await yes(prompt, 'Enable Slack owner messages')))
+  if (!(await yes(prompt, 'Enable Slack owner messages (experimental: not yet run live)')))
     return { enabled: false, allowed_channels: [], owner_user_ids: [] };
   await askSecret(prompt, secrets, stored, 'MAMA_SLACK_TOKEN', 'Slack bot token');
   await askSecret(prompt, secrets, stored, 'MAMA_SLACK_APP_TOKEN', 'Slack Socket Mode app token');

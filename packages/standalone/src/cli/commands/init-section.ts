@@ -470,6 +470,8 @@ export async function runInitSection(
       let block: Record<string, unknown>;
       if (nonInteractive) {
         block = environmentMessenger(env, section);
+        if (block.enabled)
+          write(`${section} owner messages are experimental: they have not run live yet.`);
         const asks = block.enabled ? MESSENGER_TOKENS[section].map(([name]) => name) : [];
         const replace = replaceOnly(asks);
         if (block.enabled)

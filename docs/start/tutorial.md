@@ -8,7 +8,7 @@ nav_order: 1
 
 This walkthrough installs MAMA OS, connects Telegram and one work source, and shows
 where to inspect the results. Examples use fictional work and synthetic identifiers. This walkthrough uses Telegram;
-Discord and Slack work the same way. See the [messengers guide](../guides/messengers.md).
+Discord and Slack owner messengers are experimental (not yet run live). See the [messengers guide](../guides/messengers.md).
 
 ## 1. Install through your agent
 

@@ -25,8 +25,12 @@ fonts-noto-cjk` where apt exists.
 
 ### Changed
 
+- Discord and Slack owner messengers and members without the owner role are marked
+  experimental: they have not run live yet. `mama init --section discord` or `slack` says so when
+  one is turned on, the enrollment action tells the agent to say so, and the README and guides
+  label them.
 - The README and the docs front page say Docker and Windows are not supported, and the README's
-  1.0 progress counts what is done today (34 of 47, Docker left out of 1.0).
+  1.0 progress counts what is done today (41 of 47, Docker left out of 1.0).
 - The setup guide and README list Linux (Ubuntu 24.04) as supported. A fresh install from the docs
   on Ubuntu 24.04 reached a DM reply, a source recorded as work and an answer citing it.
 
