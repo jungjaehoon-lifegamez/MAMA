@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.10.0] - 2026-11-16
+
 ### Added
 
 - `runtime/backend-limits`: the usage limit a backend CLI reports for its login, read from Claude's
