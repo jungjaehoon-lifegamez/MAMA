@@ -33,7 +33,7 @@ never type in a terminal. Your agent guides you through these steps, in this ord
 
 In Claude Code, MAMA's plugin has a `mama-install` skill that does the same: run
 `/plugin marketplace add jungjaehoon-lifegamez/claude-plugins`, then `/plugin install mama`. macOS
-is supported today; Linux and Docker are not yet.
+and Linux (Ubuntu 24.04) are supported; Docker and Windows are not.
 
 - [Your first day with MAMA](start/tutorial.md) walks through setup and a first owner conversation.
 - [Owner setup](start/owner-setup.md) is the setup your agent follows, with the install command,

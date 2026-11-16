@@ -65,8 +65,8 @@ the rest are gathered into an hourly reminder between 09:00 and 21:00.
 
 ### What you need
 
-- A Mac or Ubuntu 24.04 (see [On Linux](docs/start/owner-setup.md#on-linux)). Docker is not
-  supported yet. See
+- A Mac or Ubuntu 24.04 (see [On Linux](docs/start/owner-setup.md#on-linux)). Docker and Windows
+  are not supported. See
   [supported versions](docs/start/owner-setup.md#supported-versions).
 - Claude Code or Codex, signed in.
 - A Telegram account.
@@ -76,7 +76,7 @@ tells you how.
 
 ### Say to your agent
 
-On that Mac, open Claude Code or Codex and say:
+On that computer, open Claude Code or Codex and say:
 
 > Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA
 
@@ -245,8 +245,9 @@ These are the current package versions.
 
 ## Roadmap
 
-MAMA is built in stages, and each stage is judged on real work, not on tests alone. Today it runs
-on the developer's own Mac. 1.0 is the stage where anyone can install it.
+MAMA is built in stages, and each stage is judged on real work, not on tests alone. Fresh installs
+from these docs have run on a clean Mac account and a new Ubuntu 24.04. 1.0 is the stage where
+anyone can install it and keep it across upgrades.
 
 | Stage                      | What you get                                                                                                                                                                                           | Progress                                                                                                                |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
@@ -254,25 +255,24 @@ on the developer's own Mac. 1.0 is the stage where anyone can install it.
 | 2. Your own work           | It finds the work in your sources, adds news to it, answers who is doing what and how things went, keeps reports and the board in line with the work, and follows your corrections, on Claude or Codex | Live on one install; 2 of 5 owner checks accepted                                                                       |
 | 3. A shared engine         | Another project builds its own records, history and search on mama-core                                                                                                                                | Done                                                                                                                    |
 | 4. People                  | Each person has a DM with its own records, jobs and skills; members work in the group within what they are granted                                                                                     | In progress: owners' DMs built and in use (one daily, one a few times); members without the owner role not yet verified |
-| 5. 1.0: anyone can install | A fresh install on macOS, Linux or Docker, set up from the docs alone and kept across upgrades                                                                                                         | In progress: 12 of 52                                                                                                   |
+| 5. 1.0: anyone can install | A fresh install on macOS or Linux, set up from the docs alone and kept across upgrades                                                                                                                 | In progress: 26 of 47                                                                                                   |
 
-Messengers: Telegram is live; Discord and Slack have not run live yet. Windows is not planned for
-1.0.
+Messengers: Telegram is live; Discord and Slack have not run live yet. Docker and Windows are not
+planned for 1.0.
 
 ### 1.0 progress
 
 | Area             | What it covers                                                                                                              | Done        |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------- |
-| Install          | One command per platform, a check of the AI CLI you sign in to, a Node path that survives upgrades, document tools on Linux | 2 / 6       |
-| Setup            | Pairing in Telegram instead of typed IDs, defaults instead of edited files, the service started for you                     | 1 / 7       |
-| Operations       | Status, `mama doctor`, update (also from chat), backup and restore, upgrade checks, logs, log rotation, uninstall           | 7 / 9       |
-| Linux            | Document rendering, sandbox checks, a full run                                                                              | 4 / 5       |
-| Docker           | An official image, signing in inside the container, the same isolation inside it                                            | 0 / 5       |
+| Install          | One command per platform, a check of the AI CLI you sign in to, a Node path that survives upgrades, document tools on Linux | 4 / 6       |
+| Setup            | Pairing in Telegram instead of typed IDs, defaults instead of edited files, the service started for you                     | 6 / 7       |
+| Operations       | Status, `mama doctor`, update (also from chat), backup and restore, upgrade checks, logs, log rotation, uninstall           | 9 / 9       |
+| Linux            | Document rendering, sandbox checks, a full run                                                                              | 5 / 5       |
 | Everyday use     | Chat commands such as `/stop`, usage and limits, a health view, Discord and Slack verified or marked experimental           | 1 / 4       |
 | People           | The remaining live checks, and use by more than one person                                                                  | 0 / 5       |
 | Your own work    | The owner checks of stage 2 accepted                                                                                        | 0 / 4       |
 | Fixes and guides | Chatwork polling, shutdown order, prompt size, test stability, CI coverage, a guide per platform, what 1.x promises         | 1 / 7       |
-| **Total**        |                                                                                                                             | **16 / 52** |
+| **Total**        |                                                                                                                             | **26 / 47** |
 
 Each item, with what is true today and how it is checked, is in the
 [1.0 work list](docs/development/work/v1.md). Ongoing live checks are in the
