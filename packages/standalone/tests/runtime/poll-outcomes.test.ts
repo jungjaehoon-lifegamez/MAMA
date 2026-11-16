@@ -83,4 +83,64 @@ describe('connector poll outcome visibility', () => {
       await database.close();
     }
   });
+
+  it('lists a source that answered in part among the failed sources (X1)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'poll-outcome-partial-'));
+    roots.push(root);
+    const database = await openCoreDatabase({ path: join(root, 'state.db') });
+    const raw = new RawStore(join(root, 'raw'));
+    let partial: { error: string; readFrom?: Date } | undefined = {
+      error: 'skipped Room b: HTTP 503',
+      readFrom: new Date(0),
+    };
+    const connector: IConnector = {
+      name: 'connector-test',
+      type: 'api',
+      init: async () => {},
+      dispose: async () => {},
+      healthCheck: async () => ({ healthy: false, lastPollTime: null, lastPollCount: 0 }),
+      getAuthRequirements: () => [],
+      authenticate: async () => true,
+      poll: async () => [],
+      partialFailure: () => partial,
+    };
+    const registry = new ConnectorRegistry();
+    registry.register('connector-test', connector);
+    const scheduler = new PollingScheduler(raw, root, {
+      rawIndexSink: () => [],
+      recordPollOutcome: (name, outcome) =>
+        recordConnectorPollOutcome(database.adapter, name, outcome),
+    });
+    const dispatch = createDispatcher(
+      createCatalog(
+        reportSourceActionRegistrations({
+          adapter: database.adapter,
+          timeZone: createTimeZoneSetting('Asia/Seoul'),
+        })
+      )
+    );
+    const access: ActionContext['access'] = {
+      principalId: 'owner-test',
+      agentId: 'agent-test',
+      actions: ['source.recent'],
+      connectors: ['connector-test'],
+      connectorWideRead: ['connector-test'],
+      scopes: [],
+    };
+    const read = () => dispatch({ action: 'source.recent', input: {} }, { access });
+    try {
+      await scheduler.pollConnector('connector-test', registry, {}, async () => {});
+      expect(await read()).toMatchObject({
+        data: {
+          failedConnectors: [{ connector: 'connector-test', error: 'skipped Room b: HTTP 503' }],
+        },
+      });
+      partial = undefined;
+      await scheduler.pollConnector('connector-test', registry, {}, async () => {});
+      expect(await read()).toMatchObject({ data: { failedConnectors: [] } });
+    } finally {
+      raw.close();
+      await database.close();
+    }
+  });
 });

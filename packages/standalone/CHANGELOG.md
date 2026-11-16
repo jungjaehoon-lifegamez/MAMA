@@ -10,15 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - One failing Chatwork room no longer drops the whole poll. The rooms that answer are recorded;
-  the failed room is skipped, named in the source's health and the log, and read again from where
-  it failed once it answers. A room that got more than 100 messages between polls is reported
+  the failed room is skipped, named in the source's error (reports list it with the failing
+  sources) and the log, and read again from where it failed once it answers, also after a restart. A room that got more than 100 messages between polls is reported
   (the Chatwork API cannot page back to the older ones) instead of losing them silently.
 - On Linux, `mama tools install` names the exact command when LibreOffice or the Noto CJK fonts
   are missing: `sudo apt-get install -y libreoffice-writer libreoffice-calc libreoffice-impress
 fonts-noto-cjk` where apt exists.
-- The daemon log no longer warns on every turn that the system prompt should be truncated. MAMA
-  never truncates it (the standing text and your owner policy are both kept whole); the warning
-  now starts above today's prompts.
 
 ### Changed
 

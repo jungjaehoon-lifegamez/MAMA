@@ -104,12 +104,18 @@ describe('ChatworkConnector', () => {
     ]);
     expect((await connector.healthCheck()).error).toBe('skipped Room second: HTTP 503');
     expect(warn).toHaveBeenCalledWith('[chatwork] skipped Room second: HTTP 503');
+    // The scheduler keeps its cursor at 10s, where the second room failed (also across a restart).
+    expect(connector.partialFailure()).toEqual({
+      error: 'skipped Room second: HTTP 503',
+      readFrom: new Date(10_000),
+    });
     secondUp = true;
-    // The scheduler has moved on to since=40s; the second room is read from 10s, where it failed.
-    expect((await connector.poll(new Date(40_000))).map((item) => item.sourceId)).toEqual([
+    // Read from 10s again: the second room's message comes; the first room's is not repeated.
+    expect((await connector.poll(new Date(10_000))).map((item) => item.sourceId)).toEqual([
       'second:201',
     ]);
     expect((await connector.healthCheck()).error).toBeUndefined();
+    expect(connector.partialFailure()).toBeUndefined();
     await connector.dispose();
   });
 
@@ -134,6 +140,21 @@ describe('ChatworkConnector', () => {
     await connector.init();
     await connector.poll(new Date(0));
     page = Array.from({ length: 100 }, (_, index) => message(String(300 + index), 40));
+    expect(await connector.poll(new Date(30_000))).toHaveLength(100);
+    expect((await connector.healthCheck()).error).toBe(
+      'Room room-key: more than 100 messages since the last poll; the older ones cannot be read through the Chatwork API'
+    );
+    expect(warn).toHaveBeenCalledOnce();
+    await connector.dispose();
+  });
+
+  it('reports a full page newer than since when no message was seen yet (after a restart)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const page = Array.from({ length: 100 }, (_, index) => message(String(300 + index), 40));
+    const connector = new ChatworkConnector(config, {
+      fetch: async () => new Response(JSON.stringify(page)),
+    });
+    await connector.init();
     expect(await connector.poll(new Date(30_000))).toHaveLength(100);
     expect((await connector.healthCheck()).error).toBe(
       'Room room-key: more than 100 messages since the last poll; the older ones cannot be read through the Chatwork API'

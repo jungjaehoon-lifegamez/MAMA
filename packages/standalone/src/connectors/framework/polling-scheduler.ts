@@ -59,7 +59,10 @@ export interface PollingSchedulerOptions {
   rawIndexSink?: RawIndexSink;
   now?: () => number;
   initialNow?: number;
-  recordPollOutcome?: (connectorName: string, outcome: { at: number; error?: string }) => void;
+  recordPollOutcome?: (
+    connectorName: string,
+    outcome: { at: number; error?: string; partial?: boolean }
+  ) => void;
 }
 
 interface PollState {
@@ -323,8 +326,18 @@ export class PollingScheduler {
         );
       }
       await connector.commitPoll?.();
-      this.lastPollTimes.set(name, new Date(pollStartedAt));
-      this.recordPollOutcome?.(name, { at: this.now() });
+      // A part that failed is read again from where it failed; the cursor is persisted, so this
+      // holds across a restart, and what is read twice is one version in the raw store.
+      const partial = connector.partialFailure?.();
+      const readFrom = partial?.readFrom?.getTime();
+      this.lastPollTimes.set(
+        name,
+        new Date(readFrom !== undefined && readFrom < pollStartedAt ? readFrom : pollStartedAt)
+      );
+      this.recordPollOutcome?.(
+        name,
+        partial ? { at: this.now(), error: partial.error, partial: true } : { at: this.now() }
+      );
     } catch (error) {
       console.error(`[PollingScheduler] poll failed for connector ${name}`, error);
       connector.abortPollHandoff?.();

@@ -401,14 +401,26 @@ export function readConnectorCursor(
 export function recordConnectorPollOutcome(
   adapter: ConnectorEventIndexAdapter,
   connectorName: string,
-  outcome: { at: number; error?: string }
+  outcome: { at: number; error?: string; partial?: boolean }
 ): void {
   if (!Number.isSafeInteger(outcome.at) || outcome.at < 0) {
     throw new Error('Connector poll outcome time must be a non-negative epoch-millisecond integer');
   }
   const at = new Date(outcome.at).toISOString();
   adapter.transaction(() => {
-    if (outcome.error === undefined) {
+    if (outcome.error !== undefined && outcome.partial === true) {
+      // Part of the source answered: both its success and the failed part stay visible.
+      adapter
+        .prepare(
+          `INSERT INTO connector_event_index_cursors (connector_name, last_success_at, last_error, last_error_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(connector_name) DO UPDATE SET
+           last_success_at = excluded.last_success_at,
+           last_error = excluded.last_error,
+           last_error_at = excluded.last_error_at`
+        )
+        .run(connectorName, at, outcome.error, at);
+    } else if (outcome.error === undefined) {
       adapter
         .prepare(
           `INSERT INTO connector_event_index_cursors (connector_name, last_success_at, last_error, last_error_at)

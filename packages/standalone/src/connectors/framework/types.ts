@@ -89,6 +89,12 @@ export interface IConnector {
   poll(since: Date, cursor?: ConnectorPollCursor): Promise<NormalizedItem[]>;
   commitPoll?(): void | Promise<void>;
   abortPollHandoff?(): void;
+  /**
+   * After a poll that returned items with part of the source failing (v1 X1): what failed, kept as
+   * the source's error beside its success, and the earliest time the failed part must still be
+   * read from, which the scheduler's cursor does not move past. Undefined when nothing failed.
+   */
+  partialFailure?(): { error: string; readFrom?: Date } | undefined;
 }
 
 export type ConnectorsConfig = Record<string, ConnectorConfig>;
