@@ -119,6 +119,20 @@ describe('ChatworkConnector', () => {
     await connector.dispose();
   });
 
+  it('orders message ids as numbers, not strings', async () => {
+    let page = [message('999', 20)];
+    const connector = new ChatworkConnector(config, {
+      fetch: async () => new Response(JSON.stringify(page)),
+    });
+    await connector.init();
+    expect(await connector.poll(new Date(0))).toHaveLength(1);
+    page = [message('999', 20), message('1000', 30)];
+    expect((await connector.poll(new Date(0))).map((item) => item.sourceId)).toEqual([
+      'room-key:1000',
+    ]);
+    await connector.dispose();
+  });
+
   it('fails the poll when no room answers, so the scheduler tries them all again', async () => {
     const connector = new ChatworkConnector(
       { ...config, channels: { first: { role: 'hub' }, second: { role: 'hub' } } },

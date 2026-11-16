@@ -68,6 +68,13 @@ export function extractChatworkFiles(body: string): Array<{ fileId: string; name
   });
 }
 
+/** Chatwork message ids are decimal strings; as strings, '999' would sort after '1000'. */
+function compareMessageIds(a: string, b: string): number {
+  const left = BigInt(a);
+  const right = BigInt(b);
+  return left === right ? 0 : left > right ? 1 : -1;
+}
+
 /** What `messages?force=1` returns at most per room. */
 const CHATWORK_PAGE = 100;
 export class ChatworkConnector implements IConnector {
@@ -203,7 +210,7 @@ export class ChatworkConnector implements IConnector {
         if (
           messages.length >= CHATWORK_PAGE &&
           (lastMsgId
-            ? !messages.some((msg) => msg.message_id <= lastMsgId)
+            ? !messages.some((msg) => compareMessageIds(msg.message_id, lastMsgId) <= 0)
             : messages.every((msg) => msg.send_time > sinceEpoch))
         )
           overflowedRooms.push(roomId);
@@ -212,9 +219,10 @@ export class ChatworkConnector implements IConnector {
         for (const msg of messages) {
           if (msg.send_time <= sinceEpoch) continue;
           // Skip messages we've already processed (client-side guard)
-          if (lastMsgId && msg.message_id <= lastMsgId) continue;
+          if (lastMsgId && compareMessageIds(msg.message_id, lastMsgId) <= 0) continue;
 
-          if (msg.message_id > maxMsgId) maxMsgId = msg.message_id;
+          if (!maxMsgId || compareMessageIds(msg.message_id, maxMsgId) > 0)
+            maxMsgId = msg.message_id;
 
           const chatworkFileIds = extractChatworkFileIds(msg.body);
           const chatworkFiles = extractChatworkFiles(msg.body);
