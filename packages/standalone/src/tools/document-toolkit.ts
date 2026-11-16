@@ -264,6 +264,17 @@ function xml(value: string): string {
     .replace(/"/g, '&quot;');
 }
 
+/** The Ubuntu packages the document tools need beyond the toolkit (owner-setup, "On Linux"). */
+export const LINUX_OFFICE_PACKAGES =
+  'libreoffice-writer libreoffice-calc libreoffice-impress fonts-noto-cjk';
+
+/** The exact install line where apt runs it (v1 I3); other Linux names what is missing. */
+function officeFix(locate: InstallToolkitOptions['locate']): string {
+  return locate?.('apt-get')
+    ? `run sudo apt-get install -y ${LINUX_OFFICE_PACKAGES}`
+    : 'install LibreOffice and the Noto Sans and Serif CJK fonts with your package manager';
+}
+
 async function installOffice(
   root: string,
   version: string,
@@ -273,10 +284,7 @@ async function installOffice(
 ): Promise<string> {
   if (platform !== 'darwin') {
     const soffice = locate?.('soffice');
-    if (!soffice)
-      throw new Error(
-        'soffice is missing from PATH; install LibreOffice and Noto Sans/Serif CJK fonts on the host'
-      );
+    if (!soffice) throw new Error(`soffice is missing from PATH; ${officeFix(locate)}`);
     const fonts = [
       ...fontFiles(join(root, 'fonts')),
       ...['/usr/share/fonts', '/usr/local/share/fonts'].flatMap((path) => fontFiles(path, false)),
@@ -286,7 +294,8 @@ async function installOffice(
       const files = fonts.filter((path) =>
         new RegExp(`Noto${family}CJK.*\\.(otf|ttf|ttc)$`, 'i').test(basename(path))
       );
-      if (!files.length) throw new Error(`Noto ${family} CJK fonts are missing from the host`);
+      if (!files.length)
+        throw new Error(`Noto ${family} CJK fonts are missing from the host; ${officeFix(locate)}`);
       for (const path of files) cpSync(path, join(version, 'fonts', basename(path)));
     }
     return soffice;
