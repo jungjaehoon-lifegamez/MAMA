@@ -3160,3 +3160,9 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Evidence: `Slack poll failed for one or more configured channels` 19 times in the kept logs before. After the deploy (19:50) all eight boot stages, `connector slack: ok`, daemon.log 0 error lines since boot. Tests: partial failure recorded and cleared, total failure naming each channel, a healthy channel's history read from its own since while another holds the cursor, an unrecoverable channel holding nothing, a failed lookup retried with the real name (connector suites 393 passed).
 - Review: Opus found the first version made every healthy channel re-read from a long-held cursor (towards Slack's rate limits) and turned failed lookups into duplicate revisions; both fixed before merge. Codex had no findings; CodeRabbit was rate limited.
 - Still open: none.
+
+### 1.0 items closed on live operation; experimental labels (#577, 2026-11-16)
+
+- Result: owner, 2026-11-16: what operation already shows is not proven again. T3 and F1–F4 closed on a month of daily use; E4 (Discord and Slack owner messengers) and T1 (members without the owner role) marked experimental in setup, the enrollment action and the docs (#577). F4's daily self-check was never built and is dropped. 1.0 progress 41 of 47.
+- Evidence: live DB, last 30 days: common session 7,666 runs on 31 days; two owner-role DMs, 450 runs on 30 days and 159 on 2 days; `member.notice` 562 completed; `skill.read` in both DMs; `manage.policy.update` 7; enrollment 10-10. `principal_lifecycle_transitions` and `principal_erasure_receipts` are empty.
+- Still open: T2's unused parts (owners suspending each other, an erasure across a restart, enrolling from a DM, a rule change asked in a DM); E2, E3, T5, S2, X4, G2.
