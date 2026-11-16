@@ -9,8 +9,9 @@ needed. Each package changelog lists every change.
 
 ### Upgrading
 
-- An install on 0.81.0 updates with `mama update`, or `/update` in Telegram. Open DM conversations
-  start a new session after the update, so the new format applies from the next reply.
+- An install on 0.81.0 updates with `mama update`, or `/update` in Telegram. The update restarts
+  MAMA, and the next reply in each DM is given the standing instructions again, so it uses the new
+  format.
 - The Claude Code plugin stays at 2.5.1.
 
 ### Fixed
