@@ -24,10 +24,14 @@ jobs:
             core:
               - 'packages/mama-core/**'
               - 'pnpm-lock.yaml'
+            # Each filter also lists the files outside its package that its tests read (v1 X5).
             standalone:
               - 'packages/standalone/**'
               - 'packages/mama-core/**'
               - 'pnpm-lock.yaml'
+              - 'scripts/p4-native-smoke.mjs'
+              - 'scripts/p6b-owner-native-smoke.mjs'
+              - 'scripts/replay/**'
             plugin:
               - 'packages/claude-code-plugin/**'
               - 'packages/mama-core/**'
@@ -36,6 +40,7 @@ jobs:
               - 'packages/mcp-server/**'
               - 'packages/mama-core/**'
               - 'pnpm-lock.yaml'
+              - 'packages/claude-code-plugin/scripts/db-path.js'
 
   # Shared setup (reusable)
   setup:
