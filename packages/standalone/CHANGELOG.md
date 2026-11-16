@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The README and the docs front page say Docker and Windows are not supported, and the README's
-  1.0 progress counts what is done today (26 of 47, Docker left out of 1.0).
+  1.0 progress counts what is done today (30 of 47, Docker left out of 1.0).
 - The setup guide and README list Linux (Ubuntu 24.04) as supported. A fresh install from the docs
   on Ubuntu 24.04 reached a DM reply, a source recorded as work and an answer citing it.
 

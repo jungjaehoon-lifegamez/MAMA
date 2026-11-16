@@ -66,8 +66,8 @@ See [CLI flags](../../docs/reference/cli.md) and
 - **Records:** tasks and revision history, a four-slot board, wiki pages, daily journals,
   lessons, preferences, constraints, workflows and skills.
 - **Documents:** a managed toolkit (`mama tools install`) with python-pptx, python-docx, openpyxl,
-  PyMuPDF, numpy, pandas, matplotlib, LibreOffice and Noto CJK fonts; on macOS `document.render`
-  turns a workspace file into a PDF and page images.
+  PyMuPDF, numpy, pandas, matplotlib, LibreOffice and Noto CJK fonts; on macOS and Linux
+  `document.render` turns a workspace file into a PDF and page images.
 - **Web:** for owners, turns where a person speaks search the web and, on Claude, open pages;
   turns with no person in them search the web but open pages only from the hosts in
   `agent.autonomous_web_fetch`. Members without the owner role have no web tools.
