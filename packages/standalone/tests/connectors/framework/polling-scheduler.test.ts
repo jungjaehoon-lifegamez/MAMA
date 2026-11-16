@@ -244,6 +244,32 @@ describe('PollingScheduler', () => {
     rawStore.close();
   });
 
+  it('holds the cursor at a failed part and records its error beside the success (X1)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'poll-scheduler-partial-'));
+    roots.push(root);
+    const rawStore = new RawStore(root);
+    const outcomes: Array<{ at: number; error?: string; partial?: boolean }> = [];
+    const scheduler = new PollingScheduler(rawStore, root, {
+      now: () => 50_000,
+      initialNow: 50_000,
+      rawIndexSink: () => [],
+      recordPollOutcome: (_name, outcome) => outcomes.push(outcome),
+    });
+    const registry = new ConnectorRegistry();
+    const connector = fakeConnector([]);
+    connector.partialFailure = () => ({
+      error: 'skipped Room b: HTTP 503',
+      readFrom: new Date(10_000),
+    });
+    registry.register('slack', connector);
+
+    await scheduler.pollConnector('slack', registry, {}, async () => {});
+
+    expect(scheduler.getLastPollTime('slack')).toEqual(new Date(10_000));
+    expect(outcomes).toEqual([{ at: 50_000, error: 'skipped Room b: HTTP 503', partial: true }]);
+    rawStore.close();
+  });
+
   it('does not advance state when the handoff fails', async () => {
     const root = mkdtempSync(join(tmpdir(), 'poll-scheduler-fail-'));
     roots.push(root);

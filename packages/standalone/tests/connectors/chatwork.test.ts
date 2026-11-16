@@ -69,45 +69,111 @@ describe('ChatworkConnector', () => {
     });
     await connector.init();
     await expect(connector.poll(new Date(0))).rejects.toThrow(
-      'last error: Room room-key: fetch failed: other side closed'
+      'Chatwork poll failed for 1 of 1 configured rooms; Room room-key: fetch failed: other side closed'
     );
     await connector.dispose();
   });
 
-  it('retries earlier room messages when a later room fails', async () => {
-    let failSecondRoom = true;
+  const message = (id: string, sendTime: number) => ({
+    message_id: id,
+    account: { account_id: 1, name: 'actor', avatar_image_url: '' },
+    body: `message ${id}`,
+    send_time: sendTime,
+    update_time: sendTime,
+  });
+
+  it('records the rooms that answer and reads a failed room from its own since (X1)', async () => {
+    let secondUp = false;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const connector = new ChatworkConnector(
-      {
-        ...config,
-        channels: {
-          first: { role: 'hub' },
-          second: { role: 'hub' },
-        },
-      },
+      { ...config, channels: { first: { role: 'hub' }, second: { role: 'hub' } } },
       {
         fetch: async (url) => {
           if (String(url).includes('/second/'))
-            return new Response('[]', { status: failSecondRoom ? 503 : 200 });
-          return new Response(
-            JSON.stringify([
-              {
-                message_id: '101',
-                account: { account_id: 1, name: 'actor', avatar_image_url: '' },
-                body: 'retained',
-                send_time: 20,
-                update_time: 20,
-              },
-            ])
-          );
+            return secondUp
+              ? new Response(JSON.stringify([message('201', 30)]))
+              : new Response('[]', { status: 503 });
+          return new Response(JSON.stringify([message('101', 20)]));
         },
       }
     );
     await connector.init();
-    await expect(connector.poll(new Date(0))).rejects.toThrow(
-      'Chatwork poll failed for 1 of 2 configured rooms; last error: Room second: HTTP 503'
+    // The first room's message is recorded although the second room fails.
+    expect((await connector.poll(new Date(10_000))).map((item) => item.sourceId)).toEqual([
+      'first:101',
+    ]);
+    expect((await connector.healthCheck()).error).toBe('skipped Room second: HTTP 503');
+    expect(warn).toHaveBeenCalledWith('[chatwork] skipped Room second: HTTP 503');
+    // The scheduler keeps its cursor at 10s, where the second room failed (also across a restart).
+    expect(connector.partialFailure()).toEqual({
+      error: 'skipped Room second: HTTP 503',
+      readFrom: new Date(10_000),
+    });
+    secondUp = true;
+    // Read from 10s again: the second room's message comes; the first room's is not repeated.
+    expect((await connector.poll(new Date(10_000))).map((item) => item.sourceId)).toEqual([
+      'second:201',
+    ]);
+    expect((await connector.healthCheck()).error).toBeUndefined();
+    expect(connector.partialFailure()).toBeUndefined();
+    await connector.dispose();
+  });
+
+  it('orders message ids as numbers, not strings', async () => {
+    let page = [message('999', 20)];
+    const connector = new ChatworkConnector(config, {
+      fetch: async () => new Response(JSON.stringify(page)),
+    });
+    await connector.init();
+    expect(await connector.poll(new Date(0))).toHaveLength(1);
+    page = [message('999', 20), message('1000', 30)];
+    expect((await connector.poll(new Date(0))).map((item) => item.sourceId)).toEqual([
+      'room-key:1000',
+    ]);
+    await connector.dispose();
+  });
+
+  it('fails the poll when no room answers, so the scheduler tries them all again', async () => {
+    const connector = new ChatworkConnector(
+      { ...config, channels: { first: { role: 'hub' }, second: { role: 'hub' } } },
+      { fetch: async () => new Response('[]', { status: 503 }) }
     );
-    failSecondRoom = false;
-    expect((await connector.poll(new Date(0))).map((item) => item.sourceId)).toEqual(['first:101']);
+    await connector.init();
+    await expect(connector.poll(new Date(0))).rejects.toThrow(
+      'Chatwork poll failed for 2 of 2 configured rooms; Room first: HTTP 503; Room second: HTTP 503'
+    );
+    await connector.dispose();
+  });
+
+  it('reports a room whose latest 100 messages no longer reach the last one seen', async () => {
+    let page = [message('100', 20)];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const connector = new ChatworkConnector(config, {
+      fetch: async () => new Response(JSON.stringify(page)),
+    });
+    await connector.init();
+    await connector.poll(new Date(0));
+    page = Array.from({ length: 100 }, (_, index) => message(String(300 + index), 40));
+    expect(await connector.poll(new Date(30_000))).toHaveLength(100);
+    expect((await connector.healthCheck()).error).toBe(
+      'Room room-key: more than 100 messages since the last poll; the older ones cannot be read through the Chatwork API'
+    );
+    expect(warn).toHaveBeenCalledOnce();
+    await connector.dispose();
+  });
+
+  it('reports a full page newer than since when no message was seen yet (after a restart)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const page = Array.from({ length: 100 }, (_, index) => message(String(300 + index), 40));
+    const connector = new ChatworkConnector(config, {
+      fetch: async () => new Response(JSON.stringify(page)),
+    });
+    await connector.init();
+    expect(await connector.poll(new Date(30_000))).toHaveLength(100);
+    expect((await connector.healthCheck()).error).toBe(
+      'Room room-key: more than 100 messages since the last poll; the older ones cannot be read through the Chatwork API'
+    );
+    expect(warn).toHaveBeenCalled();
     await connector.dispose();
   });
 

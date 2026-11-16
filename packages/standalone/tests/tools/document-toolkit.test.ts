@@ -174,6 +174,30 @@ describe('host document toolkit installer', () => {
     }
   );
 
+  it.each([
+    [
+      'with apt',
+      '/usr/bin/apt-get',
+      /soffice is missing from PATH; run sudo apt-get install -y libreoffice-writer libreoffice-calc libreoffice-impress fonts-noto-cjk/,
+    ],
+    [
+      'without apt',
+      undefined,
+      /soffice is missing from PATH; install LibreOffice and the Noto Sans and Serif CJK fonts with your package manager/,
+    ],
+  ])('names the Linux packages it needs, %s (I3)', async (_label, aptGet, message) => {
+    await expect(
+      installDocumentToolkit({
+        toolsRoot: tools,
+        home,
+        platform: 'linux',
+        run: fakeHost().run,
+        locate: (name) =>
+          name === 'soffice' ? undefined : name === 'apt-get' ? aptGet : `/fixture/${name}`,
+      })
+    ).rejects.toThrow(message);
+  });
+
   it('refuses an unrelated non-empty root before running host commands', async () => {
     mkdirSync(tools);
     writeFileSync(join(tools, 'keep.txt'), 'unrelated data');
