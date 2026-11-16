@@ -229,7 +229,7 @@ function usagePanel(usage: RuntimeStatusSnapshot['usage']): string {
       statTile('Last 7 days', totalsText(person.week)) +
       '</div>' +
       (sessions
-        ? '<p class="mama-system-note">Sessions, last 7 days</p><ul class="mama-system-list">' +
+        ? '<p class="mama-system-note">By lane or channel, last 7 days</p><ul class="mama-system-list">' +
           sessions +
           '</ul>'
         : '') +
