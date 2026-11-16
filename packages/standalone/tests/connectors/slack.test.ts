@@ -45,6 +45,8 @@ describe('SlackConnector', () => {
     slack.history.mockReset();
     slack.replies.mockReset();
     slack.usersInfo.mockReset();
+    // A user without a name: the author stays the user id.
+    slack.usersInfo.mockResolvedValue({ user: {} });
     slack.filesInfo.mockReset();
   });
 
@@ -100,6 +102,109 @@ describe('SlackConnector', () => {
       limit: 200,
       cursor: 'next-page',
     });
+  });
+
+  it('records the channels that answer and holds the cursor for a failed one (X1)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    slack.history.mockImplementation(async ({ channel }: { channel: string }) => {
+      if (channel === 'second') throw new Error('not_in_channel');
+      return { messages: [{ ts: ts(5), user: 'user-key', text: 'kept' }] };
+    });
+    slack.usersInfo.mockResolvedValue({ user: { real_name: 'actor-a' } });
+    const connector = new SlackConnector({
+      ...config,
+      channels: { first: { role: 'hub' }, second: { role: 'hub' } },
+    });
+    await connector.init();
+    const items = await connector.poll(SINCE);
+    expect(items.map((item) => item.content)).toEqual(['kept']);
+    expect((await connector.healthCheck()).error).toBe('skipped Channel second: not_in_channel');
+    expect(connector.partialFailure()).toEqual({
+      error: 'skipped Channel second: not_in_channel',
+      readFrom: SINCE,
+    });
+    expect(warn).toHaveBeenCalledWith('[slack] skipped Channel second: not_in_channel');
+    // Once every channel answers, nothing is held.
+    slack.history.mockResolvedValue({ messages: [] });
+    await connector.poll(SINCE);
+    expect(connector.partialFailure()).toBeUndefined();
+    expect((await connector.healthCheck()).error).toBeUndefined();
+  });
+
+  it('reads a channel that answers from its own since while another channel holds the cursor', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    slack.history.mockImplementation(async ({ channel }: { channel: string }) => {
+      if (channel === 'second') throw new Error('ratelimited');
+      return { messages: [] };
+    });
+    const connector = new SlackConnector({
+      ...config,
+      channels: { first: { role: 'hub' }, second: { role: 'hub' } },
+    });
+    await connector.init();
+    await connector.poll(SINCE);
+    slack.history.mockClear();
+    // The scheduler passes the held cursor again; the first channel reads from its last success.
+    await connector.poll(SINCE);
+    const firstOldest = Number(
+      (
+        slack.history.mock.calls.find(([args]) => args.channel === 'first')![0] as {
+          oldest: string;
+        }
+      ).oldest
+    );
+    expect(firstOldest).toBeGreaterThan(SINCE_S - LOOKBACK_S);
+    const secondOldest = Number(
+      (
+        slack.history.mock.calls.find(([args]) => args.channel === 'second')![0] as {
+          oldest: string;
+        }
+      ).oldest
+    );
+    expect(secondOldest).toBe(SINCE_S - LOOKBACK_S);
+  });
+
+  it('reports a channel the bot cannot read without holding the cursor', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    slack.history.mockImplementation(async ({ channel }: { channel: string }) => {
+      if (channel === 'second')
+        throw Object.assign(new Error('An API error occurred: not_in_channel'), {
+          data: { error: 'not_in_channel' },
+        });
+      return { messages: [] };
+    });
+    const connector = new SlackConnector({
+      ...config,
+      channels: { first: { role: 'hub' }, second: { role: 'hub' } },
+    });
+    await connector.init();
+    await connector.poll(SINCE);
+    expect(connector.partialFailure()).toEqual({
+      error: 'skipped Channel second: An API error occurred: not_in_channel',
+    });
+  });
+
+  it('fails a channel whose author lookup fails, instead of storing the id as the name', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    slack.history.mockResolvedValue({ messages: [{ ts: ts(5), user: 'user-key', text: 'kept' }] });
+    slack.usersInfo.mockRejectedValueOnce(new Error('ratelimited'));
+    const connector = new SlackConnector(config);
+    await connector.init();
+    await expect(connector.poll(SINCE)).rejects.toThrow('Channel channel-key: ratelimited');
+    slack.usersInfo.mockResolvedValue({ user: { real_name: 'actor-a' } });
+    expect((await connector.poll(SINCE)).map((item) => item.author)).toEqual(['actor-a']);
+  });
+
+  it('fails the poll, naming each channel, when no channel answers', async () => {
+    slack.history.mockRejectedValue(new Error('ratelimited'));
+    const connector = new SlackConnector({
+      ...config,
+      channels: { first: { role: 'hub' }, second: { role: 'hub' } },
+    });
+    await connector.init();
+    await expect(connector.poll(SINCE)).rejects.toThrow(
+      'Slack poll failed for 2 of 2 configured channels; Channel first: ratelimited; Channel second: ratelimited'
+    );
   });
 
   it('keeps live Slack message file ids in observation metadata', async () => {
@@ -317,28 +422,6 @@ describe('SlackConnector', () => {
     );
   });
 
-  it('fails the whole poll when one room fails without advancing poll state', async () => {
-    slack.history.mockImplementation(async ({ channel }: { channel: string }) => {
-      if (channel === 'failed-channel') throw new Error('room request failed');
-      return { messages: [], response_metadata: { next_cursor: '' } };
-    });
-    const connector = new SlackConnector({
-      ...config,
-      channels: {
-        'working-channel': { role: 'hub' },
-        'failed-channel': { role: 'hub' },
-      },
-    });
-    await connector.init();
-
-    await expect(connector.poll(new Date(0))).rejects.toThrow(/one or more configured channels/i);
-    expect(await connector.healthCheck()).toMatchObject({
-      lastPollTime: null,
-      lastPollCount: 0,
-      error: 'room request failed',
-    });
-  });
-
   it('reads replies posted only in a thread that started before the poll window', async () => {
     const parent = ts(-5 * 24 * 60 * 60);
     slack.history.mockResolvedValue({
@@ -509,10 +592,12 @@ describe('SlackConnector', () => {
     const connector = new SlackConnector(config);
     await connector.init();
 
-    await expect(connector.poll(SINCE)).rejects.toThrow(/one or more configured channels/i);
+    await expect(connector.poll(SINCE)).rejects.toThrow(
+      'Slack poll failed for 1 of 1 configured channels; Channel channel-key: thread request failed'
+    );
     expect(await connector.healthCheck()).toMatchObject({
       lastPollTime: null,
-      error: 'thread request failed',
+      error: 'Channel channel-key: thread request failed',
     });
   });
 });
