@@ -10,8 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - One failing Slack channel no longer fails the whole poll, the same fix as Chatwork's. The
-  channels that answer are recorded; the failed channel is named, with its reason, as the source's
-  error and in the log, and is read again from where it failed once it answers.
+  channels that answer are recorded, each from its own last success; the failed channel is named,
+  with its reason, as the source's error and in the log, and is read again from where it failed
+  once it answers. A channel the bot cannot read (not a member, removed or archived) is reported
+  without holding the others back. A failed name lookup now fails its channel for the next poll
+  instead of recording the user id as the author.
 - One failing Chatwork room no longer drops the whole poll. The rooms that answer are recorded;
   the failed room is skipped, named in the source's error (reports list it with the failing
   sources) and the log, and read again from where it failed once it answers, also after a restart. A room that got more than 100 messages between polls is reported

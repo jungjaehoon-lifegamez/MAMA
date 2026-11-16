@@ -45,6 +45,8 @@ describe('SlackConnector', () => {
     slack.history.mockReset();
     slack.replies.mockReset();
     slack.usersInfo.mockReset();
+    // A user without a name: the author stays the user id.
+    slack.usersInfo.mockResolvedValue({ user: {} });
     slack.filesInfo.mockReset();
   });
 
@@ -127,6 +129,70 @@ describe('SlackConnector', () => {
     await connector.poll(SINCE);
     expect(connector.partialFailure()).toBeUndefined();
     expect((await connector.healthCheck()).error).toBeUndefined();
+  });
+
+  it('reads a channel that answers from its own since while another channel holds the cursor', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    slack.history.mockImplementation(async ({ channel }: { channel: string }) => {
+      if (channel === 'second') throw new Error('ratelimited');
+      return { messages: [] };
+    });
+    const connector = new SlackConnector({
+      ...config,
+      channels: { first: { role: 'hub' }, second: { role: 'hub' } },
+    });
+    await connector.init();
+    await connector.poll(SINCE);
+    slack.history.mockClear();
+    // The scheduler passes the held cursor again; the first channel reads from its last success.
+    await connector.poll(SINCE);
+    const firstOldest = Number(
+      (
+        slack.history.mock.calls.find(([args]) => args.channel === 'first')![0] as {
+          oldest: string;
+        }
+      ).oldest
+    );
+    expect(firstOldest).toBeGreaterThan(SINCE_S - LOOKBACK_S);
+    const secondOldest = Number(
+      (
+        slack.history.mock.calls.find(([args]) => args.channel === 'second')![0] as {
+          oldest: string;
+        }
+      ).oldest
+    );
+    expect(secondOldest).toBe(SINCE_S - LOOKBACK_S);
+  });
+
+  it('reports a channel the bot cannot read without holding the cursor', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    slack.history.mockImplementation(async ({ channel }: { channel: string }) => {
+      if (channel === 'second')
+        throw Object.assign(new Error('An API error occurred: not_in_channel'), {
+          data: { error: 'not_in_channel' },
+        });
+      return { messages: [] };
+    });
+    const connector = new SlackConnector({
+      ...config,
+      channels: { first: { role: 'hub' }, second: { role: 'hub' } },
+    });
+    await connector.init();
+    await connector.poll(SINCE);
+    expect(connector.partialFailure()).toEqual({
+      error: 'skipped Channel second: An API error occurred: not_in_channel',
+    });
+  });
+
+  it('fails a channel whose author lookup fails, instead of storing the id as the name', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    slack.history.mockResolvedValue({ messages: [{ ts: ts(5), user: 'user-key', text: 'kept' }] });
+    slack.usersInfo.mockRejectedValueOnce(new Error('ratelimited'));
+    const connector = new SlackConnector(config);
+    await connector.init();
+    await expect(connector.poll(SINCE)).rejects.toThrow('Channel channel-key: ratelimited');
+    slack.usersInfo.mockResolvedValue({ user: { real_name: 'actor-a' } });
+    expect((await connector.poll(SINCE)).map((item) => item.author)).toEqual(['actor-a']);
   });
 
   it('fails the poll, naming each channel, when no channel answers', async () => {

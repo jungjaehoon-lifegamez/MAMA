@@ -79,6 +79,14 @@ function requireSlackFileUrl(value: unknown): string {
   return parsed.href;
 }
 
+/** Slack Web API errors carry Slack's code in `data.error`. */
+function slackErrorCode(error: unknown): string | undefined {
+  const code = (error as { data?: { error?: unknown } } | null)?.data?.error;
+  return typeof code === 'string' ? code : undefined;
+}
+
+/** Channel errors that no retry fixes until someone changes the bot or the channel. */
+const UNRECOVERABLE = new Set(['not_in_channel', 'channel_not_found', 'is_archived']);
 export class SlackConnector implements IConnector {
   readonly name = 'slack';
   readonly type = 'api' as const;
@@ -94,7 +102,15 @@ export class SlackConnector implements IConnector {
   private lastPollCount = 0;
   private lastError: string | undefined;
   /** This poll's failed channels and the since they must be read from again (v1 X1). */
-  private partialProblem: { error: string; readFrom: Date } | undefined;
+  private partialProblem: { error: string; readFrom?: Date } | undefined;
+  /**
+   * Each channel's own since: the start of its last poll that answered. A channel that answers
+   * reads from here, not from a cursor a failing channel holds back, so a long failure does not
+   * widen the others' reads. Memory only: after a restart every channel reads from the held cursor
+   * once. Committed with the poll (commitPoll), so an aborted handoff reads it again.
+   */
+  private channelSince = new Map<string, number>();
+  private pendingChannelSince: Map<string, number> | null = null;
 
   constructor(config: ConnectorConfig, options: SlackConnectorOptions = {}) {
     // A setting, checked when the source is built, before it runs (see NotionConnector): the
@@ -171,7 +187,11 @@ export class SlackConnector implements IConnector {
       const name = result.user?.real_name ?? result.user?.name ?? userId;
       this.userCache.set(userId, name);
       return name;
-    } catch {
+    } catch (error) {
+      // A user Slack no longer has keeps their id. Any other failure (a rate limit, the network)
+      // fails the channel, to be read again: an id stored as the author would make the same
+      // message a new revision once the name resolves.
+      if (slackErrorCode(error) !== 'user_not_found') throw error;
       this.userCache.set(userId, userId);
       return userId;
     }
@@ -182,15 +202,23 @@ export class SlackConnector implements IConnector {
 
     const items: NormalizedItem[] = [];
     const failedChannels = new Map<string, string>();
+    /** Failures retrying cannot fix: reported, but they hold no cursor. */
+    const lostChannels = new Map<string, string>();
+    const heldSince: number[] = [];
+    const pending = new Map(this.channelSince);
+    const pollStart = Date.now();
     let polledChannels = 0;
-    const oldest = (since.getTime() / 1000).toFixed(6);
-    // History is read back THREAD_LOOKBACK_MS so a thread started before `since` still shows its
-    // newest reply time; only messages after `since` become items.
-    const historyOldest = ((since.getTime() - THREAD_LOOKBACK_MS) / 1000).toFixed(6);
 
     for (const [channelId, channelConfig] of Object.entries(this.config.channels)) {
       if (channelConfig.role === 'ignore') continue;
       polledChannels += 1;
+      const channelSince = new Date(
+        Math.max(this.channelSince.get(channelId) ?? since.getTime(), since.getTime())
+      );
+      const oldest = (channelSince.getTime() / 1000).toFixed(6);
+      // History is read back THREAD_LOOKBACK_MS so a thread started before `since` still shows its
+      // newest reply time; only messages after `since` become items.
+      const historyOldest = ((channelSince.getTime() - THREAD_LOOKBACK_MS) / 1000).toFixed(6);
       // A channel that fails part-way keeps none of its items: the next poll reads it from `since`.
       const channelItems: NormalizedItem[] = [];
       try {
@@ -207,11 +235,11 @@ export class SlackConnector implements IConnector {
             if (
               typeof message.ts === 'string' &&
               (message.reply_count ?? 0) > 0 &&
-              Number(message.latest_reply) * 1000 > since.getTime()
+              Number(message.latest_reply) * 1000 > channelSince.getTime()
             ) {
               activeThreads.push(message.ts);
             }
-            const item = await this.messageItem(channelId, channelConfig, message, since);
+            const item = await this.messageItem(channelId, channelConfig, message, channelSince);
             if (item) channelItems.push(item);
           }
           cursor = result.response_metadata?.next_cursor || undefined;
@@ -232,25 +260,32 @@ export class SlackConnector implements IConnector {
               // The thread's first message is the parent, read from history. A reply also sent to
               // the channel (thread_broadcast) is a channel message and comes from history too.
               if (reply.ts === threadTs || reply.subtype === 'thread_broadcast') continue;
-              const item = await this.messageItem(channelId, channelConfig, reply, since);
+              const item = await this.messageItem(channelId, channelConfig, reply, channelSince);
               if (item) channelItems.push(item);
             }
             replyCursor = result.response_metadata?.next_cursor || undefined;
           } while (replyCursor !== undefined);
         }
         items.push(...channelItems);
+        pending.set(channelId, pollStart);
       } catch (error) {
-        failedChannels.set(channelId, error instanceof Error ? error.message : String(error));
+        const reason = error instanceof Error ? error.message : String(error);
+        if (UNRECOVERABLE.has(slackErrorCode(error) ?? '')) lostChannels.set(channelId, reason);
+        else {
+          failedChannels.set(channelId, reason);
+          heldSince.push(channelSince.getTime());
+        }
       }
     }
 
-    const failures = [...failedChannels].map(
+    const failures = [...failedChannels, ...lostChannels].map(
       ([channelId, reason]) => `Channel ${channelId}: ${reason}`
     );
-    if (polledChannels > 0 && failedChannels.size === polledChannels) {
+    if (polledChannels > 0 && failedChannels.size + lostChannels.size === polledChannels) {
       // Nothing was read: the scheduler keeps its cursor and tries every channel again.
       this.lastError = failures.join('; ');
       this.partialProblem = undefined;
+      this.pendingChannelSince = null;
       throw new Error(
         `Slack poll failed for ${failedChannels.size} of ${polledChannels} configured channels; ${this.lastError}`
       );
@@ -262,12 +297,35 @@ export class SlackConnector implements IConnector {
     // failed ones answer, and what they read twice is one version in the raw store.
     this.lastError = failures.length > 0 ? `skipped ${failures.join('; skipped ')}` : undefined;
     this.partialProblem =
-      this.lastError === undefined ? undefined : { error: this.lastError, readFrom: since };
+      this.lastError === undefined
+        ? undefined
+        : heldSince.length > 0
+          ? { error: this.lastError, readFrom: new Date(Math.min(...heldSince)) }
+          : { error: this.lastError };
     if (this.lastError !== undefined) console.warn(`[slack] ${this.lastError}`);
+    this.pendingChannelSince = pending;
+    if (!this.pollCommitDeferred) this.commitPoll();
     return items;
   }
 
-  partialFailure(): { error: string; readFrom: Date } | undefined {
+  private pollCommitDeferred = false;
+
+  beginPollHandoff(): void {
+    this.pollCommitDeferred = true;
+  }
+
+  commitPoll(): void {
+    if (this.pendingChannelSince !== null) this.channelSince = this.pendingChannelSince;
+    this.pendingChannelSince = null;
+    this.pollCommitDeferred = false;
+  }
+
+  abortPollHandoff(): void {
+    this.pendingChannelSince = null;
+    this.pollCommitDeferred = false;
+  }
+
+  partialFailure(): { error: string; readFrom?: Date } | undefined {
     return this.partialProblem;
   }
 
