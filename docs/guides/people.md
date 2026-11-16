@@ -16,15 +16,16 @@ session: source changes, reports, shared work and the owner policy. Set up Teleg
 Register each owner with `mama register-owner <telegram id>` while the daemon is stopped. An owner
 is a member with the `owner` role.
 
-To add someone else, ask MAMA in your DM or in the common group to enroll a member. Telegram shows
-a picker; choose the person. You can give a name at the same time, or later ("call this member
+To add someone else, ask MAMA in your DM or in the common group to enroll a member (enrolling
+from a DM is experimental: it has not run live yet). Telegram shows a picker; choose the person. You can give a name at the same time, or later ("call this member
 …"). Every session shows names instead of ids.
 
 Owners manage members from their DMs or the common group:
 
 - grant or revoke a project, which lets the member read that project's records;
 - suspend, resume or offboard a member;
-- suspend and resume another owner. Nobody can suspend itself, and an owner cannot be offboarded.
+- suspend and resume another owner (experimental: not yet run live). Nobody can suspend itself,
+  and an owner cannot be offboarded.
 
 Ask "who are the members?" to see each member's status, grants and the latest enrollment results.
 
@@ -39,7 +40,7 @@ matplotlib, with Korean and Japanese labels); on macOS it can also look at each 
 a file (see Documents below). It cannot install other packages. Changes to common things happen in
 the common group: shared
 records, the owner policy and rules, reports, the wiki and files sent to the group. A DM that is
-asked for one of these says so.
+asked for one of these, such as a rule change, says so (experimental: not yet run live).
 
 At the start of a session, and on its first turn after each restart, a DM is told which sources it
 can read. It also learns the chat platforms each source holds, for example Kakao and LINE chats kept
@@ -91,7 +92,7 @@ has no network. Every session's shell also has MAMA's own Node.js as `node`, fro
 In your own DM, ask MAMA to export your records. A ZIP of your personal records and files arrives
 in the DM after the turn. Account and credential files stay out.
 
-To erase them, ask in your DM. MAMA first shows what will be exported and deleted. Confirm in a
+Erasing is experimental: it has not run live yet. To erase them, ask in your DM. MAMA first shows what will be exported and deleted. Confirm in a
 later message. MAMA sends the export, and erases only after Telegram confirms delivery. Your
 enrollment and grants stay, and you start again in a fresh workspace. An erasure that a restart
 interrupts finishes after the restart. Your messages during it wait and are answered afterwards.
