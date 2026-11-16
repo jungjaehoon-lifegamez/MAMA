@@ -244,23 +244,10 @@ live check passes.
   Linux it fails the boot today, `s/runtime/connectors.ts:209`).
 - A refused shell connection raises the same alert; one live owner turn runs Bash in the sandbox.
 
-## Wave 4 — Docker (D1–D5)
+## Wave 4 — Docker (out of 1.0)
 
-- Image: Node 22, the toolkit with LibreOffice and Noto CJK, `gws`, `bwrap` and `socat`, the backend
-  CLIs, a non-root user, an init process (`init: true`) for orphaned children, a `HEALTHCHECK` that
-  passes only when `mama status` reports boot complete (`/health` answers from the viewer stage,
-  before connectors and messengers start), version tags, published by the release workflow. amd64 is tested on the G1 test host, under Docker Engine inside its Ubuntu;
-  arm64 is offered only after the same run on arm64, otherwise labelled experimental.
-- Compose volumes: the MAMA home, `member_root`, `tools_root` (common skills live there), the
-  backend credentials and the `gws` credential store (`~/.config/gws`, or
-  `GOOGLE_WORKSPACE_CLI_CONFIG_DIR`). The viewer needs `MAMA_API_HOST`, `MAMA_VIEWER_HOSTNAMES` and its bearer
-  token.
-- Sign-in without a desktop: Codex `codex login --device-auth`; the Claude method is verified on the
-  image and must be file-based or an owner decision (D3).
-- Isolation is measured first: whether the shell sandbox starts with the documented container
-  options; then, inside the container, a member session cannot read another member or the
-  database, the common session cannot read the database with its WAL and SHM, the raw stores,
-  `member_root` or the member temp root, and egress is refused for both (decision D3 if not).
+Dropped by the owner on 2026-11-16 after the build and measurements in the closed PR #572; see
+v1.md "Not in 1.0" and checks "Docker out of 1.0".
 
 ## Wave 5 — everyday use, people, defects and guides
 
@@ -282,7 +269,7 @@ live check passes.
 ## Owner-flow rows and the gate
 
 - F1 starts with recounting C1 against core's read; F2–F4 and T2–T4 run alongside on live data.
-- G1 runs on a clean macOS account, the Linux host decided in wave 3 and the Docker image, never on
+- G1 runs on a clean macOS account and the Linux host decided in wave 3, never on
   this Mac's live home. G2 upgrades an install of the wave 4 release to the 1.0 candidate.
 
 ## Order
