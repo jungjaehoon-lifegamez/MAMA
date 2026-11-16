@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The install skill no longer calls Linux (Ubuntu 24.04) "in testing": a fresh install from the
+  docs passed on Ubuntu 24.04.
+
 ## [2.5.1] - 2026-11-15
 
 ### Changed

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The setup guide and README list Linux (Ubuntu 24.04) as supported. A fresh install from the docs
+  on Ubuntu 24.04 reached a DM reply, a source recorded as work and an answer citing it.
+
 ## [0.81.1] - 2026-11-16
 
 ### Fixed

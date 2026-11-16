@@ -14,8 +14,8 @@ model receive the information needed for each task.
 
 ## Start here
 
-You need a Mac (or Ubuntu 24.04, in testing: see [On Linux](start/owner-setup.md#on-linux)), Claude Code or Codex
-signed in, and a Telegram account. On the computer that will run MAMA, open Claude Code or Codex
+You need a Mac or Ubuntu 24.04 (see [On Linux](start/owner-setup.md#on-linux)), Claude Code or Codex signed in,
+and a Telegram account. On the computer that will run MAMA, open Claude Code or Codex
 and say:
 
 > Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA
