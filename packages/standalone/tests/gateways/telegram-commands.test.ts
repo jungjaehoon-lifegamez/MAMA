@@ -229,6 +229,33 @@ describe('Telegram host commands', () => {
     expect(dm).toContain('failing: fixture-source');
   });
 
+  it("splits an owner's /status past Telegram's message limit, replying with the first part", async () => {
+    const usage = Array.from(
+      { length: 60 },
+      (_, index) => `usage fixture-person-${index}: ${'x'.repeat(90)}`
+    );
+    const status = vi.fn(async () => ({
+      version: '0.0.0-fixture',
+      since: '2026-10-16 Fri 09:00',
+      conversationRunning: false,
+      inputsWaiting: 0,
+      usage,
+      owner: { turnsRunning: 0, sources: [] },
+    }));
+    await gateway(port({ status }));
+    await send({
+      ...command('/status'),
+      chat: { id: 7101, type: 'private' },
+      from: { id: 7101, is_bot: false },
+    });
+    await vi.waitFor(() => expect(seams.api.sendMessage.mock.calls.length).toBeGreaterThan(1));
+    const calls = seams.api.sendMessage.mock.calls;
+    for (const call of calls) expect((call[1] as string).length).toBeLessThanOrEqual(4096);
+    expect(calls[0][2].reply_parameters.message_id).toBe(21);
+    expect(calls[1][2].reply_parameters).toBeUndefined();
+    expect(calls.map((call) => call[1]).join('\n')).toContain('fixture-person-59');
+  });
+
   it('routes a member in the common group to their own room, not the common session', async () => {
     const commands = port();
     const { member } = await gateway(commands);

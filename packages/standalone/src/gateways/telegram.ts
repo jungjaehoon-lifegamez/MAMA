@@ -39,8 +39,10 @@ import {
 import {
   formatTelegramMessage,
   isTelegramEntityRejection,
+  TELEGRAM_MAX_MESSAGE_LENGTH,
   type TelegramFormattedText,
 } from './telegram-format.js';
+import { splitMessage } from './message-splitter.js';
 import {
   TelegramMessageLedger,
   type OwnerMessageLedger,
@@ -869,9 +871,22 @@ export class TelegramGateway extends BaseGateway {
       );
       text = `MAMA could not answer /${command}; its log has the error.`;
     }
-    await this.bot!.api.sendMessage(Number(chatId), text, {
-      reply_parameters: { message_id: message.message_id, allow_sending_without_reply: true },
-    });
+    // An owner's /status lists every person, which can pass Telegram's message limit.
+    for (const [index, chunk] of splitMessage(text, {
+      maxLength: TELEGRAM_MAX_MESSAGE_LENGTH,
+    }).entries())
+      await this.bot!.api.sendMessage(
+        Number(chatId),
+        chunk,
+        index === 0
+          ? {
+              reply_parameters: {
+                message_id: message.message_id,
+                allow_sending_without_reply: true,
+              },
+            }
+          : {}
+      );
     this.log(`telegram host command=${command} chat=${privateChat ? 'private' : 'group'}`);
   }
 

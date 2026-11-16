@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `runtime/backend-limits`: the usage limit a backend CLI reports for its login, read from Claude's
+  `rate_limit_event` and Codex's `account/rateLimits/updated`. The persistent Claude process, the
+  Claude CLI wrapper options and the Codex app-server and runtime process take an
+  `onBackendLimits` listener.
+
 ## [8.9.1] - 2026-11-14
 
 ### Changed

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Usage and the backend's limit. `mama status`, the viewer and `/status` show each person's runs
+  and tokens, today and over seven days, per session, and the backend login's limit as its CLI last
+  reported it during a turn. In `/status` an owner's DM shows every person, a member's DM their
+  own, and a group none.
+- The viewer's Runtime page shows the service, the boot stage, the last boot and error, the limit,
+  and each person's usage and actions by name; Connectors shows each source's last poll and error.
+- The release process states what a 1.x upgrade keeps (data, config, commands, the update path)
+  and what needs a 2.0.
+
+### Removed
+
+- The viewer's `/api/tokens/*` routes, which always answered empty; usage is in
+  `/api/runtime/status`.
+
 ### Fixed
 
 - One failing Slack channel no longer fails the whole poll, the same fix as Chatwork's. The
@@ -32,7 +48,7 @@ fonts-noto-cjk` where apt exists.
 - The people guide marks the parts never used live as experimental: owners suspending each
   other, erasing a person's records, enrolling from a DM and a rule change asked in a DM.
 - The README and the docs front page say Docker and Windows are not supported, and the README's
-  1.0 progress counts what is done today (42 of 47, Docker left out of 1.0).
+  1.0 progress counts what is done today (47 of 47, Docker left out of 1.0).
 - The setup guide and README list Linux (Ubuntu 24.04) as supported. A fresh install from the docs
   on Ubuntu 24.04 reached a DM reply, a source recorded as work and an answer citing it.
 

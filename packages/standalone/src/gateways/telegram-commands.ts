@@ -182,6 +182,11 @@ export interface ChatStatus {
    * otherwise in this conversation.
    */
   inputsWaiting: number;
+  /**
+   * Usage and the backend's limit, as lines: every person's in the owner's view, the person's own
+   * in their DM, none in a group.
+   */
+  usage?: string[];
   owner?: {
     turnsRunning: number;
     sources: Array<{ name: string; healthy: boolean }>;
@@ -194,7 +199,7 @@ export function statusText(status: ChatStatus): string[] {
     `This conversation: ${status.conversationRunning ? 'a turn is running' : 'idle'}`,
   ];
   if (status.owner === undefined) {
-    lines.push(`Inputs not yet done: ${status.inputsWaiting}`);
+    lines.push(`Inputs not yet done: ${status.inputsWaiting}`, ...(status.usage ?? []));
     return lines;
   }
   lines.push(
@@ -206,5 +211,6 @@ export function statusText(status: ChatStatus): string[] {
       `Sources: ${status.owner.sources.length - failing.length} of ${status.owner.sources.length} polling` +
         (failing.length > 0 ? `; failing: ${failing.map((source) => source.name).join(', ')}` : '')
     );
+  lines.push(...(status.usage ?? []));
   return lines;
 }

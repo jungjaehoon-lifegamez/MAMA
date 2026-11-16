@@ -37,26 +37,26 @@ data. See [viewer access setup](../guides/viewer.md).
 
 All paths in this table use GET. Limits outside a route's accepted range return `400`.
 
-| Route                                           | Inputs and result                                                                                                                                                                  |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/graph`, `/api/graph`                          | Graph nodes and edges. `limit` defaults to 300, maximum 2000; `cursor`, `history=current` (otherwise all), and comma-separated `kind` filters. Follow `nextCursor`.                |
-| `/graph/detail`, `/api/graph/detail`            | Required `id` as `kind:id`; returns a node with source content or memory provenance where applicable.                                                                              |
-| `/graph/similar`, `/api/graph/similar`          | Required `id` as `kind:id`; searches for up to five similar memories. Non-memory references return an unavailable result.                                                          |
-| `/checkpoints`, `/api/checkpoints`              | Up to 50 recent checkpoints in the daemon database.                                                                                                                                |
-| `/api/mama/search`, `/api/viewer/memory/search` | Optional `q`; `limit` defaults to 20, maximum 200. Omitting `q` lists memory.                                                                                                      |
-| `/api/viewer/tasks`                             | Current work items; `limit` defaults to 50, maximum 50.                                                                                                                            |
-| `/api/viewer/tasks/<commitmentId>`              | One task with revision history and bounded source evidence for its revisions.                                                                                                      |
-| `/api/operator/tasks`                           | Work projected as operator tasks. `limit` defaults to 50, maximum 50; optional `status` and `source_channel`. Source-channel filtering occurs after reading the bounded work page. |
-| `/api/viewer/graph`                             | Graph wrapper with a `missing` notice for revision-chain edges. `limit` defaults to 300, maximum 2000; `cursor`, `kind`.                                                           |
-| `/api/report`                                   | Current report slots from the report store.                                                                                                                                        |
-| `/api/report/events`                            | Server-sent `report-update` events; starts with the current slots and sends keep-alives every 15 seconds. At most 8 streams at once; another returns `503`.                        |
-| `/api/wiki/tree`                                | Wiki paths as a directory tree.                                                                                                                                                    |
-| `/api/wiki/page`                                | Required `path`; returns Markdown content, raw page and parsed frontmatter. Reads up to 20,000 characters.                                                                         |
-| `/api/runtime/status`                           | Runtime and connector state provided by the daemon.                                                                                                                                |
-| `/api/connectors/status`                        | Configured connector status; unavailable result if no provider is wired.                                                                                                           |
-| `/api/dashboard/status`                         | Memory statistics from the daemon database.                                                                                                                                        |
-| `/api/logs/daemon`                              | Log tail: `tail` (or `limit`) defaults to 500, maximum 2000; `since` is a file modification timestamp in milliseconds.                                                             |
-| `/api/security/events`                          | Recent structured security events; `limit` defaults to 50, maximum 2000. A member's refused connection holds only `principalId`, `host` and `time`.                                |
+| Route                                           | Inputs and result                                                                                                                                                                              |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/graph`, `/api/graph`                          | Graph nodes and edges. `limit` defaults to 300, maximum 2000; `cursor`, `history=current` (otherwise all), and comma-separated `kind` filters. Follow `nextCursor`.                            |
+| `/graph/detail`, `/api/graph/detail`            | Required `id` as `kind:id`; returns a node with source content or memory provenance where applicable.                                                                                          |
+| `/graph/similar`, `/api/graph/similar`          | Required `id` as `kind:id`; searches for up to five similar memories. Non-memory references return an unavailable result.                                                                      |
+| `/checkpoints`, `/api/checkpoints`              | Up to 50 recent checkpoints in the daemon database.                                                                                                                                            |
+| `/api/mama/search`, `/api/viewer/memory/search` | Optional `q`; `limit` defaults to 20, maximum 200. Omitting `q` lists memory.                                                                                                                  |
+| `/api/viewer/tasks`                             | Current work items; `limit` defaults to 50, maximum 50.                                                                                                                                        |
+| `/api/viewer/tasks/<commitmentId>`              | One task with revision history and bounded source evidence for its revisions.                                                                                                                  |
+| `/api/operator/tasks`                           | Work projected as operator tasks. `limit` defaults to 50, maximum 50; optional `status` and `source_channel`. Source-channel filtering occurs after reading the bounded work page.             |
+| `/api/viewer/graph`                             | Graph wrapper with a `missing` notice for revision-chain edges. `limit` defaults to 300, maximum 2000; `cursor`, `kind`.                                                                       |
+| `/api/report`                                   | Current report slots from the report store.                                                                                                                                                    |
+| `/api/report/events`                            | Server-sent `report-update` events; starts with the current slots and sends keep-alives every 15 seconds. At most 8 streams at once; another returns `503`.                                    |
+| `/api/wiki/tree`                                | Wiki paths as a directory tree.                                                                                                                                                                |
+| `/api/wiki/page`                                | Required `path`; returns Markdown content, raw page and parsed frontmatter. Reads up to 20,000 characters.                                                                                     |
+| `/api/runtime/status`                           | The daemon's status report: service, boot stage and last error, each connector's last poll and error, each person's usage and actions by name (today and seven days), and the backend's limit. |
+| `/api/connectors/status`                        | Configured connector status; unavailable result if no provider is wired.                                                                                                                       |
+| `/api/dashboard/status`                         | Memory statistics from the daemon database.                                                                                                                                                    |
+| `/api/logs/daemon`                              | Log tail: `tail` (or `limit`) defaults to 500, maximum 2000; `since` is a file modification timestamp in milliseconds.                                                                         |
+| `/api/security/events`                          | Recent structured security events; `limit` defaults to 50, maximum 2000. A member's refused connection holds only `principalId`, `host` and `time`.                                            |
 
 Graph `kind` filters accept `memory`, `case`, `report`, `edge`, `raw`, `registry`, `observation`,
 and `entity`. These are graph projection names; task history is stored on work revisions.
@@ -71,14 +71,13 @@ return `503` when their required store or provider is absent. A missing wiki pag
 These GET paths remain for the viewer but return empty or null data with an unavailable reason.
 They do not prove that the named feature is running.
 
-| Routes                                                             | Response shape                                                  |
-| ------------------------------------------------------------------ | --------------------------------------------------------------- |
-| `/api/connectors/activity`, `/api/connectors/<name>/feed`          | Empty connector activity or feed.                               |
-| `/api/metrics/health`                                              | Null score and empty components/checks.                         |
-| `/api/cron`, `/api/cron/<path>`                                    | Empty jobs or logs.                                             |
-| `/api/tokens/summary`, `/api/tokens/by-agent`, `/api/tokens/daily` | Empty usage objects or arrays.                                  |
-| `/api/skills`, `/api/skills/catalog`, `/api/skills/search`         | Empty skills.                                                   |
-| `/api/intelligence/<path>`                                         | Empty activity, summary, projects, pipeline, notices or alerts. |
+| Routes                                                     | Response shape                                                  |
+| ---------------------------------------------------------- | --------------------------------------------------------------- |
+| `/api/connectors/activity`, `/api/connectors/<name>/feed`  | Empty connector activity or feed.                               |
+| `/api/metrics/health`                                      | Null score and empty components/checks.                         |
+| `/api/cron`, `/api/cron/<path>`                            | Empty jobs or logs.                                             |
+| `/api/skills`, `/api/skills/catalog`, `/api/skills/search` | Empty skills.                                                   |
+| `/api/intelligence/<path>`                                 | Empty activity, summary, projects, pipeline, notices or alerts. |
 
 `/api/operator/summary` is partial: it derives an unconfirmed-task count from at most 50 work items,
 but returns null report and trigger fields. Read `/api/report` for real board slots.

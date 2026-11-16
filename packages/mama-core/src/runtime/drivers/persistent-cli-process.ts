@@ -45,6 +45,7 @@ import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { claudeConfiguredSecrets, SecretRedactingStream } from './cli-secret-redaction.js';
 import { formatCliArgsForLog } from './cli-arg-redaction.js';
 import { claudeEffortArgs, type ThinkingEffort } from './claude-effort.js';
+import { claudeBackendLimits, type BackendLimitsListener } from '../backend-limits.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -142,6 +143,8 @@ export interface PersistentProcessOptions {
   agentId?: string;
   /** Thinking effort passed as --effort on models that accept it. */
   effort?: ThinkingEffort;
+  /** The login's usage limit, each time the CLI reports it (`rate_limit_event`). */
+  onBackendLimits?: BackendLimitsListener;
 }
 
 export interface PersistentProcessAcquireResult {
@@ -163,7 +166,9 @@ export interface ContentBlock {
 }
 
 export interface StreamMessage {
-  type: 'system' | 'assistant' | 'result' | 'error' | 'user';
+  type: 'system' | 'assistant' | 'result' | 'error' | 'user' | 'rate_limit_event';
+  /** `rate_limit_event` only: the login's limit windows. */
+  rate_limit_info?: unknown;
   subtype?: string;
   uuid?: string;
   origin?: { kind: string };
@@ -825,6 +830,11 @@ export class PersistentClaudeProcess extends EventEmitter {
     // Output is progress: a request that keeps printing keeps running.
     this.refreshRequestIdleTimeout();
     switch (event.type) {
+      case 'rate_limit_event': {
+        const limits = claudeBackendLimits(event.rate_limit_info, Date.now());
+        if (limits) this.options.onBackendLimits?.(limits);
+        break;
+      }
       case 'system':
         if (event.subtype === 'init') {
           // A notification followed by `init` with no stdin request behind it is the CLI

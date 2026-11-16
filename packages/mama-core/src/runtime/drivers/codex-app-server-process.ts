@@ -91,6 +91,8 @@ export interface CodexAppServerProcessOptions {
   policyFingerprint?: string;
   /** Observability sink for Codex-native subagent threads spawned by a parent turn. */
   onSubagentEvent?: (event: SubagentEvent) => void;
+  /** The login's usage limit, each time the app-server reports it (`account/rateLimits/updated`). */
+  onBackendLimits?: BackendLimitsListener;
   /**
    * Host factory for a CHILD-SCOPED authority. A child outlives the parent turn, so it
    * must never inherit the parent's snapshot bridge (whose envelope expires with the
@@ -109,6 +111,7 @@ export interface CodexAppServerProcessOptions {
 }
 
 import type { SubagentBridge, SubagentBridgeRequest } from '../subagent-bridge.js';
+import { codexBackendLimits, type BackendLimitsListener } from '../backend-limits.js';
 export type { SubagentBridge, SubagentBridgeRequest } from '../subagent-bridge.js';
 
 /**
@@ -607,6 +610,7 @@ export class CodexAppServerProcess {
     deniedReadPaths?: string[];
     allowLoginShell?: boolean;
     onSubagentEvent?: (event: SubagentEvent) => void;
+    onBackendLimits?: BackendLimitsListener;
     createSubagentBridge?: (info: SubagentBridgeRequest) => Promise<SubagentBridge | null>;
     subagentGraceMs?: number;
     subagentTtlMs?: number;
@@ -1673,6 +1677,12 @@ export class CodexAppServerProcess {
   }
 
   private handleNotification(method: string, params: unknown): void {
+    if (method === 'account/rateLimits/updated') {
+      // The login's limit, not a thread's: it carries no threadId.
+      const limits = codexBackendLimits(params, Date.now());
+      if (limits) this.options.onBackendLimits?.(limits);
+      return;
+    }
     const data = object(params);
     if (!data || typeof data.threadId !== 'string') {
       return;

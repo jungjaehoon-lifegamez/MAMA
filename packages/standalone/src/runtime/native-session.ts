@@ -56,6 +56,7 @@ import {
 import type { RuntimeBackend, RuntimeEffort, RuntimeSandbox } from './config.js';
 import type { ActionSurface } from './action-surface.js';
 import type { OwnerPolicyProvider, OwnerPolicySnapshot } from './owner-policy.js';
+import { recordBackendLimits } from './backend-limits.js';
 
 export const OWNER_RUNTIME_SESSION_KEY = 'owner:runtime';
 
@@ -374,6 +375,7 @@ function createDriver(
       authSourcePath: nativeOptions.authSourcePath,
       effort: nativeOptions.effort,
       createSubagentBridge: bridge,
+      onBackendLimits: recordBackendLimits,
     });
   }
 
@@ -408,6 +410,7 @@ function createDriver(
       ? {}
       : { requestMaxMs: nativeOptions.requestMaxMs }),
     effort: nativeOptions.effort,
+    onBackendLimits: recordBackendLimits,
   });
 }
 

@@ -55,14 +55,14 @@ inbound polling but does not prove another process is receiving messages.
 MAMA answers these itself, at once and without a model turn. They appear in the bot's command
 menu in DMs and groups, and only registered people get an answer.
 
-| Command   | What it does                                                                 |
-| --------- | ---------------------------------------------------------------------------- |
-| `/whoami` | Your Telegram ID, and whether MAMA knows you as an owner or a member         |
-| `/status` | MAMA's version, whether a turn is running in this conversation, what waits   |
-| `/stop`   | Stops the turn running in this conversation; the conversation itself goes on |
-| `/new`    | Starts this conversation over; what MAMA saved stays                         |
-| `/update` | Owners: updates MAMA to the latest release and reports each step here        |
-| `/help`   | Lists these commands                                                         |
+| Command   | What it does                                                                                    |
+| --------- | ----------------------------------------------------------------------------------------------- |
+| `/whoami` | Your Telegram ID, and whether MAMA knows you as an owner or a member                            |
+| `/status` | MAMA's version, whether a turn is running in this conversation, what waits, usage and the limit |
+| `/stop`   | Stops the turn running in this conversation; the conversation itself goes on                    |
+| `/new`    | Starts this conversation over; what MAMA saved stays                                            |
+| `/update` | Owners: updates MAMA to the latest release and reports each step here                           |
+| `/help`   | Lists these commands                                                                            |
 
 The conversation is the one your messages in that chat go to. In the common group that is the
 common session for owners and your own group conversation for other members. After `/stop`, the
@@ -71,8 +71,9 @@ after it still run, so send `/stop` again for each one you want stopped. `/new` 
 nothing: while MAMA still works on something of yours, or a message of yours is waiting, it says
 so and you send it again later. A member's `/new` in a DM also starts their group conversations
 over; an owner's group messages go to the common session, which only `/new` in the group starts
-over. In their own DM, owners see every conversation's count and the sources in `/status`; in a
-group everyone sees only their own. A command for another bot (`/status@other_bot`) is left
+over. In their own DM, owners see every conversation's count, the sources and each person's usage in
+`/status`; in a DM a member sees their own usage. Both see the backend login's limit as its CLI
+last reported it. In a group everyone sees only their own count and no usage. A command for another bot (`/status@other_bot`) is left
 alone, and any other command goes to MAMA as a message.
 
 `/update` works for an owner in their own DM or in the common group, and nowhere else. It runs

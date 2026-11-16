@@ -52,6 +52,7 @@ import { createOwnerPolicyProvider } from '../../runtime/owner-policy.js';
 import {
   createViewerServer as createDefaultViewerServer,
   type ViewerConnectorStatus,
+  type ViewerRuntimeStatus,
   type ViewerServer,
   type ViewerServerOptions,
 } from '../../api/viewer-server.js';
@@ -69,7 +70,11 @@ import {
 } from '../runtime/release-check.js';
 import { packageKind, runningPackageRoot } from '../runtime/install-kind.js';
 import { requestUpdate } from '../runtime/update-request.js';
-import { defaultServiceRun } from '../runtime/systemd-service.js';
+import {
+  defaultServiceRun,
+  systemdUnitState,
+  type ServiceRun,
+} from '../runtime/systemd-service.js';
 import type { UpkeepEvent } from '../../runtime/upkeep-orders.js';
 import { findDailyPages } from '../../wiki/wiki-read.js';
 import { createTimeZoneSetting, localNow } from '../../runtime/timezone.js';
@@ -88,6 +93,8 @@ import {
   type InstallLock,
 } from '../runtime/daemon-control.js';
 import { readUpdateJournal, updatePaths } from '../runtime/update-journal.js';
+import { limitLines, readUsage, usageLines, type UsageReport } from '../../runtime/usage-report.js';
+import { backendLimits } from '../../runtime/backend-limits.js';
 
 export const OWNER_PRINCIPAL_ID = 'owner';
 const OWNER_AGENT_ID = 'owner-agent';
@@ -488,6 +495,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   const startedAt = Date.now();
   let currentStage: BootStage = 'config';
   let booted = false;
+  // The status report counts today's usage in the configured time zone, set at boot below.
+  let statusTimeZone: ReturnType<typeof createTimeZoneSetting> | undefined;
   const command = options.command ?? (options.mode === 'replay' ? 'replay' : 'daemon');
   // The install's one process: taken before anything opens the database or rewrites settings.
   const control = daemonControlPaths(dirname(configPath));
@@ -563,7 +572,9 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
             WHERE status IN ('pending', 'claimed') GROUP BY status ORDER BY status`
         )
         .all();
+      report.usage = readUsage(adapter, Date.now(), statusTimeZone!.get());
     }
+    report.limits = backendLimits();
     if (connectors) {
       const connectorRuntime = connectors;
       const health = await connectorRuntime.registry.healthCheckAll();
@@ -704,6 +715,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       logger.info(`members' node: ${node.version} at ${node.path} (${node.how})`);
     } else logger.info("members' node: none (tools_root is not set or missing)");
     const timeZone = createTimeZoneSetting(config.timezone);
+    statusTimeZone = timeZone;
     validateDeliveryRoutes(config);
     declareModelCache();
     paths = pathsFor(configPath, config);
@@ -995,6 +1007,9 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
     stage(logger, 'owner_runtime', options.signal);
 
     currentStage = 'viewer';
+    // Read once: the service manager running this daemon does not change while it runs, and the
+    // lookup is a blocking command a request should not wait on.
+    const bootService = serviceState(options.home ?? homedir());
     const viewerFactory = dependencies.createViewerServer ?? createDefaultViewerServer;
     viewer = viewerFactory({
       dispatch: owner.surface.dispatch,
@@ -1013,19 +1028,22 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       getMemoryStats: () =>
         readViewerMemoryStats(owner!.database.adapter, Date.now(), owner!.surface.ownerAccess),
       getOwnerRuleIds: (ids) => ownerRuleIds(owner!.database.adapter, ids, OWNER_PRINCIPAL_ID),
-      getRuntimeStatus: () => ({
-        running: true,
-        version: resolvePackageVersion(),
-        backend: config.agent.backend,
-        model: config.agent.model,
-        startedAt,
-        health: null,
-        connectors: (connectors?.enabledConnectorNames ?? []).map((name) => ({
-          name,
-          enabled: true,
-          state: connectors?.registry.get(name) ? ('connected' as const) : ('unknown' as const),
-        })),
-      }),
+      getRuntimeStatus: async () => {
+        const report = await statusReport();
+        return {
+          running: true,
+          version: String(report.version),
+          backend: config.agent.backend,
+          model: config.agent.model,
+          startedAt,
+          stage: String(report.stage),
+          service: bootService,
+          lastError: (report.lastError as ViewerRuntimeStatus['lastError']) ?? null,
+          connectors: (report.connectors ?? []) as ViewerRuntimeStatus['connectors'],
+          usage: (report.usage as UsageReport | undefined) ?? null,
+          limits: report.limits as ViewerRuntimeStatus['limits'],
+        };
+      },
       getConnectorStatus: async (): Promise<ViewerConnectorStatus[]> => {
         if (!connectors) return [];
         const connectorRuntime = connectors;
@@ -1130,11 +1148,34 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
             );
             const turns = (report.runningTurns ?? []) as Array<{ count: number }>;
             const sources = (report.connectors ?? []) as Array<{ name: string; healthy: boolean }>;
+            const zone = timeZone.get();
+            // A person's own DM shows their own usage; a group reads the reply, so it shows none.
+            const ownAgent =
+              target.kind === 'member' && target.room === undefined
+                ? `member-agent:${target.principalId}`
+                : null;
+            const usage =
+              ownerView || ownAgent !== null
+                ? [
+                    ...usageLines(
+                      ownerView
+                        ? (report.usage as UsageReport)
+                        : {
+                            ...(report.usage as UsageReport),
+                            people: (report.usage as UsageReport).people.filter(
+                              (person) => person.agentId === ownAgent
+                            ),
+                          }
+                    ),
+                    ...limitLines(backendLimits(), (ms) => localNow(ms, zone)),
+                  ]
+                : [];
             return {
               version: String(report.version),
-              since: localNow(startedAt, timeZone.get()),
+              since: localNow(startedAt, zone),
               conversationRunning: owner!.turnRunning(target),
               inputsWaiting: waiting,
+              ...(usage.length > 0 ? { usage } : {}),
               ...(ownerView
                 ? {
                     owner: {
@@ -1407,6 +1448,20 @@ export interface LaunchdService {
 }
 
 /** macOS only: this user's LaunchAgent (`launchctl print` exits 113 when it is not loaded). */
+/**
+ * The service manager running MAMA, as `mama status` and the viewer show it. A failing service
+ * manager is reported in the line, not in place of the rest.
+ */
+export function serviceState(home: string, run: ServiceRun = defaultServiceRun): string | null {
+  try {
+    const launchd = launchdService();
+    const unit = systemdUnitState(home, run);
+    return launchd.loaded ? 'launchd (loaded)' : unit !== null ? `systemd (${unit})` : null;
+  } catch (error) {
+    return `unknown (${error instanceof Error ? error.message : String(error)})`;
+  }
+}
+
 export function launchdService(): LaunchdService {
   if (process.platform !== 'darwin') return { loaded: false, pid: null };
   const result = spawnSync('launchctl', ['print', `gui/${process.getuid!()}/com.mama.server`], {

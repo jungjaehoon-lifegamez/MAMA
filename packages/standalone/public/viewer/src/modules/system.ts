@@ -1,5 +1,5 @@
 /**
- * System views: Runtime and Connectors.
+ * System views: Runtime (with the backend limit and each person's usage) and Connectors.
  * @module modules/system
  *
  * Read-only truth, one source. Both views render `GET /api/runtime/status` and
@@ -12,26 +12,57 @@
 
 const RUNTIME_STATUS_ENDPOINT = '/api/runtime/status';
 
-/** Shown when the daemon booted without a health service. Never a fake score. */
-const HEALTH_UNAVAILABLE = 'unavailable';
-
-export type RuntimeBackend = 'claude' | 'codex' | 'cline';
-export type RuntimeConnectorState = 'connected' | 'disconnected' | 'unknown';
-
 export interface RuntimeConnectorStatus {
   name: string;
-  enabled: boolean;
-  state: RuntimeConnectorState;
+  healthy: boolean;
+  /** ISO time of the last poll, or null before the first. */
+  lastPoll: string | null;
+  error: string | null;
 }
 
+export interface UsageTotals {
+  runs: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+}
+
+export interface PersonUsage {
+  agentId: string;
+  principalId: string | null;
+  name: string;
+  today: UsageTotals;
+  week: UsageTotals;
+  sessions: Array<UsageTotals & { session: string }>;
+  actions: Array<{ tool: string; count: number }>;
+}
+
+export interface BackendLimitWindow {
+  window: string;
+  usedPercent: number;
+  resetsAt: number | null;
+}
+
+export interface BackendLimits {
+  backend: string;
+  bucket: string | null;
+  windows: BackendLimitWindow[];
+  observedAt: number;
+}
+
+/** `GET /api/runtime/status`: the daemon's status report, what `mama status` prints. */
 export interface RuntimeStatusSnapshot {
   running: boolean;
   version: string;
-  backend: RuntimeBackend;
+  backend: string;
   model: string;
   startedAt: number;
-  health: { score: number; status: string } | null;
+  stage: string;
+  service: string | null;
+  lastError: { at: number; line: string } | null;
   connectors: RuntimeConnectorStatus[];
+  usage: { dayStart: number; weekStart: number; people: PersonUsage[] } | null;
+  limits: BackendLimits[];
 }
 
 export interface SystemViewOptions {
@@ -84,11 +115,6 @@ function errorCard(error: unknown): string {
   );
 }
 
-function formatStartedAt(startedAt: number): string {
-  if (!Number.isFinite(startedAt) || startedAt <= 0) return 'unknown';
-  return new Date(startedAt).toLocaleString();
-}
-
 function formatUptime(startedAt: number): string {
   if (!Number.isFinite(startedAt) || startedAt <= 0) return 'unknown';
   const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
@@ -115,50 +141,138 @@ function statTile(label: string, value: string, tone = 'neutral'): string {
   );
 }
 
-export function renderRuntimeSnapshot(snapshot: RuntimeStatusSnapshot): string {
-  const health = snapshot.health;
-  const healthValue = health ? health.status + ' - ' + health.score : HEALTH_UNAVAILABLE;
-  const healthTone = health
-    ? health.status === 'healthy'
-      ? 'ok'
-      : health.status === 'degraded'
-        ? 'warn'
-        : 'bad'
-    : 'muted';
+function formatTime(ms: number | null): string {
+  if (ms === null || !Number.isFinite(ms) || ms <= 0) return 'unknown';
+  return new Date(ms).toLocaleString();
+}
 
+function compactTokens(value: number): string {
+  if (value >= 1_000_000) return (value / 1_000_000).toFixed(1) + 'M';
+  if (value >= 1_000) return (value / 1_000).toFixed(1) + 'k';
+  return String(value);
+}
+
+function totalsText(totals: UsageTotals): string {
+  return (
+    totals.runs +
+    ' runs · ' +
+    compactTokens(totals.inputTokens) +
+    ' in (' +
+    compactTokens(totals.cachedTokens) +
+    ' cached) · ' +
+    compactTokens(totals.outputTokens) +
+    ' out'
+  );
+}
+
+function row(tone: string, name: string, state: string, detail = ''): string {
+  return (
+    '<li class="mama-system-row" data-tone="' +
+    escapeHtml(tone) +
+    '">' +
+    '<span class="mama-system-dot"></span>' +
+    '<span class="mama-system-row-name">' +
+    escapeHtml(name) +
+    '</span>' +
+    '<span class="mama-system-row-state">' +
+    escapeHtml(state) +
+    '</span>' +
+    (detail ? '<span class="mama-system-row-detail">' + escapeHtml(detail) + '</span>' : '') +
+    '</li>'
+  );
+}
+
+function limitsPanel(limits: BackendLimits[]): string {
+  const rows = limits
+    .flatMap((limit) =>
+      limit.windows.map((window) =>
+        row(
+          window.usedPercent >= 90 ? 'bad' : window.usedPercent >= 70 ? 'warn' : 'ok',
+          limit.backend + (limit.bucket ? ' ' + limit.bucket : '') + ' ' + window.window,
+          window.usedPercent + '% used',
+          (window.resetsAt === null ? '' : 'resets ' + formatTime(window.resetsAt) + ' · ') +
+            'reported ' +
+            formatTime(limit.observedAt)
+        )
+      )
+    )
+    .join('');
   return (
     '<section class="mama-system-panel">' +
-    '<h2 class="mama-system-heading">Runtime</h2>' +
-    '<p class="mama-system-note">Reported by the running daemon; some fields reflect boot-time state. Configuration is edited via the CLI or the config file.</p>' +
-    '<div class="mama-system-tiles">' +
-    statTile('Daemon', snapshot.running ? 'running' : 'stopped', snapshot.running ? 'ok' : 'bad') +
-    statTile('Version', snapshot.version) +
-    statTile('Backend', snapshot.backend) +
-    statTile('Model', snapshot.model) +
-    statTile('Health', healthValue, healthTone) +
-    statTile('Uptime', formatUptime(snapshot.startedAt)) +
-    statTile('Started', formatStartedAt(snapshot.startedAt)) +
-    '</div>' +
+    '<h2 class="mama-system-heading">Backend limit</h2>' +
+    '<p class="mama-system-note">What the login has used, as its CLI last reported it during a turn. Every session shares the login.</p>' +
+    (rows
+      ? '<ul class="mama-system-list">' + rows + '</ul>'
+      : '<p class="mama-system-note">Not reported yet: each CLI reports it during a turn.</p>') +
     '</section>'
   );
 }
 
-const CONNECTOR_STATE_TONE: Record<RuntimeConnectorState, string> = {
-  connected: 'ok',
-  disconnected: 'muted',
-  unknown: 'warn',
-};
+function usagePanel(usage: RuntimeStatusSnapshot['usage']): string {
+  if (!usage) return '';
+  let people = '';
+  for (const person of usage.people) {
+    const sessions = person.sessions
+      .map((session) => row('neutral', session.session || '(none)', totalsText(session)))
+      .join('');
+    const actions = person.actions.map((action) => action.tool + ' ' + action.count).join(' · ');
+    people +=
+      '<div class="mama-system-person">' +
+      '<h3 class="mama-system-subheading">' +
+      escapeHtml(person.name) +
+      '</h3>' +
+      '<div class="mama-system-tiles">' +
+      statTile('Today', totalsText(person.today)) +
+      statTile('Last 7 days', totalsText(person.week)) +
+      '</div>' +
+      (sessions
+        ? '<p class="mama-system-note">By lane or channel, last 7 days</p><ul class="mama-system-list">' +
+          sessions +
+          '</ul>'
+        : '') +
+      (actions
+        ? '<p class="mama-system-note">Actions, last 7 days: ' + escapeHtml(actions) + '</p>'
+        : '') +
+      '</div>';
+  }
+  return (
+    '<section class="mama-system-panel">' +
+    '<h2 class="mama-system-heading">Usage and actions by person</h2>' +
+    '<p class="mama-system-note">Runs and tokens each session recorded, since ' +
+    escapeHtml(formatTime(usage.weekStart)) +
+    '. Actions are counted by name only.</p>' +
+    (people || '<p class="mama-system-note">No runs in the last 7 days.</p>') +
+    '</section>'
+  );
+}
 
-/**
- * What a connector state actually means. 'connected' is not a live probe: it
- * says the connector registered when the daemon booted, so the chip carries the
- * narrower claim rather than letting the word oversell itself.
- */
-const CONNECTOR_STATE_TITLE: Record<RuntimeConnectorState, string> = {
-  connected: 'Registered at daemon boot',
-  disconnected: 'Disabled in config',
-  unknown: 'Enabled in config but not registered at boot',
-};
+export function renderRuntimeSnapshot(snapshot: RuntimeStatusSnapshot): string {
+  return (
+    '<section class="mama-system-panel">' +
+    '<h2 class="mama-system-heading">Runtime</h2>' +
+    '<p class="mama-system-note">Reported by the running daemon. Configuration is edited via the CLI.</p>' +
+    '<div class="mama-system-tiles">' +
+    statTile('Daemon', snapshot.running ? 'running' : 'stopped', snapshot.running ? 'ok' : 'bad') +
+    statTile('Boot stage', snapshot.stage, snapshot.stage === 'running' ? 'ok' : 'warn') +
+    statTile('Service', snapshot.service ?? 'none', snapshot.service ? 'ok' : 'warn') +
+    statTile('Version', snapshot.version) +
+    statTile('Backend', snapshot.backend) +
+    statTile('Model', snapshot.model) +
+    statTile('Last boot', formatTime(snapshot.startedAt)) +
+    statTile('Uptime', formatUptime(snapshot.startedAt)) +
+    statTile(
+      'Last error',
+      snapshot.lastError
+        ? formatTime(snapshot.lastError.at) + ': ' + snapshot.lastError.line
+        : 'none since boot',
+      snapshot.lastError ? 'bad' : 'ok'
+    ) +
+    '</div>' +
+    '</section>' +
+    limitsPanel(snapshot.limits ?? []) +
+    usagePanel(snapshot.usage)
+  );
+}
 
 export function renderConnectorsSnapshot(snapshot: RuntimeStatusSnapshot): string {
   const connectors = snapshot.connectors ?? [];
@@ -167,37 +281,29 @@ export function renderConnectorsSnapshot(snapshot: RuntimeStatusSnapshot): strin
       '<section class="mama-system-panel">' +
       '<h2 class="mama-system-heading">Connectors</h2>' +
       '<div class="mama-system-empty">' +
-      '<p class="mama-system-empty-title">No connectors configured</p>' +
-      '<p class="mama-system-empty-detail">Add one from a terminal:</p>' +
-      '<code class="mama-system-code">mama connector add &lt;name&gt;</code>' +
+      '<p class="mama-system-empty-title">No connectors enabled</p>' +
+      '<p class="mama-system-empty-detail">Ask your agent to run:</p>' +
+      '<code class="mama-system-code">mama init --section connectors</code>' +
       '</div>' +
       '</section>'
     );
   }
-
-  let rows = '';
-  for (const connector of connectors) {
-    rows +=
-      '<li class="mama-system-row" data-tone="' +
-      escapeHtml(CONNECTOR_STATE_TONE[connector.state] ?? 'muted') +
-      '">' +
-      '<span class="mama-system-dot"></span>' +
-      '<span class="mama-system-row-name">' +
-      escapeHtml(connector.name) +
-      '</span>' +
-      '<span class="mama-system-row-state" title="' +
-      escapeHtml(CONNECTOR_STATE_TITLE[connector.state] ?? 'State reported at daemon boot') +
-      '">' +
-      escapeHtml(connector.state) +
-      '</span>' +
-      (connector.enabled ? '' : '<span class="mama-system-badge">off</span>') +
-      '</li>';
-  }
-
+  const rows = connectors
+    .map((connector) =>
+      row(
+        connector.healthy ? 'ok' : 'bad',
+        connector.name,
+        (connector.healthy ? 'ok' : 'failing') +
+          ' · last poll ' +
+          (connector.lastPoll ? formatTime(Date.parse(connector.lastPoll)) : 'not yet'),
+        connector.error ?? ''
+      )
+    )
+    .join('');
   return (
     '<section class="mama-system-panel">' +
     '<h2 class="mama-system-heading">Connectors</h2>' +
-    '<p class="mama-system-note">Read-only. Add or remove connectors with <code>mama connector add</code>.</p>' +
+    '<p class="mama-system-note">Each enabled connector as the running daemon last polled it.</p>' +
     '<ul class="mama-system-list">' +
     rows +
     '</ul>' +

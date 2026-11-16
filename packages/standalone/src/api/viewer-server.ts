@@ -61,6 +61,8 @@ import {
   type ArchiveGraphResponse,
   type ViewerMemoryStats,
 } from './viewer-data.js';
+import type { BackendLimits } from '@jungjaehoon/mama-core/runtime/backend-limits';
+import type { UsageReport } from '../runtime/usage-report.js';
 
 const GRAPH_KINDS = new Set([
   'memory',
@@ -99,18 +101,27 @@ export interface ViewerConnectorStatus {
 
 export interface ViewerRuntimeConnector {
   name: string;
-  enabled: boolean;
-  state: 'connected' | 'disconnected' | 'unknown';
+  healthy: boolean;
+  /** ISO time of the last poll, or null before the first. */
+  lastPoll: string | null;
+  error: string | null;
 }
 
+/** The daemon's status report as the viewer shows it: what `mama status` prints. */
 export interface ViewerRuntimeStatus {
   running: boolean;
   version: string;
   backend: string;
   model: string;
+  /** This boot's start, epoch milliseconds. */
   startedAt: number;
-  health: { score: number; status: string } | null;
+  stage: string;
+  /** The service manager running MAMA, or null when none does. */
+  service: string | null;
+  lastError: { at: number; line: string } | null;
   connectors: ViewerRuntimeConnector[];
+  usage: UsageReport | null;
+  limits: BackendLimits[];
 }
 
 export interface ViewerServerOptions {
@@ -1275,12 +1286,6 @@ export function createViewerServer(options: ViewerServerOptions): ViewerServer {
         result = { jobs: [], ...notAvailable() };
       } else if (url.pathname.startsWith('/api/cron/')) {
         result = { logs: [], ...notAvailable() };
-      } else if (url.pathname === '/api/tokens/summary') {
-        result = { today: {}, week: {}, month: {}, ...notAvailable() };
-      } else if (url.pathname === '/api/tokens/by-agent') {
-        result = { agents: [], ...notAvailable() };
-      } else if (url.pathname === '/api/tokens/daily') {
-        result = { days: [], ...notAvailable() };
       } else if (
         url.pathname === '/api/skills' ||
         url.pathname === '/api/skills/catalog' ||

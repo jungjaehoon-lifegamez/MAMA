@@ -20,6 +20,7 @@ import {
   createCodexAuxiliaryToolBridge,
   type CodexAuxiliaryToolPolicy,
 } from './drivers/codex-auxiliary-tools.js';
+import type { BackendLimitsListener } from './backend-limits.js';
 
 export interface AgentRuntimeProcess {
   sendMessage(content: string, callbacks?: ClaudePromptCallbacks): Promise<ClaudePromptResult>;
@@ -70,6 +71,8 @@ export interface CodexRuntimeProcessOptions {
    * inherit the parent's expiring grant.
    */
   createSubagentBridge?: (info: SubagentBridgeRequest) => Promise<SubagentBridge | null>;
+  /** The login's usage limit, each time the app-server reports it. */
+  onBackendLimits?: BackendLimitsListener;
 }
 
 /**
@@ -130,6 +133,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
       processEnv: options.processEnv,
       deniedReadPaths: options.deniedReadPaths,
       allowLoginShell: options.allowLoginShell,
+      onBackendLimits: options.onBackendLimits,
       // A completed child is accepted by the consumer's durable intake before the
       // driver forgets it. Started events remain observational.
       onSubagentEvent: (event: SubagentEvent) => {
