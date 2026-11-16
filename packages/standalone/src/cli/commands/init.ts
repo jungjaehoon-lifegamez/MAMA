@@ -668,7 +668,7 @@ export async function runInit(
         // MAMA runs without the document tools; their host requirements must not keep it from
         // starting. The daemon log names them as absent until mama tools install succeeds.
         write(
-          `The document tools could not be installed: ${error instanceof Error ? error.message : 'unknown error'}. MAMA runs without them; run mama tools install once that is fixed.`
+          `The document tools could not be installed: ${error instanceof Error ? error.message.replace(/\.+$/, '') : 'unknown error'}. MAMA runs without them; run mama tools install once that is fixed.`
         );
       }
       mark('toolkit');

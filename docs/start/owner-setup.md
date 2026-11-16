@@ -12,8 +12,9 @@ reports. For coding-session decisions and checkpoints, use the separate
 
 ## Install
 
-You need a Mac, Claude Code or Codex signed in, and a Telegram account. On the Mac that will run
-MAMA, open Claude Code or Codex and say:
+You need a Mac (or Ubuntu 24.04, in testing: see [On Linux](#on-linux)), Claude Code or Codex
+signed in, and a Telegram account. On the computer that will run MAMA, open Claude Code or Codex
+and say:
 
 > Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA
 

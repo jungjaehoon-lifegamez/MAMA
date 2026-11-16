@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   answer every DM including the owner's, now get the same Telegram format guide as the common
   session; before, a fresh install answered DMs in Markdown, shown as literal `**` and `#`, until
   the owner corrected it.
+- The setup guide's first line names Ubuntu 24.04 (in testing) beside the Mac, and the note that the
+  document tools could not be installed no longer ends in a doubled period.
 
 ## [0.81.0] - 2026-11-15
 
