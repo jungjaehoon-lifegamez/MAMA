@@ -2593,9 +2593,12 @@ describe('later setup changes from the conversation (install.md, W2.4.6)', () =>
     });
     expect(secret('MAMA_DISCORD_TOKEN')).toBe('fixture-discord');
     // Asked again, the stored token is kept and no page opens.
-    expect(
-      await section('discord', { ...on, MAMA_INIT_DISCORD_CHANNEL_ID: 'fixture-channel-2' })
-    ).toContain(
+    const kept = await section('discord', {
+      ...on,
+      MAMA_INIT_DISCORD_CHANNEL_ID: 'fixture-channel-2',
+    });
+    expect(kept).toContain('discord owner messages are experimental: they have not run live yet.');
+    expect(kept).toContain(
       'MAMA_DISCORD_TOKEN is in auth.env already and is kept. To enter another, run this again with MAMA_INIT_REPLACE_SECRETS=MAMA_DISCORD_TOKEN.'
     );
     expect(readDoc().discord).toMatchObject({ owner_channel_id: 'fixture-channel-2' });
@@ -2614,7 +2617,7 @@ describe('later setup changes from the conversation (install.md, W2.4.6)', () =>
     await vi.waitFor(() => expect(again.replies).toHaveLength(1));
     expect(again.forms[0]).toContain('It replaces the one in auth.env.');
     expect(secret('MAMA_DISCORD_TOKEN')).toBe('fixture-discord-two');
-    await section('discord', { MAMA_INIT_DISCORD: 'off' });
+    expect(await section('discord', { MAMA_INIT_DISCORD: 'off' })).not.toContain('experimental');
     expect(readDoc().discord).toMatchObject({ enabled: false });
     expect(secret('MAMA_DISCORD_TOKEN')).toBe('fixture-discord-two');
   });

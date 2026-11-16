@@ -44,7 +44,7 @@ export function createMemberEnrollment(options: {
     contract: {
       name: 'manage.member.enroll',
       summary:
-        "Enrollment runs in an active owner-role caller's own message turn (DM or the common channel), sending the Choose member button to the owner's own Telegram DM. Requires member_root and a daemon restart after configuring it. The host registers the selected identity; this action accepts an optional owner supplied name for the new member, but no identity, chat or grants. Telegram names are not used. Returns pending; enrollment grants no shared access. Active members' own messages are admitted by the registry.",
+        "Enrollment runs in an active owner-role caller's own message turn (DM or the common channel), sending the Choose member button to the owner's own Telegram DM. Requires member_root and a daemon restart after configuring it. The host registers the selected identity; this action accepts an optional owner supplied name for the new member, but no identity, chat or grants. Telegram names are not used. Returns pending; enrollment grants no shared access. Active members' own messages are admitted by the registry. Members without the owner role are experimental: they have not run live yet, so tell the owner when enrolling one.",
       inputSchema: {
         type: 'object',
         additionalProperties: false,

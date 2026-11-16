@@ -3163,6 +3163,6 @@ The implementation writes raw/index data during import only. Replay is the owner
 
 ### 1.0 items closed on live operation; experimental labels (#577, 2026-11-16)
 
-- Result: owner, 2026-11-16: what operation already shows is not proven again. T3 and F1–F4 closed on a month of daily use; E4 (Discord and Slack owner messengers) and T1 (members without the owner role) marked experimental in setup, the enrollment action and the docs (#577). F4's daily self-check was never built and is dropped. 1.0 progress 41 of 47.
+- Result: owner, 2026-11-16: what operation already shows is not proven again. T3 and F1–F4 closed on a month of daily use; E4 (Discord and Slack owner messengers) and T1 (members without the owner role) marked experimental in setup, the enrollment action and the docs (#577). F4's daily self-check (#502) wrote its page every day of October and 1–15 November (an earlier draft of this entry said it was never built; CodeRabbit's note on G3 led to the check). 1.0 progress 41 of 47.
 - Evidence: live DB, last 30 days: common session 7,666 runs on 31 days; two owner-role DMs, 450 runs on 30 days and 159 on 2 days; `member.notice` 562 completed; `skill.read` in both DMs; `manage.policy.update` 7; enrollment 10-10. `principal_lifecycle_transitions` and `principal_erasure_receipts` are empty.
 - Still open: T2's unused parts (owners suspending each other, an erasure across a restart, enrolling from a DM, a rule change asked in a DM); E2, E3, T5, S2, X4, G2.

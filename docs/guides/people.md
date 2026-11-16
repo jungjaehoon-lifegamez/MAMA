@@ -98,7 +98,8 @@ interrupts finishes after the restart. Your messages during it wait and are answ
 
 ## Members in the common group
 
-A member with the `owner` role talks to the common session in the group. A member without that
+A member with the `owner` role talks to the common session in the group. Members without the
+owner role are experimental: they have not run live yet. A member without that
 role gets a session of its own for the group. That session reads only what the member's grants
 allow and none of the member's personal records. It cannot read chat from before the member
 enrolled. In the common group such a member may also change shared work in its granted projects and

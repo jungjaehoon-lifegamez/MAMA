@@ -185,7 +185,7 @@ through Google's unverified-app warning once; a Google Workspace account uses th
 type. If the client is left in Testing, Google ends the sign-in after 7 days. See
 [Google sources](../guides/connectors.md#google-sources).
 
-Discord or Slack as the messenger you talk to MAMA in, and Jev, are set up the same way, by your
+Discord or Slack as the messenger you talk to MAMA in (experimental: not yet run live), and Jev, are set up the same way, by your
 agent with `mama init --section <part> --non-interactive`; see
 [Change one part later](#change-one-part-later).
 

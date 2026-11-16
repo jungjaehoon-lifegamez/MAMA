@@ -63,7 +63,7 @@ A `connectors.json` edited by hand is checked when MAMA starts and by `mama doct
 
 Tokens belong in `~/.mama/auth.env`, never in `connectors.json`. Restart through `start.sh` after
 changing credentials so the daemon loads them. Telegram is the owner messenger today; Discord
-and Slack are selectable messengers. See the [Telegram guide](telegram.md). The owner messenger
+and Slack owner messengers are experimental (not yet run live). See the [Telegram guide](telegram.md). The owner messenger
 uses `MAMA_TELEGRAM_TOKEN`;
 the Telegram source connector uses a separate bot and `MAMA_TELEGRAM_SOURCE_TOKEN` so both do not
 poll the same update stream.

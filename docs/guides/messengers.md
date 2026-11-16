@@ -8,6 +8,8 @@ nav_order: 1
 
 MAMA accepts owner messages through enabled Telegram, Discord, and Slack gateways. A direct reply returns through the gateway that accepted the message. Scheduled reports, `[notify]` results, and viewer security alerts each use their configured single messenger route.
 
+Discord and Slack owner gateways are experimental: they have not run live yet. Telegram is the messenger in daily use.
+
 ## Configure an owner gateway
 
 `mama init --section discord` and `mama init --section slack` turn the optional Discord and Slack owner gateways on or off and store their credentials in `~/.mama/auth.env`, never in YAML. Telegram uses `MAMA_TELEGRAM_TOKEN`; Discord uses `MAMA_DISCORD_TOKEN`; Slack uses `MAMA_SLACK_TOKEN` and `MAMA_SLACK_APP_TOKEN` for Socket Mode. Your agent runs them with `--non-interactive`: `MAMA_INIT_DISCORD` (or `MAMA_INIT_SLACK`) is `on` or `off`, and with `on`, `MAMA_INIT_DISCORD_CHANNEL_ID` and `MAMA_INIT_DISCORD_USER_ID` (or the `SLACK` pair) name the owner channel and the owner's user id. The tokens are entered on the setup page; one `auth.env` already holds is kept unless `MAMA_INIT_REPLACE_SECRETS` names it. Rotate one on its own with `mama secret set <NAME> --non-interactive`.
