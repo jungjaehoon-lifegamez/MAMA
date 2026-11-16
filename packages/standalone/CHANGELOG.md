@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Direct messages are written in Telegram's format from the first reply. Member sessions, which
+  answer every DM including the owner's, now get the same Telegram format guide as the common
+  session; before, a fresh install answered DMs in Markdown, shown as literal `**` and `#`, until
+  the owner corrected it.
+
 ## [0.81.0] - 2026-11-15
 
 ### Added
