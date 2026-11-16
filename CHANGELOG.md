@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.81.1] - 2026-11-16
+
+MAMA answers your direct messages in Telegram's own format from the first reply, with no correction
+needed. Each package changelog lists every change.
+
+### Upgrading
+
+- An install on 0.81.0 updates with `mama update`, or `/update` in Telegram. Open DM conversations
+  start a new session after the update, so the new format applies from the next reply.
+- The Claude Code plugin stays at 2.5.1.
+
+### Fixed
+
+- Direct messages, the owner's included, were written in Markdown on a fresh install and showed
+  literal `**` and `#` in Telegram until the owner corrected it (#569).
+- The setup guide's first line names Ubuntu 24.04 (in testing) beside the Mac (#569).
+
 ## mama-os [0.81.0] / plugin [2.5.1] - 2026-11-15
 
 MAMA now renders documents on Linux, inside a sandbox with the same limits as on macOS, and the
