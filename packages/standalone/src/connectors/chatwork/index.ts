@@ -68,6 +68,8 @@ export function extractChatworkFiles(body: string): Array<{ fileId: string; name
   });
 }
 
+/** What `messages?force=1` returns at most per room. */
+const CHATWORK_PAGE = 100;
 export class ChatworkConnector implements IConnector {
   readonly name = 'chatwork';
   readonly type = 'api' as const;
@@ -94,6 +96,12 @@ export class ChatworkConnector implements IConnector {
    */
   private lastMessageIds: Map<string, string> = new Map();
   private pendingMessageIds: Map<string, string> | null = null;
+  /**
+   * A room that failed keeps the `since` it failed at, so the messages sent while it failed are
+   * read once it answers again; the other rooms move on (v1 X1).
+   */
+  private failedSince: Map<string, number> = new Map();
+  private pendingFailedSince: Map<string, number> | null = null;
   private pollCommitDeferred = false;
 
   constructor(config: ConnectorConfig, options: ChatworkConnectorOptions = {}) {
@@ -156,14 +164,18 @@ export class ChatworkConnector implements IConnector {
 
     const items: NormalizedItem[] = [];
     const pendingMessageIds = new Map(this.lastMessageIds);
-    const failedRooms = new Set<string>();
+    const pendingFailedSince = new Map(this.failedSince);
+    const failedRooms = new Map<string, string>();
+    /** Rooms whose latest 100 messages no longer reach the last one seen: older ones are lost. */
+    const overflowedRooms: string[] = [];
     let polledRooms = 0;
-    const sinceEpoch = Math.floor(since.getTime() / 1000);
+    const pollSince = Math.floor(since.getTime() / 1000);
 
     for (const [roomId, channelCfg] of Object.entries(this.config.channels)) {
       if (channelCfg.role === 'ignore') continue;
       polledRooms += 1;
 
+      const sinceEpoch = Math.min(this.failedSince.get(roomId) ?? pollSince, pollSince);
       try {
         // force=1: the latest 100 messages independent of the server-side read cursor,
         // which any other reader of this token would otherwise consume first. New-ness
@@ -174,12 +186,20 @@ export class ChatworkConnector implements IConnector {
         });
 
         if (!res.ok) {
-          failedRooms.add(roomId);
-          this.lastError = `Room ${roomId}: HTTP ${res.status}`;
+          failedRooms.set(roomId, `HTTP ${res.status}`);
+          pendingFailedSince.set(roomId, sinceEpoch);
           continue;
         }
 
         const messages = (await res.json()) as ChatworkMessage[];
+        // The API has no paging (see lastMessageIds): a full page without the last message seen
+        // means more than 100 arrived since, and the older ones cannot be read. Said, not hidden.
+        if (
+          lastMsgId &&
+          messages.length >= CHATWORK_PAGE &&
+          !messages.some((msg) => msg.message_id <= lastMsgId)
+        )
+          overflowedRooms.push(roomId);
 
         let maxMsgId = lastMsgId ?? '';
         for (const msg of messages) {
@@ -210,24 +230,37 @@ export class ChatworkConnector implements IConnector {
         }
 
         if (maxMsgId) pendingMessageIds.set(roomId, maxMsgId);
+        pendingFailedSince.delete(roomId);
       } catch (err) {
-        failedRooms.add(roomId);
-        this.lastError = `Room ${roomId}: ${messageWithCauses(err)}`;
+        failedRooms.set(roomId, messageWithCauses(err));
+        pendingFailedSince.set(roomId, sinceEpoch);
       }
     }
 
     this.lastPollTime = new Date();
     this.lastPollCount = items.length;
-    // lastError was set in catch blocks; clear only if no error occurred this pass
-    if (failedRooms.size > 0) {
+    const failures = [...failedRooms].map(([roomId, reason]) => `Room ${roomId}: ${reason}`);
+    if (polledRooms > 0 && failedRooms.size === polledRooms) {
+      // Nothing was read: the scheduler keeps its cursor and tries every room again.
+      this.lastError = failures.join('; ');
       this.abortPollHandoff();
       throw new Error(
-        `Chatwork poll failed for ${failedRooms.size} of ${polledRooms} configured rooms; last error: ${this.lastError}`
+        `Chatwork poll failed for ${failedRooms.size} of ${polledRooms} configured rooms; ${this.lastError}`
       );
     }
+    const problems = [
+      ...failures.map((failure) => `skipped ${failure}`),
+      ...overflowedRooms.map(
+        (roomId) =>
+          `Room ${roomId}: more than ${CHATWORK_PAGE} messages since the last poll; the older ones cannot be read through the Chatwork API`
+      ),
+    ];
+    // The rooms that answered are recorded; the skipped ones are read again from their own since.
+    if (problems.length > 0) console.warn(`[chatwork] ${problems.join('; ')}`);
     this.pendingMessageIds = pendingMessageIds;
+    this.pendingFailedSince = pendingFailedSince;
     if (!this.pollCommitDeferred) this.commitPoll();
-    this.lastError = undefined;
+    this.lastError = problems.length > 0 ? problems.join('; ') : undefined;
 
     return items;
   }
@@ -244,12 +277,15 @@ export class ChatworkConnector implements IConnector {
       throw new Error('Chatwork poll state is unavailable to commit');
     }
     this.lastMessageIds = this.pendingMessageIds;
+    this.failedSince = this.pendingFailedSince ?? this.failedSince;
     this.pendingMessageIds = null;
+    this.pendingFailedSince = null;
     this.pollCommitDeferred = false;
   }
 
   abortPollHandoff(): void {
     this.pendingMessageIds = null;
+    this.pendingFailedSince = null;
     this.pollCommitDeferred = false;
   }
 
