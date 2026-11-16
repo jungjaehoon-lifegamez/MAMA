@@ -1,4 +1,5 @@
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
+import { setPromptBudget } from '@jungjaehoon/mama-core/runtime/prompt-layers';
 import { readDocumentToolkit } from '../../tools/document-toolkit.js';
 import { syncMemberNode } from '../../runtime/member-node.js';
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
@@ -460,7 +461,18 @@ async function stopOne(
 }
 
 /** Open the W1 owner subject, then activate producers in their dependency order. */
+/**
+ * MAMA's prompt budget (v1 X3). Every layer MAMA sends is priority 1, the standing text and the
+ * owner policy, so the budget never trims; it only warns. Measured 2026-11-16 on the live install:
+ * the standing text is 2,334 tokens on Claude and 2,515 on Codex, under core's 3,750 default, and
+ * the owner policy, the owner's own rules, adds 7,330 (common prompt 9,666; an owner's DM 8,738).
+ * Core's defaults warned about the owner's rules on every turn ("truncation recommended", with
+ * nothing to truncate), so the warning now starts above today's prompts.
+ */
+const MAMA_PROMPT_BUDGET = { warnTokens: 12_000, truncateTokens: 16_000, hardLimitTokens: 20_000 };
+
 export async function bootDaemon(options: DaemonBootOptions = {}): Promise<DaemonHandle> {
+  setPromptBudget(MAMA_PROMPT_BUDGET);
   const baseLogger = options.logger ?? defaultLogger;
   let lastError: { at: number; line: string } | null = null;
   const logger: DaemonLogger = {
