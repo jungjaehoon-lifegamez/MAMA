@@ -304,38 +304,6 @@ export interface SkillsResponse {
   [key: string]: unknown;
 }
 
-export interface TokenSummaryPeriod {
-  input_tokens?: number;
-  output_tokens?: number;
-  cache_read_tokens?: number;
-  cost_usd?: number;
-  request_count?: number;
-  [key: string]: unknown;
-}
-
-export interface TokenSummaryResponse {
-  today?: TokenSummaryPeriod;
-  week?: TokenSummaryPeriod;
-  month?: TokenSummaryPeriod;
-  [key: string]: unknown;
-}
-
-export interface TokenByAgentRecord {
-  agent_id?: string;
-  agent_name?: string;
-  input_tokens?: number;
-  output_tokens?: number;
-  cache_read_tokens?: number;
-  cost_usd?: number;
-  request_count?: number;
-  [key: string]: unknown;
-}
-
-export interface TokensByAgentResponse {
-  agents: TokenByAgentRecord[];
-  [key: string]: unknown;
-}
-
 export interface CronJob {
   id: string;
   name: string;
@@ -759,22 +727,6 @@ export class API {
 
   static async getCronLogs(id: string, limit = 5): Promise<CronLogResponse> {
     return this.get<CronLogResponse>(`/api/cron/${encodeURIComponent(id)}/logs`, { limit });
-  }
-
-  // =============================================
-  // Token API
-  // =============================================
-
-  static async getTokenSummary(): Promise<TokenSummaryResponse> {
-    return this.get<TokenSummaryResponse>('/api/tokens/summary');
-  }
-
-  static async getTokensByAgent(): Promise<TokensByAgentResponse> {
-    return this.get<TokensByAgentResponse>('/api/tokens/by-agent');
-  }
-
-  static async getTokensDaily(days = 30): Promise<JsonRecord> {
-    return this.get<JsonRecord>('/api/tokens/daily', { days });
   }
 
   // =============================================

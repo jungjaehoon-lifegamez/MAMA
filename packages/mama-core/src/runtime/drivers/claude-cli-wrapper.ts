@@ -30,6 +30,7 @@ import type { PromptCallbacks, PromptResult, ToolUseBlock } from './types.js';
 import { claudeConfiguredSecrets, SecretRedactingStream } from './cli-secret-redaction.js';
 import { formatCliArgsForLog } from './cli-arg-redaction.js';
 import { claudeEffortArgs, type ThinkingEffort } from './claude-effort.js';
+import type { BackendLimitsListener } from '../backend-limits.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -54,6 +55,8 @@ export interface ClaudeCLIWrapperOptions {
   model?: string;
   /** Thinking effort passed as --effort on models that accept it. */
   effort?: ThinkingEffort;
+  /** The login's usage limit, each time the CLI reports it (persistent CLI only). */
+  onBackendLimits?: BackendLimitsListener;
   sessionId?: string;
   systemPrompt?: string;
   mcpConfigPath?: string;

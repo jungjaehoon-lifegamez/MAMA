@@ -25,7 +25,15 @@ import {
   systemdUnitState,
   type ServiceRun,
 } from '../runtime/systemd-service.js';
-import { askDaemon, bootoutLaunchdService, installControlPaths, launchdService } from './daemon.js';
+import {
+  askDaemon,
+  bootoutLaunchdService,
+  installControlPaths,
+  launchdService,
+  serviceState,
+} from './daemon.js';
+import type { BackendLimits } from '@jungjaehoon/mama-core/runtime/backend-limits';
+import { limitLines, usageLines, type UsageReport } from '../../runtime/usage-report.js';
 
 /** `mama status` exits 0 while the daemon runs and 3 when nothing serves the install. */
 export const STATUS_STOPPED_EXIT = 3;
@@ -119,6 +127,8 @@ function statusLines(status: Record<string, unknown>): string[] {
   }
   const lastError = status.lastError as { at: number; line: string } | null | undefined;
   if (lastError) lines.push(`last error ${localTime(lastError.at)}: ${lastError.line}`);
+  lines.push(...usageLines(status.usage as UsageReport | undefined));
+  lines.push(...limitLines(status.limits as BackendLimits[] | undefined, localTime));
   return lines;
 }
 
@@ -131,15 +141,7 @@ export async function runStatus(
     throw new CliInputError('Usage: mama status [--json]');
   }
   const write = options.write ?? ((line: string) => console.log(line));
-  // The service line is extra: a failing service manager is reported in it, not in place of status.
-  let service: string | null;
-  try {
-    const launchd = launchdService();
-    const unit = systemdUnitState(options.home ?? homedir(), options.run ?? defaultServiceRun);
-    service = launchd.loaded ? 'launchd (loaded)' : unit !== null ? `systemd (${unit})` : null;
-  } catch (error) {
-    service = `unknown (${error instanceof Error ? error.message : String(error)})`;
-  }
+  const service = serviceState(options.home ?? homedir(), options.run ?? defaultServiceRun);
   const reply = await askDaemon('status', options);
   // The daemon's last release check, from its file: it outlives the daemon, and nothing here asks
   // the registry.

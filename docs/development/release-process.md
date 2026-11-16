@@ -92,3 +92,27 @@ site and creates the release after the required jobs succeed.
 
 Finally, verify the installed package versions and the affected owner or development-memory path.
 Record live delivery and read-back evidence separately from the publication job result.
+
+## What a 1.x upgrade keeps
+
+From 1.0, every 1.x release keeps what an install already holds. A change that breaks one of these
+is a 2.0 change.
+
+- **Data.** The database, records and their revisions, sessions, lessons and pending owner
+  messages that an earlier 1.x release wrote. Schema changes are forward migrations only; a release
+  never asks the owner to export and import. Checked by the upgrade check in CI
+  (`scripts/upgrade-check`): the previous published release sets up an install and writes work, a
+  revision, a lesson and a pending owner message; this build boots on it and reads each back.
+- **Config.** A `config.yaml`, `auth.env` and `connectors.json` that an earlier 1.x release wrote
+  load unchanged. A new setting has a default; a setting is not removed or renamed. Checked for the
+  config the previous release's `mama init` writes: the same upgrade check runs
+  `mama doctor --offline` on it after the upgrade.
+- **Commands.** The documented `mama` commands, their flags and `MAMA_INIT_*` variables, and the
+  chat commands (`/status`, `/stop`, `/new`, `/whoami`, `/help`, `/update`) keep their meaning.
+  New ones may be added; one is removed or renamed only in 2.0.
+- **The update path.** `mama update` (and `/update`) moves a 1.x install to the latest 1.x with a
+  backup, a drain and a rollback when doctor fails after the install.
+
+Downgrades are not kept: a release refuses a database a newer release migrated and names both
+versions. Experimental features (marked in `mama init` and the docs) may change in a 1.x release;
+the README lists them.

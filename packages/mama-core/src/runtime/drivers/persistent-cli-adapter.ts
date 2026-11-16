@@ -94,6 +94,7 @@ export class PersistentCLIAdapter extends EventEmitter implements IModelRunner {
       tools: options.tools,
       // Adaptive thinking effort (agent.effort) reaches the CLI as --effort.
       effort: options.effort,
+      onBackendLimits: options.onBackendLimits,
       pluginDir: options.pluginDir,
       allowedTools: options.allowedTools,
       disallowedTools: options.disallowedTools,

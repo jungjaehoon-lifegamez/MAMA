@@ -12,8 +12,10 @@ report.
 
 Browse Board, Tasks, Memory, Wiki, Runtime, Connectors and Logs. The board shows
 published report slots; tasks and memory expose stored work, revisions and linked
-evidence. Wiki displays the configured Markdown vault. Runtime and Connectors
-help distinguish a running process from collection health. Daemon logs and
+evidence. Wiki displays the configured Markdown vault. Runtime shows the service, the boot
+and the last error, the backend login's limit as its CLI last reported it, and each person's
+runs, tokens, sessions and actions (by name only) today and over seven days. Connectors shows
+each enabled source's last poll and error. Daemon logs and
 `GET /api/security/events` support investigation.
 
 `MAMA_API_HOST` and `MAMA_API_PORT` select the listener; defaults are `127.0.0.1`

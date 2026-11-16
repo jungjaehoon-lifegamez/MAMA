@@ -161,7 +161,8 @@ the agent is shown the few saved lessons that match it best, and can add, revise
 workflows as you agree on them. Every change keeps its history.
 
 **The viewer.** `http://127.0.0.1:3847` shows the board, work items with their history, the memory
-graph, the wiki and logs.
+graph, the wiki and logs, and whether the install is healthy: the service, each source's last
+poll, the backend's limit and each person's usage and actions.
 
 ## What you can connect
 
@@ -255,7 +256,7 @@ anyone can install it and keep it across upgrades.
 | 2. Your own work           | It finds the work in your sources, adds news to it, answers who is doing what and how things went, keeps reports and the board in line with the work, and follows your corrections, on Claude or Codex | Live on one install; the owner checks accepted                                                                      |
 | 3. A shared engine         | Another project builds its own records, history and search on mama-core                                                                                                                                | Done                                                                                                                |
 | 4. People                  | Each person has a DM with its own records, jobs and skills; members work in the group within what they are granted                                                                                     | In progress: owners' DMs built and in use (one daily, one a few times); members without the owner role experimental |
-| 5. 1.0: anyone can install | A fresh install on macOS or Linux, set up from the docs alone and kept across upgrades                                                                                                                 | In progress: 42 of 47                                                                                               |
+| 5. 1.0: anyone can install | A fresh install on macOS or Linux, set up from the docs alone and kept across upgrades                                                                                                                 | 47 of 47; the upgrade gate is last                                                                                  |
 
 Messengers: Telegram is live; Discord and Slack are experimental (not yet run live). Docker and Windows are not
 planned for 1.0.
@@ -268,11 +269,11 @@ planned for 1.0.
 | Setup            | Pairing in Telegram instead of typed IDs, defaults instead of edited files, the service started for you                     | 7 / 7       |
 | Operations       | Status, `mama doctor`, update (also from chat), backup and restore, upgrade checks, logs, log rotation, uninstall           | 9 / 9       |
 | Linux            | Document rendering, sandbox checks, a full run                                                                              | 5 / 5       |
-| Everyday use     | Chat commands such as `/stop`, usage and limits, a health view, Discord and Slack verified or marked experimental           | 2 / 4       |
-| People           | The remaining live checks, and use by more than one person                                                                  | 4 / 5       |
+| Everyday use     | Chat commands such as `/stop`, usage and limits, a health view, Discord and Slack verified or marked experimental           | 4 / 4       |
+| People           | The remaining live checks, and use by more than one person                                                                  | 5 / 5       |
 | Your own work    | The owner checks of stage 2 accepted                                                                                        | 4 / 4       |
-| Fixes and guides | Chatwork polling, shutdown order, prompt size, test stability, CI coverage, a guide per platform, what 1.x promises         | 5 / 7       |
-| **Total**        |                                                                                                                             | **42 / 47** |
+| Fixes and guides | Chatwork polling, shutdown order, prompt size, test stability, CI coverage, a guide per platform, what 1.x promises         | 7 / 7       |
+| **Total**        |                                                                                                                             | **47 / 47** |
 
 Each item, with what is true today and how it is checked, is in the
 [1.0 work list](docs/development/work/v1.md). Ongoing live checks are in the
