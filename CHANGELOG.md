@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.82.0] / core [8.10.0] / server [2.6.3] / plugin [2.5.2] - 2026-11-16
+
+You can now see how much MAMA uses and whether it is healthy. `mama status`, `/status` in
+Telegram and the viewer show each person's runs and tokens today and over seven days, and how much
+of the backend login's limit is used, as the Claude or Codex CLI reported it during the last turn.
+The viewer also shows the service, the last boot and error, each source's last poll and error,
+and each person's actions. Each package changelog lists every change.
+
+### Upgrading
+
+- An install on 0.81.x updates with `mama update`, or `/update` in Telegram. The limit appears
+  after the first turn following the update.
+- The Claude Code plugin moves to 2.5.2 with the MCP server 2.6.3 on mama-core 8.10.0.
+
+### Added
+
+- Usage and the backend's limit in `mama status`, `/status` (every person in an owner's DM, one's
+  own in a member's DM, none in a group) and the viewer (#579).
+- A health view in the viewer: service, boot stage, last boot and error, each source's last poll
+  and error, and each person's actions by name (#579).
+- What a 1.x upgrade keeps is written down in the release process (#579).
+
+### Changed
+
+- Discord and Slack owner messengers, members without the owner role, and owner features not yet
+  used live (owners suspending each other, erasure, enrolling from a DM) are marked experimental
+  in setup and the docs (#577, #578).
+
+### Fixed
+
+- One failing Chatwork room or Slack channel no longer fails the whole poll (#575, #576).
+- On Linux, `mama tools install` names the exact command for missing LibreOffice or fonts (#575).
+
 ## mama-os [0.81.1] - 2026-11-16
 
 MAMA answers your direct messages in Telegram's own format from the first reply, with no correction
