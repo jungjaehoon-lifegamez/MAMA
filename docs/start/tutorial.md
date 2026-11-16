@@ -12,8 +12,8 @@ Discord and Slack work the same way. See the [messengers guide](../guides/messen
 
 ## 1. Install through your agent
 
-You need a Mac (or Ubuntu 24.04, in testing: see [On Linux](owner-setup.md#on-linux)), Claude Code or Codex
-signed in, and a Telegram account. On the computer that will run MAMA, open Claude Code or Codex
+You need a Mac or Ubuntu 24.04 (see [On Linux](owner-setup.md#on-linux)), Claude Code or Codex signed in,
+and a Telegram account. On the computer that will run MAMA, open Claude Code or Codex
 and say:
 
 > Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA

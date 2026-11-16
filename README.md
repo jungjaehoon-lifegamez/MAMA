@@ -65,8 +65,8 @@ the rest are gathered into an hourly reminder between 09:00 and 21:00.
 
 ### What you need
 
-- A Mac. Linux (Ubuntu 24.04) is in testing (see
-  [On Linux](docs/start/owner-setup.md#on-linux)); Docker is not supported yet. See
+- A Mac or Ubuntu 24.04 (see [On Linux](docs/start/owner-setup.md#on-linux)). Docker is not
+  supported yet. See
   [supported versions](docs/start/owner-setup.md#supported-versions).
 - Claude Code or Codex, signed in.
 - A Telegram account.

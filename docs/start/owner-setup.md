@@ -12,8 +12,8 @@ reports. For coding-session decisions and checkpoints, use the separate
 
 ## Install
 
-You need a Mac (or Ubuntu 24.04, in testing: see [On Linux](#on-linux)), Claude Code or Codex
-signed in, and a Telegram account. On the computer that will run MAMA, open Claude Code or Codex
+You need a Mac or Ubuntu 24.04 (see [On Linux](#on-linux)), Claude Code or Codex signed in,
+and a Telegram account. On the computer that will run MAMA, open Claude Code or Codex
 and say:
 
 > Install MAMA OS from https://github.com/jungjaehoon-lifegamez/MAMA
@@ -35,8 +35,8 @@ You never type in a terminal. Your agent guides you through these steps, in this
 
 The next section is what the agent follows.
 
-macOS is supported today. Linux (Ubuntu 24.04) is in testing: see [On Linux](#on-linux) before
-you start. Over SSH or without a desktop there is no setup path yet. See
+macOS and Linux (Ubuntu 24.04) are supported: on Linux, see [On Linux](#on-linux) before you
+start. Over SSH or without a desktop there is no setup path yet. See
 [Supported versions](#supported-versions). To keep your own Node.js, see
 [Install with your own Node.js](#install-with-your-own-nodejs).
 
@@ -326,15 +326,15 @@ by git, which leaves the document tools as they are: when a release changes them
 
 ## Supported versions
 
-| What                         | Supported                                              | Source                                                                                                                                                                           |
-| ---------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Node.js (install command)    | Node.js 22, the release the install command pins       | [`install/node.json`](../../packages/standalone/install/node.json), installed and run in CI on macOS and Ubuntu                                                                  |
-| Node.js (your own, with npm) | 22.13 or newer                                         | `engines` in [`package.json`](../../packages/standalone/package.json)                                                                                                            |
-| Claude Code                  | 2.1.299 or newer                                       | [`backend-probe.ts`](../../packages/standalone/src/cli/runtime/backend-probe.ts); setup refuses an older one                                                                     |
-| Codex                        | 0.160.1 or newer                                       | [`backend-probe.ts`](../../packages/standalone/src/cli/runtime/backend-probe.ts); setup refuses an older one                                                                     |
-| macOS                        | 26.6 on Apple silicon, the version setup was proven on | A clean Mac account, set up through Claude Code (`docs/development/checks.md`); Claude Code itself needs macOS 13 or newer                                                       |
-| Linux                        | Ubuntu 24.04 on x86-64, in testing                     | A run on Ubuntu 24.04 (WSL2): setup, the service, members' shells and document rendering (`docs/development/checks.md`); the fresh-install check from these docs has not run yet |
-| Docker                       | Not yet: there is no image; a later release adds it    | —                                                                                                                                                                                |
+| What                         | Supported                                              | Source                                                                                                                                                                                                     |
+| ---------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Node.js (install command)    | Node.js 22, the release the install command pins       | [`install/node.json`](../../packages/standalone/install/node.json), installed and run in CI on macOS and Ubuntu                                                                                            |
+| Node.js (your own, with npm) | 22.13 or newer                                         | `engines` in [`package.json`](../../packages/standalone/package.json)                                                                                                                                      |
+| Claude Code                  | 2.1.299 or newer                                       | [`backend-probe.ts`](../../packages/standalone/src/cli/runtime/backend-probe.ts); setup refuses an older one                                                                                               |
+| Codex                        | 0.160.1 or newer                                       | [`backend-probe.ts`](../../packages/standalone/src/cli/runtime/backend-probe.ts); setup refuses an older one                                                                                               |
+| macOS                        | 26.6 on Apple silicon, the version setup was proven on | A clean Mac account, set up through Claude Code (`docs/development/checks.md`); Claude Code itself needs macOS 13 or newer                                                                                 |
+| Linux                        | Ubuntu 24.04 on x86-64                                 | A fresh install from these docs on Ubuntu 24.04 (WSL2), from the first message to an answer with its source, and setup, the service, members' shells and document rendering (`docs/development/checks.md`) |
+| Docker                       | Not yet: there is no image; a later release adds it    | —                                                                                                                                                                                                          |
 
 Known limits:
 
