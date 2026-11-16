@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.81.1] - 2026-11-16
+
 ### Fixed
 
 - Direct messages are written in Telegram's format from the first reply. Member sessions, which
