@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { MEMBER_SYSTEM_PROMPT } from '../../src/runtime/member-system-prompt.js';
+import {
+  MEMBER_ROOM_SYSTEM_PROMPT,
+  MEMBER_SYSTEM_PROMPT,
+} from '../../src/runtime/member-system-prompt.js';
 import { TELEGRAM_FORMAT_GUIDE } from '../../src/gateways/telegram-format.js';
 import type { Client } from '@jungjaehoon/mama-core/client/client';
 import type { DatabaseInstance, Knowledge } from '@jungjaehoon/mama-core';
@@ -368,4 +371,12 @@ it('names CJK font files and supported PDF tools for both owner backends and mem
   }
   expect(ownerHelpTopics('codex', true).files).toContain('PyMuPDF/pdfplumber');
   expect(ownerHelpTopics('codex', true).files).not.toContain('native reader');
+});
+
+it('gives member DM and room sessions the same Telegram format guide as the owner session', () => {
+  // Every DM, owners' included, is answered by a member session (P10). Without the guide a fresh
+  // install answered in Markdown, which Telegram shows as literal ** and #.
+  for (const prompt of [MEMBER_SYSTEM_PROMPT, MEMBER_ROOM_SYSTEM_PROMPT]) {
+    expect(prompt).toContain(TELEGRAM_FORMAT_GUIDE);
+  }
 });

@@ -1,4 +1,5 @@
 import type { PromptLayer } from '@jungjaehoon/mama-core/runtime/prompt-layers';
+import { TELEGRAM_FORMAT_GUIDE } from '../gateways/telegram-format.js';
 
 const MEMBER_TOOLS_PROMPT =
   'Read help for the available actions, their arguments and procedures before using them. ' +
@@ -15,7 +16,8 @@ const MEMBER_TOOLS_PROMPT =
   'a PDF and page PNGs, and look at every page before sending it; PDF inputs are rasterized directly. ' +
   'Packages cannot be installed by sessions and shell egress stays closed. If the toolkit is missing, ' +
   'ask the owner to run mama tools install on the host. Your workspace .git holds only HEAD to bound ' +
-  'settings lookup; it is not a repository. Claim success only from receipts. Format replies for Telegram.';
+  'settings lookup; it is not a repository. Claim success only from receipts.\n\n' +
+  TELEGRAM_FORMAT_GUIDE;
 
 /** Read by an owner-role DM above the owner policy, which is written for the common session. */
 export const DM_OWNER_POLICY_NOTE =
