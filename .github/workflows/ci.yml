@@ -40,6 +40,7 @@ jobs:
             docker:
               - 'packages/standalone/docker/**'
               - 'packages/standalone/src/cli/runtime/container.ts'
+              - 'packages/standalone/src/cli/commands/update.ts'
               - '.github/workflows/ci.yml'
 
   # Shared setup (reusable)
@@ -291,6 +292,11 @@ jobs:
           sudo apparmor_parser -r /etc/apparmor.d/mama-docker; echo "load rc=$?"
           echo "== B seccomp + apparmor=mama-docker"; docker run --rm --security-opt seccomp=$S --security-opt apparmor=mama-docker mama-os:check $B; echo "rc=$?"
           echo "== B2 + a shell net test"; docker run --rm --security-opt seccomp=$S --security-opt apparmor=mama-docker mama-os:check sh -c 'cat /proc/self/attr/current; bwrap --ro-bind / / --dev /dev --proc /proc --unshare-net /bin/sh -c "getent hosts example.com || echo nonet"'
+          echo "== C sysctl apparmor_restrict_unprivileged_userns=0"; sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          echo "== C1 seccomp only (docker-default)"; docker run --rm --security-opt seccomp=$S mama-os:check $B; echo "rc=$?"
+          echo "== C2 seccomp + apparmor=unconfined"; docker run --rm --security-opt seccomp=$S --security-opt apparmor=unconfined mama-os:check $B; echo "rc=$?"
+          echo "== C3 seccomp + apparmor=mama-docker"; docker run --rm --security-opt seccomp=$S --security-opt apparmor=mama-docker mama-os:check $B; echo "rc=$?"
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
       - name: Sandbox under the shipped profile
         run: |
           docker run --rm --security-opt seccomp=packages/standalone/docker/seccomp.json mama-os:check \

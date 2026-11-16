@@ -71,8 +71,17 @@ token or a code into the chat with the agent.
    docker compose up -d
    ```
 
-   `docker compose ps` shows `healthy` once MAMA has started. Send your bot a message: setup is
-   done when MAMA answers.
+   `docker compose ps` shows `healthy` once MAMA has started.
+
+6. Finish setup in the running container. It checks the backend with one real turn through MAMA,
+   as setup does on a Mac or Linux:
+
+   ```bash
+   docker compose exec mama mama init --non-interactive
+   ```
+
+   It ends with `MAMA is running. Send your bot a message in Telegram.` Setup is done when MAMA
+   answers your message.
 
 ## Every day
 

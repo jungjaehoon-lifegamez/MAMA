@@ -14,6 +14,7 @@ import { homedir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { resolvePackageVersion } from '../../package-version.js';
 import { defaultConfigPath, loadConfig } from '../../runtime/config.js';
+import { CONTAINER_BACKUP, CONTAINER_START, inContainer } from '../runtime/container.js';
 import { CliInputError } from '../prompt.js';
 import {
   backupFiles,
@@ -74,6 +75,8 @@ export async function runBackup(
   options: BackupOptions = {}
 ): Promise<string> {
   const flags = parse(args);
+  // Stopping the daemon ends the container this command runs in.
+  if (flags.restart && inContainer()) throw new CliInputError(CONTAINER_BACKUP);
   if (!flags.restart) return await backupStopped(flags, options);
   // Only the service starts it again; a daemon run in a terminal would stay stopped.
   if (!existsSync(serviceFile(options))) {
@@ -202,7 +205,10 @@ async function backupStopped(flags: BackupFlags, options: BackupOptions): Promis
     }
     write('  Codex homes and their sessions left out; sessions start over after a restore');
     if (!flags.includeLogs) write('  logs left out (--logs adds them)');
-    if (!flags.restart) write('The install is still stopped; mama service start starts it.');
+    if (!flags.restart)
+      write(
+        `The install is still stopped; ${inContainer() ? CONTAINER_START : 'mama service start'} starts it.`
+      );
     return final;
   } catch (error) {
     if (error instanceof CliInputError) throw error;

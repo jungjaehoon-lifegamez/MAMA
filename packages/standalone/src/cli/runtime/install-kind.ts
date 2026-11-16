@@ -1,3 +1,4 @@
+import { CONTAINER_PULL, inContainer } from './container.js';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { CliInputError } from '../prompt.js';
@@ -166,6 +167,8 @@ export function requireServicePackage(
 
 /** How this kind updates: `mama update` for npm, the git steps for a checkout. */
 export function updateSteps(install: InstallKind): string[] {
+  // The image's package sits in npm's layout too, but the image updates by a pull.
+  if (inContainer()) return [CONTAINER_PULL];
   if (install.kind === 'npm') return ['mama update'];
   if (install.kind === 'other') return [`no update path: ${install.reason}`];
   // `service install` writes the running CLI as exec, so the steps name this checkout's by path.

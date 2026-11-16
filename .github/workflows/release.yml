@@ -31,7 +31,6 @@ permissions:
   contents: write
   pages: write
   id-token: write
-  packages: write
 
 jobs:
   # Step 1: Resolve versions and create the release tag
@@ -309,6 +308,9 @@ jobs:
     needs: [prepare-release, publish-mama-os]
     if: ${{ always() && !inputs.dry_run && needs.publish-mama-os.result == 'success' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v6
         with:

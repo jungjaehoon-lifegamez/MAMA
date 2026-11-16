@@ -1,6 +1,8 @@
-# MAMA OS on Docker Engine (Linux). Setup once, then start:
-#   docker compose run --rm mama init
+# MAMA OS on Docker Engine (Linux); docs/start/docker.md. Run every command in this folder, with
+# its setup folder made first (Docker would make it root's): mkdir -p setup
+#   docker compose run --rm mama mama init --non-interactive
 #   docker compose up -d
+#   docker compose exec mama mama init --non-interactive
 services:
   mama:
     image: ghcr.io/jungjaehoon-lifegamez/mama-os:${MAMA_OS_VERSION:-latest}
@@ -25,7 +27,8 @@ services:
     volumes:
       - mama-home:/home/mama
       - mama-data:/var/lib/mama/mama
-      - ./setup:/setup
+      # The same folder setup names on the host (MAMA_SETUP_HOST_DIR).
+      - ${PWD}/setup:/setup
 volumes:
   mama-home:
   mama-data:

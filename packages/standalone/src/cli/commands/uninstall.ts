@@ -23,6 +23,7 @@ import { defaultConfigPath, loadConfig, type W1Config } from '../../runtime/conf
 import { physicalReadPath } from '../../runtime/backend-security.js';
 import { memberClaudeTmpDir, memberRoomTmpRoot } from '../../runtime/member-paths.js';
 import { removeVersion } from '../../tools/document-toolkit.js';
+import { CONTAINER_UNINSTALL, inContainer } from '../runtime/container.js';
 import { CliInputError, createTerminalPrompt, type PromptAdapter } from '../prompt.js';
 import { acquireInstallLock, daemonControlPaths, lockHolder } from '../runtime/daemon-control.js';
 import { runStop } from './control.js';
@@ -304,6 +305,8 @@ export async function runUninstall(
   options: UninstallOptions = {}
 ): Promise<number> {
   const { dryRun, data, toolkit, confirmHome } = parseArgs(args);
+  // Docker removes the container and its volumes; stopping here would end this container first.
+  if (inContainer()) throw new CliInputError(CONTAINER_UNINSTALL);
   const home = options.home ?? homedir();
   const configPath = options.configPath ?? defaultConfigPath(home);
   const write = options.write ?? ((line: string) => console.log(line));

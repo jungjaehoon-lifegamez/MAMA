@@ -728,13 +728,11 @@ export async function runInit(
       }
     }
     await startServiceFor(progress.viewer ?? {});
-    if (inContainer() && options.startService === undefined) {
-      // This run is `docker compose run mama init`, a container of its own: the daemon starts with
-      // `docker compose up -d`, and the first DM it answers is the real turn.
-      delete progress.viewer;
-      mark('service');
+    if (inContainer() && ownDaemon?.state !== 'running') {
+      // `docker compose run mama init` is a container of its own: the daemon starts with
+      // `docker compose up -d`, and the same command run in that container checks a real turn.
       write(
-        `Setup written. Start MAMA with ${CONTAINER_START}; once docker compose ps shows it healthy, send your bot a message in Telegram.`
+        `Setup written. Start MAMA with ${CONTAINER_START}, then finish setup with docker compose exec mama mama init --non-interactive, which checks the backend with one real turn.`
       );
       return;
     }
