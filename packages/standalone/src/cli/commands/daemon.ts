@@ -572,7 +572,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
             WHERE status IN ('pending', 'claimed') GROUP BY status ORDER BY status`
         )
         .all();
-      if (statusTimeZone) report.usage = readUsage(adapter, Date.now(), statusTimeZone.get());
+      report.usage = readUsage(adapter, Date.now(), statusTimeZone!.get());
     }
     report.limits = backendLimits();
     if (connectors) {
@@ -1156,8 +1156,13 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
                 ? [
                     ...usageLines(
                       ownerView
-                        ? (report.usage as UsageReport | undefined)
-                        : readUsage(adapter, Date.now(), zone, [ownAgent!])
+                        ? (report.usage as UsageReport)
+                        : {
+                            ...(report.usage as UsageReport),
+                            people: (report.usage as UsageReport).people.filter(
+                              (person) => person.agentId === ownAgent
+                            ),
+                          }
                     ),
                     ...limitLines(backendLimits(), (ms) => localNow(ms, zone)),
                   ]

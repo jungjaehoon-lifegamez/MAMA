@@ -43,15 +43,28 @@ describe('usage report', () => {
       .run();
     const run = adapter.prepare(
       `INSERT INTO model_runs (model_run_id, agent_id, instance_id, status, created_at,
-         input_tokens, output_tokens, cache_read_input_tokens, erased_at)
-       VALUES (?, ?, ?, 'committed', ?, ?, ?, ?, ?)`
+         input_tokens, output_tokens, cache_read_input_tokens, erased_at, model_provider,
+         cache_creation_input_tokens)
+       VALUES (?, ?, ?, 'committed', ?, ?, ?, ?, ?, ?, ?)`
     );
-    run.run('r1', 'owner-agent', 'operator:record', NOW - HOUR, 1000, 10, 800, null);
-    run.run('r2', 'owner-agent', 'schedule', NOW - 3 * 24 * HOUR, 2000, 20, 0, null);
-    run.run('r3', 'member-agent:principal_fixture', 'dm', NOW - 2 * HOUR, 500, 5, 100, null);
+    run.run('r1', 'owner-agent', 'operator:record', NOW - HOUR, 1000, 10, 800, null, 'codex', 0);
+    run.run('r2', 'owner-agent', 'schedule', NOW - 3 * 24 * HOUR, 2000, 20, 0, null, 'codex', 0);
+    // A Claude run's input_tokens leave out cache reads and writes: input is 500 + 100 + 50.
+    run.run(
+      'r3',
+      'member-agent:principal_fixture',
+      'dm',
+      NOW - 2 * HOUR,
+      500,
+      5,
+      100,
+      null,
+      'claude',
+      50
+    );
     // Before the window, and erased: neither is counted.
-    run.run('r4', 'owner-agent', 'schedule', NOW - 9 * 24 * HOUR, 9000, 90, 0, null);
-    run.run('r5', 'member-agent:principal_fixture', 'dm', NOW - HOUR, 7000, 70, 0, 99);
+    run.run('r4', 'owner-agent', 'schedule', NOW - 9 * 24 * HOUR, 9000, 90, 0, null, 'codex', 0);
+    run.run('r5', 'member-agent:principal_fixture', 'dm', NOW - HOUR, 7000, 70, 0, 99, 'claude', 0);
     const trace = adapter.prepare(
       `INSERT INTO tool_traces (trace_id, model_run_id, tool_name, input_summary,
          execution_status, created_at, erased_at)
@@ -88,14 +101,22 @@ describe('usage report', () => {
     // Nothing a run or trace said reaches the report.
     expect(JSON.stringify(report)).not.toContain('fixture input');
 
-    const own = readUsage(adapter, NOW, ZONE, ['member-agent:principal_fixture']);
+    const own = { ...report, people: report.people.filter((person) => person.principalId) };
     expect(own.people.map((person) => person.name)).toEqual(['Fixture Owner']);
     expect(usageLines(own)).toEqual([
-      'usage Fixture Owner: today 1 runs, 500 in (100 cached), 5 out; 7 days 1 runs, 500 in (100 cached), 5 out',
+      'usage Fixture Owner: today 1 runs, 650 in (100 cached), 5 out; 7 days 1 runs, 650 in (100 cached), 5 out',
     ]);
     expect(usageLines({ dayStart: 0, weekStart: 0, people: [] })).toEqual([
       'usage: no runs in the last 7 days',
     ]);
+  });
+
+  it('starts the seven days at local midnight six days back, across a daylight-saving change', async () => {
+    const adapter = await database();
+    // 2026-03-10 12:00 in New York; clocks went forward on 03-08.
+    const report = readUsage(adapter, Date.parse('2026-03-10T16:00:00Z'), 'America/New_York');
+    expect(report.dayStart).toBe(Date.parse('2026-03-10T04:00:00Z'));
+    expect(report.weekStart).toBe(Date.parse('2026-03-04T05:00:00Z'));
   });
 
   it('names each backend window, and says when none was reported', () => {

@@ -55,33 +55,36 @@ function add(totals: UsageTotals, row: UsageTotals): void {
   totals.cachedTokens += row.cachedTokens;
 }
 
-/** `agentIds` limits the report to those sessions; omitted, every person is read. */
-export function readUsage(
-  adapter: DatabaseAdapter,
-  now: number,
-  timeZone: string,
-  agentIds?: readonly string[]
-): UsageReport {
-  const dayStart = epochAtLocalDateTime(`${localDateKey(now, timeZone)}T00:00:00`, timeZone);
-  const weekStart = dayStart - 6 * DAY_MS;
-  const listed = agentIds === undefined ? null : agentIds.map(() => '?').join(', ') || 'NULL';
-  const runFilter = listed === null ? '' : ` AND agent_id IN (${listed})`;
-  const traceFilter = listed === null ? '' : ` AND m.agent_id IN (${listed})`;
+export function readUsage(adapter: DatabaseAdapter, now: number, timeZone: string): UsageReport {
+  const midnight = (ms: number) =>
+    epochAtLocalDateTime(`${localDateKey(ms, timeZone)}T00:00:00`, timeZone);
+  const dayStart = midnight(now);
+  // Six local days back, by date, so a daylight-saving change does not move it by an hour.
+  const weekStart = midnight(dayStart - 6 * DAY_MS + DAY_MS / 2);
   const runs = adapter
     .prepare(
-      `SELECT agent_id AS agentId, COALESCE(instance_id, '') AS session,
+      `WITH runs AS (
+         SELECT agent_id, instance_id, created_at,
+                -- A Codex run's input_tokens include its cached input; a Claude run's leave out
+                -- cache reads and writes (core migration 101). Input here is all of it.
+                COALESCE(input_tokens, 0) + CASE WHEN model_provider = 'claude'
+                  THEN COALESCE(cache_read_input_tokens, 0) + COALESCE(cache_creation_input_tokens, 0)
+                  ELSE 0 END AS input,
+                COALESCE(output_tokens, 0) AS output,
+                COALESCE(cache_read_input_tokens, 0) AS cached
+           FROM model_runs
+          WHERE created_at >= ? AND erased_at IS NULL)
+       SELECT agent_id AS agentId, COALESCE(instance_id, '') AS session,
               SUM(created_at >= ?) AS todayRuns,
-              SUM(CASE WHEN created_at >= ? THEN COALESCE(input_tokens, 0) ELSE 0 END) AS todayInput,
-              SUM(CASE WHEN created_at >= ? THEN COALESCE(output_tokens, 0) ELSE 0 END) AS todayOutput,
-              SUM(CASE WHEN created_at >= ? THEN COALESCE(cache_read_input_tokens, 0) ELSE 0 END) AS todayCached,
-              COUNT(*) AS runs, SUM(COALESCE(input_tokens, 0)) AS inputTokens,
-              SUM(COALESCE(output_tokens, 0)) AS outputTokens,
-              SUM(COALESCE(cache_read_input_tokens, 0)) AS cachedTokens
-         FROM model_runs
-        WHERE created_at >= ? AND erased_at IS NULL${runFilter}
+              SUM(CASE WHEN created_at >= ? THEN input ELSE 0 END) AS todayInput,
+              SUM(CASE WHEN created_at >= ? THEN output ELSE 0 END) AS todayOutput,
+              SUM(CASE WHEN created_at >= ? THEN cached ELSE 0 END) AS todayCached,
+              COUNT(*) AS runs, SUM(input) AS inputTokens, SUM(output) AS outputTokens,
+              SUM(cached) AS cachedTokens
+         FROM runs
         GROUP BY agent_id, instance_id`
     )
-    .all(dayStart, dayStart, dayStart, dayStart, weekStart, ...(agentIds ?? [])) as Array<
+    .all(weekStart, dayStart, dayStart, dayStart, dayStart) as Array<
     SessionUsage & {
       agentId: string;
       todayRuns: number;
@@ -94,10 +97,10 @@ export function readUsage(
     .prepare(
       `SELECT m.agent_id AS agentId, t.tool_name AS tool, COUNT(*) AS count
          FROM model_runs m JOIN tool_traces t ON t.model_run_id = m.model_run_id
-        WHERE m.created_at >= ? AND m.erased_at IS NULL AND t.erased_at IS NULL${traceFilter}
+        WHERE m.created_at >= ? AND m.erased_at IS NULL AND t.erased_at IS NULL
         GROUP BY m.agent_id, t.tool_name ORDER BY count DESC, tool`
     )
-    .all(weekStart, ...(agentIds ?? [])) as Array<{ agentId: string; tool: string; count: number }>;
+    .all(weekStart) as Array<{ agentId: string; tool: string; count: number }>;
   const names = new Map(
     (
       adapter
