@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { dirname } from 'node:path';
 import { defaultConfigPath } from '../../runtime/config.js';
+import { inContainer } from '../runtime/container.js';
 import { CliInputError } from '../prompt.js';
 import { releaseReport } from '../runtime/release-check.js';
 import {
@@ -136,7 +137,13 @@ export async function runStatus(
   try {
     const launchd = launchdService();
     const unit = systemdUnitState(options.home ?? homedir(), options.run ?? defaultServiceRun);
-    service = launchd.loaded ? 'launchd (loaded)' : unit !== null ? `systemd (${unit})` : null;
+    service = inContainer()
+      ? 'container (Docker runs it)'
+      : launchd.loaded
+        ? 'launchd (loaded)'
+        : unit !== null
+          ? `systemd (${unit})`
+          : null;
   } catch (error) {
     service = `unknown (${error instanceof Error ? error.message : String(error)})`;
   }

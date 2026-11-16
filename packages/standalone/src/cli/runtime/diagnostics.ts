@@ -54,6 +54,7 @@ import {
   readSchemaState,
 } from '@jungjaehoon/mama-core/db-manager';
 import { STANDALONE_MIGRATION_SOURCE } from '../../storage/migrations-source.js';
+import { inContainer } from './container.js';
 import { systemdUnitState, type ServiceRun, defaultServiceRun } from './systemd-service.js';
 
 export type CheckStatus = 'ok' | 'warn' | 'fail';
@@ -1270,6 +1271,12 @@ function releaseCheck(root: string, home: string): Check {
 }
 
 function serviceCheck(platform: NodeJS.Platform, home: string, serviceRun: ServiceRun): Check {
+  if (platform === 'linux' && inContainer())
+    return {
+      name: 'service',
+      status: 'ok',
+      detail: "container (the daemon is the container's main process)",
+    };
   let launchd: { loaded: boolean; pid: number | null };
   let unit: string | null;
   try {

@@ -176,6 +176,13 @@ refused shell connection) go to that person's own DM, never the common channel. 
 role keep no web tools. The common session (`owner:runtime`, deltas, reports and the common
 channel) keeps the owner runtime's tools.
 
+Owner decision 2026-11-16 (D3): the Docker image keeps the required Claude shell sandbox. Its
+compose file runs the container with Docker's default seccomp profile plus the five calls bwrap
+needs for user namespaces (`clone`, `mount`, `pivot_root`, `umount2`, `unshare`; the profile is
+`packages/standalone/docker/seccomp.json`); every other default filter stays, and the container is
+not unconfined. Member isolation, the credential and member-data denies and the deny-all shell
+proxy are the same as on a Linux install.
+
 ## Owner credential boundary — 2026-09-27
 
 - Scope (owner decision 2026-09-27): the boundary covers MAMA's own credentials — auth.env,

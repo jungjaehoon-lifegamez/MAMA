@@ -1,4 +1,5 @@
 import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { CONTAINER_UPDATE, inContainer } from './container.js';
 import { join } from 'node:path';
 import type { UpdateOrigin } from '../../gateways/telegram-commands.js';
 import { UPDATE_JOB_LABEL, updateAgent, updateScript } from '../launch-files.js';
@@ -134,6 +135,8 @@ function jobRuns(options: UpdateJobOptions): { loaded: boolean; running: boolean
  */
 export function requestUpdate(options: UpdateJobOptions): UpdateJobResult {
   const { mamaRoot, home } = options;
+  // The image updates by a pull; no service manager runs an update job in the container.
+  if (inContainer()) return { kind: 'not_updatable', reason: CONTAINER_UPDATE };
   const install = installKind(mamaRoot, home);
   if (install.kind === 'checkout') return { kind: 'checkout', steps: updateSteps(install) };
   if (install.kind === 'other') return { kind: 'not_updatable', reason: install.reason };

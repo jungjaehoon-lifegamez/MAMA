@@ -10,6 +10,7 @@ import { physicalReadPath } from '../../runtime/backend-security.js';
 import { resolveApiPort } from '../../api/viewer-server.js';
 import { installDocumentToolkit } from '../../tools/document-toolkit.js';
 import { findExecutable } from '../launch-files.js';
+import { CONTAINER_START, inContainer } from '../runtime/container.js';
 import { CliInputError, nonblankLine, type PromptAdapter } from '../prompt.js';
 import { updateSecrets, type SecretName } from '../secrets.js';
 import type { ProbeRun } from '../runtime/backend-probe.js';
@@ -696,7 +697,7 @@ export async function runInit(
         };
         // Linux keeps the user's services running after logout only with linger (B4). Enabling it
         // can need privileges this account lacks; that must not stop the service from starting.
-        if (platform === 'linux') {
+        if (platform === 'linux' && !inContainer()) {
           const user = options.user ?? userInfo().username;
           const result = (options.serviceRun ?? defaultServiceRun)('loginctl', [
             'enable-linger',
@@ -708,7 +709,8 @@ export async function runInit(
             );
         }
         await installService([], serviceOptions);
-        await startService(serviceOptions);
+        // In the image the container runs start.sh; Docker starts it after this run (D1).
+        if (!inContainer()) await startService(serviceOptions);
       });
     // The port was free when the setup was written; a reboot or another account's MAMA started
     // since may have taken it. This install's own daemon, if it runs, holds it legitimately.
@@ -726,6 +728,16 @@ export async function runInit(
       }
     }
     await startServiceFor(progress.viewer ?? {});
+    if (inContainer() && options.startService === undefined) {
+      // This run is `docker compose run mama init`, a container of its own: the daemon starts with
+      // `docker compose up -d`, and the first DM it answers is the real turn.
+      delete progress.viewer;
+      mark('service');
+      write(
+        `Setup written. Start MAMA with ${CONTAINER_START}; once docker compose ps shows it healthy, send your bot a message in Telegram.`
+      );
+      return;
+    }
     const viewerPort = resolveApiPort(progress.viewer?.MAMA_API_PORT);
     await waitForBoot({
       status: options.daemonStatus ?? (() => askDaemon('status', { home })),

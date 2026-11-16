@@ -31,6 +31,7 @@ permissions:
   contents: write
   pages: write
   id-token: write
+  packages: write
 
 jobs:
   # Step 1: Resolve versions and create the release tag
@@ -302,6 +303,50 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+  # The Docker image (v1 D1) installs this MAMA OS from npm, so it is built once npm serves it.
+  # amd64 only: arm64 is offered after the same fresh-install run passes on arm64.
+  publish-image:
+    needs: [prepare-release, publish-mama-os]
+    if: ${{ always() && !inputs.dry_run && needs.publish-mama-os.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-release.outputs.release_tag }}
+
+      - name: Wait for npm to serve this MAMA OS
+        run: |
+          VERSION="${{ needs.prepare-release.outputs.mama_os_version }}"
+          PUBLISHED=""
+          for attempt in $(seq 1 10); do
+            PUBLISHED=$(npm view "@jungjaehoon/mama-os@$VERSION" version 2>/dev/null || true)
+            [[ -n "$PUBLISHED" ]] && break
+            sleep 30
+          done
+          if [[ "$PUBLISHED" != "$VERSION" ]]; then
+            echo "::error::@jungjaehoon/mama-os@$VERSION is not on npm; the image would not build"
+            exit 1
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: packages/standalone/docker
+          platforms: linux/amd64
+          build-args: MAMA_OS_VERSION=${{ needs.prepare-release.outputs.mama_os_version }}
+          push: true
+          tags: |
+            ghcr.io/jungjaehoon-lifegamez/mama-os:${{ needs.prepare-release.outputs.mama_os_version }}
+            ghcr.io/jungjaehoon-lifegamez/mama-os:latest
+
   # Step 5: Sync Claude plugin to marketplace
   sync-plugin:
     needs: [prepare-release, publish-mama-server]
@@ -445,6 +490,7 @@ jobs:
         publish-mama-core,
         publish-mama-server,
         publish-mama-os,
+        publish-image,
         sync-plugin,
         deploy-pages,
       ]
@@ -456,6 +502,7 @@ jobs:
         (needs.publish-mama-core.result == 'success' || needs.publish-mama-core.result == 'skipped') &&
         (needs.publish-mama-server.result == 'success' || needs.publish-mama-server.result == 'skipped') &&
         (needs.publish-mama-os.result == 'success' || needs.publish-mama-os.result == 'skipped') &&
+        (needs.publish-image.result == 'success' || needs.publish-image.result == 'skipped') &&
         (needs.sync-plugin.result == 'success' || needs.sync-plugin.result == 'skipped') &&
         needs.deploy-pages.result == 'success'
       }}
@@ -509,7 +556,7 @@ jobs:
           curl -fsSL https://github.com/jungjaehoon-lifegamez/MAMA/releases/latest/download/install.sh | MAMA_INIT_MODEL=<model> sh -s -- --backend <claude|codex> --non-interactive
           ```
 
-          With your own Node.js 22.13 or newer: `npm install -g @jungjaehoon/mama-os`, then `MAMA_INIT_BACKEND=<claude|codex> MAMA_INIT_MODEL=<model> mama init --non-interactive`. Supported versions are listed in the [owner setup guide](https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/start/owner-setup.md#supported-versions). macOS is supported. Linux is not supported yet (over SSH or without a desktop there is no setup path), and Docker has no image yet.
+          With your own Node.js 22.13 or newer: `npm install -g @jungjaehoon/mama-os`, then `MAMA_INIT_BACKEND=<claude|codex> MAMA_INIT_MODEL=<model> mama init --non-interactive`. Supported versions are listed in the [owner setup guide](https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/start/owner-setup.md#supported-versions). macOS and Linux (Ubuntu 24.04) are supported; over SSH or without a desktop there is no setup path. Docker (Docker Engine on Linux, amd64): the image `ghcr.io/jungjaehoon-lifegamez/mama-os`, with `compose.yaml` and `seccomp.json` attached here; see the [Docker guide](https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/start/docker.md).
 
           ```bash
           # MCP Server (Claude Desktop/Code)
@@ -537,11 +584,14 @@ jobs:
             --notes-file release-notes.md \
             --verify-tag \
             "${LATEST[@]}" \
-            ${INSTALL_SCRIPT:+"$INSTALL_SCRIPT"}
+            ${INSTALL_SCRIPT:+"$INSTALL_SCRIPT"} \
+            ${DOCKER_FILES:+packages/standalone/docker/compose.yaml packages/standalone/docker/seccomp.json}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Attached only when this release publishes MAMA OS, as the wait above.
           INSTALL_SCRIPT: ${{ (inputs.packages == 'all' || contains(inputs.packages, 'mama-os')) && 'packages/standalone/install/install.sh' || '' }}
+          # The compose file names the image this release pushed.
+          DOCKER_FILES: ${{ needs.publish-image.result == 'success' && 'yes' || '' }}
 
   # Summary job
   summary:

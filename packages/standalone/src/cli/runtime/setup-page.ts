@@ -4,10 +4,11 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo, Socket } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isAllowedHost } from '../../api/viewer-request-security.js';
 import { CliInputError, nonblankLine } from '../prompt.js';
+import { inContainer } from './container.js';
 
 /**
  * The setup page (install.md, W2.4.5b): a page on this machine, served by the running command,
@@ -48,6 +49,22 @@ export interface SetupField {
  * `xdg-open` without a desktop runs the browser itself, in the foreground, until it quits.
  */
 export type OpenRun = (command: string, args: string[]) => Promise<{ exit: Promise<number> }>;
+
+/**
+ * The image's setup folder: MAMA_SETUP_DIR inside the container, a bind mount of
+ * MAMA_SETUP_HOST_DIR on the host (compose.yaml sets both). Without them no browser could reach
+ * the file, so the run stops before the page opens.
+ */
+function setupFolderInContainer(env: NodeJS.ProcessEnv): { dir: string; hostDir: string } | null {
+  if (!inContainer(env)) return null;
+  const dir = env.MAMA_SETUP_DIR?.trim();
+  const hostDir = env.MAMA_SETUP_HOST_DIR?.trim();
+  if (!dir || !hostDir)
+    throw new CliInputError(
+      'In the image, setup needs MAMA_SETUP_DIR and MAMA_SETUP_HOST_DIR (compose.yaml sets them): run it with docker compose run --rm mama init'
+    );
+  return { dir, hostDir };
+}
 
 /** Whether this Linux is WSL: its kernel names Microsoft. */
 export function isWsl(read: () => string = () => readFileSync('/proc/version', 'utf8')): boolean {
@@ -155,8 +172,11 @@ export async function openSetupPage(options: {
   windowsPath?: (file: string) => string;
   openRun?: OpenRun;
   lifetimeMs?: number;
+  /** The image's environment (tests pass their own): MAMA_SETUP_DIR and its host path. */
+  env?: NodeJS.ProcessEnv;
 }): Promise<SetupPage> {
   const { fields, write } = options;
+  const container = setupFolderInContainer(options.env ?? process.env);
   const nonce = randomBytes(32).toString('base64url');
   const path = Buffer.from(`/${nonce}`);
   const lifetimeMs = options.lifetimeMs ?? SETUP_PAGE_MS;
@@ -306,7 +326,9 @@ export async function openSetupPage(options: {
   let file: string;
   try {
     // mkdtemp makes the folder 0700 for this account; the file is 0600 in it.
-    folder = mkdtempSync(join(tmpdir(), 'mama-setup-'));
+    // In the image the folder is a bind mount, so the browser on the host can open the file; the
+    // container's network is the host's, so its 127.0.0.1 is the page (D1).
+    folder = mkdtempSync(join(container?.dir ?? tmpdir(), 'mama-setup-'));
     file = join(folder, 'open.html');
     writeFileSync(
       file,
@@ -325,6 +347,14 @@ export async function openSetupPage(options: {
     stop(new CliInputError(`the setup page expired at ${until}; nothing was written`));
   }, lifetimeMs);
 
+  if (container) {
+    // No browser runs in the container; the person opens the file at its path on the host.
+    const hostFile = join(container.hostDir, basename(folder), 'open.html');
+    write(
+      `setup page: open ${pathToFileURL(hostFile).href} in the browser on this machine; it closes at ${until}`
+    );
+    return { stopped, close };
+  }
   // WSL has no xdg-open; Windows interop opens the file in the Windows browser, whose 127.0.0.1
   // reaches this page under WSL's localhost forwarding. explorer.exe exits 1 even when it opens.
   const wsl = options.platform === 'linux' && (options.wsl ?? isWsl());

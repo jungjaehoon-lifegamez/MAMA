@@ -65,6 +65,11 @@ function buildRules(versions, nodePin) {
     suffix: true,
   });
   // A shell assignment on its own line: `  NAME=value`.
+  // A Dockerfile build argument with its default: `ARG NAME=value`.
+  const arg = (name, pattern, version) => ({
+    ...assign(name, pattern, version),
+    regex: new RegExp(`^(ARG ${name}=)${pattern}($)`, 'gm'),
+  });
   const assign = (name, pattern, version) => {
     if (typeof version !== 'string' || !new RegExp(`^${pattern}$`).test(version)) {
       throw new Error(`${name}: ${JSON.stringify(version)} does not match ${pattern}`);
@@ -118,6 +123,15 @@ function buildRules(versions, nodePin) {
             nodePin.sha256[platform]
           )
         ),
+      ],
+    },
+    {
+      // The image installs this MAMA OS on the install command's Node (v1 D1).
+      file: 'packages/standalone/docker/Dockerfile',
+      patterns: [
+        arg('MAMA_OS_VERSION', SEMVER, os),
+        arg('NODE_VERSION', SEMVER, nodePin.version),
+        arg('NODE_SHA256', '[0-9a-f]{64}', nodePin.sha256['linux-x64']),
       ],
     },
     {

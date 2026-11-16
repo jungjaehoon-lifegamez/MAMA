@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A Docker image, `ghcr.io/jungjaehoon-lifegamez/mama-os`, for Docker Engine on Linux (amd64),
+  with a compose file and the guide [Run MAMA OS in Docker](../../docs/start/docker.md). The
+  image holds Node.js, MAMA OS, Claude Code, Codex, `gws` and the document tools, and runs as a
+  non-root user. Data, settings and sign-ins live in two volumes and survive a new image. Setup
+  runs once with `docker compose run --rm mama mama init --non-interactive`, and its setup page
+  opens from a folder beside the compose file. The release workflow publishes the image and
+  attaches `compose.yaml` and `seccomp.json` to the release.
+- Inside the image, Docker starts, stops and updates MAMA. `mama update` and `/update` name
+  `docker compose pull && docker compose up -d`. `mama service start`, `restart` and `uninstall`
+  name the Docker commands, and `mama status` and `mama doctor` report the service as the
+  container.
+- The shell sandbox runs in the container, as on Linux (owner decision 2026-11-16). `seccomp.json`
+  is Docker's default profile plus the five calls the sandbox needs for user namespaces.
+
 ### Changed
 
 - The setup guide and README list Linux (Ubuntu 24.04) as supported. A fresh install from the docs

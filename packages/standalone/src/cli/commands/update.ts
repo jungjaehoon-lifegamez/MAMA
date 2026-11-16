@@ -26,6 +26,7 @@ import { defaultConfigPath, loadConfig } from '../../runtime/config.js';
 import { STANDALONE_MIGRATION_SOURCE } from '../../storage/migrations-source.js';
 import { readDocumentToolkit, TOOLKIT_ASSETS } from '../../tools/toolkit-state.js';
 import { readStartScript, startExports } from '../launch-files.js';
+import { CONTAINER_UPDATE, inContainer } from '../runtime/container.js';
 import { CliInputError } from '../prompt.js';
 import {
   acquireInstallLock,
@@ -326,6 +327,8 @@ export async function runUpdate(
   args: readonly string[],
   options: UpdateOptions = {}
 ): Promise<number> {
+  // The image updates by a pull (decision 6); its package sits in the image, not in npm's prefix.
+  if (inContainer()) throw new CliInputError(CONTAINER_UPDATE);
   const mode = parse(args);
   const home = options.home ?? homedir();
   const configPath = options.configPath ?? defaultConfigPath(home);

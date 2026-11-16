@@ -15,6 +15,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { gwsTool } from '../../connectors/framework/gws-utils.js';
 import { defaultConfigPath, loadConfig } from '../../runtime/config.js';
 import { CliInputError } from '../prompt.js';
+import { CONTAINER_SERVICE, CONTAINER_START, inContainer } from '../runtime/container.js';
 import {
   findExecutable,
   launchAgent,
@@ -36,7 +37,7 @@ import {
 import { runStatus, runStop } from './control.js';
 import { launchdService } from './daemon.js';
 
-type Manager = 'launchd' | 'systemd';
+type Manager = 'launchd' | 'systemd' | 'container';
 
 export interface ServiceOptions {
   home?: string;
@@ -59,12 +60,15 @@ export interface ServiceOptions {
 const LAUNCHD_LABEL = 'com.mama.server';
 
 function managerFor(platform: NodeJS.Platform): Manager {
+  // The image's daemon is the container's main process; it has start.sh and no service file.
+  if (platform === 'linux' && inContainer()) return 'container';
   if (platform === 'darwin') return 'launchd';
   if (platform === 'linux') return 'systemd';
   throw new CliInputError('mama service runs on macOS (launchd) and Linux (systemd)');
 }
 
 function servicePath(manager: Manager, home: string): string {
+  if (manager === 'container') return join(home, '.mama', 'start.sh');
   return manager === 'launchd'
     ? join(home, 'Library', 'LaunchAgents', `${LAUNCHD_LABEL}.plist`)
     : systemdUnitPath(home);
@@ -111,6 +115,7 @@ function writeFile(
 }
 
 function serviceRunning(manager: Manager, home: string, run: ServiceRun): boolean {
+  if (manager === 'container') return false;
   if (manager === 'launchd') return launchdService().pid !== null;
   return systemdUnitState(home, run, 'linux') === 'active';
 }
@@ -302,6 +307,11 @@ export async function installService(
   write(
     `start.sh ${startResult}${startResult === 'updated' ? `; the previous one is kept at ${keep('start.sh')}` : ''}`
   );
+  if (manager === 'container') {
+    // The image runs start.sh as the container's command.
+    write(`start it with: ${CONTAINER_START}`);
+    return 0;
+  }
   const path = servicePath(manager, home);
   const content = manager === 'launchd' ? launchAgent(home) : systemdUnit();
   const serviceResult = writeFile(
@@ -346,6 +356,7 @@ export async function installService(
 export async function startService(options: ServiceOptions = {}): Promise<number> {
   const home = options.home ?? homedir();
   const manager = managerFor(options.platform ?? process.platform);
+  if (manager === 'container') throw new CliInputError(CONTAINER_SERVICE);
   const write = options.write ?? ((line: string) => console.log(line));
   const run = options.run ?? defaultServiceRun;
   const path = servicePath(manager, home);
@@ -372,6 +383,7 @@ export async function startService(options: ServiceOptions = {}): Promise<number
 export async function uninstallService(options: ServiceOptions = {}): Promise<number> {
   const home = options.home ?? homedir();
   const manager = managerFor(options.platform ?? process.platform);
+  if (manager === 'container') throw new CliInputError(CONTAINER_SERVICE);
   const write = options.write ?? ((line: string) => console.log(line));
   const run = options.run ?? defaultServiceRun;
   const path = servicePath(manager, home);
@@ -410,6 +422,7 @@ export async function runService(
   if (command === 'stop') return await runStop([], options);
   if (command === 'restart') {
     const manager = managerFor(options.platform ?? process.platform);
+    if (manager === 'container') throw new CliInputError(CONTAINER_SERVICE);
     if (!existsSync(servicePath(manager, options.home ?? homedir()))) {
       throw new CliInputError('No service file yet: run mama service install');
     }

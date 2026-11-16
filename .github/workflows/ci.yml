@@ -15,6 +15,7 @@ jobs:
       standalone: ${{ steps.filter.outputs.standalone }}
       plugin: ${{ steps.filter.outputs.plugin }}
       mcp_server: ${{ steps.filter.outputs.mcp_server }}
+      docker: ${{ steps.filter.outputs.docker }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v4
@@ -36,6 +37,10 @@ jobs:
               - 'packages/mcp-server/**'
               - 'packages/mama-core/**'
               - 'pnpm-lock.yaml'
+            docker:
+              - 'packages/standalone/docker/**'
+              - 'packages/standalone/src/cli/runtime/container.ts'
+              - '.github/workflows/ci.yml'
 
   # Shared setup (reusable)
   setup:
@@ -216,6 +221,50 @@ jobs:
         run: npx vitest run tests/cli/install-script.test.ts
       - name: install.sh on a fresh HOME
         run: node packages/standalone/scripts/install-check/run.mjs --vendor-installers
+
+  # The Docker image (v1 D1) built from this commit's package on a stock Ubuntu 24.04 runner, with
+  # its AppArmor: the shell sandbox starts under the shipped seccomp profile and not under Docker's
+  # default, and the container mode refuses mama update.
+  image-check:
+    needs: [changes, setup]
+    if: ${{ needs.changes.outputs.docker == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@v6
+      - uses: actions/cache/restore@v5
+        with:
+          path: |
+            node_modules
+            packages/*/node_modules
+            packages/*/dist
+            packages/standalone/ui/node_modules
+            packages/standalone/public/viewer
+          key: ${{ runner.os }}-build-${{ github.sha }}
+      - name: Pack this commit's MAMA OS into the build context
+        working-directory: packages/standalone
+        run: pnpm pack --pack-destination /tmp/pack && mv /tmp/pack/*.tgz docker/mama-os.tgz
+      - name: Build the image
+        run: docker build -t mama-os:check packages/standalone/docker
+      - name: Sandbox under the shipped profile
+        run: |
+          docker run --rm --security-opt seccomp=packages/standalone/docker/seccomp.json mama-os:check \
+            bwrap --ro-bind / / --dev /dev --proc /proc --unshare-net --unshare-pid --new-session --die-with-parent /bin/true
+      - name: No sandbox under Docker's default profile
+        run: |
+          if docker run --rm mama-os:check bwrap --ro-bind / / --dev /dev --unshare-net /bin/true; then
+            echo "::error::bwrap started under Docker's default seccomp; the shipped profile may no longer be needed"
+            exit 1
+          fi
+      - name: The container mode refuses mama update
+        run: |
+          out=$(docker run --rm mama-os:check mama update 2>&1 || true)
+          echo "$out"
+          grep -q 'docker compose pull' <<<"$out"
 
   # Test plugin (independent)
   test-plugin:

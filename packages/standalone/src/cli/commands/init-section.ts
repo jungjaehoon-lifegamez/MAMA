@@ -8,6 +8,7 @@ import type { ConnectorsConfig } from '../../connectors/framework/types.js';
 import { loadConfig, parseConfig, type W1Config } from '../../runtime/config.js';
 import { planConnectors } from '../../runtime/connectors.js';
 import { findExecutable, mamaCommand } from '../launch-files.js';
+import { CONTAINER_START, inContainer } from '../runtime/container.js';
 import { CliInputError, createTerminalPrompt, nonblankLine, requireTTY } from '../prompt.js';
 import { updateSecrets, type SecretName } from '../secrets.js';
 import {
@@ -365,9 +366,11 @@ export async function runInitSection(
     throw new CliInputError('MAMA is not set up here; run the install command first.');
   const mama = mamaCommand(root);
   // `service start` needs the service file, which `service install` writes.
-  const start = existsSync(serviceFile({ home, platform: options.platform ?? process.platform }))
-    ? `${mama} service start`
-    : `${mama} service install, then ${mama} service start`;
+  const start = inContainer()
+    ? CONTAINER_START
+    : existsSync(serviceFile({ home, platform: options.platform ?? process.platform }))
+      ? `${mama} service start`
+      : `${mama} service install, then ${mama} service start`;
   const lock = acquireInstallLock(daemonControlPaths(root), 'init --section');
   try {
     refuseWhileRestoring(root);

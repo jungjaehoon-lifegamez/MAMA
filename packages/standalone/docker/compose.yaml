@@ -1,0 +1,31 @@
+# MAMA OS on Docker Engine (Linux). Setup once, then start:
+#   docker compose run --rm mama init
+#   docker compose up -d
+services:
+  mama:
+    image: ghcr.io/jungjaehoon-lifegamez/mama-os:${MAMA_OS_VERSION:-latest}
+    init: true
+    # Host networking: the setup page and the viewer answer on this machine's 127.0.0.1 only, as
+    # on a Linux install, and the shell sandbox's deny-all proxy stays on loopback.
+    network_mode: host
+    restart: on-failure
+    # Claude's shell sandbox (bwrap) needs user namespaces: Docker's default seccomp profile plus
+    # clone, mount, pivot_root, umount2 and unshare (owner decision 2026-11-16).
+    security_opt:
+      - seccomp=./seccomp.json
+    environment:
+      # The owner's time zone: setup and the report schedule read it. A container sees only TZ
+      # (not the host's /etc/localtime), so .env must name it, for example TZ=Asia/Seoul.
+      TZ: ${TZ:?set TZ in .env to this machine's time zone, for example TZ=Asia/Seoul}
+      MAMA_INIT_BACKEND: ${MAMA_INIT_BACKEND:-claude}
+      MAMA_INIT_MODEL: ${MAMA_INIT_MODEL:-}
+      MAMA_INIT_TIMEZONE: ${MAMA_INIT_TIMEZONE:-}
+      MAMA_SETUP_DIR: /setup
+      MAMA_SETUP_HOST_DIR: ${PWD}/setup
+    volumes:
+      - mama-home:/home/mama
+      - mama-data:/var/lib/mama/mama
+      - ./setup:/setup
+volumes:
+  mama-home:
+  mama-data:

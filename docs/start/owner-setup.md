@@ -326,15 +326,15 @@ by git, which leaves the document tools as they are: when a release changes them
 
 ## Supported versions
 
-| What                         | Supported                                              | Source                                                                                                                                                                                                     |
-| ---------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Node.js (install command)    | Node.js 22, the release the install command pins       | [`install/node.json`](../../packages/standalone/install/node.json), installed and run in CI on macOS and Ubuntu                                                                                            |
-| Node.js (your own, with npm) | 22.13 or newer                                         | `engines` in [`package.json`](../../packages/standalone/package.json)                                                                                                                                      |
-| Claude Code                  | 2.1.299 or newer                                       | [`backend-probe.ts`](../../packages/standalone/src/cli/runtime/backend-probe.ts); setup refuses an older one                                                                                               |
-| Codex                        | 0.160.1 or newer                                       | [`backend-probe.ts`](../../packages/standalone/src/cli/runtime/backend-probe.ts); setup refuses an older one                                                                                               |
-| macOS                        | 26.6 on Apple silicon, the version setup was proven on | A clean Mac account, set up through Claude Code (`docs/development/checks.md`); Claude Code itself needs macOS 13 or newer                                                                                 |
-| Linux                        | Ubuntu 24.04 on x86-64                                 | A fresh install from these docs on Ubuntu 24.04 (WSL2), from the first message to an answer with its source, and setup, the service, members' shells and document rendering (`docs/development/checks.md`) |
-| Docker                       | Not yet: there is no image; a later release adds it    | —                                                                                                                                                                                                          |
+| What                         | Supported                                                                         | Source                                                                                                                                                                                                     |
+| ---------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Node.js (install command)    | Node.js 22, the release the install command pins                                  | [`install/node.json`](../../packages/standalone/install/node.json), installed and run in CI on macOS and Ubuntu                                                                                            |
+| Node.js (your own, with npm) | 22.13 or newer                                                                    | `engines` in [`package.json`](../../packages/standalone/package.json)                                                                                                                                      |
+| Claude Code                  | 2.1.299 or newer                                                                  | [`backend-probe.ts`](../../packages/standalone/src/cli/runtime/backend-probe.ts); setup refuses an older one                                                                                               |
+| Codex                        | 0.160.1 or newer                                                                  | [`backend-probe.ts`](../../packages/standalone/src/cli/runtime/backend-probe.ts); setup refuses an older one                                                                                               |
+| macOS                        | 26.6 on Apple silicon, the version setup was proven on                            | A clean Mac account, set up through Claude Code (`docs/development/checks.md`); Claude Code itself needs macOS 13 or newer                                                                                 |
+| Linux                        | Ubuntu 24.04 on x86-64                                                            | A fresh install from these docs on Ubuntu 24.04 (WSL2), from the first message to an answer with its source, and setup, the service, members' shells and document rendering (`docs/development/checks.md`) |
+| Docker                       | Docker Engine on Linux, amd64 (the image `ghcr.io/jungjaehoon-lifegamez/mama-os`) | Setup, a DM reply, the shell sandbox's denies and egress refusal, and a new image keeping the data, on Ubuntu 24.04 (WSL2) with Docker Engine 29 ([Run MAMA OS in Docker](docker.md))                      |
 
 Known limits:
 
@@ -399,9 +399,9 @@ and distinguishes missing information from confirmed facts. Ask what evidence it
 used and compare its answer with the original. Open
 [the viewer](../guides/viewer.md) to inspect the task and board.
 
-Setup through Claude Code has reached a Telegram reply on a clean Mac account. On Linux, setup,
-the service and document rendering ran on Ubuntu 24.04, but a fresh install from these docs alone
-has not been checked yet. Docker has not been verified. A running process or healthy HTTP response does not establish that login,
+Setup through Claude Code has reached a Telegram reply on a clean Mac account, and a fresh install
+from these docs on Ubuntu 24.04 reached an answer citing its source. For Docker, see
+[Run MAMA OS in Docker](docker.md). A running process or healthy HTTP response does not establish that login,
 source collection or Telegram delivery works. Add a [source](../guides/connectors.md) and check an
 actual source-backed answer before relying on reports.
 
