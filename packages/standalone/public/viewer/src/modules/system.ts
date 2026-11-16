@@ -45,6 +45,7 @@ export interface BackendLimitWindow {
 
 export interface BackendLimits {
   backend: string;
+  bucket: string | null;
   windows: BackendLimitWindow[];
   observedAt: number;
 }
@@ -187,7 +188,7 @@ function limitsPanel(limits: BackendLimits[]): string {
       limit.windows.map((window) =>
         row(
           window.usedPercent >= 90 ? 'bad' : window.usedPercent >= 70 ? 'warn' : 'ok',
-          limit.backend + ' ' + window.window,
+          limit.backend + (limit.bucket ? ' ' + limit.bucket : '') + ' ' + window.window,
           window.usedPercent + '% used',
           (window.resetsAt === null ? '' : 'resets ' + formatTime(window.resetsAt) + ' · ') +
             'reported ' +
@@ -212,13 +213,9 @@ function usagePanel(usage: RuntimeStatusSnapshot['usage']): string {
   let people = '';
   for (const person of usage.people) {
     const sessions = person.sessions
-      .slice(0, 5)
       .map((session) => row('neutral', session.session || '(none)', totalsText(session)))
       .join('');
-    const actions = person.actions
-      .slice(0, 8)
-      .map((action) => action.tool + ' ' + action.count)
-      .join(' · ');
+    const actions = person.actions.map((action) => action.tool + ' ' + action.count).join(' · ');
     people +=
       '<div class="mama-system-person">' +
       '<h3 class="mama-system-subheading">' +

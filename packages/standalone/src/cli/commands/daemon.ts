@@ -1007,6 +1007,9 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
     stage(logger, 'owner_runtime', options.signal);
 
     currentStage = 'viewer';
+    // Read once: the service manager running this daemon does not change while it runs, and the
+    // lookup is a blocking command a request should not wait on.
+    const bootService = serviceState(options.home ?? homedir());
     const viewerFactory = dependencies.createViewerServer ?? createDefaultViewerServer;
     viewer = viewerFactory({
       dispatch: owner.surface.dispatch,
@@ -1034,7 +1037,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
           model: config.agent.model,
           startedAt,
           stage: String(report.stage),
-          service: serviceState(options.home ?? homedir()),
+          service: bootService,
           lastError: (report.lastError as ViewerRuntimeStatus['lastError']) ?? null,
           connectors: (report.connectors ?? []) as ViewerRuntimeStatus['connectors'],
           usage: (report.usage as UsageReport | undefined) ?? null,

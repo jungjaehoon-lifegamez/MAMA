@@ -110,8 +110,10 @@ is a 2.0 change.
 - **Commands.** The documented `mama` commands, their flags and `MAMA_INIT_*` variables, and the
   chat commands (`/status`, `/stop`, `/new`, `/whoami`, `/help`, `/update`) keep their meaning.
   New ones may be added; one is removed or renamed only in 2.0.
-- **The update path.** `mama update` (and `/update`) moves a 1.x install to the latest 1.x with a
-  backup, a drain and a rollback when doctor fails after the install.
+- **The update path.** `mama update` (and `/update`) moves an install to the latest release with a
+  backup, a drain and a rollback when doctor fails after the install. It follows npm's `latest`
+  tag and does not hold an install to 1.x, so a 2.0 release is published under another tag until
+  its upgrade path is ready.
 
 Downgrades are not kept: a release refuses a database a newer release migrated and names both
 versions. Experimental features (marked in `mama init` and the docs) may change in a 1.x release;

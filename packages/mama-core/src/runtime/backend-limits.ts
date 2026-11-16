@@ -15,6 +15,8 @@ export interface BackendLimitWindow {
 
 export interface BackendLimits {
   readonly backend: 'claude' | 'codex';
+  /** Codex meters some models in a bucket of their own (`limitId`); null for the main one. */
+  readonly bucket: string | null;
   readonly windows: readonly BackendLimitWindow[];
   /** When the event was read, in epoch milliseconds. */
   readonly observedAt: number;
@@ -48,7 +50,7 @@ export function claudeBackendLimits(info: unknown, observedAt: number): BackendL
       resetsAt: resetMs(window.resetsAt),
     });
   }
-  return read.length === 0 ? null : { backend: 'claude', windows: read, observedAt };
+  return read.length === 0 ? null : { backend: 'claude', bucket: null, windows: read, observedAt };
 }
 
 function minutesLabel(minutes: number): string {
@@ -64,13 +66,18 @@ export function codexBackendLimits(params: unknown, observedAt: number): Backend
   const read: BackendLimitWindow[] = [];
   for (const key of ['primary', 'secondary']) {
     const window = record(limits[key]);
-    if (typeof window?.usedPercent !== 'number' || typeof window.windowDurationMins !== 'number')
-      continue;
+    if (typeof window?.usedPercent !== 'number') continue;
     read.push({
-      window: minutesLabel(window.windowDurationMins),
+      // The protocol allows a window without its length.
+      window:
+        typeof window.windowDurationMins === 'number'
+          ? minutesLabel(window.windowDurationMins)
+          : 'window',
       usedPercent: window.usedPercent,
       resetsAt: resetMs(window.resetsAt),
     });
   }
-  return read.length === 0 ? null : { backend: 'codex', windows: read, observedAt };
+  const bucket =
+    typeof limits.limitId === 'string' && limits.limitId !== 'codex' ? limits.limitId : null;
+  return read.length === 0 ? null : { backend: 'codex', bucket, windows: read, observedAt };
 }

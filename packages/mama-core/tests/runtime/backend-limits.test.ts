@@ -34,6 +34,7 @@ describe('backend limits', () => {
   it('reads Claude windows as percent used with reset times', () => {
     expect(claudeBackendLimits(claudeInfo, 5)).toEqual({
       backend: 'claude',
+      bucket: null,
       observedAt: 5,
       windows: [
         { window: '5h', usedPercent: 21, resetsAt: 1_800_000_000_000 },
@@ -46,6 +47,7 @@ describe('backend limits', () => {
   it('reads Codex windows by their length', () => {
     expect(codexBackendLimits(codexParams, 5)).toEqual({
       backend: 'codex',
+      bucket: null,
       observedAt: 5,
       windows: [{ window: '7d', usedPercent: 13, resetsAt: 1_800_000_000_000 }],
     });
@@ -55,6 +57,7 @@ describe('backend limits', () => {
           rateLimits: {
             primary: { usedPercent: 40, windowDurationMins: 300, resetsAt: null },
             secondary: { usedPercent: 2, windowDurationMins: 45 },
+            limitId: 'codex_other',
           },
         },
         5
@@ -63,6 +66,24 @@ describe('backend limits', () => {
       { window: '5h', usedPercent: 40, resetsAt: null },
       { window: '45m', usedPercent: 2, resetsAt: null },
     ]);
+    expect(
+      codexBackendLimits(
+        {
+          rateLimits: {
+            limitId: 'codex_other',
+            primary: { usedPercent: 1, windowDurationMins: 60 },
+          },
+        },
+        5
+      )?.bucket
+    ).toBe('codex_other');
+    // A window without its length keeps its measurement.
+    expect(
+      codexBackendLimits(
+        { rateLimits: { primary: { usedPercent: 40, windowDurationMins: null } } },
+        5
+      )?.windows
+    ).toEqual([{ window: 'window', usedPercent: 40, resetsAt: null }]);
     expect(codexBackendLimits({ rateLimits: { primary: null } }, 5)).toBeNull();
   });
 });
