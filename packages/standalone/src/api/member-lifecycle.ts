@@ -47,6 +47,8 @@ export interface MemberLifecyclePorts {
   retire(principalId: string): Promise<void>;
   resume(principalId: string): Promise<void>;
   cancelQueued(principalId: string, reason: string): number;
+  /** Removes the person's own connected accounts (approvals.md, P1): none outlives offboarding. */
+  removeAccounts(principalId: string): void;
 }
 
 /** The surface queues all changes on the target chain, then uses the member directory lane. */
@@ -294,6 +296,8 @@ export function memberLifecycleRegistrations(options: {
           } else if (principal.status !== 'offboarded') repo.offboard(principalId, Date.now());
           return ports.cancelQueued(principalId, `member_${change}`);
         });
+        // An offboarded person's tokens go first: nothing runs on them again.
+        if (change === 'offboard') ports.removeAccounts(principalId);
         // Inactive registry state denies new turns even if process stop or a move fails.
         await ports.retire(principalId);
         return {

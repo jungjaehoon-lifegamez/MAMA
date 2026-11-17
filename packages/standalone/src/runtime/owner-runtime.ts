@@ -60,7 +60,11 @@ import type {
   W1DriveDeliveryConfig,
 } from './config.js';
 import { openCoreDatabase, type CoreDatabase } from './core-db.js';
-import { createActionSurface, type ActionSurface } from './action-surface.js';
+import {
+  createActionSurface,
+  type ActionSurface,
+  type ActionSurfaceOptions,
+} from './action-surface.js';
 import type { OutboundAttemptEvent, MemberConnectionEvent } from '../api/security-events.js';
 import type { SandboxNetworkProxy } from '../cli/runtime/claude-caller-config.js';
 import { holdsOwnerRole, ownerRuleIds, RULE_KINDS } from './owner-authority.js';
@@ -100,6 +104,7 @@ import {
   type TurnLesson,
 } from './stimulus-delivery.js';
 import type { ApprovalActionPorts } from '../api/approval-actions.js';
+import { createAccountStore, personalAccountsDir } from './account-store.js';
 import { createApprovalRuntime, type ApprovalRuntime } from './approval-runtime.js';
 import type { Proposal } from './approval-store.js';
 
@@ -109,6 +114,8 @@ const BACKEND_PROBE_PROMPT =
   'This is a setup check of the model connection, not a request. Reply with the single word OK and use no tools.';
 
 export interface OwnerRuntimeOptions {
+  /** Prompts for a person's account token in their own DM (approvals.md, P2). */
+  accountConnect?: ActionSurfaceOptions['accountConnect'];
   /** Approval cards in Telegram: send one, and edit one no press started (sweep, recovery). */
   approvalCards?: {
     sendCard: ApprovalActionPorts['sendCard'];
@@ -551,6 +558,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       ...(options.approvalCards === undefined
         ? {}
         : { approvalCards: { sendCard: options.approvalCards.sendCard } }),
+      ...(options.accountConnect === undefined ? {} : { accountConnect: options.accountConnect }),
       runtimeRoot: options.runtimeRoot,
       skillPaths: {
         toolsRoot: options.toolsRoot,
@@ -703,6 +711,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
                 return ownerMailbox!.cancelQueued(id, reason);
               },
               retire: (id) => retireMember(id),
+              removeAccounts: (id) =>
+                createAccountStore(personalAccountsDir(options.runtimeRoot)).removeAll(id),
               resume: async (id) => {
                 // A suspended member may retain a session after an earlier stop/move failure.
                 await retireMember(id);

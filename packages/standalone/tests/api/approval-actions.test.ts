@@ -45,7 +45,13 @@ const plain: ActionRegistration = {
 };
 
 async function fixture(
-  options: { idLength?: number; failSend?: boolean; readsConnector?: string } = {}
+  options: {
+    idLength?: number;
+    failSend?: boolean;
+    readsConnector?: string;
+    /** The card takes DM proposals and names an account (P1). */
+    personal?: (proposer: string | null) => Promise<{ id: string; line: string }>;
+  } = {}
 ) {
   const home = mkdtempSync(join(tmpdir(), 'mama-propose-'));
   homes.push(home);
@@ -82,6 +88,7 @@ async function fixture(
             throw new Error('no such event');
           return ['Current: the event as it is now'];
         },
+        ...(options.personal === undefined ? {} : { personal: true, account: options.personal }),
       },
     },
     sendCard: async (targetSession, html, buttons) => {
@@ -208,7 +215,7 @@ describe('approval.propose', () => {
     expect(sent).toHaveLength(1);
   });
 
-  it('refuses a DM proposal until people connect their own accounts (G1)', async () => {
+  it('refuses a DM proposal for an action that cannot run on a person’s account (G1)', async () => {
     const { propose, sent } = await fixture();
     expect(await propose(call, 'principal_member')).toMatchObject({
       status: 'failed',
@@ -274,5 +281,35 @@ describe('approval.propose', () => {
     // Escaping does not count: Telegram counts the text it shows.
     const fits = await propose({ ...call, requestKey: 'k2', input: { text: '<&>'.repeat(1100) } });
     expect(fits).toMatchObject({ status: 'completed' });
+  });
+
+  it('sends a DM proposal to that DM, naming and storing the person’s account (A5, P1)', async () => {
+    const { propose, sent, store } = await fixture({
+      personal: async (proposer) => ({ id: `acct-${String(proposer)}`, line: 'Posts as: you' }),
+    });
+    expect(await propose(call, 'principal_member')).toMatchObject({ status: 'completed' });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.principalId).toBe('principal_member');
+    expect(sent[0]!.html).toContain('Posts as: you');
+    expect(store.get('p1')).toMatchObject({
+      principalId: 'principal_member',
+      accountId: 'acct-principal_member',
+    });
+  });
+
+  it('refuses a proposal whose account is not connected, before any row or card', async () => {
+    const { propose, sent, store } = await fixture({
+      personal: async () => {
+        throw Object.assign(new Error('Your Fixture account is not connected'), {
+          name: 'account_not_connected',
+        });
+      },
+    });
+    expect(await propose(call, 'principal_member')).toMatchObject({
+      status: 'failed',
+      error: { kind: 'denied', message: expect.stringContaining('not connected') },
+    });
+    expect(sent).toEqual([]);
+    expect(store.get('p1')).toBeNull();
   });
 });

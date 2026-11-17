@@ -96,6 +96,10 @@ import {
 import { readUpdateJournal, updatePaths } from '../runtime/update-journal.js';
 import { limitLines, readUsage, usageLines, type UsageReport } from '../../runtime/usage-report.js';
 import { backendLimits } from '../../runtime/backend-limits.js';
+import { createAccountConnect, type AccountConnect } from '../../runtime/account-connect.js';
+import { createAccountStore, personalAccountsDir } from '../../runtime/account-store.js';
+import { ChatworkConnector } from '../../connectors/chatwork/index.js';
+import { SlackConnector } from '../../connectors/slack/index.js';
 
 export const OWNER_PRINCIPAL_ID = 'owner';
 const OWNER_AGENT_ID = 'owner-agent';
@@ -121,6 +125,9 @@ export interface DaemonGateway {
   recoverPendingResponses(): Promise<void>;
   sendApprovalCard?: TelegramGateway['sendApprovalCard'];
   editApprovalCard?: TelegramGateway['editApprovalCard'];
+  sendAccountPrompt?: TelegramGateway['sendAccountPrompt'];
+  sendAccountNote?: TelegramGateway['sendAccountNote'];
+  deleteChatMessage?: TelegramGateway['deleteChatMessage'];
   /** Recover one owner message as startup recovery does, leaving every other one alone. */
   recoverResponse(sourceRef: string): Promise<void>;
   start(): Promise<void>;
@@ -491,6 +498,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   let gateway: DaemonGateway | null = null;
   // Approval cards go through Telegram, which starts after the owner runtime that proposes them.
   let approvalGateway: DaemonGateway | null = null;
+  let accountConnect: AccountConnect | null = null;
   let approvalSweeps: ReturnType<typeof scheduleApprovalSweeps> | undefined;
   let approvalsRunning = 0;
   const gateways = new Map<MessengerName, DaemonGateway>();
@@ -824,6 +832,40 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         callId: null,
       })
     );
+    // A person's own Telegram DM, by their registered identity.
+    const dmChatOf = (principalId: string): string =>
+      (
+        owner!.database.adapter
+          .prepare(
+            `SELECT external_id FROM external_identities
+              WHERE principal_id = ? AND connector = 'telegram' AND namespace = 'private'`
+          )
+          .get(principalId) as { external_id: string }
+      ).external_id;
+    const telegramFor = (purpose: string) => {
+      if (!approvalGateway?.sendAccountPrompt)
+        throw new Error(`${purpose} needs the Telegram messenger, which is not running`);
+      return approvalGateway;
+    };
+    // Connecting a person's own account in their DM (approvals.md, P2): the token is checked with
+    // the running source's API, as the person, and stored under runtime/.
+    accountConnect = createAccountConnect({
+      accounts: createAccountStore(personalAccountsDir(paths.mamaRoot)),
+      identify: async (service, token) => {
+        const connector = connectors?.registry.get(service);
+        if (service === 'chatwork' && connector instanceof ChatworkConnector)
+          return connector.account(token);
+        if (service === 'slack' && connector instanceof SlackConnector)
+          return connector.account(token);
+        throw new Error(`the ${service} source is not running`);
+      },
+      dmChatOf,
+      prompt: (chatId, text) => telegramFor('An account prompt').sendAccountPrompt!(chatId, text),
+      deleteMessage: (chatId, messageId) =>
+        telegramFor('Deleting a token message').deleteChatMessage!(chatId, messageId),
+      say: (chatId, text) => telegramFor('An account note').sendAccountNote!(chatId, text),
+      log: (line) => logger.error(`[accounts] ${line}`),
+    });
     const ownerFactory = dependencies.createOwnerRuntime ?? createOwnerRuntime;
     owner = await ownerFactory({
       backend: config.agent.backend,
@@ -832,6 +874,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       socketPath: paths.socketPath,
       credentialPath: paths.credentialPath,
       runtimeRoot: paths.mamaRoot,
+      accountConnect: { ask: (principalId, service) => accountConnect!.ask(principalId, service) },
       ...(config.member_root === undefined ? {} : { memberRoot: config.member_root }),
       ...(config.tools_root === undefined ? {} : { toolsRoot: config.tools_root }),
       ownerDeniedReadPaths: [
@@ -1179,6 +1222,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         principalPaths: (principalId, room) => owner!.principalPaths(principalId, room),
         onMemberSelection: (selection) => owner!.completeMemberEnrollment(selection),
         recordMemberSelection: (exchange) => owner!.recordHostExchange(exchange),
+        accountReplies: { claim: (reply) => accountConnect?.claim(reply) ?? null },
         approvals: {
           // An approved write is work like a turn: refused while an update or a drain holds new
           // work, and counted by the drain while it runs.

@@ -119,3 +119,26 @@ describe('ChatworkConnector sends (approvals.md, S1)', () => {
     });
   });
 });
+
+describe('ChatworkConnector sends with a person’s token (approvals.md, P1)', () => {
+  beforeEach(() => {
+    process.env[envName] = 'fixture-chatwork-token';
+  });
+  afterEach(() => {
+    delete process.env[envName];
+  });
+
+  it('posts and names the account with the token it is given, not the install’s', async () => {
+    const http = vi.fn(async (url: string) =>
+      String(url).endsWith('/me')
+        ? json(200, { account_id: 8, name: 'person-b' })
+        : json(200, { message_id: '9002' })
+    );
+    const connector = new ChatworkConnector(config, { fetch: http as unknown as typeof fetch });
+    await connector.init();
+    await connector.account('person-token');
+    await connector.sendMessage('111', 'hi', 'person-token');
+    for (const [, request] of http.mock.calls)
+      expect((request as RequestInit).headers).toMatchObject({ 'X-ChatWorkToken': 'person-token' });
+  });
+});

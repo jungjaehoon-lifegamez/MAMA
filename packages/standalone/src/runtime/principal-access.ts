@@ -194,8 +194,15 @@ export function resolvePrincipalAccess(
           'drive.download',
           // Google is read with the owner's sign-in, so only an owner's own DM reads it (P6).
           'google.read',
-          // Calendar writes and proposals stay in the common session until a person can connect
-          // their own Google login (approvals.md, A5 and G1): a DM must not write as the install.
+          // Calendar writes stay in the common session until a person can connect their own Google
+          // login (approvals.md, G1). Messages are proposed on the person's own connected account
+          // (A5, P1), and accounts are connected here, in the person's own DM.
+          'approval.propose',
+          'chatwork.message.send',
+          'slack.message.send',
+          'account.connect',
+          'account.disconnect',
+          'account.list',
           'report.read',
           ...MEMBER_MANAGEMENT_ACTIONS,
           'manage.member.enroll',
