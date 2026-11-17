@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recorded in `tool_traces` as `codex_apps:<tool>`. Member sessions keep them off.
 - `google.calendar.write`: the owner agent creates, changes or deletes an event in the owner's
   Google Calendar, with a Google Meet link when asked and invitations sent to its attendees, on
-  any backend (Claude included). Same grants as `google.read`; not in a replay.
+  any backend (Claude included). Same grants as `google.read`, and only in a turn an owner
+  started with their own message, so text from a source cannot book or cancel; not in a replay.
 
 ### Changed
 

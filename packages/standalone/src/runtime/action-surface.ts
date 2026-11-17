@@ -589,6 +589,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     // Calendar events, written with the same sign-in, for every backend (owner, 2026-11-17).
     ...googleCalendarWriteActionRegistrations({
       scratchDir: join(options.runtimeRoot, 'runtime', 'google-calendar'),
+      ownerMessageTurn: (context) => activeOwnerMessageCaller(context, options) !== undefined,
     }),
     ...(options.driveDelivery === undefined
       ? []

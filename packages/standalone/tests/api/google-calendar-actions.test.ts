@@ -21,6 +21,8 @@ let bin: string;
 let scratch: string;
 let log: string;
 let cwdLog: string;
+/** Whether the fixture call runs in a turn an owner's own message started. */
+let ownerTurn = true;
 
 /** A `gws` stand-in on PATH that records its argv, one per line, and its directory, then runs `script`. */
 function fakeGws(script: string): void {
@@ -43,7 +45,14 @@ const access: ActionContext['access'] = {
 };
 
 const write = (input: Record<string, unknown>, session?: ActionContext['session']) =>
-  createDispatcher(createCatalog(googleCalendarWriteActionRegistrations({ scratchDir: scratch })))(
+  createDispatcher(
+    createCatalog(
+      googleCalendarWriteActionRegistrations({
+        scratchDir: scratch,
+        ownerMessageTurn: () => ownerTurn,
+      })
+    )
+  )(
     { action: 'google.calendar.write', input },
     { access, ...(session === undefined ? {} : { session }) }
   );
@@ -69,6 +78,7 @@ describe('google.calendar.write', () => {
     cwdLog = join(root, 'cwd');
     mkdirSync(bin);
     vi.stubEnv('PATH', `${bin}:${process.env.PATH ?? ''}`);
+    ownerTurn = true;
   });
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -179,6 +189,17 @@ describe('google.calendar.write', () => {
       error: { code: 'google_calendar_event_missing' },
     });
     expect((result as { error: { message: string } }).error.message).toContain(says);
+    expect(argvRun()).toBeNull();
+  });
+
+  it('does not write in a turn no owner message started, before gws runs', async () => {
+    fakeGws(`echo '{}'`);
+    ownerTurn = false;
+    const result = await write({ op: 'delete', eventId: 'fixture-event' });
+    expect(result).toMatchObject({
+      status: 'failed',
+      error: { code: 'google_calendar_owner_message_required' },
+    });
     expect(argvRun()).toBeNull();
   });
 
