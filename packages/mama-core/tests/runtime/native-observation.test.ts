@@ -138,11 +138,31 @@ describe('native observation is not authorization', () => {
         action: { type: 'search', query: 'fixture' },
         status: 'completed',
       },
+      // A Codex app call, as Codex CLI 0.160.1 reports it; failed, so it settles as an error.
+      {
+        id: 'app',
+        type: 'mcpToolCall',
+        server: 'codex_apps',
+        tool: 'google_calendar.create_event',
+        arguments: { title: 'fixture meeting' },
+        status: 'failed',
+      },
+      // A call to the host's own MCP actions is traced by the host, not here.
+      { id: 'host', type: 'mcpToolCall', server: 'mama', tool: 'work.list', status: 'completed' },
     ]) {
       for (const method of ['item/started', 'item/completed', 'item/completed'])
         internal.handleNotification(method, { threadId: 'child', turnId: 'turn', item });
     }
-    expect(started).toHaveBeenCalledTimes(2);
+    expect(started).toHaveBeenCalledTimes(3);
+    expect(started).toHaveBeenCalledWith(
+      'google_calendar.create_event',
+      expect.objectContaining({ arguments: { title: 'fixture meeting' } })
+    );
+    expect(settled).toHaveBeenCalledWith(
+      'google_calendar.create_event',
+      JSON.stringify(['child', 'app']),
+      true
+    );
     expect(started).toHaveBeenCalledWith(
       'commandExecution',
       expect.objectContaining({ command: 'pwd', subagentThreadId: 'child' })
@@ -151,7 +171,7 @@ describe('native observation is not authorization', () => {
       'webSearch',
       expect.objectContaining({ action: { type: 'search', query: 'fixture' } })
     );
-    expect(settled).toHaveBeenCalledTimes(2);
+    expect(settled).toHaveBeenCalledTimes(3);
     internal.handleNotification('item/started', {
       threadId: 'child',
       turnId: 'turn',

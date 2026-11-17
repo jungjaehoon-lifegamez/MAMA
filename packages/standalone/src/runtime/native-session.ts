@@ -71,6 +71,8 @@ export interface NativeDriverOptions {
   shellTool?: boolean;
   /** Enable live web search; disabled unless the consumer opts in. */
   webSearch?: boolean;
+  /** Codex apps: the common session only (owner decision 2026-11-17). */
+  apps?: boolean;
   permissionMode?: 'dontAsk';
   shellEnvironment?: Record<string, string>;
   processEnv: NodeJS.ProcessEnv;
@@ -279,6 +281,9 @@ function driverOptions(
       ? {
           shellTool: true,
           webSearch: webTools,
+          // Owner decision 2026-11-17: the common session uses the account's Codex apps (Google
+          // Calendar, Gmail, Drive), as Kagemusha's owner did; each call is traced by its tool.
+          apps: options.principal === undefined,
           // macOS login shells run path_helper and put the system Python before Homebrew.
           // Keep the daemon's toolchain PATH and the driver's isolated HOME; no user profiles.
           shellEnvironment: {
@@ -361,6 +366,7 @@ function createDriver(
       sandbox: nativeOptions.sandbox,
       shellTool: nativeOptions.shellTool,
       webSearch: nativeOptions.webSearch,
+      apps: nativeOptions.apps,
       shellEnvironment: nativeOptions.shellEnvironment,
       processEnv: nativeOptions.processEnv,
       deniedReadPaths: nativeOptions.deniedReadPaths,

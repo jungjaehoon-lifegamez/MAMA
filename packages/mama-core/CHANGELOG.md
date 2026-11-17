@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `apps` option for the Codex app-server, runtime process and managed config: enables Codex apps
+  (the account's connectors) and their instructions; off by default. App calls
+  (`mcpToolCall` from `codex_apps`) are observed like shell and web items, under their tool name,
+  with their arguments.
+
 ## [8.10.0] - 2026-11-16
 
 ### Added

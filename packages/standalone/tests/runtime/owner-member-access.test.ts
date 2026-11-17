@@ -484,6 +484,9 @@ describe('owner rules reach the personal DM session', () => {
       if (backend === 'codex') {
         expect(f.drivers.get(f.member)!.webSearch).toBe(true);
         expect(f.drivers.get('owner')!.webSearch).toBe(true);
+        // Codex apps act on the owner's Google account: the common session only.
+        expect(f.drivers.get('owner')!.apps).toBe(true);
+        expect(f.drivers.get(f.member)!.apps).toBe(false);
       }
       expect(f.drivers.get(f.member)!.deniedReadPaths).toContain(join(f.home, 'owner-policy.md'));
       expect(
