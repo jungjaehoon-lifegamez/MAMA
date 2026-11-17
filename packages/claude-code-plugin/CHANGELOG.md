@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.3] - 2026-11-17
+
+### Changed
+
+- The MCP server is pinned to `@jungjaehoon/mama-server@2.6.4`, published with mama-core 8.11.0,
+  the core the hooks install.
+
+
 ## [2.5.2] - 2026-11-16
 
 - The MCP server is pinned to `@jungjaehoon/mama-server@2.6.3`, published with mama-core 8.10.0,
