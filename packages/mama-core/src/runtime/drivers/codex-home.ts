@@ -469,9 +469,12 @@ export function buildMAMACodexAppServerConfig(
     '[analytics]',
     'enabled = false',
     '',
-    // An app's writes (create_event, send_email) ask for approval, and approval_policy "never"
-    // fails them (measured on Codex CLI 0.160.1); the host has no one to ask, so they run.
-    ...(options.apps ? ['[apps._default]', 'default_tools_approval_mode = "approve"', ''] : []),
+    // Apps read only (owner, 2026-11-17): a turn with no person in it shares this process, so an
+    // app write (send_email, create_event) could come from text in a source. With these off, the
+    // write tools are not offered at all; reads still run (measured on Codex CLI 0.160.1).
+    ...(options.apps
+      ? ['[apps._default]', 'destructive_enabled = false', 'open_world_enabled = false', '']
+      : []),
     '[features]',
     // The owner agent may create native Codex subagents when it decides a goal
     // needs parallel or specialized work. Channels never create agents.
