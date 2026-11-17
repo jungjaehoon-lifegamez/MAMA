@@ -258,4 +258,21 @@ describe('approval.propose', () => {
     expect(contextReads).toBe(reads);
     contextFails = false;
   });
+
+  it('refuses a card Telegram could not show, before any row or card (S1, S2)', async () => {
+    const { propose, sent, store } = await fixture();
+    const result = await propose({ ...call, input: { text: '<&>'.repeat(1300) } });
+    expect(result).toMatchObject({
+      status: 'failed',
+      error: {
+        kind: 'invalid_input',
+        message: expect.stringMatching(/card would be \d+ characters.*at most 3596/),
+      },
+    });
+    expect(sent).toEqual([]);
+    expect(store.get('p1')).toBeNull();
+    // Escaping does not count: Telegram counts the text it shows.
+    const fits = await propose({ ...call, requestKey: 'k2', input: { text: '<&>'.repeat(1100) } });
+    expect(fits).toMatchObject({ status: 'completed' });
+  });
 });

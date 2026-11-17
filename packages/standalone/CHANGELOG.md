@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   included) says it was not posted. A post whose answer was lost, timed out after 30 seconds or met
   a server error is stored as unknown, never as failed, so it is not approved and sent twice.
   Slack posts go through a client that never retries.
+  A proposal whose card would be too long for Telegram is refused with how much to shorten it,
+  instead of being stored with no card.
   Slack needs the bot's `chat:write` scope.
 
 ## [0.83.0] - 2026-11-17

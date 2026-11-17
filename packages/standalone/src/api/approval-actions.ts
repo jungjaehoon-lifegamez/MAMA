@@ -7,13 +7,26 @@
 import type { ActionCatalog, ActionRegistration } from '@jungjaehoon/mama-core';
 import { validateInput } from '@jungjaehoon/mama-core/api/dispatch';
 import {
+  APPROVAL_EXPIRY_MS,
   ApprovalConflictError,
   proposalFingerprint,
   type ApprovalStore,
 } from '../runtime/approval-store.js';
-import { renderApprovalCard, type ApprovalCardRenderer } from '../runtime/approval-cards.js';
+import {
+  cardTextLength,
+  renderApprovalCard,
+  type ApprovalCardRenderer,
+} from '../runtime/approval-cards.js';
+import { TELEGRAM_MAX_MESSAGE_LENGTH } from '../gateways/telegram-format.js';
 
 export const APPROVAL_PROPOSE_ACTION = 'approval.propose';
+
+/**
+ * The longest card a proposal may have: Telegram's message limit, less room for the result line
+ * the card gains when it is decided. A longer card could not be sent, and its proposal could never
+ * be approved (#588 review).
+ */
+const CARD_MAX_LENGTH = TELEGRAM_MAX_MESSAGE_LENGTH - 500;
 
 /** Telegram refuses callback data over 64 bytes. */
 const CALLBACK_DATA_MAX_BYTES = 64;
@@ -179,6 +192,23 @@ export function approvalActionRegistrations(ports: ApprovalActionPorts): ActionR
               'invalid_input'
             );
           }
+
+        // Measured before anything is stored: the expiry line is the same length either way.
+        const draft = renderApprovalCard(
+          card.title,
+          [...card.render(values.input), ...current],
+          {
+            reason: values.reason ?? null,
+            expiresAt: Date.now() + APPROVAL_EXPIRY_MS,
+          },
+          ports.timeZone()
+        );
+        if (cardTextLength(draft) > CARD_MAX_LENGTH)
+          throw failure(
+            'approval_card_too_long',
+            `The card would be ${cardTextLength(draft)} characters; Telegram shows at most ${CARD_MAX_LENGTH} for a card. Shorten it by about ${cardTextLength(draft) - CARD_MAX_LENGTH} characters and propose again.`,
+            'invalid_input'
+          );
 
         let stored;
         try {
