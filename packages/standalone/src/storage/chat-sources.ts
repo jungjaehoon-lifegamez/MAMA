@@ -123,6 +123,31 @@ export class ChatSources {
   }
 
   /** Autonomous inputs are host-authored; the person's message views do not select them. */
+  /**
+   * A line the host writes into this record (an approval's proposal and outcome): authored by the
+   * host, never an owner message, so nothing in it is read as the owner speaking.
+   */
+  saveHostNote(input: {
+    ref: string;
+    occurredAt: number;
+    text: string;
+    metadata: Record<string, unknown>;
+  }): void {
+    this.save({
+      source: 'chat',
+      sourceId: input.ref,
+      // A channel per record: a channel grant never reaches another person's notes.
+      channel: `host:${this.principalId}`,
+      author: 'host',
+      content: input.text,
+      timestamp: new Date(input.occurredAt),
+      type: 'message',
+      memoryScopeKind: 'user',
+      memoryScopeId: this.principalId,
+      metadata: { ...input.metadata, kind: 'host_note', occurrenceAt: input.occurredAt },
+    });
+  }
+
   savePersonalExchange(input: {
     kind: 'job' | 'notice';
     ref: string;

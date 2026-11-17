@@ -99,6 +99,24 @@ export interface TelegramGatewayOptions {
   recordMemberSelection?: (exchange: OwnerHostExchangeInput) => void;
   /** The commands the host answers before any turn (/status, /new). */
   hostCommands: TelegramHostCommandPort;
+  /** Approval card buttons (approvals.md, A4): a press goes to the host, never to a turn. */
+  approvals?: TelegramApprovalPort;
+}
+
+export interface TelegramApprovalPort {
+  press(input: {
+    data: string;
+    chatId: string;
+    userId: string;
+    messageId: number;
+  }): Promise<{ answer: string; card?: string }>;
+}
+
+interface TelegramCallbackQuery {
+  id: string;
+  data?: string;
+  from: { id: number; is_bot: boolean };
+  message?: { message_id: number; chat: { id: number; type: string } };
 }
 
 function entityOptions<T>(entities: TelegramFormattedText['entities']): T {
@@ -203,6 +221,7 @@ export class TelegramGateway extends BaseGateway {
   private readonly onMemberSelection?: TelegramGatewayOptions['onMemberSelection'];
   private readonly recordMemberSelection?: TelegramGatewayOptions['recordMemberSelection'];
   private readonly hostCommands: TelegramHostCommandPort;
+  private readonly approvals: TelegramApprovalPort | undefined;
   private bot: Bot | null = null;
   private lastError: string | null = null;
   private lastMessageAt: number | undefined;
@@ -220,6 +239,7 @@ export class TelegramGateway extends BaseGateway {
     this.onMemberSelection = options.onMemberSelection;
     this.recordMemberSelection = options.recordMemberSelection;
     this.hostCommands = options.hostCommands;
+    this.approvals = options.approvals;
     this.config = {
       enabled: options.config?.enabled ?? true,
       allowedChats: options.config?.allowedChats ?? [],
@@ -262,6 +282,13 @@ export class TelegramGateway extends BaseGateway {
       this.bot = new Bot(this.token);
       this.bot.on('message', async (ctx: Context) => {
         if (ctx.message) await this.handleMessage(ctx.message);
+      });
+      this.bot.on('callback_query:data', async (ctx: Context) => {
+        // A press is intake: tracked so a stop drains it, and refused once the gateway stops.
+        if (ctx.callbackQuery)
+          await this.trackIntake(() =>
+            this.handleApprovalPress(ctx.callbackQuery as TelegramCallbackQuery)
+          );
       });
       this.bot.catch((error) => {
         this.lastError = telegramErrorMessage(error);
@@ -723,6 +750,76 @@ export class TelegramGateway extends BaseGateway {
       return this.memberIntake(principalId, chatId);
     }
     return this.intake;
+  }
+
+  /** An approval card: the host's HTML and two buttons. Returns the card's message id. */
+  async sendApprovalCard(
+    chatId: string,
+    html: string,
+    buttons: { approve: string; reject: string }
+  ): Promise<number> {
+    const sent = await this.bot!.api.sendMessage(Number(chatId), html, {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: 'Approve', callback_data: buttons.approve },
+            { text: 'Reject', callback_data: buttons.reject },
+          ],
+        ],
+      },
+    });
+    return sent.message_id;
+  }
+
+  /** Replace an approval card's text and remove its buttons (expiry, recovery). */
+  async editApprovalCard(chatId: string, messageId: number, html: string): Promise<void> {
+    await this.bot!.api.editMessageText(Number(chatId), messageId, html, {
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: [] },
+    });
+  }
+
+  /**
+   * A card button. The host decides it (who pressed, the nonce, the expiry); no turn sees it.
+   * Every press is answered, so Telegram stops the button's spinner.
+   */
+  private async handleApprovalPress(query: TelegramCallbackQuery): Promise<void> {
+    const answer = (text: string) =>
+      this.bot!.api.answerCallbackQuery(query.id, { text: text.slice(0, 200) });
+    const chat = query.message?.chat;
+    if (!chat || query.data === undefined || query.from.is_bot)
+      return void (await answer('Not an approval.'));
+    const chatId = String(chat.id);
+    const userId = String(query.from.id);
+    const allowed =
+      (chat.type === 'private' && chatId === userId) || this.config.allowedChats?.includes(chatId);
+    if (!allowed) return void (await answer('This chat cannot decide approvals.'));
+    if (!this.approvals) return void (await answer('Approvals are not available.'));
+    let result: { answer: string; card?: string };
+    try {
+      result = await this.approvals.press({
+        data: query.data,
+        chatId,
+        userId,
+        messageId: query.message!.message_id,
+      });
+    } catch (error) {
+      this.log(`telegram approval press failed error=${telegramErrorMessage(error)}`);
+      return void (await answer('The approval could not be handled; the log has the error.'));
+    }
+    // The outcome on the card matters more than the toast: a press answered too late (Telegram
+    // refuses old queries) still gets its card edited.
+    try {
+      await answer(result.answer);
+    } catch (error) {
+      this.log(`telegram approval answer failed error=${telegramErrorMessage(error)}`);
+    }
+    if (result.card !== undefined)
+      await this.bot!.api.editMessageText(Number(chatId), query.message!.message_id, result.card, {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: [] },
+      });
   }
 
   private requireAllowedChat(chatId: string): void {

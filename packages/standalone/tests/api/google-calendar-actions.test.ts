@@ -14,7 +14,10 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createCatalog, createDispatcher, type ActionContext } from '@jungjaehoon/mama-core';
 
-import { googleCalendarWriteActionRegistrations } from '../../src/api/google-calendar-actions.js';
+import {
+  calendarEventContext,
+  googleCalendarWriteActionRegistrations,
+} from '../../src/api/google-calendar-actions.js';
 
 let root: string;
 let bin: string;
@@ -258,6 +261,16 @@ describe('google.calendar.write', () => {
     expect(argvRun()).toBeNull();
   });
 
+  it('runs outside an owner turn when the session states an approved proposal', async () => {
+    fakeGws(`echo '${JSON.stringify(created)}'`);
+    ownerTurn = false;
+    const result = await write({ op: 'delete', eventId: 'fixture-event' }, {
+      approvedProposalId: 'proposal-1',
+    } as ActionContext['session']);
+    expect(result).toMatchObject({ status: 'completed' });
+    expect(argvRun()!.slice(0, 3)).toEqual(['calendar', 'events', 'delete']);
+  });
+
   it('is not available in a replay', async () => {
     fakeGws(`echo '{}'`);
     const result = await write({ op: 'delete', eventId: 'fixture-event' }, {
@@ -275,6 +288,27 @@ describe('google.calendar.write', () => {
     expect(result).toMatchObject({ status: 'failed', error: { code: 'google_scope_missing' } });
     expect((result as { error: { message: string } }).error.message).toContain(
       'The login must include https://www.googleapis.com/auth/calendar.'
+    );
+  });
+
+  it('reads the event a change or delete names, for the card', async () => {
+    fakeGws(`echo '${JSON.stringify(created)}'`);
+    const context = calendarEventContext({ scratchDir: scratch });
+    expect(await context({ op: 'create', event: {} })).toEqual([]);
+    expect(argvRun()).toBeNull();
+    expect(await context({ op: 'delete', eventId: 'fixture-event' })).toEqual([
+      'Current event: Fixture review · 2026-11-20T10:30:00+09:00 – 2026-11-20T11:00:00+09:00 · attendees person@example.com',
+    ]);
+    expect(argvRun()).toEqual([
+      'calendar',
+      'events',
+      'get',
+      '--params',
+      '{"calendarId":"primary","eventId":"fixture-event"}',
+    ]);
+    fakeGws(`echo '{"error":{"code":404,"message":"Not Found","reason":"notFound"}}'\nexit 1`);
+    await expect(context({ op: 'update', eventId: 'gone', event: {} })).rejects.toThrow(
+      /404|Not Found/
     );
   });
 });

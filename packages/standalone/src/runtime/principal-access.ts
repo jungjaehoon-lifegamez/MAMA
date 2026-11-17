@@ -194,7 +194,8 @@ export function resolvePrincipalAccess(
           'drive.download',
           // Google is read with the owner's sign-in, so only an owner's own DM reads it (P6).
           'google.read',
-          'google.calendar.write',
+          // Calendar writes and proposals stay in the common session until a person can connect
+          // their own Google login (approvals.md, A5 and G1): a DM must not write as the install.
           'report.read',
           ...MEMBER_MANAGEMENT_ACTIONS,
           'manage.member.enroll',

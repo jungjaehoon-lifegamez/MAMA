@@ -184,6 +184,13 @@ describe('owner standing prompt', () => {
     expect(ownerPrompt('codex', null, false)).not.toContain('manage.wiki.');
   });
 
+  it('carries the approval line in both backends', () => {
+    for (const backend of ['claude', 'codex'] as const)
+      expect(ownerSystemPrompt(backend, null, [], false, 'Asia/Seoul')).toContain(
+        "- A write you may not run in this turn (google.calendar.write in a turn no owner message started, and every action whose result says it needs approval) is proposed with approval.propose; an owner decides it on a card and the host runs it. Deciding is the owner's, never yours; a changed request is a new proposal."
+      );
+  });
+
   it('carries none of the removed or conflicting lines', () => {
     for (const backend of ['codex', 'claude'] as const) {
       const prompt = ownerPrompt(backend);

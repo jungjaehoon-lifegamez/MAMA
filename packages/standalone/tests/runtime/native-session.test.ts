@@ -687,6 +687,7 @@ describe('one owner native session', () => {
           .map((tool) => tool.name)
           .sort()
       ).toEqual([
+        'approval.propose',
         'deliver.telegram.file',
         'document.render',
         'drive.download',

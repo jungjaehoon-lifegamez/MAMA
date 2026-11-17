@@ -319,6 +319,11 @@ function config(home: string): W1Config {
 
 function boot(home: string, logs: string[], extra: Partial<Parameters<typeof bootDaemon>[0]> = {}) {
   const createOwnerRuntime = vi.fn(async () => ({
+    approvals: {
+      recover: async () => {},
+      sweep: async () => {},
+      press: async () => ({ answer: '' }),
+    },
     database: {
       adapter: {
         prepare: vi.fn(() => ({ get: vi.fn(), all: vi.fn(() => []), run: vi.fn() })),
@@ -454,6 +459,11 @@ describe('daemon boot holds the install', () => {
     const home = root('mama-run-signal-');
     const configPath = join(home, 'config.yaml');
     const owner = () => ({
+      approvals: {
+        recover: async () => {},
+        sweep: async () => {},
+        press: async () => ({ answer: '' }),
+      },
       database: { adapter: { prepare: () => ({ all: () => [] }) } },
       intake: { recordOwnerReply: () => {}, acceptOwnerMessage: vi.fn() },
       surface: { dispatch: vi.fn(), ownerAccess: { scopes: [] } },

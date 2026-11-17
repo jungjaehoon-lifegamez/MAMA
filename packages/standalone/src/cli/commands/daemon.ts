@@ -1,6 +1,7 @@
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import { readDocumentToolkit } from '../../tools/document-toolkit.js';
 import { syncMemberNode } from '../../runtime/member-node.js';
+import { scheduleApprovalSweeps } from '../../runtime/approval-runtime.js';
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -118,6 +119,8 @@ export interface DaemonGateway {
   cancelMemberEnrollment?(principalId: string): void;
   interruptResponse?(sourceRef: string): Promise<void>;
   recoverPendingResponses(): Promise<void>;
+  sendApprovalCard?: TelegramGateway['sendApprovalCard'];
+  editApprovalCard?: TelegramGateway['editApprovalCard'];
   /** Recover one owner message as startup recovery does, leaving every other one alone. */
   recoverResponse(sourceRef: string): Promise<void>;
   start(): Promise<void>;
@@ -486,6 +489,10 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   let connectors: ConnectorRuntime | undefined;
   let messageLedger: OwnerMessageLedger | undefined;
   let gateway: DaemonGateway | null = null;
+  // Approval cards go through Telegram, which starts after the owner runtime that proposes them.
+  let approvalGateway: DaemonGateway | null = null;
+  let approvalSweeps: ReturnType<typeof scheduleApprovalSweeps> | undefined;
+  let approvalsRunning = 0;
   const gateways = new Map<MessengerName, DaemonGateway>();
   let reportScheduler: ReportScheduler | undefined;
   let releaseCheck: ReleaseCheck | undefined;
@@ -536,7 +543,12 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       .get(startedAt) as { claimed: number };
     // A turn either runs a claimed input or is a top-level run without one (a probe); subagent
     // runs belong to their parent's turn.
-    return { running, claimed, turns: claimed + unclaimed };
+    // A press running an approved write is a turn the drain waits for.
+    return {
+      running: running + approvalsRunning,
+      claimed,
+      turns: claimed + unclaimed + approvalsRunning,
+    };
   };
 
   const statusReport = async (): Promise<Record<string, unknown>> => {
@@ -590,6 +602,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
 
   const stopOwned = async (): Promise<void> => {
     const errors: unknown[] = [];
+    approvalSweeps?.cancel();
     owner?.beginStop?.();
     // Quiesce every producer before awaiting any one of them. Transports and the database
     // remain available to completions that already own work.
@@ -611,6 +624,9 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         stopOne(logger, `${name}_drain`, () => active.drain?.(), errors)
       ),
       ...(owner?.drain ? [stopOne(logger, 'owner_drain', () => owner!.drain(), errors)] : []),
+      // A sweep under way records outcomes and edits cards: it ends before Telegram and the
+      // database close.
+      ...(approvalSweeps ? [approvalSweeps.settled()] : []),
     ]);
     for (const [name, active] of gateways) await stopOne(logger, name, () => active.stop(), errors);
     if (owner) await stopOne(logger, 'owner_runtime', () => owner!.stop(), errors);
@@ -833,6 +849,39 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       ownerPrincipalId: OWNER_PRINCIPAL_ID,
       commonChannelId: config.telegram.owner_chat_id,
       roomChannels: config.telegram.allowed_chats,
+      ...(config.telegram.enabled && options.mode !== 'replay'
+        ? {
+            approvalCards: {
+              sendCard: async (target, html, buttons) => {
+                if (!approvalGateway?.sendApprovalCard)
+                  throw new Error(
+                    'Approval cards need the Telegram messenger, which is not running'
+                  );
+                // The common session's card goes to the common channel, a person's to their DM.
+                const chatId =
+                  target.principalId === null
+                    ? config.telegram.owner_chat_id!
+                    : (
+                        owner!.database.adapter
+                          .prepare(
+                            `SELECT external_id FROM external_identities
+                              WHERE principal_id = ? AND connector = 'telegram' AND namespace = 'private'`
+                          )
+                          .get(target.principalId) as { external_id: string }
+                      ).external_id;
+                const messageId = await approvalGateway.sendApprovalCard(chatId, html, buttons);
+                return { chatId, messageId };
+              },
+              editCard: async (chatId, messageId, html) => {
+                if (!approvalGateway?.editApprovalCard)
+                  throw new Error(
+                    'Approval cards need the Telegram messenger, which is not running'
+                  );
+                await approvalGateway.editApprovalCard(chatId, messageId, html);
+              },
+            } satisfies NonNullable<OwnerRuntimeOptions['approvalCards']>,
+          }
+        : {}),
       agentId: OWNER_AGENT_ID,
       ...(config.telegram.enabled && options.mode !== 'replay'
         ? {
@@ -1130,6 +1179,20 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         principalPaths: (principalId, room) => owner!.principalPaths(principalId, room),
         onMemberSelection: (selection) => owner!.completeMemberEnrollment(selection),
         recordMemberSelection: (exchange) => owner!.recordHostExchange(exchange),
+        approvals: {
+          // An approved write is work like a turn: refused while an update or a drain holds new
+          // work, and counted by the drain while it runs.
+          press: async (input) => {
+            if (claimsHeld())
+              return { answer: 'MAMA is updating or stopping; press again in a minute.' };
+            approvalsRunning += 1;
+            try {
+              return await owner!.approvals.press(input);
+            } finally {
+              approvalsRunning -= 1;
+            }
+          },
+        },
         hostCommands: {
           status: async (target, ownerView) => {
             const report = await statusReport();
@@ -1230,6 +1293,17 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       });
       gateways.set('telegram', gateway);
       await gateway.start();
+      // A replay returned before this point, so this is a live daemon.
+      approvalGateway = gateway;
+      // A write running at the last stop is unknown and never run again; an approved one runs.
+      await owner.approvals.recover();
+      // Cards that expired while MAMA was stopped say so now, not an hour from now (A8).
+      await owner.approvals.sweep();
+      approvalSweeps = scheduleApprovalSweeps(() => owner!.approvals.sweep(), {
+        intervalMs: 60 * 60 * 1000,
+        onError: (error) =>
+          logger.error(`approval sweep failed error=${stimulusFailureReason(error)}`),
+      });
       stage(logger, 'telegram', options.signal);
     } else stage(logger, 'telegram:disabled', options.signal);
     if (config.discord?.enabled) {

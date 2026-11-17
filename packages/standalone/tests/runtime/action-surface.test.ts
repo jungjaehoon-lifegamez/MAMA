@@ -117,6 +117,7 @@ describe('W1 action surface', () => {
       attachmentPorts: { telegram: () => null },
     });
     const expected = [
+      'approval.propose',
       'code_act',
       'deliver.telegram.file',
       'document.render',

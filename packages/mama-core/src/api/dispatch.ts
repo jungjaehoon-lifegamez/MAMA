@@ -121,6 +121,18 @@ export function createDispatcher(
       );
     }
 
+    if (
+      registration.contract.approval === 'always' &&
+      context.session?.approvedProposalId === undefined
+    ) {
+      return fail(
+        call,
+        'denied',
+        'approval_required',
+        `${call.action} runs only after a person approves it: propose it with approval.propose`
+      );
+    }
+
     const readsConnector = registration.contract.readsConnector;
     if (readsConnector !== undefined) {
       const named =

@@ -21,8 +21,8 @@ const transport = vi.hoisted(() => ({
 vi.mock('grammy', async (original) => ({
   InputFile: (await original<typeof import('grammy')>()).InputFile,
   Bot: vi.fn(() => ({
-    on: (_event: string, handler: (ctx: unknown) => Promise<void>) => {
-      transport.handler = handler;
+    on: (event: string, handler: (ctx: unknown) => Promise<void>) => {
+      if (event === 'message') transport.handler = handler;
     },
     catch: () => {},
     init: async () => {},
@@ -293,6 +293,11 @@ describe('enrollment host receipts remain in the requesting DM and the common re
         ensureIsolation: () => {},
         createOwnerRuntime: async () =>
           ({
+            approvals: {
+              recover: async () => {},
+              sweep: async () => {},
+              press: async () => ({ answer: '' }),
+            },
             database,
             intake: { acceptOwnerMessage, recordOwnerReply: () => {} },
             serveMember: () => ({ acceptOwnerMessage, recordOwnerReply: () => {} }),
