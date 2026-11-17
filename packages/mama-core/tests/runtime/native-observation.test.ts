@@ -42,6 +42,29 @@ describe('native observation is not authorization', () => {
     const failure = new Error('read failed');
     expect(boundary.failure(failure)).toBe(failure);
   });
+  it('passes Codex app calls to the trace observer; an app write makes the turn not replayable', () => {
+    const observer = { started: vi.fn(), settled: vi.fn(), interrupted: vi.fn() };
+    const reads = new NativeEffectReplayBoundary(observer);
+    reads.started('codex_apps:google_calendar.list_calendars', { readOnlyHint: true });
+    reads.settled('codex_apps:google_calendar.list_calendars', 'list', false);
+    expect(observer.started).toHaveBeenCalledWith('codex_apps:google_calendar.list_calendars', {
+      readOnlyHint: true,
+    });
+    expect(observer.settled).toHaveBeenCalledTimes(1);
+    const failure = new Error('after a read');
+    expect(reads.failure(failure)).toBe(failure);
+
+    const writes = new NativeEffectReplayBoundary(observer);
+    writes.started('codex_apps:google_calendar.create_event', { arguments: {} });
+    writes.settled('codex_apps:google_calendar.create_event', 'create', false);
+    expect(observer.started).toHaveBeenCalledWith('codex_apps:google_calendar.create_event', {
+      arguments: {},
+    });
+    expect(writes.failure(new Error('after a write'))).toMatchObject({
+      code: 'MUTATION_OUTCOME_UNKNOWN',
+    });
+  });
+
   it('does not let an observer failure stop a successful native call', () => {
     const fail = () => {
       throw new Error('storage unavailable');
@@ -155,11 +178,11 @@ describe('native observation is not authorization', () => {
     }
     expect(started).toHaveBeenCalledTimes(3);
     expect(started).toHaveBeenCalledWith(
-      'google_calendar.create_event',
+      'codex_apps:google_calendar.create_event',
       expect.objectContaining({ arguments: { title: 'fixture meeting' } })
     );
     expect(settled).toHaveBeenCalledWith(
-      'google_calendar.create_event',
+      'codex_apps:google_calendar.create_event',
       JSON.stringify(['child', 'app']),
       true
     );

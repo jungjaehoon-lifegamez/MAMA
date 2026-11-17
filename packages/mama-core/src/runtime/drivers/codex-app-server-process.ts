@@ -114,6 +114,7 @@ export interface CodexAppServerProcessOptions {
 
 import type { SubagentBridge, SubagentBridgeRequest } from '../subagent-bridge.js';
 import { codexBackendLimits, type BackendLimitsListener } from '../backend-limits.js';
+import { CODEX_APP_PREFIX } from '../native-effect-observer.js';
 export type { SubagentBridge, SubagentBridgeRequest } from '../subagent-bridge.js';
 
 /**
@@ -585,7 +586,7 @@ function nativeObservationId(threadId: string, itemId: string): string {
 
 /**
  * The trace name of a native item the host observes, or null for one it does not: the shell, file
- * edits, web search, subagent calls, and Codex app calls by their tool (`google_calendar.create_event`),
+ * edits, web search, subagent calls, and Codex app calls as `codex_apps:<tool>`,
  * which act on the account's connected services outside the host's actions. Calls to the host's
  * own MCP actions are traced by the host when they run.
  */
@@ -594,7 +595,7 @@ function nativeItemName(item: JsonObject): string | null {
   if (['commandExecution', 'fileChange', 'webSearch', 'collabAgentToolCall'].includes(item.type))
     return item.type;
   if (item.type === 'mcpToolCall' && item.server === 'codex_apps' && typeof item.tool === 'string')
-    return item.tool;
+    return `${CODEX_APP_PREFIX}${item.tool}`;
   return null;
 }
 
@@ -1966,7 +1967,16 @@ export class CodexAppServerProcess {
       const input: JsonObject = { nativeToolUseId: observationId, providerToolUseId: item.id };
       if (subagent) input.subagentThreadId = threadId;
       // Input only: stdout, results and file diffs are not diagnostic inputs.
-      for (const key of ['command', 'cwd', 'action', 'query', 'queries', 'url', 'arguments']) {
+      for (const key of [
+        'command',
+        'cwd',
+        'action',
+        'query',
+        'queries',
+        'url',
+        'arguments',
+        'readOnlyHint',
+      ]) {
         if (item[key] !== undefined) input[key] = item[key];
       }
       if (Array.isArray(item.changes))

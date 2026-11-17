@@ -150,7 +150,8 @@ account's connectors: Google Calendar, Gmail, Drive and the rest), as Kagemusha'
 can book a meeting with a Meet link. They had been off since the May 2026 port with no recorded
 reason. App writes (create an event, send mail) run without an approval prompt
 (`[apps._default] default_tools_approval_mode = "approve"`), since `approval_policy = "never"`
-otherwise fails them. Each app call is recorded in `tool_traces` under its tool name; their results
+otherwise fails them. Each app call is recorded in `tool_traces` as `codex_apps:<tool>`, and an app write marks its turn
+as not replayable; their results
 reach the model unquoted. Member sessions, owner-role DMs included, keep apps off; the Claude backend has no
 equivalent.
 
