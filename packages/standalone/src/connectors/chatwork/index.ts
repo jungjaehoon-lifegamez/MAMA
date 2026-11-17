@@ -167,6 +167,59 @@ export class ChatworkConnector implements IConnector {
     }
   }
 
+  /** The rooms this source reads, with their configured names: the only rooms a send may post to. */
+  rooms(): Array<{ id: string; name: string | null }> {
+    return Object.entries(this.config.channels).map(([id, channel]) => ({
+      id,
+      name: channel.name ?? null,
+    }));
+  }
+
+  /** The Chatwork account the token posts as, for an approval card (approvals.md, S1). */
+  async account(): Promise<{ id: string; name: string }> {
+    if (!this.token) throw new Error('ChatworkConnector not initialized');
+    const res = await this.http(`${this.baseUrl}/me`, {
+      headers: { 'X-ChatWorkToken': this.token },
+    });
+    if (!res.ok) throw new Error(`Chatwork /me answered ${res.status}`);
+    const me = (await res.json()) as { account_id: number; name: string };
+    return { id: String(me.account_id), name: me.name };
+  }
+
+  /**
+   * Posts one message as the token's account. Only an approved proposal calls this
+   * (chatwork.message.send). A refusal is not posted; a lost answer may have been, and the error
+   * says which so nobody posts it twice.
+   */
+  async sendMessage(roomId: string, body: string): Promise<{ messageId: string }> {
+    if (!this.token) throw new Error('ChatworkConnector not initialized');
+    let res: Response;
+    try {
+      res = await this.http(`${this.baseUrl}/rooms/${encodeURIComponent(roomId)}/messages`, {
+        method: 'POST',
+        headers: {
+          'X-ChatWorkToken': this.token,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({ body }).toString(),
+      });
+    } catch (error) {
+      throw new Error(
+        `Chatwork did not answer (${messageWithCauses(error)}); the message may have been posted: read the room before sending it again.`
+      );
+    }
+    if (res.status >= 500)
+      throw new Error(
+        `Chatwork answered ${res.status}; the message may have been posted: read the room before sending it again.`
+      );
+    if (!res.ok)
+      throw new Error(
+        `Chatwork refused the message (${res.status}): ${await res.text()}. It was not posted.`
+      );
+    const posted = (await res.json()) as { message_id: string | number };
+    return { messageId: String(posted.message_id) };
+  }
+
   async poll(since: Date): Promise<NormalizedItem[]> {
     if (!this.token) throw new Error('ChatworkConnector not initialized');
 

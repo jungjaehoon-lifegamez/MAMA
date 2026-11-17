@@ -56,7 +56,7 @@ export function approvalActionRegistrations(ports: ApprovalActionPorts): ActionR
       contract: {
         name: APPROVAL_PROPOSE_ACTION,
         summary:
-          'Propose a write that runs only after an owner approves it in Telegram: action is the write (google.calendar.write, …) and input exactly what it takes. The host shows the owner a card made from that input and runs it once if approved. requestKey names this proposal within the turn: the same key again returns the same proposal. reason is one line on why, shown on the card. A changed request is a new proposal. Not in a replay.',
+          'Propose a write that runs only after an owner approves it in Telegram: action is the write (google.calendar.write, chatwork.message.send, slack.message.send) and input exactly what it takes. The host shows the owner a card made from that input and runs it once if approved. requestKey names this proposal within the turn: the same key again returns the same proposal. reason is one line on why, shown on the card. A changed request is a new proposal. Not in a replay.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,

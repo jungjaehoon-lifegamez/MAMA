@@ -688,6 +688,7 @@ describe('one owner native session', () => {
           .sort()
       ).toEqual([
         'approval.propose',
+        'chatwork.message.send',
         'deliver.telegram.file',
         'document.render',
         'drive.download',
@@ -729,6 +730,7 @@ describe('one owner native session', () => {
         'skill.publish',
         'skill.read',
         'skill.unpublish',
+        'slack.message.send',
         'source.attachment.download',
         'source.attachment.list',
         'source.read',

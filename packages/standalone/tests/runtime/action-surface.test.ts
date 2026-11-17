@@ -118,6 +118,7 @@ describe('W1 action surface', () => {
     });
     const expected = [
       'approval.propose',
+      'chatwork.message.send',
       'code_act',
       'deliver.telegram.file',
       'document.render',
@@ -161,6 +162,7 @@ describe('W1 action surface', () => {
       'skill.publish',
       'skill.read',
       'skill.unpublish',
+      'slack.message.send',
       'source.attachment.download',
       'source.attachment.list',
       'source.read',

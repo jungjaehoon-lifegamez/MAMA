@@ -97,6 +97,7 @@ import {
 import { approvalActionRegistrations, type ApprovalActionPorts } from '../api/approval-actions.js';
 import { createApprovalStore, type ApprovalStore } from './approval-store.js';
 import { APPROVAL_CARDS } from './approval-cards.js';
+import { messageSendActionRegistrations, messageSendCards } from '../api/message-send-actions.js';
 
 const OWNER_ACTIONS = [
   'skill.list',
@@ -117,6 +118,8 @@ const OWNER_ACTIONS = [
   'drive.download',
   'google.read',
   'google.calendar.write',
+  'chatwork.message.send',
+  'slack.message.send',
   'approval.propose',
   'judge',
   'owner.timezone.set',
@@ -520,6 +523,11 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     const record = (result.data as { record: object | null }).record;
     return record !== null && !isErasedRecord(record);
   };
+  // Sends post through the running connectors, which hold the tokens (approvals.md, S1, S2).
+  const messagePorts =
+    options.attachmentPorts?.connectors === undefined
+      ? {}
+      : { connectors: options.attachmentPorts.connectors };
   const registrations = [
     ...skillActionRegistrations(skills, options),
     ...memberNoticeRegistrations({
@@ -610,6 +618,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
             scratchDir: join(options.runtimeRoot, 'runtime', 'google-calendar'),
           }),
         },
+        ...messageSendCards(messagePorts),
       },
       sendCard: (target, html, buttons) => {
         if (!options.approvalCards)
@@ -618,6 +627,8 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       },
       timeZone: () => options.timeZone.get(),
     }),
+    // Messages posted in a source's own rooms, each after an owner approves it (approvals.md, S1, S2).
+    ...messageSendActionRegistrations(messagePorts),
     // Calendar events, written with the same sign-in, for every backend (owner, 2026-11-17).
     ...googleCalendarWriteActionRegistrations({
       scratchDir: join(options.runtimeRoot, 'runtime', 'google-calendar'),
