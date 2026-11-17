@@ -46,6 +46,8 @@ describe('ChatworkConnector sends (approvals.md, S1)', () => {
     await connector.init();
     await expect(connector.account()).resolves.toEqual({ id: '7', name: 'account-a' });
     expect(http.mock.calls[0]?.[0]).toBe('https://api.chatwork.com/v2/me');
+    // Read right before a post, so bounded like it.
+    expect(http.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it('posts one message as a form and returns its id', async () => {

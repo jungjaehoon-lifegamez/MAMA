@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the reply before anything records it, deletes it from the chat and checks it with the service.
   Every reply to an account prompt stays with the host: one that comes late, after a restart or
   as a caption is deleted and the person is asked to start again.
+  A person's personal-records export includes the writes they proposed from their DM, and
+  erasing their records deletes them.
   Messages proposed from that DM then post as that person, and only that person approves them.
   Cards name the account; the proposal keeps its id and the run posts only while the same account
   holds the credential. `account.list` and `account.disconnect` manage them; offboarding removes

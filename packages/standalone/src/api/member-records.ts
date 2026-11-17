@@ -181,6 +181,14 @@ export function createMemberRecords(options: {
         .all(id),
       ...p.rawStore.exportScope('chat', 'user', id),
       message_ledger: ledger.listForTelegramDm(dm(p.access(id))),
+      // The writes this person proposed from their DM (approvals.md, P1): their drafts and cards.
+      approval_proposals: options.adapter
+        .prepare(
+          `SELECT id, action, input_json, status, reason, card_html, account_id, created_at,
+                  expires_at, decided_by, decided_at, result_json
+             FROM approval_proposals WHERE principal_id=? ORDER BY created_at, id`
+        )
+        .all(id),
     };
     return {
       stores,
@@ -473,6 +481,12 @@ export function createMemberRecords(options: {
                 "DELETE FROM connector_event_index WHERE source_connector='chat' AND memory_scope_kind='user' AND memory_scope_id=?"
               )
               .run(id).changes;
+          step = 'approval_proposals';
+          // A deleted proposal can no longer be approved: its card answers "Unknown proposal".
+          product.approval_proposals =
+            (product.approval_proposals ?? 0) +
+            options.adapter.prepare('DELETE FROM approval_proposals WHERE principal_id=?').run(id)
+              .changes;
           step = 'core';
           core = erasePrincipalRecords(options.adapter, {
             principalId: id,

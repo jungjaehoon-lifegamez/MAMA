@@ -185,8 +185,10 @@ export class ChatworkConnector implements IConnector {
   async account(token?: string): Promise<{ id: string; name: string }> {
     const as = token ?? this.token;
     if (!as) throw new Error('ChatworkConnector not initialized');
+    // Read just before a post (P1): bounded like the post, so a stalled check cannot hold the press.
     const res = await this.http(`${this.baseUrl}/me`, {
       headers: { 'X-ChatWorkToken': as },
+      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`Chatwork /me answered ${res.status}`);
     const me = (await res.json()) as { account_id: number; name: string };
