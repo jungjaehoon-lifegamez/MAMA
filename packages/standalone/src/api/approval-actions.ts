@@ -45,8 +45,20 @@ export interface ApprovalActionPorts {
         /**
          * What the write would change, read when it is proposed (a delete's event title and time).
          * A failure refuses the proposal: a card must not name something that is not there.
+         * `proposer` is the proposing person, null for the common session.
          */
-        context?: (input: unknown) => Promise<string[]>;
+        context?: (input: unknown, proposer: string | null) => Promise<string[]>;
+        /**
+         * Whether a person's DM may propose it: the write then runs on that person's own
+         * connected account (A5, P1). Without it only the common session proposes.
+         */
+        personal?: boolean;
+        /**
+         * The account the write posts as: its id is stored on the row and checked again when it
+         * runs, and its line goes on the card. An error named `account_not_connected` refuses the
+         * proposal with how to connect it.
+         */
+        account?: (proposer: string | null) => Promise<{ id: string; line: string }>;
       }
     >
   >;
@@ -159,12 +171,12 @@ export function approvalActionRegistrations(ports: ApprovalActionPorts): ActionR
         if (invalid !== null) throw failure('approval_invalid_input', invalid, 'invalid_input');
         const principalId =
           context.access.principalId === ports.ownerPrincipalId ? null : context.access.principalId;
-        // A DM's write runs on that person's own account (approvals.md, A5), and no person can
-        // connect one yet (P1, G1): until then only the common session proposes.
-        if (principalId !== null)
+        // A DM's write runs on that person's own account (approvals.md, A5). An action that cannot
+        // run on one yet (Google until G1) is proposed from the common group only.
+        if (principalId !== null && !card.personal)
           throw failure(
             'approval_personal_account_missing',
-            'Writes are proposed from the common group for now: a DM write needs the person’s own connected account, which MAMA cannot connect yet.',
+            `${values.action} is proposed from the common group for now: a DM write runs on the person’s own account, and ${values.action} cannot use one yet.`,
             'denied'
           );
         // A repeat answers from what was stored, before anything is read again.
@@ -181,10 +193,23 @@ export function approvalActionRegistrations(ports: ApprovalActionPorts): ActionR
             state: earlier.messageId === null ? 'unknown' : 'sent',
             repeated: true,
           };
+        let account: { id: string; line: string } | undefined;
+        if (card.account)
+          try {
+            account = await card.account(principalId);
+          } catch (error) {
+            if (error instanceof Error && error.name === 'account_not_connected')
+              throw failure('approval_account_missing', error.message, 'denied');
+            throw failure(
+              'approval_account_unreadable',
+              `The account ${values.action} would post as could not be read: ${error instanceof Error ? error.message : String(error)}`,
+              'invalid_input'
+            );
+          }
         let current: string[] = [];
         if (card.context)
           try {
-            current = await card.context(values.input);
+            current = await card.context(values.input, principalId);
           } catch (error) {
             throw failure(
               'approval_target_unreadable',
@@ -194,9 +219,14 @@ export function approvalActionRegistrations(ports: ApprovalActionPorts): ActionR
           }
 
         // Measured before anything is stored: the expiry line is the same length either way.
+        const lines = [
+          ...card.render(values.input),
+          ...current,
+          ...(account === undefined ? [] : [account.line]),
+        ];
         const draft = renderApprovalCard(
           card.title,
-          [...card.render(values.input), ...current],
+          lines,
           {
             reason: values.reason ?? null,
             expiresAt: Date.now() + APPROVAL_EXPIRY_MS,
@@ -222,6 +252,7 @@ export function approvalActionRegistrations(ports: ApprovalActionPorts): ActionR
             ...(context.session?.sourceRefs === undefined
               ? {}
               : { sourceRefs: context.session.sourceRefs }),
+            ...(account === undefined ? {} : { accountId: account.id }),
           });
         } catch (error) {
           if (error instanceof ApprovalConflictError)
@@ -241,12 +272,7 @@ export function approvalActionRegistrations(ports: ApprovalActionPorts): ActionR
         };
         if (Buffer.byteLength(buttons.approve) > CALLBACK_DATA_MAX_BYTES)
           throw new Error(`proposal ${proposal.id} is too long for a Telegram button`);
-        const html = renderApprovalCard(
-          card.title,
-          [...card.render(values.input), ...current],
-          proposal,
-          ports.timeZone()
-        );
+        const html = renderApprovalCard(card.title, lines, proposal, ports.timeZone());
         ports.store.setCardHtml(proposal.id, html);
         try {
           const sent = await ports.sendCard({ principalId }, html, buttons);

@@ -1,9 +1,11 @@
 /**
  * chatwork.message.send and slack.message.send — a message posted in a room or channel the source
  * reads, only after an owner approves its card (docs/development/work/approvals.md, S1 and S2).
- * Both are `approval: 'always'`: core refuses a direct call, an owner's own turn included. The post
- * goes through the running connector, so the token never leaves it. From the common session it
- * posts as the install's account (a Chatwork user, the Slack bot); DM proposals wait for P1.
+ * Both are `approval: 'always'`: core refuses a direct call, an owner's own turn included. From the
+ * common session a post goes as the install's account (a Chatwork user, the Slack bot), whose token
+ * stays in the running connector; from a person's DM, as that person's own connected account (P1),
+ * never the install's. The card names the account, the row keeps its id, and the run posts only
+ * while the same account holds the credential.
  */
 import type { ActionRegistration } from '@jungjaehoon/mama-core';
 
@@ -11,12 +13,60 @@ import { ChatworkConnector } from '../connectors/chatwork/index.js';
 import type { ConnectorRegistry } from '../connectors/framework/connector-registry.js';
 import { SlackConnector } from '../connectors/slack/index.js';
 import type { ApprovalActionPorts } from './approval-actions.js';
+import type { AccountService, AccountStore } from '../runtime/account-store.js';
 
 export const CHATWORK_MESSAGE_SEND_ACTION = 'chatwork.message.send';
 export const SLACK_MESSAGE_SEND_ACTION = 'slack.message.send';
 
 export interface MessageSendPorts {
   connectors?: () => ConnectorRegistry | null;
+  /** The common session's principal: it posts with the install's accounts. */
+  ownerPrincipalId: string;
+  accounts: AccountStore;
+  /** The account an approved proposal's card named (its row). */
+  proposalAccount(proposalId: string): string | null;
+}
+
+const SERVICE_NAMES: Record<AccountService, string> = { chatwork: 'Chatwork', slack: 'Slack' };
+
+/**
+ * The token a principal posts with: undefined for the common session (the connector's own), the
+ * person's connected one otherwise. A person without one is refused: nobody's write runs on
+ * another's account.
+ */
+function tokenFor(
+  ports: MessageSendPorts,
+  principalId: string,
+  service: AccountService
+): string | undefined {
+  if (principalId === ports.ownerPrincipalId) return undefined;
+  const account = ports.accounts.get(principalId, service);
+  if (account) return account.token;
+  throw failure(
+    'account_not_connected',
+    `Your ${SERVICE_NAMES[service]} account is not connected, and a DM's message posts as you. Connect it with account.connect ${service}: you reply to the host's message with your token, and it never passes through the conversation.`
+  );
+}
+
+/** Posts only while the account the card named holds the credential (P1). */
+async function sameAccount(
+  ports: MessageSendPorts,
+  proposalId: string | undefined,
+  current: () => Promise<{ id: string }>,
+  service: AccountService
+): Promise<void> {
+  const named = proposalId === undefined ? null : ports.proposalAccount(proposalId);
+  const now = (await current()).id;
+  if (named === null)
+    throw failure(
+      'account_changed',
+      'This card was proposed before cards recorded the account they post as. It was not posted: propose it again.'
+    );
+  if (named !== now)
+    throw failure(
+      'account_changed',
+      `The ${SERVICE_NAMES[service]} credential now posts as account ${now}, but the card named ${String(named)}. It was not posted: propose it again.`
+    );
 }
 
 function failure(name: string, message: string, code?: 'invalid_input'): Error {
@@ -85,7 +135,7 @@ export function messageSendActionRegistrations(ports: MessageSendPorts): ActionR
         readsConnector: { fixed: 'chatwork' },
         approval: 'always',
         summary:
-          'Post a message in a Chatwork room the Chatwork source reads, as the install’s Chatwork account. Runs only after an owner approves it: propose it with approval.propose. roomId is the room’s id (the room key source.search and source.read show); body is the whole message as it will be posted. Returns the room and the posted message id.',
+          'Post a message in a Chatwork room the Chatwork source reads, as the install’s Chatwork account from the common group, as your own connected account from your DM. Runs only after an owner approves it: propose it with approval.propose. roomId is the room’s id (the room key source.search and source.read show); body is the whole message as it will be posted. Returns the room and the posted message id.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -102,11 +152,18 @@ export function messageSendActionRegistrations(ports: MessageSendPorts): ActionR
           },
         ],
       },
-      exec: async (input) => {
+      exec: async (input, context) => {
         const values = input as ChatworkSend;
         const connector = chatwork(ports);
         const room = chatworkRoom(connector, values.roomId);
-        const posted = await connector.sendMessage(room.id, values.body);
+        const token = tokenFor(ports, context.access.principalId, 'chatwork');
+        await sameAccount(
+          ports,
+          context.session?.approvedProposalId,
+          () => connector.account(token),
+          'chatwork'
+        );
+        const posted = await connector.sendMessage(room.id, values.body, token);
         return { roomId: room.id, room: room.name, messageId: posted.messageId };
       },
     },
@@ -116,7 +173,7 @@ export function messageSendActionRegistrations(ports: MessageSendPorts): ActionR
         readsConnector: { fixed: 'slack' },
         approval: 'always',
         summary:
-          'Post a message in a Slack channel the Slack source reads, as the install’s Slack bot. Runs only after an owner approves it: propose it with approval.propose. channel is the channel id; threadTs, the ts of the message to reply under; text is the whole message as it will be posted. Returns the channel and the posted message ts.',
+          'Post a message in a Slack channel the Slack source reads, as the install’s Slack bot from the common group, as your own connected account from your DM. Runs only after an owner approves it: propose it with approval.propose. channel is the channel id; threadTs, the ts of the message to reply under; text is the whole message as it will be posted. Returns the channel and the posted message ts.',
         inputSchema: {
           type: 'object',
           additionalProperties: false,
@@ -138,11 +195,18 @@ export function messageSendActionRegistrations(ports: MessageSendPorts): ActionR
           },
         ],
       },
-      exec: async (input) => {
+      exec: async (input, context) => {
         const values = input as SlackSend;
         const connector = slack(ports);
         const channel = slackChannel(connector, values.channel);
-        const posted = await connector.postMessage(channel.id, values.text, values.threadTs);
+        const token = tokenFor(ports, context.access.principalId, 'slack');
+        await sameAccount(
+          ports,
+          context.session?.approvedProposalId,
+          () => connector.account(token),
+          'slack'
+        );
+        const posted = await connector.postMessage(channel.id, values.text, values.threadTs, token);
         return { channel: posted.channel, name: channel.name, ts: posted.ts };
       },
     },
@@ -161,15 +225,19 @@ export function messageSendCards(ports: MessageSendPorts): ApprovalActionPorts['
         const values = input as ChatworkSend;
         return ['Action: post a message in Chatwork', `Message: ${values.body}`];
       },
+      personal: true,
+      account: async (proposer) => {
+        const token = tokenFor(ports, proposer ?? ports.ownerPrincipalId, 'chatwork');
+        const account = await chatwork(ports).account(token);
+        return {
+          id: account.id,
+          line: `Posts as: ${account.name} (${proposer === null ? 'the install’s' : 'your own'} Chatwork account ${account.id})`,
+        };
+      },
       context: async (input) => {
         const values = input as ChatworkSend;
-        const connector = chatwork(ports);
-        const room = chatworkRoom(connector, values.roomId);
-        const account = await connector.account();
-        return [
-          `Room: ${room.name ?? '(no name)'} (${room.id})`,
-          `Posts as: ${account.name} (Chatwork account ${account.id})`,
-        ];
+        const room = chatworkRoom(chatwork(ports), values.roomId);
+        return [`Room: ${room.name ?? '(no name)'} (${room.id})`];
       },
     },
     [SLACK_MESSAGE_SEND_ACTION]: {
@@ -182,15 +250,19 @@ export function messageSendCards(ports: MessageSendPorts): ApprovalActionPorts['
           `Message: ${values.text}`,
         ];
       },
+      personal: true,
+      account: async (proposer) => {
+        const token = tokenFor(ports, proposer ?? ports.ownerPrincipalId, 'slack');
+        const account = await slack(ports).account(token);
+        return {
+          id: account.id,
+          line: `Posts as: ${account.name} (${account.bot ? 'the bot' : proposer === null ? 'the install’s account' : 'your own account'})`,
+        };
+      },
       context: async (input) => {
         const values = input as SlackSend;
-        const connector = slack(ports);
-        const channel = slackChannel(connector, values.channel);
-        const account = await connector.account();
-        return [
-          `Channel: #${channel.name ?? '(no name)'} (${channel.id})`,
-          `Posts as: ${account.name} (${account.bot ? 'the bot' : 'a person'})`,
-        ];
+        const channel = slackChannel(slack(ports), values.channel);
+        return [`Channel: #${channel.name ?? '(no name)'} (${channel.id})`];
       },
     },
   };

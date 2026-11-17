@@ -40,6 +40,8 @@ export interface Proposal {
   decidedBy: string | null;
   decidedAt: number | null;
   result: unknown;
+  /** The account the write posts as, as its card named it (P1); null when it names none. */
+  accountId: string | null;
 }
 
 export interface ProposalInput {
@@ -50,6 +52,7 @@ export interface ProposalInput {
   requestKey: string;
   reason?: string;
   sourceRefs?: readonly string[];
+  accountId?: string;
 }
 
 export type ApprovalRefusal = 'wrong_nonce' | 'expired' | 'unknown_proposal' | `already_${string}`;
@@ -111,6 +114,7 @@ interface Row {
   decided_by: string | null;
   decided_at: number | null;
   result_json: string | null;
+  account_id: string | null;
 }
 
 function toProposal(row: Row): Proposal {
@@ -133,6 +137,7 @@ function toProposal(row: Row): Proposal {
     decidedBy: row.decided_by,
     decidedAt: row.decided_at,
     result: row.result_json === null ? null : JSON.parse(row.result_json),
+    accountId: row.account_id,
   };
 }
 
@@ -204,8 +209,9 @@ export function createApprovalStore(
       adapter
         .prepare(
           `INSERT INTO approval_proposals (id, action, input_json, fingerprint, nonce_hash, status,
-             principal_id, model_run_id, request_key, reason, source_refs_json, created_at, expires_at)
-           VALUES (?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, ?, ?)`
+             principal_id, model_run_id, request_key, reason, source_refs_json, created_at, expires_at,
+             account_id)
+           VALUES (?, ?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           id,
@@ -219,7 +225,8 @@ export function createApprovalStore(
           input.reason ?? null,
           JSON.stringify(input.sourceRefs ?? []),
           at,
-          at + APPROVAL_EXPIRY_MS
+          at + APPROVAL_EXPIRY_MS,
+          input.accountId ?? null
         );
       return { proposal: must(id), nonce, repeated: false };
     },

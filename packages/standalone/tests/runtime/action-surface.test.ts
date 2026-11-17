@@ -185,6 +185,10 @@ describe('W1 action surface', () => {
     ).toEqual(
       [
         ...expected,
+        // A person's own accounts are managed from their DM, not the common session (P1, P2).
+        'account.connect',
+        'account.disconnect',
+        'account.list',
         'memory.share',
         'records.export',
         'records.erase',

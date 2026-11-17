@@ -46,6 +46,8 @@ describe('ChatworkConnector sends (approvals.md, S1)', () => {
     await connector.init();
     await expect(connector.account()).resolves.toEqual({ id: '7', name: 'account-a' });
     expect(http.mock.calls[0]?.[0]).toBe('https://api.chatwork.com/v2/me');
+    // Read right before a post, so bounded like it.
+    expect(http.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it('posts one message as a form and returns its id', async () => {
@@ -117,5 +119,28 @@ describe('ChatworkConnector sends (approvals.md, S1)', () => {
       name: 'outcome_unknown',
       message: expect.stringMatching(/answered 200.*likely posted/),
     });
+  });
+});
+
+describe('ChatworkConnector sends with a person’s token (approvals.md, P1)', () => {
+  beforeEach(() => {
+    process.env[envName] = 'fixture-chatwork-token';
+  });
+  afterEach(() => {
+    delete process.env[envName];
+  });
+
+  it('posts and names the account with the token it is given, not the install’s', async () => {
+    const http = vi.fn(async (url: string) =>
+      String(url).endsWith('/me')
+        ? json(200, { account_id: 8, name: 'person-b' })
+        : json(200, { message_id: '9002' })
+    );
+    const connector = new ChatworkConnector(config, { fetch: http as unknown as typeof fetch });
+    await connector.init();
+    await connector.account('person-token');
+    await connector.sendMessage('111', 'hi', 'person-token');
+    for (const [, request] of http.mock.calls)
+      expect((request as RequestInit).headers).toMatchObject({ 'X-ChatWorkToken': 'person-token' });
   });
 });

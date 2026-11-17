@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Personal accounts. An owner-role person connects their own Chatwork or Slack account from their
+  DM: the agent calls `account.connect`, the host asks for the token as a reply in that DM, takes
+  the reply before anything records it, deletes it from the chat and checks it with the service.
+  Every reply to an account prompt stays with the host: one that comes late, after a restart or
+  as a caption is deleted and the person is asked to start again.
+  A person's personal-records export includes the writes they proposed from their DM, and
+  erasing their records deletes them.
+  Messages proposed from that DM then post as that person, and only that person approves them.
+  Cards name the account; the proposal keeps its id and the run posts only while the same account
+  holds the credential. `account.list` and `account.disconnect` manage them; offboarding removes
+  them. Calendar writes stay in the common group until a person can connect their own Google
+  login.
+
 - Chatwork and Slack messages through approvals: `chatwork.message.send` and `slack.message.send`
   post in a room or channel the source reads, only after an owner approves the card, in an
   owner's own turn too. The card shows the room by name, the account it posts as (the install's

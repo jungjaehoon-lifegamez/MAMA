@@ -10,6 +10,10 @@ import { ChatworkConnector } from '../../src/connectors/chatwork/index.js';
 import { SlackConnector } from '../../src/connectors/slack/index.js';
 import type { ConnectorRegistry } from '../../src/connectors/framework/connector-registry.js';
 import type { ConnectorConfig } from '../../src/connectors/framework/types.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { createAccountStore, type AccountStore } from '../../src/runtime/account-store.js';
 
 const chatworkConfig: ConnectorConfig = {
   enabled: true,
@@ -37,22 +41,37 @@ let http: ReturnType<typeof vi.fn>;
 let postMessage: ReturnType<typeof vi.fn>;
 let authTest: ReturnType<typeof vi.fn>;
 let registry: ConnectorRegistry;
+let accounts: AccountStore;
+let accountsRoot: string;
+/** The account the proposal's card named. */
+let named: string | null;
 
-const ports = () => ({ connectors: () => registry });
+const ports = () => ({
+  connectors: () => registry,
+  ownerPrincipalId: 'owner',
+  accounts,
+  proposalAccount: () => named,
+});
 
 function dispatch(
   action: string,
   input: Record<string, unknown>,
-  session?: ActionContext['session']
+  session?: ActionContext['session'],
+  principalId = 'owner'
 ) {
   return createDispatcher(createCatalog(messageSendActionRegistrations(ports())))(
     { action, input, operationId: 'proposal-1' },
-    { access, ...(session === undefined ? {} : { session }) }
+    { access: { ...access, principalId }, ...(session === undefined ? {} : { session }) }
   );
 }
 
+const posts = () => http.mock.calls.filter(([url]) => !String(url).endsWith('/me'));
+
 describe('chatwork.message.send and slack.message.send (approvals.md, S1, S2)', () => {
   beforeEach(async () => {
+    accountsRoot = mkdtempSync(join(tmpdir(), 'mama-send-accounts-'));
+    accounts = createAccountStore(accountsRoot);
+    named = null;
     process.env.MAMA_CHATWORK_TOKEN = 'fixture-chatwork-token';
     process.env.MAMA_SLACK_TOKEN = 'fixture-slack-token';
     http = vi.fn(async (url: string) =>
@@ -77,6 +96,7 @@ describe('chatwork.message.send and slack.message.send (approvals.md, S1, S2)', 
     } as unknown as ConnectorRegistry;
   });
   afterEach(() => {
+    rmSync(accountsRoot, { recursive: true, force: true });
     delete process.env.MAMA_CHATWORK_TOKEN;
     delete process.env.MAMA_SLACK_TOKEN;
   });
@@ -94,6 +114,7 @@ describe('chatwork.message.send and slack.message.send (approvals.md, S1, S2)', 
   });
 
   it('posts exactly once to Chatwork when approved', async () => {
+    named = '7';
     const result = await dispatch(
       'chatwork.message.send',
       { roomId: '111', body: 'hello' },
@@ -103,11 +124,12 @@ describe('chatwork.message.send and slack.message.send (approvals.md, S1, S2)', 
       status: 'completed',
       data: { roomId: '111', room: 'room-one', messageId: '9001' },
     });
-    expect(http).toHaveBeenCalledTimes(1);
-    expect(http.mock.calls[0]?.[0]).toBe('https://api.chatwork.com/v2/rooms/111/messages');
+    expect(posts()).toHaveLength(1);
+    expect(posts()[0]?.[0]).toBe('https://api.chatwork.com/v2/rooms/111/messages');
   });
 
   it('posts exactly once to Slack when approved, in the thread given', async () => {
+    named = 'U1';
     const result = await dispatch(
       'slack.message.send',
       { channel: 'C1', text: 'hello', threadTs: '1690000000.000200' },
@@ -152,8 +174,11 @@ describe('chatwork.message.send and slack.message.send (approvals.md, S1, S2)', 
       'Action: post a message in Chatwork',
       'Message: line one\nline two',
       'Room: room-one (111)',
-      'Posts as: account-a (Chatwork account 7)',
     ]);
+    expect(await cards['chatwork.message.send']!.account!(null)).toEqual({
+      id: '7',
+      line: 'Posts as: account-a (the install’s Chatwork account 7)',
+    });
     const slackInput = { channel: 'C1', text: 'hello', threadTs: '1690000000.000200' };
     expect([
       ...cards['slack.message.send']!.render(slackInput),
@@ -163,8 +188,11 @@ describe('chatwork.message.send and slack.message.send (approvals.md, S1, S2)', 
       'In thread: 1690000000.000200',
       'Message: hello',
       'Channel: #channel-one (C1)',
-      'Posts as: mama-bot (the bot)',
     ]);
+    expect(await cards['slack.message.send']!.account!(null)).toEqual({
+      id: 'U1',
+      line: 'Posts as: mama-bot (the bot)',
+    });
   });
 
   it('a card for a room the source does not read is refused, so no proposal is stored', async () => {
@@ -181,5 +209,83 @@ describe('chatwork.message.send and slack.message.send (approvals.md, S1, S2)', 
     registry = { get: () => undefined } as unknown as ConnectorRegistry;
     const result = await dispatch('chatwork.message.send', { roomId: '111', body: 'x' }, approved);
     expect(result.error?.message).toMatch(/The Chatwork source is not running/);
+  });
+
+  it('a DM posts with that person’s own token and names their account (P1)', async () => {
+    accounts.set('person-a', 'chatwork', { token: 'person-a-token', accountId: '8', name: 'a' });
+    http.mockImplementation(async (url: string) =>
+      String(url).endsWith('/me')
+        ? { ok: true, status: 200, json: async () => ({ account_id: 8, name: 'person-a' }) }
+        : { ok: true, status: 200, json: async () => ({ message_id: '9003' }) }
+    );
+    const cards = messageSendCards(ports());
+    expect(await cards['chatwork.message.send']!.account!('person-a')).toEqual({
+      id: '8',
+      line: 'Posts as: person-a (your own Chatwork account 8)',
+    });
+    named = '8';
+    const result = await dispatch(
+      'chatwork.message.send',
+      { roomId: '111', body: 'mine' },
+      approved,
+      'person-a'
+    );
+    expect(result).toMatchObject({ status: 'completed' });
+    for (const [, request] of http.mock.calls)
+      expect((request as RequestInit).headers).toMatchObject({
+        'X-ChatWorkToken': 'person-a-token',
+      });
+  });
+
+  it('a person’s token is used for no one else, and a person without one is refused', async () => {
+    accounts.set('person-a', 'chatwork', { token: 'person-a-token', accountId: '8', name: 'a' });
+    const cards = messageSendCards(ports());
+    await expect(cards['chatwork.message.send']!.account!('person-b')).rejects.toMatchObject({
+      name: 'account_not_connected',
+      message: expect.stringMatching(/Chatwork account is not connected.*account.connect chatwork/),
+    });
+    await expect(cards['slack.message.send']!.account!('person-a')).rejects.toMatchObject({
+      name: 'account_not_connected',
+    });
+    named = '8';
+    const result = await dispatch(
+      'chatwork.message.send',
+      { roomId: '111', body: 'x' },
+      approved,
+      'person-b'
+    );
+    expect(result.error?.message).toMatch(/not connected/);
+    expect(http).not.toHaveBeenCalled();
+  });
+
+  it('removing a person’s account refuses their next post', async () => {
+    accounts.set('person-a', 'chatwork', { token: 'person-a-token', accountId: '8', name: 'a' });
+    accounts.remove('person-a', 'chatwork');
+    named = '8';
+    const result = await dispatch(
+      'chatwork.message.send',
+      { roomId: '111', body: 'x' },
+      approved,
+      'person-a'
+    );
+    expect(result.error?.message).toMatch(/not connected/);
+    expect(http).not.toHaveBeenCalled();
+  });
+
+  it('posts nothing when the credential now belongs to another account than the card named', async () => {
+    named = '6';
+    const chatwork = await dispatch(
+      'chatwork.message.send',
+      { roomId: '111', body: 'x' },
+      approved
+    );
+    expect(chatwork.error?.message).toMatch(
+      /now posts as account 7, but the card named 6.*not posted/
+    );
+    expect(posts()).toHaveLength(0);
+    named = 'U9';
+    const slack = await dispatch('slack.message.send', { channel: 'C1', text: 'x' }, approved);
+    expect(slack.error?.message).toMatch(/not posted/);
+    expect(postMessage).not.toHaveBeenCalled();
   });
 });

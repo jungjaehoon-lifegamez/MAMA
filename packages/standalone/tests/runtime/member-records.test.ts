@@ -14,6 +14,7 @@ import {
   type ErasureStoreCount,
 } from '@jungjaehoon/mama-core';
 import { fixture, roots } from '../helpers/member-runtime.js';
+import { createApprovalStore } from '../../src/runtime/approval-store.js';
 import { memberPaths, memberClaudeTmpDir } from '../../src/runtime/member-paths.js';
 import { memberFileInventory } from '../../src/api/member-export.js';
 import { resolvePrincipalAccess } from '../../src/runtime/principal-access.js';
@@ -668,6 +669,19 @@ it('erases after settlement, preserves owner and shared rows, receipts counts an
     )
     .all();
   rawBefore.close();
+  // A proposal from the member's DM is theirs; the common session's is not (approvals.md, P1).
+  const proposals = createApprovalStore(f.runtime.database.adapter);
+  for (const [principalId, requestKey] of [
+    [f.member, 'member-draft'],
+    [null, 'common-draft'],
+  ] as const)
+    proposals.propose({
+      action: 'chatwork.message.send',
+      input: { roomId: '1', body: `fixture ${requestKey}` },
+      principalId,
+      modelRunId: null,
+      requestKey,
+    });
   const p = await f.preview();
   const oldSession = f.turns.at(-1)!.session;
   const oldPoolSession = f.pool.getSessionInfo(`member:${f.member}:runtime`)!.sessionId;
@@ -709,6 +723,11 @@ it('erases after settlement, preserves owner and shared rows, receipts counts an
   expect(receipt.product.connector_event_index).toBe(exportedProduct.counts.connector_event_index);
   expect(receipt.product.pending_core_projections).toBe(1);
   expect(receipt.product.message_ledger).toBe(2);
+  expect(receipt.product.approval_proposals).toBe(1);
+  expect(exportedProduct.counts.approval_proposals).toBe(1);
+  expect(db.prepare('SELECT principal_id, request_key FROM approval_proposals').all()).toEqual([
+    { principal_id: null, request_key: 'common-draft' },
+  ]);
   expect(f.ledger.get('member-entry')).toBeNull();
   expect(f.ledger.get(`telegram:${f.memberDm}:123`)).toBeNull();
   expect(f.ledger.get('owner-entry')).toEqual(ledgerOwner);

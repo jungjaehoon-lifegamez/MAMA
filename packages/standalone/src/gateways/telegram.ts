@@ -101,6 +101,22 @@ export interface TelegramGatewayOptions {
   hostCommands: TelegramHostCommandPort;
   /** Approval card buttons (approvals.md, A4): a press goes to the host, never to a turn. */
   approvals?: TelegramApprovalPort;
+  /**
+   * A person's account token, sent in their DM after the host asked for it (approvals.md, P2):
+   * taken by the host before the message is recorded, so it never reaches a turn.
+   */
+  accountReplies?: TelegramAccountReplyPort;
+}
+
+export interface TelegramAccountReplyPort {
+  /** The completion when this DM message is the awaited token, else null. */
+  claim(input: {
+    chatId: string;
+    principalId: string;
+    messageId: number;
+    text: string | undefined;
+    replyTo: { messageId: number; text: string | undefined };
+  }): (() => Promise<void>) | null;
 }
 
 export interface TelegramApprovalPort {
@@ -209,6 +225,7 @@ export class TelegramGateway extends BaseGateway {
     this.stopIntake = () => resolve(undefined);
   });
   private readonly enrollmentCompletions = new Set<Promise<void>>();
+  private readonly accountReplies: TelegramAccountReplyPort | undefined;
   private readonly commandAnswers = new Set<Promise<void>>();
   private readonly activePresenters = new Map<string, TelegramResponsePresenter>();
   private readonly recentMessageIds = new Map<string, number>();
@@ -240,6 +257,7 @@ export class TelegramGateway extends BaseGateway {
     this.recordMemberSelection = options.recordMemberSelection;
     this.hostCommands = options.hostCommands;
     this.approvals = options.approvals;
+    this.accountReplies = options.accountReplies;
     this.config = {
       enabled: options.config?.enabled ?? true,
       allowedChats: options.config?.allowedChats ?? [],
@@ -772,6 +790,24 @@ export class TelegramGateway extends BaseGateway {
     return sent.message_id;
   }
 
+  /** The host's prompt for an account token (approvals.md, P2): the reply box opens for it. */
+  async sendAccountPrompt(chatId: string, text: string): Promise<number> {
+    const sent = await this.bot!.api.sendMessage(Number(chatId), text, {
+      reply_markup: { force_reply: true, input_field_placeholder: 'token' },
+    });
+    return sent.message_id;
+  }
+
+  /** The host's answer to an account token in the person's own DM: connected, or why not. */
+  async sendAccountNote(chatId: string, text: string): Promise<void> {
+    await this.bot!.api.sendMessage(Number(chatId), text);
+  }
+
+  /** Deletes a message the person sent: their account token, once the host has it. */
+  async deleteChatMessage(chatId: string, messageId: number): Promise<void> {
+    await this.bot!.api.deleteMessage(Number(chatId), messageId);
+  }
+
   /** Replace an approval card's text and remove its buttons (expiry, recovery). */
   async editApprovalCard(chatId: string, messageId: number, html: string): Promise<void> {
     await this.bot!.api.editMessageText(Number(chatId), messageId, html, {
@@ -868,6 +904,31 @@ export class TelegramGateway extends BaseGateway {
     // A host command is answered now, ahead of any intake waiting in this chat.
     const command = hostCommand(message, () => this.bot!.botInfo.username);
     if (command === 'other_bot') return;
+    // A reply to the host's account prompt carries a token: taken here, before anything records
+    // it, whatever the host still remembers of the prompt (#589 review).
+    const repliedTo = message.reply_to_message;
+    if (
+      command === null &&
+      privateChat &&
+      repliedTo?.from !== undefined &&
+      repliedTo.from.id === this.bot!.botInfo.id
+    ) {
+      const completion = this.accountReplies?.claim({
+        chatId,
+        principalId,
+        messageId: message.message_id,
+        text: message.text ?? message.caption,
+        replyTo: { messageId: repliedTo.message_id, text: repliedTo.text },
+      });
+      if (completion) {
+        const done = completion().catch((error) =>
+          this.log(`telegram account connect failed error=${telegramErrorMessage(error)}`)
+        );
+        this.enrollmentCompletions.add(done);
+        void done.finally(() => this.enrollmentCompletions.delete(done));
+        return;
+      }
+    }
     if (command !== null) {
       // /new may wait for a member to be served; polling admits other updates meanwhile.
       const answer = this.answerHostCommand(message, command, principalId).catch((error) =>

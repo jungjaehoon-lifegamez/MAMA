@@ -97,7 +97,13 @@ import {
 import { approvalActionRegistrations, type ApprovalActionPorts } from '../api/approval-actions.js';
 import { createApprovalStore, type ApprovalStore } from './approval-store.js';
 import { APPROVAL_CARDS } from './approval-cards.js';
-import { messageSendActionRegistrations, messageSendCards } from '../api/message-send-actions.js';
+import {
+  messageSendActionRegistrations,
+  messageSendCards,
+  type MessageSendPorts,
+} from '../api/message-send-actions.js';
+import { createAccountStore, personalAccountsDir } from './account-store.js';
+import { accountActionRegistrations, type AccountActionPorts } from '../api/account-actions.js';
 
 const OWNER_ACTIONS = [
   'skill.list',
@@ -232,6 +238,8 @@ export interface ActionSurfaceOptions {
   memberDirectoryChange?: <T>(work: () => Promise<T>) => Promise<T>;
   /** Where approval cards go (Telegram); absent, approval.propose says no card can be sent. */
   approvalCards?: Pick<ApprovalActionPorts, 'sendCard'>;
+  /** Prompts for a person's account token in their DM (P2); absent without Telegram. */
+  accountConnect?: Pick<AccountActionPorts, 'ask'>;
   recordManagementReceipt?(receipt: {
     callerPrincipalId?: string;
     operationId: string;
@@ -524,10 +532,15 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     return record !== null && !isErasedRecord(record);
   };
   // Sends post through the running connectors, which hold the tokens (approvals.md, S1, S2).
-  const messagePorts =
-    options.attachmentPorts?.connectors === undefined
+  const messagePorts: MessageSendPorts = {
+    ...(options.attachmentPorts?.connectors === undefined
       ? {}
-      : { connectors: options.attachmentPorts.connectors };
+      : { connectors: options.attachmentPorts.connectors }),
+    ownerPrincipalId: options.ownerPrincipalId,
+    // Each person's own accounts (P1), read at each use from under runtime/.
+    accounts: createAccountStore(personalAccountsDir(options.runtimeRoot)),
+    proposalAccount: (proposalId) => approvalStore.get(proposalId)?.accountId ?? null,
+  };
   const registrations = [
     ...skillActionRegistrations(skills, options),
     ...memberNoticeRegistrations({
@@ -629,6 +642,18 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     }),
     // Messages posted in a source's own rooms, each after an owner approves it (approvals.md, S1, S2).
     ...messageSendActionRegistrations(messagePorts),
+    // Each person's own send accounts, connected from their DM (approvals.md, P1, P2).
+    ...accountActionRegistrations({
+      ownerPrincipalId: options.ownerPrincipalId,
+      accounts: messagePorts.accounts,
+      ask: (principalId, service) => {
+        if (!options.accountConnect)
+          throw new Error(
+            'Connecting an account needs the Telegram messenger, which is not running'
+          );
+        return options.accountConnect.ask(principalId, service);
+      },
+    }),
     // Calendar events, written with the same sign-in, for every backend (owner, 2026-11-17).
     ...googleCalendarWriteActionRegistrations({
       scratchDir: join(options.runtimeRoot, 'runtime', 'google-calendar'),

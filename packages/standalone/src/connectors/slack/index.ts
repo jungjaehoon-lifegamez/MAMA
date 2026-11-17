@@ -209,9 +209,13 @@ export class SlackConnector implements IConnector {
   }
 
   /** The Slack account the token posts as, for an approval card (approvals.md, S2). */
-  async account(): Promise<{ id: string; name: string; bot: boolean }> {
-    if (!this.client) throw new Error('SlackConnector not initialized');
-    const me = await this.client.auth.test();
+  async account(token?: string): Promise<{ id: string; name: string; bot: boolean }> {
+    if (!this.sendClient) throw new Error('SlackConnector not initialized');
+    // Read just before a post (P1), so through the bounded client that posts: a stalled check
+    // cannot hold the press. A person's own token is passed per call; the install's is the client's.
+    const me = await (token === undefined
+      ? this.sendClient.auth.test()
+      : this.sendClient.auth.test({ token }));
     return {
       id: String(me.user_id ?? ''),
       name: String(me.user ?? me.user_id ?? ''),
@@ -227,7 +231,8 @@ export class SlackConnector implements IConnector {
   async postMessage(
     channel: string,
     text: string,
-    threadTs?: string
+    threadTs?: string,
+    token?: string
   ): Promise<{ channel: string; ts: string }> {
     if (!this.sendClient) throw new Error('SlackConnector not initialized');
     let posted;
@@ -236,6 +241,7 @@ export class SlackConnector implements IConnector {
         channel,
         text,
         ...(threadTs === undefined ? {} : { thread_ts: threadTs }),
+        ...(token === undefined ? {} : { token }),
       });
     } catch (error) {
       const code = slackErrorCode(error);

@@ -178,11 +178,17 @@ export class ChatworkConnector implements IConnector {
       .map(([id, channel]) => ({ id, name: channel.name ?? null }));
   }
 
-  /** The Chatwork account the token posts as, for an approval card (approvals.md, S1). */
-  async account(): Promise<{ id: string; name: string }> {
-    if (!this.token) throw new Error('ChatworkConnector not initialized');
+  /**
+   * The Chatwork account a token posts as, for an approval card (approvals.md, S1): the install's,
+   * or the person's own when given (P1).
+   */
+  async account(token?: string): Promise<{ id: string; name: string }> {
+    const as = token ?? this.token;
+    if (!as) throw new Error('ChatworkConnector not initialized');
+    // Read just before a post (P1): bounded like the post, so a stalled check cannot hold the press.
     const res = await this.http(`${this.baseUrl}/me`, {
-      headers: { 'X-ChatWorkToken': this.token },
+      headers: { 'X-ChatWorkToken': as },
+      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`Chatwork /me answered ${res.status}`);
     const me = (await res.json()) as { account_id: number; name: string };
@@ -190,18 +196,20 @@ export class ChatworkConnector implements IConnector {
   }
 
   /**
-   * Posts one message as the token's account. Only an approved proposal calls this
+   * Posts one message as the token's account (the install's, or a person's own when given). Only
+   * an approved proposal calls this
    * (chatwork.message.send). A refusal is not posted; a lost answer may have been, and the error
    * says which so nobody posts it twice.
    */
-  async sendMessage(roomId: string, body: string): Promise<{ messageId: string }> {
-    if (!this.token) throw new Error('ChatworkConnector not initialized');
+  async sendMessage(roomId: string, body: string, token?: string): Promise<{ messageId: string }> {
+    const as = token ?? this.token;
+    if (!as) throw new Error('ChatworkConnector not initialized');
     let res: Response;
     try {
       res = await this.http(`${this.baseUrl}/rooms/${encodeURIComponent(roomId)}/messages`, {
         method: 'POST',
         headers: {
-          'X-ChatWorkToken': this.token,
+          'X-ChatWorkToken': as,
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: new URLSearchParams({ body }).toString(),

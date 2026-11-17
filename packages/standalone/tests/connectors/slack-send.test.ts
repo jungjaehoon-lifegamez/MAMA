@@ -112,3 +112,27 @@ describe('SlackConnector sends (approvals.md, S2)', () => {
     );
   });
 });
+
+describe('SlackConnector sends with a person’s token (approvals.md, P1)', () => {
+  beforeEach(() => {
+    process.env[envName] = 'fixture-slack-token';
+  });
+  afterEach(() => {
+    delete process.env[envName];
+  });
+
+  it('posts and names the account with the token it is given, not the install’s', async () => {
+    const postMessage = vi.fn().mockResolvedValue({ ok: true, channel: 'C1', ts: '1.2' });
+    const test = vi.fn().mockResolvedValue({ ok: true, user: 'person-b', user_id: 'U2' });
+    const connector = connectorWith({ chat: { postMessage }, auth: { test } });
+    await connector.init();
+    await expect(connector.account('xoxp-person')).resolves.toEqual({
+      id: 'U2',
+      name: 'person-b',
+      bot: false,
+    });
+    expect(test).toHaveBeenCalledWith({ token: 'xoxp-person' });
+    await connector.postMessage('C1', 'hi', undefined, 'xoxp-person');
+    expect(postMessage).toHaveBeenCalledWith({ channel: 'C1', text: 'hi', token: 'xoxp-person' });
+  });
+});
