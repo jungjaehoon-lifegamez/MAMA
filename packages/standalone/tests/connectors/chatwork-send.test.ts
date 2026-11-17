@@ -10,6 +10,7 @@ const config: ConnectorConfig = {
   channels: {
     '111': { role: 'hub', name: 'room-one' },
     '222': { role: 'hub' },
+    '333': { role: 'ignore', name: 'muted' },
   },
   auth: { type: 'token', tokenName: envName },
 };
@@ -31,7 +32,7 @@ describe('ChatworkConnector sends (approvals.md, S1)', () => {
     delete process.env[envName];
   });
 
-  it('lists the rooms the source reads, with their names', async () => {
+  it('lists the rooms the source reads, with their names, not the ignored ones', async () => {
     const connector = new ChatworkConnector(config, { fetch: vi.fn() });
     expect(connector.rooms()).toEqual([
       { id: '111', name: 'room-one' },
@@ -80,10 +81,41 @@ describe('ChatworkConnector sends (approvals.md, S1)', () => {
     const http = vi.fn().mockRejectedValue(new Error('socket hang up'));
     const connector = new ChatworkConnector(config, { fetch: http });
     await connector.init();
-    await expect(connector.sendMessage('111', 'x')).rejects.toThrow(/may have been posted/);
+    await expect(connector.sendMessage('111', 'x')).rejects.toMatchObject({
+      name: 'outcome_unknown',
+      message: expect.stringMatching(/may have been posted/),
+    });
     const late = vi.fn().mockResolvedValue(json(502, {}));
     const second = new ChatworkConnector(config, { fetch: late });
     await second.init();
-    await expect(second.sendMessage('111', 'x')).rejects.toThrow(/may have been posted/);
+    await expect(second.sendMessage('111', 'x')).rejects.toMatchObject({ name: 'outcome_unknown' });
+  });
+
+  it('gives up after a timeout, as may have been posted', async () => {
+    const http = vi.fn((_url: string, request: RequestInit) => {
+      expect(request.signal).toBeInstanceOf(AbortSignal);
+      return Promise.reject(new DOMException('timed out', 'TimeoutError'));
+    });
+    const connector = new ChatworkConnector(config, { fetch: http as unknown as typeof fetch });
+    await connector.init();
+    await expect(connector.sendMessage('111', 'x')).rejects.toMatchObject({
+      name: 'outcome_unknown',
+    });
+  });
+
+  it('a post whose answer cannot be read was posted, outcome unknown', async () => {
+    const http = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError('Unexpected end of JSON input');
+      },
+    });
+    const connector = new ChatworkConnector(config, { fetch: http });
+    await connector.init();
+    await expect(connector.sendMessage('111', 'x')).rejects.toMatchObject({
+      name: 'outcome_unknown',
+      message: expect.stringMatching(/answered 200.*likely posted/),
+    });
   });
 });

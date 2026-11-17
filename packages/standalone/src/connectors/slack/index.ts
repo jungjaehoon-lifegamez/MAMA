@@ -20,6 +20,7 @@ import {
 } from '../framework/attachments.js';
 import { requireHttpsUrl, saveResponseBody } from '../framework/attachment-io.js';
 import { messageWithCauses } from '../../utils/error-message.js';
+import { outcomeUnknown } from '../framework/outcome.js';
 
 interface SlackMessageFile {
   id?: string;
@@ -86,6 +87,14 @@ function slackErrorCode(error: unknown): string | undefined {
   return typeof code === 'string' ? code : undefined;
 }
 
+/** Slack errors after which a post may still have been stored (Slack: the call may have partly run). */
+const SLACK_MAY_HAVE_POSTED = new Set([
+  'internal_error',
+  'fatal_error',
+  'service_unavailable',
+  'request_timeout',
+]);
+
 /** Channel errors that no retry fixes until someone changes the bot or the channel. */
 const UNRECOVERABLE = new Set(['not_in_channel', 'channel_not_found', 'is_archived']);
 export class SlackConnector implements IConnector {
@@ -147,7 +156,13 @@ export class SlackConnector implements IConnector {
     }
     const { WebClient } = await import('@slack/web-api');
     this.client = new WebClient(token);
-    this.sendClient = new WebClient(token, { retryConfig: { retries: 0 } });
+    // A rate limit is answered as an error (nothing posted) instead of a wait; a post that hangs
+    // would hold the Telegram press that approved it.
+    this.sendClient = new WebClient(token, {
+      retryConfig: { retries: 0 },
+      rejectRateLimitedCalls: true,
+      timeout: 30_000,
+    });
   }
 
   async dispose(): Promise<void> {
@@ -224,9 +239,14 @@ export class SlackConnector implements IConnector {
       });
     } catch (error) {
       const code = slackErrorCode(error);
-      if (code !== undefined)
+      if (code !== undefined && !SLACK_MAY_HAVE_POSTED.has(code))
         throw new Error(`Slack refused the message (${code}). It was not posted.`);
-      throw new Error(
+      const retryAfter = (error as { code?: unknown; retryAfter?: unknown }).retryAfter;
+      if ((error as { code?: unknown }).code === 'slack_webapi_rate_limited_error')
+        throw new Error(
+          `Slack refused the message (rate limited, retry after ${String(retryAfter)} s). It was not posted.`
+        );
+      throw outcomeUnknown(
         `Slack did not answer (${messageWithCauses(error)}); the message may have been posted: read the channel before sending it again.`
       );
     }

@@ -13,8 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   post in a room or channel the source reads, only after an owner approves the card, in an
   owner's own turn too. The card shows the room by name, the account it posts as (the install's
   Chatwork account, the Slack bot) and the whole message. A room the source does not read is
-  refused when proposed. A refused post says it was not posted; a post whose answer was lost says
-  it may have been, so it is not sent twice. Slack posts go through a client that never retries.
+  refused when proposed, and so is a room the source ignores. A refused post (a Slack rate limit
+  included) says it was not posted. A post whose answer was lost, timed out after 30 seconds or met
+  a server error is stored as unknown, never as failed, so it is not approved and sent twice.
+  Slack posts go through a client that never retries.
   Slack needs the bot's `chat:write` scope.
 
 ## [0.83.0] - 2026-11-17

@@ -78,6 +78,37 @@ describe('SlackConnector sends (approvals.md, S2)', () => {
       chat: { postMessage: vi.fn().mockRejectedValue(new Error('socket hang up')) },
     });
     await lost.init();
-    await expect(lost.postMessage('C1', 'x')).rejects.toThrow(/may have been posted/);
+    await expect(lost.postMessage('C1', 'x')).rejects.toMatchObject({
+      name: 'outcome_unknown',
+      message: expect.stringMatching(/may have been posted/),
+    });
+  });
+
+  it('Slack server errors may have posted; a rate limit did not', async () => {
+    for (const code of [
+      'internal_error',
+      'fatal_error',
+      'service_unavailable',
+      'request_timeout',
+    ]) {
+      const failed = Object.assign(new Error(`An API error occurred: ${code}`), {
+        code: 'slack_webapi_platform_error',
+        data: { ok: false, error: code },
+      });
+      const connector = connectorWith({ chat: { postMessage: vi.fn().mockRejectedValue(failed) } });
+      await connector.init();
+      await expect(connector.postMessage('C1', 'x')).rejects.toMatchObject({
+        name: 'outcome_unknown',
+      });
+    }
+    const limited = Object.assign(new Error('A rate limit was exceeded'), {
+      code: 'slack_webapi_rate_limited_error',
+      retryAfter: 30,
+    });
+    const connector = connectorWith({ chat: { postMessage: vi.fn().mockRejectedValue(limited) } });
+    await connector.init();
+    await expect(connector.postMessage('C1', 'x')).rejects.toThrow(
+      /Slack refused the message \(rate limited, retry after 30 s\).*not posted/
+    );
   });
 });

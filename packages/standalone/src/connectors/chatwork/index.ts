@@ -17,6 +17,7 @@ import {
 } from '../framework/attachments.js';
 import { requireHttpsUrl, saveResponseBody } from '../framework/attachment-io.js';
 import { messageWithCauses } from '../../utils/error-message.js';
+import { outcomeUnknown } from '../framework/outcome.js';
 
 interface ChatworkMessage {
   message_id: string;
@@ -74,6 +75,9 @@ function compareMessageIds(a: string, b: string): number {
   const right = BigInt(b);
   return left === right ? 0 : left > right ? 1 : -1;
 }
+
+/** How long a post may take before it is given up as unknown. */
+const SEND_TIMEOUT_MS = 30_000;
 
 /** What `messages?force=1` returns at most per room. */
 const CHATWORK_PAGE = 100;
@@ -169,10 +173,9 @@ export class ChatworkConnector implements IConnector {
 
   /** The rooms this source reads, with their configured names: the only rooms a send may post to. */
   rooms(): Array<{ id: string; name: string | null }> {
-    return Object.entries(this.config.channels).map(([id, channel]) => ({
-      id,
-      name: channel.name ?? null,
-    }));
+    return Object.entries(this.config.channels)
+      .filter(([, channel]) => channel.role !== 'ignore')
+      .map(([id, channel]) => ({ id, name: channel.name ?? null }));
   }
 
   /** The Chatwork account the token posts as, for an approval card (approvals.md, S1). */
@@ -202,21 +205,30 @@ export class ChatworkConnector implements IConnector {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: new URLSearchParams({ body }).toString(),
+        // A post that hangs would hold the Telegram press that approved it, and every update after.
+        signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
       });
     } catch (error) {
-      throw new Error(
+      throw outcomeUnknown(
         `Chatwork did not answer (${messageWithCauses(error)}); the message may have been posted: read the room before sending it again.`
       );
     }
     if (res.status >= 500)
-      throw new Error(
+      throw outcomeUnknown(
         `Chatwork answered ${res.status}; the message may have been posted: read the room before sending it again.`
       );
     if (!res.ok)
       throw new Error(
         `Chatwork refused the message (${res.status}): ${await res.text()}. It was not posted.`
       );
-    const posted = (await res.json()) as { message_id: string | number };
+    let posted: { message_id: string | number };
+    try {
+      posted = (await res.json()) as { message_id: string | number };
+    } catch (error) {
+      throw outcomeUnknown(
+        `Chatwork answered 200 but its answer could not be read (${messageWithCauses(error)}); the message was likely posted: read the room before sending it again.`
+      );
+    }
     return { messageId: String(posted.message_id) };
   }
 
