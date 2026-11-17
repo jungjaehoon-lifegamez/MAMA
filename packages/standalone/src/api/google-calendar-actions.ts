@@ -212,7 +212,9 @@ export function googleCalendarWriteActionRegistrations(
         try {
           let result: unknown;
           try {
-            result = await gws(args, { cwd: dir, emptyBody: values.op === 'delete' });
+            // A delete has no body: gws reports an empty file it saved here, which goes with the directory
+            // (measured on a real delete, 2026-11-17).
+            result = await gws(args, { cwd: dir });
           } catch (error) {
             if (
               values.op === 'create' &&
