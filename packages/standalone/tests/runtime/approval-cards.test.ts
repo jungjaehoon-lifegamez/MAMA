@@ -39,7 +39,8 @@ describe('approval cards', () => {
       'Calendar: primary',
       'Title: Review',
       'When: 2026-11-20T10:30:00 – 2026-11-20T11:00:00 (Asia/Seoul)',
-      'Attendees: person@example.com (invitations are sent)',
+      'Attendees: person@example.com',
+      'Updates: attendees are told',
       'Meet link: yes',
     ]);
     const update = calendarApprovalCard({
@@ -53,12 +54,12 @@ describe('approval cards', () => {
       'Action: change event event-1',
       'Calendar: team@example.com',
       'Title: Moved',
-      'Attendees are not told',
+      'Updates: nobody is told',
     ]);
     expect(calendarApprovalCard({ op: 'delete', eventId: 'event-1' })).toEqual([
       'Action: delete event event-1',
       'Calendar: primary',
-      'Attendees are told',
+      'Updates: attendees are told',
     ]);
   });
 
@@ -133,7 +134,16 @@ describe('approval cards', () => {
         end: { date: '2026-11-21' },
       },
     });
-    expect(lines).toContain('Updates: invitations go to people outside the domain');
+    expect(lines).toContain('Updates: only people outside the domain are told');
     expect(lines).toContain('start: {"date":"2026-11-20","dateTime":"2026-11-20T10:30:00"}');
+  });
+
+  it('always says who is told, whether attendees are named, cleared or left out', () => {
+    expect(
+      calendarApprovalCard({ op: 'update', eventId: 'e1', sendUpdates: 'externalOnly', event: {} })
+    ).toContain('Updates: only people outside the domain are told');
+    expect(calendarApprovalCard({ op: 'update', eventId: 'e1', event: { attendees: [] } })).toEqual(
+      expect.arrayContaining(['Attendees: all removed', 'Updates: attendees are told'])
+    );
   });
 });

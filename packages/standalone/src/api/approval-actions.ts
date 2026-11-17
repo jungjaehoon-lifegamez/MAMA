@@ -138,7 +138,7 @@ export function approvalActionRegistrations(ports: ApprovalActionPorts): ActionR
           !(context.access.connectors ?? []).includes(String(connector))
         )
           throw failure(
-            'approval_connector_not_granted',
+            'connector_out_of_scope',
             `This session may not use the ${String(connector)} connector.`,
             'denied'
           );

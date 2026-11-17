@@ -232,9 +232,10 @@ describe('approval.propose', () => {
     const { propose, sent } = await fixture({ readsConnector: 'calendar' });
     const reads = contextReads;
     const result = await propose(call, 'owner', { modelRunId: 'run-1' }, undefined, ['slack']);
+    // The same refusal a direct call gets.
     expect(result).toMatchObject({
       status: 'failed',
-      error: { message: expect.stringContaining('calendar') },
+      error: { code: 'connector_out_of_scope', message: expect.stringContaining('calendar') },
     });
     expect(sent).toEqual([]);
     expect(contextReads).toBe(reads);

@@ -101,33 +101,19 @@ export const calendarApprovalCard: ApprovalCardRenderer = (input) => {
       const one = record(attendee);
       return typeof one.email === 'string' && Object.keys(one).length === 1;
     });
+  const updates =
+    value.sendUpdates === 'externalOnly'
+      ? 'only people outside the domain are told'
+      : told
+        ? 'attendees are told'
+        : 'nobody is told';
   if (plainAttendees) {
     shown.add('attendees');
     const emails = attendeeList!.map((attendee) => String(record(attendee).email));
-    lines.push(
-      emails.length === 0
-        ? 'Attendees: all removed'
-        : `Attendees: ${emails.join(', ')} (${
-            value.sendUpdates === 'externalOnly'
-              ? 'invitations go to people outside the domain'
-              : told
-                ? 'invitations are sent'
-                : 'nobody is told'
-          })`
-    );
-  } else if (event.attendees === undefined)
-    lines.push(told ? 'Attendees are told' : 'Attendees are not told');
-  // Attendees in another form are shown below as sent; who is told is said here either way.
-  else
-    lines.push(
-      `Updates: ${
-        value.sendUpdates === 'externalOnly'
-          ? 'invitations go to people outside the domain'
-          : told
-            ? 'invitations are sent'
-            : 'nobody is told'
-      }`
-    );
+    lines.push(emails.length === 0 ? 'Attendees: all removed' : `Attendees: ${emails.join(', ')}`);
+  }
+  // Who is told, on every card: attendees named, cleared, left out or shown as sent below.
+  lines.push(`Updates: ${updates}`);
   if (value.meet === true) lines.push('Meet link: yes');
   // Every other field the event sets is shown as it will be sent: the card is what runs.
   for (const [key, field] of Object.entries(event))
