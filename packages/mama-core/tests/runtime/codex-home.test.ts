@@ -53,6 +53,9 @@ describe('managed Codex shell configuration', () => {
     const enabled = buildMAMACodexAppServerConfig(undefined, undefined, { apps: true });
     expect(enabled).toContain('apps = true');
     expect(enabled).toContain('include_apps_instructions = true');
+    // Writes run: approval_policy "never" otherwise fails them.
+    expect(enabled).toContain('[apps._default]\ndefault_tools_approval_mode = "approve"');
+    expect(baseline).not.toContain('[apps._default]');
     expect(enabled).toContain('plugins = false');
   });
 

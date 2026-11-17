@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `apps` option for the Codex app-server, runtime process and managed config: enables Codex apps
-  (the account's connectors) and their instructions; off by default. App calls
+  (the account's connectors) and their instructions, and lets app writes run without an approval
+  prompt (`approval_policy = "never"` fails them otherwise); off by default. App calls
   (`mcpToolCall` from `codex_apps`) are observed like shell and web items, under their tool name,
   with their arguments.
 

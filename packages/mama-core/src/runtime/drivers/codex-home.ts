@@ -469,6 +469,9 @@ export function buildMAMACodexAppServerConfig(
     '[analytics]',
     'enabled = false',
     '',
+    // An app's writes (create_event, send_email) ask for approval, and approval_policy "never"
+    // fails them (measured on Codex CLI 0.160.1); the host has no one to ask, so they run.
+    ...(options.apps ? ['[apps._default]', 'default_tools_approval_mode = "approve"', ''] : []),
     '[features]',
     // The owner agent may create native Codex subagents when it decides a goal
     // needs parallel or specialized work. Channels never create agents.

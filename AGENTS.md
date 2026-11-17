@@ -148,8 +148,10 @@ stays allowed; WebSearch stays recorded in `tool_traces` only. This is observati
 Owner decision 2026-11-17, a widening: the common session's Codex runtime enables Codex apps (the
 account's connectors: Google Calendar, Gmail, Drive and the rest), as Kagemusha's owner did, so it
 can book a meeting with a Meet link. They had been off since the May 2026 port with no recorded
-reason. Each app call is recorded in `tool_traces` under its tool name; their results reach the
-model unquoted. Member sessions, owner-role DMs included, keep apps off; the Claude backend has no
+reason. App writes (create an event, send mail) run without an approval prompt
+(`[apps._default] default_tools_approval_mode = "approve"`), since `approval_policy = "never"`
+otherwise fails them. Each app call is recorded in `tool_traces` under its tool name; their results
+reach the model unquoted. Member sessions, owner-role DMs included, keep apps off; the Claude backend has no
 equivalent.
 
 Owner decision 2026-10-15, a narrowing: web fetch needs judgment, so a turn with no person in it
