@@ -114,7 +114,8 @@ export interface TelegramAccountReplyPort {
     chatId: string;
     principalId: string;
     messageId: number;
-    text: string;
+    text: string | undefined;
+    replyTo: { messageId: number; text: string | undefined };
   }): (() => Promise<void>) | null;
 }
 
@@ -903,13 +904,21 @@ export class TelegramGateway extends BaseGateway {
     // A host command is answered now, ahead of any intake waiting in this chat.
     const command = hostCommand(message, () => this.bot!.botInfo.username);
     if (command === 'other_bot') return;
-    // An account token the host asked this person for: taken here, before anything records it.
-    if (command === null && privateChat && typeof message.text === 'string') {
+    // A reply to the host's account prompt carries a token: taken here, before anything records
+    // it, whatever the host still remembers of the prompt (#589 review).
+    const repliedTo = message.reply_to_message;
+    if (
+      command === null &&
+      privateChat &&
+      repliedTo?.from !== undefined &&
+      repliedTo.from.id === this.bot!.botInfo.id
+    ) {
       const completion = this.accountReplies?.claim({
         chatId,
         principalId,
         messageId: message.message_id,
-        text: message.text,
+        text: message.text ?? message.caption,
+        replyTo: { messageId: repliedTo.message_id, text: repliedTo.text },
       });
       if (completion) {
         const done = completion().catch((error) =>

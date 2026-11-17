@@ -193,8 +193,8 @@ channel) keeps the owner runtime's tools.
   on the machine are not denied; the agent's native reads of them are recorded in tool_traces.
 - Each person's own send accounts (approvals.md P1, owner decision 2026-11-17) live in
   `runtime/accounts/` under the MAMA home, inside the denied `runtime/`. Tokens are entered in the
-  person's Telegram DM as a reply the gateway takes before any turn records it, and are deleted
-  from the chat. They are read at each use, never put in the environment, removed on offboarding,
+  person's Telegram DM as a reply to the host's prompt; the gateway takes every reply to such a
+  prompt before any turn records it (late ones too), and the host deletes it from the chat. They are read at each use, never put in the environment, removed on offboarding,
   and not in backups (a restored install reconnects them).
 - Owner decision 2026-10-31: gws's credential store (its config directory and a configured
   credentials file) joined the denied set, for both backends, because MAMA's own connectors and

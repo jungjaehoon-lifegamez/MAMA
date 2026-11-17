@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Personal accounts. An owner-role person connects their own Chatwork or Slack account from their
   DM: the agent calls `account.connect`, the host asks for the token as a reply in that DM, takes
   the reply before anything records it, deletes it from the chat and checks it with the service.
+  Every reply to an account prompt stays with the host: one that comes late, after a restart or
+  as a caption is deleted and the person is asked to start again.
   Messages proposed from that DM then post as that person, and only that person approves them.
   Cards name the account; the proposal keeps its id and the run posts only while the same account
   holds the credential. `account.list` and `account.disconnect` manage them; offboarding removes

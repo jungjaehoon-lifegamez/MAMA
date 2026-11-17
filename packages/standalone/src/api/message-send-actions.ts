@@ -57,6 +57,11 @@ async function sameAccount(
 ): Promise<void> {
   const named = proposalId === undefined ? null : ports.proposalAccount(proposalId);
   const now = (await current()).id;
+  if (named === null)
+    throw failure(
+      'account_changed',
+      'This card was proposed before cards recorded the account they post as. It was not posted: propose it again.'
+    );
   if (named !== now)
     throw failure(
       'account_changed',

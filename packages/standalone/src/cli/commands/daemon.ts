@@ -97,6 +97,7 @@ import { readUpdateJournal, updatePaths } from '../runtime/update-journal.js';
 import { limitLines, readUsage, usageLines, type UsageReport } from '../../runtime/usage-report.js';
 import { backendLimits } from '../../runtime/backend-limits.js';
 import { createAccountConnect, type AccountConnect } from '../../runtime/account-connect.js';
+import { holdsOwnerRole } from '../../runtime/owner-authority.js';
 import { createAccountStore, personalAccountsDir } from '../../runtime/account-store.js';
 import { ChatworkConnector } from '../../connectors/chatwork/index.js';
 import { SlackConnector } from '../../connectors/slack/index.js';
@@ -865,6 +866,14 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         telegramFor('Deleting a token message').deleteChatMessage!(chatId, messageId),
       say: (chatId, text) => telegramFor('An account note').sendAccountNote!(chatId, text),
       log: (line) => logger.error(`[accounts] ${line}`),
+      // Offboarded or no longer an owner while the service answered: nothing is kept.
+      mayConnect: (principalId) => {
+        const principals = createPrincipalRepository(owner!.database.adapter);
+        return (
+          principals.findById(principalId)?.status === 'active' &&
+          holdsOwnerRole(principals, principalId)
+        );
+      },
     });
     const ownerFactory = dependencies.createOwnerRuntime ?? createOwnerRuntime;
     owner = await ownerFactory({

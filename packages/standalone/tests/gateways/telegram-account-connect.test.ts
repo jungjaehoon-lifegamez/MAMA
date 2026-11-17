@@ -37,6 +37,7 @@ const COMMON = '-7001';
 const PERSON = 7101;
 
 afterEach(async () => {
+  nextId = 77;
   for (const database of databases.splice(0)) await database.close();
   seams.handlers.clear();
   for (const fn of Object.values(seams.api)) fn.mockClear();
@@ -89,14 +90,27 @@ async function gateway(
   return { gateway: active, accepted, person, ledger };
 }
 
-function message(text: string, chatId = PERSON) {
+let nextId = 77;
+/** A message; `replyFrom` is who wrote the message it replies to (101 is this bot). */
+function message(text: string, chatId = PERSON, replyFrom: number | null = 101, caption = false) {
   return seams.handlers.get('message')!({
     message: {
-      message_id: 77,
+      message_id: nextId++,
       date: 1,
-      text,
+      ...(caption ? { caption: text, photo: [] } : { text }),
       from: { id: PERSON, is_bot: false },
       chat: { id: chatId, type: chatId < 0 ? 'supergroup' : 'private' },
+      ...(replyFrom === null
+        ? {}
+        : {
+            reply_to_message: {
+              message_id: 401,
+              date: 1,
+              text: 'Reply to this message with your Chatwork API token',
+              from: { id: replyFrom, is_bot: true },
+              chat: { id: chatId, type: 'private' },
+            },
+          }),
     },
   });
 }
@@ -113,6 +127,7 @@ describe('Telegram account connect (approvals.md, P2)', () => {
       principalId: person,
       messageId: 77,
       text: 'fixture-secret-token',
+      replyTo: { messageId: 401, text: 'Reply to this message with your Chatwork API token' },
     });
     expect(completion).toHaveBeenCalledTimes(1);
     expect(accepted).toEqual([]);
@@ -127,6 +142,20 @@ describe('Telegram account connect (approvals.md, P2)', () => {
     await message('hello');
     await active.drain();
     expect(accepted).toHaveLength(1);
+  });
+
+  it('asks only about replies to this bot, and passes a caption as the text', async () => {
+    const claim = vi.fn(() => async () => {});
+    const { gateway: active, accepted } = await gateway({ claim });
+    await message('not a reply', PERSON, null);
+    await message('a reply to someone else', PERSON, 999);
+    await active.drain();
+    expect(claim).not.toHaveBeenCalled();
+    expect(accepted).toHaveLength(2);
+    await message('fixture-caption-token', PERSON, 101, true);
+    await active.drain();
+    expect(claim).toHaveBeenCalledWith(expect.objectContaining({ text: 'fixture-caption-token' }));
+    expect(accepted).toHaveLength(2);
   });
 
   it('never claims a group message', async () => {
