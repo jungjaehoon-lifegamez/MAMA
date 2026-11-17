@@ -12,6 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The common session on Codex can read through the account's Codex apps (Google Calendar,
   Gmail, Drive); their write tools are not offered. Each call is
   recorded in `tool_traces` as `codex_apps:<tool>`. Member sessions keep them off.
+- `google.calendar.write`: the owner agent creates, changes or deletes an event in the owner's
+  Google Calendar, with a Google Meet link when asked and invitations sent to its attendees, on
+  any backend (Claude included). Same grants as `google.read`, and only in a turn an owner
+  started with their own message, so text from a source cannot book or cancel; not in a replay.
+
+### Changed
+
+- The Google login's calendar scope is `calendar` (read and write) instead of
+  `calendar.readonly`. An install signed in before this release signs in again with the line
+  `mama doctor` prints; until then a calendar write is refused with that instruction. With no
+  Calendar source on, that line has no calendar scope: add
+  `https://www.googleapis.com/auth/calendar` to its `--scopes`.
 
 ## [0.82.0] - 2026-11-16
 

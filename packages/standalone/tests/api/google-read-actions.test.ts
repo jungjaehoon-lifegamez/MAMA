@@ -338,7 +338,7 @@ describe('google.read', () => {
       '{"error":{"code":403,"message":"Request had insufficient authentication scopes.","reason":"insufficientPermissions"}}',
       1,
       'google_scope_missing',
-      "The login must include https://www.googleapis.com/auth/calendar.readonly. mama doctor names the gws auth login command for this install, with the scopes of the Google sources that are on; if calendar is not among them, the owner adds it to that line's --scopes list (gws auth login --scopes <those scopes>,https://www.googleapis.com/auth/calendar.readonly)",
+      "The login must include https://www.googleapis.com/auth/calendar. mama doctor names the gws auth login command for this install, with the scopes of the Google sources that are on; if calendar is not among them, the owner adds it to that line's --scopes list (gws auth login --scopes <those scopes>,https://www.googleapis.com/auth/calendar)",
     ],
     [
       'an API the Cloud project has not enabled',

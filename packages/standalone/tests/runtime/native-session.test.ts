@@ -691,6 +691,7 @@ describe('one owner native session', () => {
         'document.render',
         'drive.download',
         'drive.read',
+        'google.calendar.write',
         'google.read',
         'graph.query',
         'help',
@@ -809,6 +810,7 @@ describe('one owner native session', () => {
           'drive.read',
           'drive.download',
           'google.read',
+          'google.calendar.write',
         ]) {
           const result = await options.hostToolBridge.execute({ callId: name, name, input: {} });
           const envelope = JSON.parse(result.content);

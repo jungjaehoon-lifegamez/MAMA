@@ -74,6 +74,7 @@ import { reportSourceActionRegistrations } from '../api/report-source-actions.js
 import { trelloActionRegistrations } from '../api/trello-actions.js';
 import { driveActionRegistrations } from '../api/drive-actions.js';
 import { googleReadActionRegistrations } from '../api/google-read-actions.js';
+import { googleCalendarWriteActionRegistrations } from '../api/google-calendar-actions.js';
 import {
   driveDeliveryActionRegistrations,
   type DriveDeliveryPorts,
@@ -109,6 +110,7 @@ const OWNER_ACTIONS = [
   'drive.read',
   'drive.download',
   'google.read',
+  'google.calendar.write',
   'judge',
   'owner.timezone.set',
   ...MEMBER_MANAGEMENT_ACTIONS,
@@ -583,6 +585,11 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     // Gmail, Calendar, Sheets and Docs as text, through the same daemon-held gws sign-in.
     ...googleReadActionRegistrations({
       scratchDir: join(options.runtimeRoot, 'runtime', 'google-read'),
+    }),
+    // Calendar events, written with the same sign-in, for every backend (owner, 2026-11-17).
+    ...googleCalendarWriteActionRegistrations({
+      scratchDir: join(options.runtimeRoot, 'runtime', 'google-calendar'),
+      ownerMessageTurn: (context) => activeOwnerMessageCaller(context, options) !== undefined,
     }),
     ...(options.driveDelivery === undefined
       ? []
