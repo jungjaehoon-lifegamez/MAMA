@@ -2,8 +2,8 @@ import { execFile } from 'node:child_process';
 import type { SourceTool } from './types.js';
 
 /**
- * The scope a gws login asks for each Google source's service (2026-10-31). Gmail, Calendar and
- * Sheets are read only. Drive keeps full `drive`: the same login serves deliver.drive.file, which
+ * The scope a gws login asks for each Google source's service (2026-10-31). Gmail and Sheets are
+ * read only; Calendar reads and writes, for google.calendar.write (2026-11-17). Drive keeps full `drive`: the same login serves deliver.drive.file, which
  * uploads into the folder the owner names and sets its readers, and `drive.file` reaches only
  * files this client created or the person opened with it (Google's Drive scope guide), not that
  * folder. `--scopes` is passed to Google as written; gws ignores `-s` beside it and adds only its
@@ -11,7 +11,8 @@ import type { SourceTool } from './types.js';
  */
 export const GWS_LOGIN_SCOPES: Readonly<Record<string, string>> = {
   gmail: 'https://www.googleapis.com/auth/gmail.readonly',
-  calendar: 'https://www.googleapis.com/auth/calendar.readonly',
+  // Read and write: google.calendar.write creates events (owner, 2026-11-17).
+  calendar: 'https://www.googleapis.com/auth/calendar',
   sheets: 'https://www.googleapis.com/auth/spreadsheets.readonly',
   drive: 'https://www.googleapis.com/auth/drive',
 };
@@ -58,6 +59,8 @@ export interface GwsCallOptions {
   timeoutMs?: number;
   /** Where gws runs; a response gws writes to a file (not JSON) lands here. */
   cwd?: string;
+  /** A method whose success has no body (a delete answers 204): no output is a success, as null. */
+  emptyBody?: boolean;
 }
 
 /** Where the JSON gws prints starts: the first line opening an object or an array. */
@@ -235,5 +238,6 @@ export function execGwsTextAsync(args: string[]): Promise<string> {
 /** Keep upstream page tokens in argv, never in a shell command; do not block the daemon. */
 export async function execGwsAsync(args: string[], options?: GwsCallOptions): Promise<unknown> {
   const stdout = await execGwsStdoutAsync(args, options);
+  if (options?.emptyBody && stdout.trim() === '') return null;
   return parseGwsOutput(stdout);
 }

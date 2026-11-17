@@ -830,7 +830,7 @@ describe('mama doctor', () => {
       },
     });
     expect((await check(both, undefined, undefined)).fix).toBe(
-      'install it: npm install -g @googleworkspace/cli or brew install googleworkspace-cli; then log in: gws auth login --scopes https://www.googleapis.com/auth/calendar.readonly,https://www.googleapis.com/auth/gmail.readonly'
+      'install it: npm install -g @googleworkspace/cli or brew install googleworkspace-cli; then log in: gws auth login --scopes https://www.googleapis.com/auth/calendar,https://www.googleapis.com/auth/gmail.readonly'
     );
 
     // The install command's layout: start.sh runs ~/.mama/node and its PATH names ~/.mama/npm/bin;

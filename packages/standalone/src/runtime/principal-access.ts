@@ -194,6 +194,7 @@ export function resolvePrincipalAccess(
           'drive.download',
           // Google is read with the owner's sign-in, so only an owner's own DM reads it (P6).
           'google.read',
+          'google.calendar.write',
           'report.read',
           ...MEMBER_MANAGEMENT_ACTIONS,
           'manage.member.enroll',

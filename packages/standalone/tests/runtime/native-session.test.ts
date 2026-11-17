@@ -691,6 +691,7 @@ describe('one owner native session', () => {
         'document.render',
         'drive.download',
         'drive.read',
+        'google.calendar.write',
         'google.read',
         'graph.query',
         'help',

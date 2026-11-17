@@ -129,7 +129,7 @@ function tooLarge(command: string, size: number | null): Error {
 }
 
 /** What the agent is told when gws itself failed, in terms it can act on or relay. */
-function gwsError(error: unknown, service: GoogleService, command: string): Error {
+export function gwsError(error: unknown, service: GoogleService, command: string): Error {
   const found = gwsFailure(error);
   switch (found.kind) {
     case 'missing':

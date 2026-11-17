@@ -2036,7 +2036,7 @@ describe('a source enabled from the conversation (install.md, W2.4.5e)', () => {
         cannotRead('Gmail', 'the mailbox'),
         'gws signs in through an OAuth client of your own: in Google Cloud Console, create an OAuth client of type Desktop app, download its JSON and save it as ~/.config/gws/client_secret.json (mode 0600).',
         // Calendar is already on: logging in for Gmail alone could narrow what Calendar was granted.
-        'Sign in first: gws auth login --scopes https://www.googleapis.com/auth/calendar.readonly,https://www.googleapis.com/auth/gmail.readonly',
+        'Sign in first: gws auth login --scopes https://www.googleapis.com/auth/calendar,https://www.googleapis.com/auth/gmail.readonly',
         'Then run this again.',
         'MAMA is still stopped; start it with mama service install, then mama service start.',
       ].join('\n')

@@ -12,6 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The common session on Codex can use the account's Codex apps (Google Calendar, Gmail, Drive),
   so it can book a meeting with a Meet link or send mail as the owner's Kagemusha did. Each call is
   recorded in `tool_traces` as `codex_apps:<tool>`. Member sessions keep them off.
+- `google.calendar.write`: the owner agent creates, changes or deletes an event in the owner's
+  Google Calendar, with a Google Meet link when asked and invitations sent to its attendees, on
+  any backend (Claude included). Same grants as `google.read`; not in a replay.
+
+### Changed
+
+- The Google login's calendar scope is `calendar` (read and write) instead of
+  `calendar.readonly`. An install signed in before this release signs in again with the line
+  `mama doctor` prints; until then a calendar write is refused with that instruction.
 
 ## [0.82.0] - 2026-11-16
 

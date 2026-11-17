@@ -122,6 +122,7 @@ describe('W1 action surface', () => {
       'document.render',
       'drive.download',
       'drive.read',
+      'google.calendar.write',
       'google.read',
       'graph.query',
       'help',
