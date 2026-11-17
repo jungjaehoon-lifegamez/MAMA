@@ -264,6 +264,18 @@ describe('approval runtime', () => {
     expect(f.logged.join('\n')).toContain(a.id);
   });
 
+  it('still edits the card when recording an approved or rejected outcome fails', async () => {
+    const f = await fixture({ recordFails: new Set(['proposal-1', 'proposal-2']) });
+    const approved = await f.press(f.propose(null, 'k1'));
+    expect(approved.answer).toBe('Approved');
+    expect(approved.card).toContain('Done');
+    const rejected = await f.press(f.propose(null, 'k2'), 'r');
+    expect(rejected.answer).toBe('Rejected');
+    expect(rejected.card).toContain('Rejected');
+    expect(f.logged.join('\n')).toContain('proposal-1 outcome note failed');
+    expect(f.logged.join('\n')).toContain('proposal-2 outcome note failed');
+  });
+
   it('reports unknown, never failed, when the call throws after it may have written', async () => {
     const f = await fixture();
     f.dispatch.mockImplementationOnce(async () => {

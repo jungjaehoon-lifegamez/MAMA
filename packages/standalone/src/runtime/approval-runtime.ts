@@ -80,8 +80,18 @@ function outcomeLine(proposal: Proposal): string | null {
 
 export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
   const { store } = ports;
+  /** The conversation's note never decides the card: the outcome is stored either way. */
+  const note = (proposal: Proposal, line: string) => {
+    try {
+      ports.record(proposal, line);
+    } catch (error) {
+      ports.log(
+        `approval ${proposal.id} outcome note failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  };
   const finished = (proposal: Proposal, line: string): string => {
-    ports.record(proposal, line);
+    note(proposal, line);
     // The outcome carries text from the input and the service (a title, an error): shown, never markup.
     return `${ports.cardFor(proposal)}\n\n${escapeTelegramHtml(line)}`;
   };
@@ -135,11 +145,7 @@ export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
         `approval ${proposal.id} ${what} failed: ${error instanceof Error ? error.message : String(error)}`
       );
     // The note and the card are delivered apart: one failing never skips the other.
-    try {
-      ports.record(proposal, line);
-    } catch (error) {
-      failed('outcome note', error);
-    }
+    note(proposal, line);
     try {
       await ports.editCard(proposal, `${ports.cardFor(proposal)}\n\n${escapeTelegramHtml(line)}`);
     } catch (error) {
@@ -206,3 +212,29 @@ export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
 }
 
 export type ApprovalRuntime = ReturnType<typeof createApprovalRuntime>;
+
+/**
+ * The hourly expiry sweep (A8). One sweep at a time: a tick while one runs is skipped, so
+ * `settled` waits for the only sweep that can be recording outcomes and editing cards.
+ */
+export function scheduleApprovalSweeps(
+  sweep: () => Promise<void>,
+  options: { intervalMs: number; onError(error: unknown): void }
+): { cancel(): void; settled(): Promise<void> } {
+  let running: Promise<void> | null = null;
+  const timer = setInterval(() => {
+    if (running) return;
+    running = sweep()
+      .catch(options.onError)
+      .finally(() => {
+        running = null;
+      });
+  }, options.intervalMs);
+  timer.unref();
+  return {
+    cancel: () => clearInterval(timer),
+    settled: async () => {
+      await running;
+    },
+  };
+}

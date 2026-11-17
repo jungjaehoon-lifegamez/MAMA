@@ -134,14 +134,14 @@ describe('approval cards', () => {
         end: { date: '2026-11-21' },
       },
     });
-    expect(lines).toContain('Updates: only people outside the domain are told');
+    expect(lines).toContain('Updates: only guests who do not use Google Calendar are told');
     expect(lines).toContain('start: {"date":"2026-11-20","dateTime":"2026-11-20T10:30:00"}');
   });
 
   it('always says who is told, whether attendees are named, cleared or left out', () => {
     expect(
       calendarApprovalCard({ op: 'update', eventId: 'e1', sendUpdates: 'externalOnly', event: {} })
-    ).toContain('Updates: only people outside the domain are told');
+    ).toContain('Updates: only guests who do not use Google Calendar are told');
     expect(calendarApprovalCard({ op: 'update', eventId: 'e1', event: { attendees: [] } })).toEqual(
       expect.arrayContaining(['Attendees: all removed', 'Updates: attendees are told'])
     );

@@ -103,7 +103,7 @@ export const calendarApprovalCard: ApprovalCardRenderer = (input) => {
     });
   const updates =
     value.sendUpdates === 'externalOnly'
-      ? 'only people outside the domain are told'
+      ? 'only guests who do not use Google Calendar are told'
       : told
         ? 'attendees are told'
         : 'nobody is told';

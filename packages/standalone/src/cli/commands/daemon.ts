@@ -1,6 +1,7 @@
 import { createPrincipalRepository } from '@jungjaehoon/mama-core';
 import { readDocumentToolkit } from '../../tools/document-toolkit.js';
 import { syncMemberNode } from '../../runtime/member-node.js';
+import { scheduleApprovalSweeps } from '../../runtime/approval-runtime.js';
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -490,10 +491,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   let gateway: DaemonGateway | null = null;
   // Approval cards go through Telegram, which starts after the owner runtime that proposes them.
   let approvalGateway: DaemonGateway | null = null;
-  let approvalSweep: ReturnType<typeof setInterval> | undefined;
-  let approvalSweeping: Promise<void> = Promise.resolve();
+  let approvalSweeps: ReturnType<typeof scheduleApprovalSweeps> | undefined;
   let approvalsRunning = 0;
-  let approvalSweepActive = false;
   const gateways = new Map<MessengerName, DaemonGateway>();
   let reportScheduler: ReportScheduler | undefined;
   let releaseCheck: ReleaseCheck | undefined;
@@ -603,7 +602,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
 
   const stopOwned = async (): Promise<void> => {
     const errors: unknown[] = [];
-    if (approvalSweep) clearInterval(approvalSweep);
+    approvalSweeps?.cancel();
     owner?.beginStop?.();
     // Quiesce every producer before awaiting any one of them. Transports and the database
     // remain available to completions that already own work.
@@ -627,7 +626,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       ...(owner?.drain ? [stopOne(logger, 'owner_drain', () => owner!.drain(), errors)] : []),
       // A sweep under way records outcomes and edits cards: it ends before Telegram and the
       // database close.
-      approvalSweeping,
+      ...(approvalSweeps ? [approvalSweeps.settled()] : []),
     ]);
     for (const [name, active] of gateways) await stopOne(logger, name, () => active.stop(), errors);
     if (owner) await stopOne(logger, 'owner_runtime', () => owner!.stop(), errors);
@@ -1300,23 +1299,11 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       await owner.approvals.recover();
       // Cards that expired while MAMA was stopped say so now, not an hour from now (A8).
       await owner.approvals.sweep();
-      approvalSweep = setInterval(
-        () => {
-          // One sweep at a time: a slow one is not overlapped, and stop waits for the one running.
-          if (approvalSweepActive) return;
-          approvalSweepActive = true;
-          approvalSweeping = owner!.approvals
-            .sweep()
-            .catch((error: unknown) =>
-              logger.error(`approval sweep failed error=${stimulusFailureReason(error)}`)
-            )
-            .finally(() => {
-              approvalSweepActive = false;
-            });
-        },
-        60 * 60 * 1000
-      );
-      approvalSweep.unref();
+      approvalSweeps = scheduleApprovalSweeps(() => owner!.approvals.sweep(), {
+        intervalMs: 60 * 60 * 1000,
+        onError: (error) =>
+          logger.error(`approval sweep failed error=${stimulusFailureReason(error)}`),
+      });
       stage(logger, 'telegram', options.signal);
     } else stage(logger, 'telegram:disabled', options.signal);
     if (config.discord?.enabled) {
