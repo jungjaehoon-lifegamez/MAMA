@@ -70,6 +70,14 @@ export interface ActionContract {
    * an action that always reads the same one.
    */
   readsConnector?: { fromInput: string } | { fixed: string };
+  /**
+   * This action writes on someone's behalf and runs only after a person approved it.
+   * `always`: dispatch refuses a call whose session states no approved proposal.
+   * `outsideOwnerTurn`: the action itself refuses a turn no owner's message started unless the
+   * session states one; dispatch cannot tell an owner's turn, so it leaves the check to the action.
+   * The approval is the host's session fact (`ActionSessionFacts.approvedProposalId`), never input.
+   */
+  approval?: 'always' | 'outsideOwnerTurn';
 }
 
 /**
@@ -113,6 +121,11 @@ export interface ClientSessionFacts {
 
 export interface ActionSessionFacts {
   nativeCaller?: NativeToolCaller;
+  /**
+   * The proposal a person approved, stated by the host when it runs the stored call. Never call
+   * input: the host sets it only when it dispatches an approved proposal.
+   */
+  approvedProposalId?: string;
   /** The model run this call belongs to. */
   modelRunId?: string;
   /** The surface the call arrived on (e.g. 'mama_save'). */
