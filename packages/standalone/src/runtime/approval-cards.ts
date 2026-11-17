@@ -33,6 +33,14 @@ export function renderApprovalCard(
   ].join('\n');
 }
 
+/**
+ * The length Telegram counts for a card: its text as shown (tags out, each escape one character),
+ * in UTF-16 code units.
+ */
+export function cardTextLength(html: string): number {
+  return html.replace(/<\/?b>/g, '').replace(/&(?:amp|lt|gt);/g, '_').length;
+}
+
 function record(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)

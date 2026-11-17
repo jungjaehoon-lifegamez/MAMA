@@ -19,6 +19,8 @@ import {
   type AttachmentDownloadRequest,
 } from '../framework/attachments.js';
 import { requireHttpsUrl, saveResponseBody } from '../framework/attachment-io.js';
+import { messageWithCauses } from '../../utils/error-message.js';
+import { outcomeUnknown } from '../framework/outcome.js';
 
 interface SlackMessageFile {
   id?: string;
@@ -85,6 +87,14 @@ function slackErrorCode(error: unknown): string | undefined {
   return typeof code === 'string' ? code : undefined;
 }
 
+/** Slack errors after which a post may still have been stored (Slack: the call may have partly run). */
+const SLACK_MAY_HAVE_POSTED = new Set([
+  'internal_error',
+  'fatal_error',
+  'service_unavailable',
+  'request_timeout',
+]);
+
 /** Channel errors that no retry fixes until someone changes the bot or the channel. */
 const UNRECOVERABLE = new Set(['not_in_channel', 'channel_not_found', 'is_archived']);
 export class SlackConnector implements IConnector {
@@ -96,6 +106,11 @@ export class SlackConnector implements IConnector {
   private readonly clientFactory: ((token: string) => WebClient) | undefined;
   private readonly http: typeof fetch;
   private client: WebClient | null = null;
+  /**
+   * The client that posts. The reading client retries a failed request for up to half an hour; a
+   * post whose answer was lost would then be posted again, so this one never retries.
+   */
+  private sendClient: WebClient | null = null;
   private token: string | null = null;
   private readonly userCache = new Map<string, string>();
   private lastPollTime: Date | null = null;
@@ -132,19 +147,27 @@ export class SlackConnector implements IConnector {
     }
     this.token = token;
     if (this.providedClient !== undefined) {
-      this.client = this.providedClient;
+      this.client = this.sendClient = this.providedClient;
       return;
     }
     if (this.clientFactory !== undefined) {
-      this.client = this.clientFactory(token);
+      this.client = this.sendClient = this.clientFactory(token);
       return;
     }
     const { WebClient } = await import('@slack/web-api');
     this.client = new WebClient(token);
+    // A rate limit is answered as an error (nothing posted) instead of a wait; a post that hangs
+    // would hold the Telegram press that approved it.
+    this.sendClient = new WebClient(token, {
+      retryConfig: { retries: 0 },
+      rejectRateLimitedCalls: true,
+      timeout: 30_000,
+    });
   }
 
   async dispose(): Promise<void> {
     this.client = null;
+    this.sendClient = null;
     this.token = null;
     this.userCache.clear();
   }
@@ -176,6 +199,58 @@ export class SlackConnector implements IConnector {
     } catch {
       return false;
     }
+  }
+
+  /** The channels this source reads (not the ignored ones): the only channels a send may post to. */
+  channels(): Array<{ id: string; name: string | null }> {
+    return Object.entries(this.config.channels)
+      .filter(([, channel]) => channel.role !== 'ignore')
+      .map(([id, channel]) => ({ id, name: channel.name ?? null }));
+  }
+
+  /** The Slack account the token posts as, for an approval card (approvals.md, S2). */
+  async account(): Promise<{ id: string; name: string; bot: boolean }> {
+    if (!this.client) throw new Error('SlackConnector not initialized');
+    const me = await this.client.auth.test();
+    return {
+      id: String(me.user_id ?? ''),
+      name: String(me.user ?? me.user_id ?? ''),
+      bot: me.bot_id !== undefined,
+    };
+  }
+
+  /**
+   * Posts one message as the token's account. Only an approved proposal calls this
+   * (slack.message.send). Slack's own refusal is not posted; a lost answer may have been, and the
+   * error says which so nobody posts it twice.
+   */
+  async postMessage(
+    channel: string,
+    text: string,
+    threadTs?: string
+  ): Promise<{ channel: string; ts: string }> {
+    if (!this.sendClient) throw new Error('SlackConnector not initialized');
+    let posted;
+    try {
+      posted = await this.sendClient.chat.postMessage({
+        channel,
+        text,
+        ...(threadTs === undefined ? {} : { thread_ts: threadTs }),
+      });
+    } catch (error) {
+      const code = slackErrorCode(error);
+      if (code !== undefined && !SLACK_MAY_HAVE_POSTED.has(code))
+        throw new Error(`Slack refused the message (${code}). It was not posted.`);
+      const retryAfter = (error as { code?: unknown; retryAfter?: unknown }).retryAfter;
+      if ((error as { code?: unknown }).code === 'slack_webapi_rate_limited_error')
+        throw new Error(
+          `Slack refused the message (rate limited, retry after ${String(retryAfter)} s). It was not posted.`
+        );
+      throw outcomeUnknown(
+        `Slack did not answer (${messageWithCauses(error)}); the message may have been posted: read the channel before sending it again.`
+      );
+    }
+    return { channel: String(posted.channel ?? channel), ts: String(posted.ts) };
   }
 
   private async resolveUserName(userId: string): Promise<string> {

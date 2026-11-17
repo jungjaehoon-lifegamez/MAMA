@@ -17,6 +17,7 @@ import {
 } from '../framework/attachments.js';
 import { requireHttpsUrl, saveResponseBody } from '../framework/attachment-io.js';
 import { messageWithCauses } from '../../utils/error-message.js';
+import { outcomeUnknown } from '../framework/outcome.js';
 
 interface ChatworkMessage {
   message_id: string;
@@ -74,6 +75,9 @@ function compareMessageIds(a: string, b: string): number {
   const right = BigInt(b);
   return left === right ? 0 : left > right ? 1 : -1;
 }
+
+/** How long a post may take before it is given up as unknown. */
+const SEND_TIMEOUT_MS = 30_000;
 
 /** What `messages?force=1` returns at most per room. */
 const CHATWORK_PAGE = 100;
@@ -165,6 +169,67 @@ export class ChatworkConnector implements IConnector {
     } catch {
       return false;
     }
+  }
+
+  /** The rooms this source reads, with their configured names: the only rooms a send may post to. */
+  rooms(): Array<{ id: string; name: string | null }> {
+    return Object.entries(this.config.channels)
+      .filter(([, channel]) => channel.role !== 'ignore')
+      .map(([id, channel]) => ({ id, name: channel.name ?? null }));
+  }
+
+  /** The Chatwork account the token posts as, for an approval card (approvals.md, S1). */
+  async account(): Promise<{ id: string; name: string }> {
+    if (!this.token) throw new Error('ChatworkConnector not initialized');
+    const res = await this.http(`${this.baseUrl}/me`, {
+      headers: { 'X-ChatWorkToken': this.token },
+    });
+    if (!res.ok) throw new Error(`Chatwork /me answered ${res.status}`);
+    const me = (await res.json()) as { account_id: number; name: string };
+    return { id: String(me.account_id), name: me.name };
+  }
+
+  /**
+   * Posts one message as the token's account. Only an approved proposal calls this
+   * (chatwork.message.send). A refusal is not posted; a lost answer may have been, and the error
+   * says which so nobody posts it twice.
+   */
+  async sendMessage(roomId: string, body: string): Promise<{ messageId: string }> {
+    if (!this.token) throw new Error('ChatworkConnector not initialized');
+    let res: Response;
+    try {
+      res = await this.http(`${this.baseUrl}/rooms/${encodeURIComponent(roomId)}/messages`, {
+        method: 'POST',
+        headers: {
+          'X-ChatWorkToken': this.token,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({ body }).toString(),
+        // A post that hangs would hold the Telegram press that approved it, and every update after.
+        signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+      });
+    } catch (error) {
+      throw outcomeUnknown(
+        `Chatwork did not answer (${messageWithCauses(error)}); the message may have been posted: read the room before sending it again.`
+      );
+    }
+    if (res.status >= 500)
+      throw outcomeUnknown(
+        `Chatwork answered ${res.status}; the message may have been posted: read the room before sending it again.`
+      );
+    if (!res.ok)
+      throw new Error(
+        `Chatwork refused the message (${res.status}): ${await res.text()}. It was not posted.`
+      );
+    let posted: { message_id: string | number };
+    try {
+      posted = (await res.json()) as { message_id: string | number };
+    } catch (error) {
+      throw outcomeUnknown(
+        `Chatwork answered 200 but its answer could not be read (${messageWithCauses(error)}); the message was likely posted: read the room before sending it again.`
+      );
+    }
+    return { messageId: String(posted.message_id) };
   }
 
   async poll(since: Date): Promise<NormalizedItem[]> {

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import type { ActionCall, ActionContext, ActionResult } from '@jungjaehoon/mama-core';
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
 import { createApprovalStore, type Proposal } from '../../src/runtime/approval-store.js';
-import { createApprovalRuntime } from '../../src/runtime/approval-runtime.js';
+import { createApprovalRuntime, OUTCOME_UNKNOWN } from '../../src/runtime/approval-runtime.js';
 
 const homes: string[] = [];
 const databases: Array<Awaited<ReturnType<typeof openCoreDatabase>>> = [];
@@ -348,5 +348,23 @@ describe('approval runtime', () => {
     const result = await f.press(proposal);
     expect(f.store.get(proposal.id)!.status).toBe('unknown');
     expect(result.card).toContain('Unknown');
+  });
+
+  it('stores unknown when the action says its write may have happened', async () => {
+    const f = await fixture({
+      result: {
+        status: 'failed',
+        error: {
+          kind: 'internal',
+          code: OUTCOME_UNKNOWN,
+          message: 'Chatwork did not answer; the message may have been posted',
+        },
+      } as ActionResult,
+    });
+    const proposal = f.propose();
+    const result = await f.press(proposal);
+    expect(f.store.get(proposal.id)!.status).toBe('unknown');
+    expect(result.card).toContain('Unknown');
+    expect(result.card).toContain('may have been posted');
   });
 });

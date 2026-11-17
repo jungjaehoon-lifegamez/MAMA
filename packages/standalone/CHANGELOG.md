@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Chatwork and Slack messages through approvals: `chatwork.message.send` and `slack.message.send`
+  post in a room or channel the source reads, only after an owner approves the card, in an
+  owner's own turn too. The card shows the room by name, the account it posts as (the install's
+  Chatwork account, the Slack bot) and the whole message. A room the source does not read is
+  refused when proposed, and so is a room the source ignores. A refused post (a Slack rate limit
+  included) says it was not posted. A post whose answer was lost, timed out after 30 seconds or met
+  a server error is stored as unknown, never as failed, so it is not approved and sent twice.
+  Slack posts go through a client that never retries.
+  A proposal whose card would be too long for Telegram is refused with how much to shorten it,
+  instead of being stored with no card.
+  Slack needs the bot's `chat:write` scope.
+
 ## [0.83.0] - 2026-11-17
 
 ### Added
@@ -21,7 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   found in a source can be booked once an owner approves.
   Cards and the conversation name the person who decided, as registered; the record keeps their
   id.
-
 
 - The common session on Codex can read through the account's Codex apps (Google Calendar,
   Gmail, Drive); their write tools are not offered. Each call is
@@ -38,7 +51,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mama doctor` prints; until then a calendar write is refused with that instruction. With no
   Calendar source on, that line has no calendar scope: add
   `https://www.googleapis.com/auth/calendar` to its `--scopes`.
-
 
 ## [0.82.0] - 2026-11-16
 

@@ -11,6 +11,7 @@ import type {
   JudgmentAccess,
 } from '@jungjaehoon/mama-core';
 import { ApprovalRefusedError, type ApprovalStore, type Proposal } from './approval-store.js';
+import { OUTCOME_UNKNOWN } from '../connectors/framework/outcome.js';
 import { escapeTelegramHtml } from '../gateways/telegram-format.js';
 
 export interface ApprovalRuntimePorts {
@@ -129,7 +130,10 @@ export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
         : store.finish(proposal.id, {
             ok: false,
             error: message,
-            unknown: result.status === 'unknown',
+            // The action itself may say its write may have happened (a send whose answer was lost).
+            unknown:
+              result.status === 'unknown' ||
+              (result as { error?: { code?: string } }).error?.code === OUTCOME_UNKNOWN,
           });
     return finished(settled, outcomeLine(settled, ports.nameOf)!);
   };
@@ -240,3 +244,5 @@ export function scheduleApprovalSweeps(
     },
   };
 }
+
+export { OUTCOME_UNKNOWN };
