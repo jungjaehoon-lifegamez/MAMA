@@ -7,12 +7,12 @@
  * under runtime/, removed after it. The login needs the calendar scope (gws-utils); a login made
  * with the read-only one is told to sign in again.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ActionContext, ActionRegistration } from '@jungjaehoon/mama-core';
 
-import { execGwsAsync } from '../connectors/framework/gws-utils.js';
+import { execGwsAsync, GwsCliError } from '../connectors/framework/gws-utils.js';
 import type { GwsCall } from './drive-actions.js';
 import { gwsError } from './google-read-actions.js';
 
@@ -89,6 +89,7 @@ export function googleCalendarWriteActionRegistrations(
     {
       contract: {
         name: GOOGLE_CALENDAR_WRITE_ACTION,
+        readsConnector: { fixed: 'calendar' },
         summary:
           "Create, change or delete an event in the owner's Google Calendar, live through gws. create takes event (a Calendar API Event: summary, start and end with dateTime and timeZone, attendees [{email}], description, location); meet true adds a Google Meet link. update takes eventId and the fields to change (meet true adds a Meet link to an event without one). delete takes eventId. calendarId defaults to primary (calendarList with google.read names the others). sendUpdates defaults to all: attendees get the invitation, change or cancellation by email; none sends nothing. Returns the event's id, link, Meet link, time and attendees. Only in a turn an owner started with their own message (their DM or the common channel); not in a replay.",
         inputSchema: {
@@ -169,11 +170,23 @@ export function googleCalendarWriteActionRegistrations(
           ...(values.op === 'create' ? {} : { eventId: values.eventId }),
           ...(values.op === 'delete' ? {} : { conferenceDataVersion: 1 }),
         };
+        // A create names its own event id (Google accepts a client id of 0-9a-v), the same for a
+        // retransmission of the same operation, so a create whose answer was lost is not made
+        // twice: Google answers the second with 409 and the event is read back instead.
+        const eventId =
+          values.op !== 'create'
+            ? values.eventId!
+            : typeof values.event?.id === 'string'
+              ? values.event.id
+              : createHash('sha256')
+                  .update(`mama-calendar:${context.operationId ?? randomUUID()}`)
+                  .digest('hex');
         const body =
           values.op === 'delete'
             ? undefined
             : {
                 ...(values.event ?? {}),
+                ...(values.op === 'create' ? { id: eventId } : {}),
                 ...(values.meet
                   ? {
                       conferenceData: {
@@ -201,7 +214,32 @@ export function googleCalendarWriteActionRegistrations(
           try {
             result = await gws(args, { cwd: dir, emptyBody: values.op === 'delete' });
           } catch (error) {
-            throw gwsError(error, 'calendar', `calendar events ${method}`);
+            if (
+              values.op === 'create' &&
+              error instanceof GwsCliError &&
+              error.reported.code === 409
+            ) {
+              // Already made by an earlier attempt of this operation: read it back.
+              try {
+                result = await gws(
+                  [
+                    'calendar',
+                    'events',
+                    'get',
+                    '--params',
+                    JSON.stringify({ calendarId: params.calendarId, eventId }),
+                  ],
+                  { cwd: dir }
+                );
+              } catch (readError) {
+                throw gwsError(readError, 'calendar', 'calendar events get');
+              }
+              return { ...receipt(result), existing: true };
+            }
+            const failed = gwsError(error, 'calendar', `calendar events ${method}`);
+            if (values.op === 'create')
+              failed.message += ` If Google may have made it anyway, its id is ${eventId}: read it with google.read calendar events get before creating again.`;
+            throw failed;
           }
           return values.op === 'delete' ? { id: values.eventId, deleted: true } : receipt(result);
         } finally {

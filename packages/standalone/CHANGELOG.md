@@ -21,7 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The Google login's calendar scope is `calendar` (read and write) instead of
   `calendar.readonly`. An install signed in before this release signs in again with the line
-  `mama doctor` prints; until then a calendar write is refused with that instruction.
+  `mama doctor` prints; until then a calendar write is refused with that instruction. With no
+  Calendar source on, that line has no calendar scope: add
+  `https://www.googleapis.com/auth/calendar` to its `--scopes`.
 
 ## [0.82.0] - 2026-11-16
 

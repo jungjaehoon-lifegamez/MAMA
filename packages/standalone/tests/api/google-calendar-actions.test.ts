@@ -44,7 +44,12 @@ const access: ActionContext['access'] = {
   scopes: [],
 };
 
-const write = (input: Record<string, unknown>, session?: ActionContext['session']) =>
+const write = (
+  input: Record<string, unknown>,
+  session?: ActionContext['session'],
+  operationId?: string,
+  grant: ActionContext['access'] = access
+) =>
   createDispatcher(
     createCatalog(
       googleCalendarWriteActionRegistrations({
@@ -53,8 +58,12 @@ const write = (input: Record<string, unknown>, session?: ActionContext['session'
       })
     )
   )(
-    { action: 'google.calendar.write', input },
-    { access, ...(session === undefined ? {} : { session }) }
+    {
+      action: 'google.calendar.write',
+      input,
+      ...(operationId === undefined ? {} : { operationId }),
+    },
+    { access: grant, ...(session === undefined ? {} : { session }) }
   );
 
 // Synthetic event; the shape is the Calendar API's Event resource.
@@ -143,6 +152,49 @@ describe('google.calendar.write', () => {
     const failed = await write({ op: 'create', meet: true, event: { start: {}, end: {} } });
     expect(failed).toMatchObject({ data: { meetLink: null, meetStatus: 'failure' } });
     expect((failed as { data: Record<string, unknown> }).data.next).toBeUndefined();
+  });
+
+  it('gives one operation one event id, and reads the event back when a retry finds it made', async () => {
+    fakeGws(`echo '${JSON.stringify(created)}'`);
+    const event = { start: {}, end: {} };
+    await write({ op: 'create', event }, undefined, 'fixture-operation');
+    const first = JSON.parse(argvRun()![6]!).id as string;
+    expect(first).toMatch(/^[0-9a-f]{64}$/);
+    await write({ op: 'create', event }, undefined, 'fixture-operation');
+    expect(JSON.parse(argvRun()![6]!).id).toBe(first);
+    await write({ op: 'create', event }, undefined, 'another-operation');
+    expect(JSON.parse(argvRun()![6]!).id).not.toBe(first);
+
+    // The insert answers 409 (made by the lost attempt); the event is read back.
+    fakeGws(
+      `case "$3" in insert) echo '{"error":{"code":409,"message":"The requested identifier already exists.","reason":"duplicate"}}'; exit 1;; *) echo '${JSON.stringify(created)}';; esac`
+    );
+    const again = await write({ op: 'create', event }, undefined, 'fixture-operation');
+    expect(again).toMatchObject({
+      status: 'completed',
+      data: { id: 'fixture-event', existing: true },
+    });
+    expect(argvRun()!.slice(0, 3)).toEqual(['calendar', 'events', 'get']);
+    expect(JSON.parse(argvRun()![4]!)).toEqual({ calendarId: 'primary', eventId: first });
+
+    // Any other failure names the id so the agent can check before creating again.
+    fakeGws(
+      `echo '{"error":{"code":500,"message":"Backend Error","reason":"backendError"}}'\nexit 1`
+    );
+    const failed = await write({ op: 'create', event }, undefined, 'fixture-operation');
+    expect((failed as { error: { message: string } }).error.message).toContain(
+      `its id is ${first}`
+    );
+  });
+
+  it('needs the calendar connector grant', async () => {
+    fakeGws(`echo '{}'`);
+    const result = await write({ op: 'delete', eventId: 'fixture-event' }, undefined, undefined, {
+      ...access,
+      connectors: ['gmail'],
+    });
+    expect(result).toMatchObject({ status: 'failed' });
+    expect(argvRun()).toBeNull();
   });
 
   it('changes and cancels a named event, sending updates as asked', async () => {
