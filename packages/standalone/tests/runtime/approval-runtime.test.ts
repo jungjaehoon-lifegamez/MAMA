@@ -296,6 +296,49 @@ describe('approval runtime', () => {
     );
   });
 
+  it('settles the row before naming the decider', async () => {
+    const f = await fixture();
+    const proposal = f.propose();
+    const names = vi.fn(() => {
+      throw new Error('principal read failed');
+    });
+    const runtime = createApprovalRuntime({
+      store: f.store,
+      dispatch: f.dispatch,
+      accessFor: () => ({ principalId: 'owner', agentId: 'agent', scopes: [], actions: [] }),
+      deciderFor: () => 'owner-a',
+      mayDecide: () => true,
+      cardFor: () => 'card',
+      record: () => {},
+      editCard: async () => {},
+      log: () => {},
+      nameOf: names,
+    });
+    await expect(
+      runtime.press({
+        data: `apv:a:${proposal.id}:nonce-fixture`,
+        chatId: '-100',
+        userId: 'u1',
+        messageId: 7,
+      })
+    ).rejects.toThrow('principal read failed');
+    expect(f.store.get(proposal.id)!.status).toBe('done');
+    expect(f.calls).toHaveLength(1);
+  });
+
+  it('names the decider when it repairs an unknown card', async () => {
+    const f = await fixture({
+      result: {
+        status: 'unknown',
+        error: { code: 'timeout', message: 'no answer' },
+      } as ActionResult,
+    });
+    const proposal = f.propose();
+    await f.press(proposal);
+    const again = await f.press(proposal, 'a', 'u2');
+    expect(again.card).toContain('Unknown: approved by Owner A;');
+  });
+
   it('reports unknown, never failed, when the call throws after it may have written', async () => {
     const f = await fixture();
     f.dispatch.mockImplementationOnce(async () => {

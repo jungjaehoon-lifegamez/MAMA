@@ -74,7 +74,7 @@ function outcomeLine(proposal: Proposal, nameOf: (principalId: string) => string
     case 'expired':
       return 'Expired: nobody decided it within 24 hours.';
     case 'unknown':
-      return `Unknown: whether it happened is not known (${result?.error ?? 'no answer'}). Check before asking again.`;
+      return `Unknown: approved by ${by}; whether it happened is not known (${result?.error ?? 'no answer'}). Check before asking again.`;
     default:
       return null;
   }
@@ -120,21 +120,18 @@ export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
         },
       } as ActionResult;
     }
-    const by = `approved by ${proposal.decidedBy === null ? 'unknown' : ports.nameOf(proposal.decidedBy)}`;
-    if (result.status === 'completed') {
-      const done = store.finish(proposal.id, { ok: true, result: result.data });
-      return finished(done, `Done: ${by}. ${summary(result.data)}`);
-    }
     const message = (result as { error?: { message?: string } }).error?.message ?? 'failed';
+    // The outcome is stored before anything is shown: naming the decider never holds the row.
     // An unknown outcome may have written: it is never shown as a failure to retry.
-    const unknown = result.status === 'unknown';
-    const settled = store.finish(proposal.id, { ok: false, error: message, unknown });
-    return finished(
-      settled,
-      unknown
-        ? `Unknown: ${by}; whether it happened is not known (${message}). Check before asking again.`
-        : `Failed: ${by}. ${message}`
-    );
+    const settled =
+      result.status === 'completed'
+        ? store.finish(proposal.id, { ok: true, result: result.data })
+        : store.finish(proposal.id, {
+            ok: false,
+            error: message,
+            unknown: result.status === 'unknown',
+          });
+    return finished(settled, outcomeLine(settled, ports.nameOf)!);
   };
 
   /**
@@ -188,7 +185,7 @@ export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
       if (decided.status === 'rejected')
         return {
           answer: 'Rejected',
-          card: finished(decided, `Rejected: by ${ports.nameOf(decider)}.`),
+          card: finished(decided, outcomeLine(decided, ports.nameOf)!),
         };
       return { answer: 'Approved', card: await run(decided) };
     },
