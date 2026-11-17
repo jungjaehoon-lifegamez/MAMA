@@ -6,7 +6,11 @@
  */
 import type { ActionCatalog, ActionRegistration } from '@jungjaehoon/mama-core';
 import { validateInput } from '@jungjaehoon/mama-core/api/dispatch';
-import { ApprovalConflictError, type ApprovalStore } from '../runtime/approval-store.js';
+import {
+  ApprovalConflictError,
+  proposalFingerprint,
+  type ApprovalStore,
+} from '../runtime/approval-store.js';
 import { renderApprovalCard, type ApprovalCardRenderer } from '../runtime/approval-cards.js';
 
 export const APPROVAL_PROPOSE_ACTION = 'approval.propose';
@@ -122,6 +126,30 @@ export function approvalActionRegistrations(ports: ApprovalActionPorts): ActionR
           );
         const invalid = validateInput(contract.inputSchema, values.input, 'input');
         if (invalid !== null) throw failure('approval_invalid_input', invalid, 'invalid_input');
+        const principalId =
+          context.access.principalId === ports.ownerPrincipalId ? null : context.access.principalId;
+        // A DM's write runs on that person's own account (approvals.md, A5), and no person can
+        // connect one yet (P1, G1): until then only the common session proposes.
+        if (principalId !== null)
+          throw failure(
+            'approval_personal_account_missing',
+            'Writes are proposed from the common group for now: a DM write needs the person’s own connected account, which MAMA cannot connect yet.',
+            'denied'
+          );
+        // A repeat answers from what was stored, before anything is read again.
+        const earlier = ports.store.find(context.session?.modelRunId ?? null, values.requestKey);
+        if (earlier && earlier.fingerprint !== proposalFingerprint(values.action, values.input))
+          throw failure(
+            'approval_request_key_conflict',
+            `request key ${values.requestKey} was already used for a different proposal in this run`,
+            'invalid_input'
+          );
+        if (earlier)
+          return {
+            proposalId: earlier.id,
+            state: earlier.messageId === null ? 'unknown' : 'sent',
+            repeated: true,
+          };
         let current: string[] = [];
         if (card.context)
           try {
@@ -134,8 +162,6 @@ export function approvalActionRegistrations(ports: ApprovalActionPorts): ActionR
             );
           }
 
-        const principalId =
-          context.access.principalId === ports.ownerPrincipalId ? null : context.access.principalId;
         let stored;
         try {
           stored = ports.store.propose({

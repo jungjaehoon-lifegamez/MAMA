@@ -141,6 +141,8 @@ export interface ApprovalStore {
   setCardHtml(id: string, html: string): void;
   setCard(id: string, chatId: string, messageId: number): void;
   get(id: string): Proposal | null;
+  /** The proposal this run already made under this request key, if any. */
+  find(modelRunId: string | null, requestKey: string): Proposal | null;
   decide(
     id: string,
     decision: 'approve' | 'reject',
@@ -227,6 +229,12 @@ export function createApprovalStore(
     },
     get(id) {
       const found = row(id);
+      return found ? toProposal(found) : null;
+    },
+    find(modelRunId, requestKey) {
+      const found = adapter
+        .prepare('SELECT * FROM approval_proposals WHERE model_run_id IS ? AND request_key = ?')
+        .get(modelRunId, requestKey) as Row | undefined;
       return found ? toProposal(found) : null;
     },
     decide(id, decision, proof) {

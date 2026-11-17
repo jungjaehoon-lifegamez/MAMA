@@ -11,8 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Approvals in Telegram. The agent proposes a write it may not run in the turn with
   `approval.propose`; the host stores it and posts a card made from the stored input, with Approve
-  and Reject buttons, to the common group (any owner-role member decides) or to the proposing
-  person's DM (that person decides). An approved card runs the stored write once and shows the
+  and Reject buttons, to the common group, where any owner-role member decides. DMs do not propose
+  yet: a DM's write will run on that person's own connected account, which cannot be connected
+  yet. `google.calendar.write` leaves owner-role DM grants for the same reason. An approved card runs the stored write once and shows the
   result; a card expires after 24 hours. A write that was running when MAMA stopped is marked
   unknown and never run again. `google.calendar.write` is the first action behind it, so a meeting
   found in a source can be booked once an owner approves.

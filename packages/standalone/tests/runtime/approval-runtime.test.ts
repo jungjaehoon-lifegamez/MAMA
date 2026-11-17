@@ -219,4 +219,14 @@ describe('approval runtime', () => {
     expect(g.edits.map((edit) => edit.id)).toEqual([b.id]);
     expect(g.logged.join('\n')).toContain(a.id);
   });
+
+  it('repairs a stale card from the stored outcome on a later press', async () => {
+    const f = await fixture();
+    const proposal = f.propose();
+    await f.press(proposal);
+    const again = await f.press(proposal, 'a', 'u2');
+    expect(again.answer).toBe('Already approved');
+    expect(again.card).toContain('Done');
+    expect(f.calls).toHaveLength(1);
+  });
 });

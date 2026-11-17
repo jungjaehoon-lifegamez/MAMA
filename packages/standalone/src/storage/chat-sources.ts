@@ -136,7 +136,8 @@ export class ChatSources {
     this.save({
       source: 'chat',
       sourceId: input.ref,
-      channel: 'host',
+      // A channel per record: a channel grant never reaches another person's notes.
+      channel: `host:${this.principalId}`,
       author: 'host',
       content: input.text,
       timestamp: new Date(input.occurredAt),

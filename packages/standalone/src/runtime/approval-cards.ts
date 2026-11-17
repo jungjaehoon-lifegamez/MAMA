@@ -70,7 +70,9 @@ export const calendarApprovalCard: ApprovalCardRenderer = (input) => {
   const attendees = Array.isArray(event.attendees)
     ? event.attendees.map((attendee) => String(record(attendee).email ?? '?'))
     : [];
-  if (attendees.length > 0)
+  if (Array.isArray(event.attendees) && attendees.length === 0)
+    lines.push('Attendees: all removed');
+  else if (attendees.length > 0)
     lines.push(
       `Attendees: ${attendees.join(', ')} (${told ? 'invitations are sent' : 'nobody is told'})`
     );

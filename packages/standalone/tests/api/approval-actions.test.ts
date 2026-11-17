@@ -139,7 +139,7 @@ describe('approval.propose', () => {
     expect(sent).toEqual([]);
   });
 
-  it('stores, sends the card to the common channel for the common session and to the DM for a DM session', async () => {
+  it('stores and sends the card to the common channel for the common session', async () => {
     const { propose, sent, store } = await fixture();
     expect(await propose({ ...call, reason: 'asked in a source' })).toMatchObject({
       status: 'completed',
@@ -154,9 +154,6 @@ describe('approval.propose', () => {
       reject: 'apv:r:p1:nonce-fixture',
     });
     expect(store.get('p1')).toMatchObject({ chatId: '-100', messageId: 7, principalId: null });
-    await propose({ ...call, requestKey: 'k2' }, 'principal_member');
-    expect(sent[1]!.principalId).toBe('principal_member');
-    expect(store.get('p2')).toMatchObject({ principalId: 'principal_member', chatId: '42' });
   });
 
   it('returns the same receipt for a repeated request key and sends no second card', async () => {
@@ -190,5 +187,25 @@ describe('approval.propose', () => {
       error: { message: expect.stringContaining('no such event') },
     });
     expect(sent).toHaveLength(1);
+  });
+
+  it('refuses a DM proposal until people connect their own accounts (G1)', async () => {
+    const { propose, sent } = await fixture();
+    expect(await propose(call, 'principal_member')).toMatchObject({
+      status: 'failed',
+      error: { message: expect.stringContaining('common group') },
+    });
+    expect(sent).toEqual([]);
+  });
+
+  it('returns a repeated proposal before reading the target again', async () => {
+    const { propose } = await fixture();
+    await propose(call);
+    expect(await propose({ ...call })).toMatchObject({ data: { repeated: true } });
+    // The target is gone now; the repeat still answers from the stored proposal.
+    expect(await propose({ ...call, input: { text: 'missing' }, requestKey: 'k1' })).toMatchObject({
+      status: 'failed',
+      error: { message: expect.stringContaining('request key') },
+    });
   });
 });

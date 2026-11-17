@@ -97,4 +97,10 @@ describe('approval cards', () => {
     expect(lines.some((line) => line.startsWith('Meet link:'))).toBe(false);
     expect(html).toContain('Description: agenda\n    Attendees: none (nobody is told)');
   });
+
+  it('says an update removes every attendee', () => {
+    expect(
+      calendarApprovalCard({ op: 'update', eventId: 'e1', event: { attendees: [] } })
+    ).toContain('Attendees: all removed');
+  });
 });

@@ -26,10 +26,11 @@ describe('host notes in the chat record', () => {
     });
     const rows = db.adapter
       .prepare(
-        "SELECT author, json_extract(metadata_json, '$.kind') AS kind FROM connector_event_index WHERE source_connector = 'chat' AND source_id = ?"
+        "SELECT author, channel, json_extract(metadata_json, '$.kind') AS kind FROM connector_event_index WHERE source_connector = 'chat' AND source_id = ?"
       )
-      .all('host:approval:p1') as Array<{ author: string; kind: string }>;
-    expect(rows).toEqual([{ author: 'host', kind: 'host_note' }]);
+      .all('host:approval:p1') as Array<{ author: string; channel: string; kind: string }>;
+    // Each record's notes sit on a channel of its own, so one person's never reach another's reads.
+    expect(rows).toEqual([{ author: 'host', channel: 'host:owner', kind: 'host_note' }]);
     expect(chat.hasOwnerMessage('host:approval:p1')).toBe(false);
     raw.close();
     await db.close();

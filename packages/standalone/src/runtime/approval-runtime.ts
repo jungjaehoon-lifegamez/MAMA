@@ -58,6 +58,26 @@ function summary(value: unknown): string {
   return text.length > 300 ? `${text.slice(0, 300)}…` : text;
 }
 
+/** What a decided proposal's card says under it, from the stored row; null while undecided. */
+function outcomeLine(proposal: Proposal): string | null {
+  const result = proposal.result as { error?: string } | null;
+  const by = proposal.decidedBy ?? 'unknown';
+  switch (proposal.status) {
+    case 'done':
+      return `Done: approved by ${by}. ${summary(proposal.result)}`;
+    case 'failed':
+      return `Failed: approved by ${by}. ${result?.error ?? 'failed'}`;
+    case 'rejected':
+      return `Rejected: by ${by}.`;
+    case 'expired':
+      return 'Expired: nobody decided it within 24 hours.';
+    case 'unknown':
+      return 'Unknown: the daemon restarted while this ran, so whether it happened is not known. Check before asking again.';
+    default:
+      return null;
+  }
+}
+
 export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
   const { store } = ports;
   const finished = (proposal: Proposal, line: string): string => {
@@ -127,7 +147,17 @@ export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
           deciderPrincipalId: decider,
         });
       } catch (error) {
-        if (error instanceof ApprovalRefusedError) return { answer: refusal(error.reason) };
+        if (error instanceof ApprovalRefusedError) {
+          // A decided card whose edit was lost is repaired from the stored outcome; nothing runs.
+          const settled = store.get(id);
+          const line = settled ? outcomeLine(settled) : null;
+          return line === null
+            ? { answer: refusal(error.reason) }
+            : {
+                answer: refusal(error.reason),
+                card: `${ports.cardFor(settled!)}\n\n${escapeTelegramHtml(line)}`,
+              };
+        }
         throw error;
       }
       if (decided.status === 'rejected')
