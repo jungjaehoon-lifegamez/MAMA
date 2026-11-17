@@ -46,6 +46,10 @@ function receipt(result: unknown): Record<string, unknown> {
   const video = Array.isArray(entryPoints)
     ? entryPoints.map(record).find((entry) => entry?.entryPointType === 'video')
     : undefined;
+  // Google may make the Meet link after it answers: pending, success or failure.
+  const meetStatus = record(
+    record(record(event.conferenceData)?.createRequest)?.status
+  )?.statusCode;
   const attendees = Array.isArray(event.attendees)
     ? event.attendees.map((attendee) => record(attendee)?.email).filter(Boolean)
     : [];
@@ -57,6 +61,16 @@ function receipt(result: unknown): Record<string, unknown> {
     end: event.end ?? null,
     htmlLink: event.htmlLink ?? null,
     meetLink: event.hangoutLink ?? video?.uri ?? null,
+    ...(meetStatus === undefined
+      ? {}
+      : {
+          meetStatus,
+          ...(meetStatus === 'pending'
+            ? {
+                next: 'The Meet link is still being made: read the event again (google.read calendar events get) for it.',
+              }
+            : {}),
+        }),
     attendees,
   };
 }

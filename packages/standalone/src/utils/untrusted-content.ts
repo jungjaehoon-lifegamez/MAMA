@@ -21,8 +21,10 @@ export function isUntrustedExternalEvidenceTool(toolName: string): boolean {
     toolName === 'trello.read' ||
     toolName === 'drive.read' ||
     toolName === 'drive.download' ||
-    // Mail, events, sheets and documents are written by other people too.
-    toolName === 'google.read'
+    // Mail, events, sheets and documents are written by other people too; an event a write
+    // returns carries what other participants wrote.
+    toolName === 'google.read' ||
+    toolName === 'google.calendar.write'
   );
 }
 

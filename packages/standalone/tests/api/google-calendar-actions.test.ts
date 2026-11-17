@@ -115,6 +115,26 @@ describe('google.calendar.write', () => {
     expect(readdirSync(scratch)).toEqual([]);
   });
 
+  it('says when Google is still making the Meet link, and when it failed', async () => {
+    const pending = {
+      ...created,
+      hangoutLink: undefined,
+      conferenceData: { createRequest: { status: { statusCode: 'pending' } } },
+    };
+    fakeGws(`echo '${JSON.stringify(pending)}'`);
+    const result = await write({ op: 'create', meet: true, event: { start: {}, end: {} } });
+    expect(result).toMatchObject({
+      status: 'completed',
+      data: { meetLink: null, meetStatus: 'pending', next: expect.stringContaining('events get') },
+    });
+    fakeGws(
+      `echo '${JSON.stringify({ ...pending, conferenceData: { createRequest: { status: { statusCode: 'failure' } } } })}'`
+    );
+    const failed = await write({ op: 'create', meet: true, event: { start: {}, end: {} } });
+    expect(failed).toMatchObject({ data: { meetLink: null, meetStatus: 'failure' } });
+    expect((failed as { data: Record<string, unknown> }).data.next).toBeUndefined();
+  });
+
   it('changes and cancels a named event, sending updates as asked', async () => {
     fakeGws(`echo '${JSON.stringify(created)}'`);
     await write({
