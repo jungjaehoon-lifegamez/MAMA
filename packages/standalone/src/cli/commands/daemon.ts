@@ -493,6 +493,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   let approvalSweep: ReturnType<typeof setInterval> | undefined;
   let approvalSweeping: Promise<void> = Promise.resolve();
   let approvalsRunning = 0;
+  let approvalSweepActive = false;
   const gateways = new Map<MessengerName, DaemonGateway>();
   let reportScheduler: ReportScheduler | undefined;
   let releaseCheck: ReleaseCheck | undefined;
@@ -1301,11 +1302,17 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       await owner.approvals.sweep();
       approvalSweep = setInterval(
         () => {
+          // One sweep at a time: a slow one is not overlapped, and stop waits for the one running.
+          if (approvalSweepActive) return;
+          approvalSweepActive = true;
           approvalSweeping = owner!.approvals
             .sweep()
             .catch((error: unknown) =>
               logger.error(`approval sweep failed error=${stimulusFailureReason(error)}`)
-            );
+            )
+            .finally(() => {
+              approvalSweepActive = false;
+            });
         },
         60 * 60 * 1000
       );

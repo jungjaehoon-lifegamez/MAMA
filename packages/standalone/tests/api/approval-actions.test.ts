@@ -105,11 +105,15 @@ async function fixture(
     input: Record<string, unknown>,
     principalId = 'owner',
     session: ActionContext['session'] = { modelRunId: 'run-1' },
-    actions?: string[]
+    actions?: string[],
+    connectors?: string[]
   ) =>
     dispatch(
       { action: 'approval.propose', input },
-      { access: access(principalId, actions), session }
+      {
+        access: { ...access(principalId, actions), ...(connectors ? { connectors } : {}) },
+        session,
+      }
     );
   return { store, sent, propose };
 }
@@ -226,12 +230,21 @@ describe('approval.propose', () => {
 
   it('refuses a target its connector grant does not cover, before reading it', async () => {
     const { propose, sent } = await fixture({ readsConnector: 'calendar' });
+    const reads = contextReads;
     const result = await propose(call, 'owner', { modelRunId: 'run-1' }, undefined, ['slack']);
     expect(result).toMatchObject({
       status: 'failed',
       error: { message: expect.stringContaining('calendar') },
     });
     expect(sent).toEqual([]);
+    expect(contextReads).toBe(reads);
+    // With the grant, the same proposal reads its target and is sent.
+    expect(
+      await propose({ ...call, requestKey: 'k2' }, 'owner', { modelRunId: 'run-1' }, undefined, [
+        'calendar',
+      ])
+    ).toMatchObject({ status: 'completed', data: { state: 'sent' } });
+    expect(contextReads).toBe(reads + 1);
   });
 
   it('answers an identical repeat from the store even when the target can no longer be read', async () => {

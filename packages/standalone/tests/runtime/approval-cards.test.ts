@@ -121,4 +121,19 @@ describe('approval cards', () => {
       'When: 2026-11-20T10:30:00 (Asia/Seoul) – 2026-11-20T11:30:00 (Asia/Tokyo)'
     );
   });
+
+  it('says who is told and shows a time in an unusual form, whatever else the card shows', () => {
+    const lines = calendarApprovalCard({
+      op: 'update',
+      eventId: 'e1',
+      sendUpdates: 'externalOnly',
+      event: {
+        attendees: [{ email: 'a@example.com', optional: true }],
+        start: { date: '2026-11-20', dateTime: '2026-11-20T10:30:00' },
+        end: { date: '2026-11-21' },
+      },
+    });
+    expect(lines).toContain('Updates: invitations go to people outside the domain');
+    expect(lines).toContain('start: {"date":"2026-11-20","dateTime":"2026-11-20T10:30:00"}');
+  });
 });

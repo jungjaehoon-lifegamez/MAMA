@@ -259,7 +259,8 @@ describe('approval runtime', () => {
     const b = f.propose(null, 'k2');
     f.clock.now += DAY;
     await f.runtime.sweep();
-    expect(f.edits.map((edit) => edit.id)).toEqual([b.id]);
+    // The note failed; the card is still edited, and the next one too.
+    expect(f.edits.map((edit) => edit.id)).toEqual([a.id, b.id]);
     expect(f.logged.join('\n')).toContain(a.id);
   });
 

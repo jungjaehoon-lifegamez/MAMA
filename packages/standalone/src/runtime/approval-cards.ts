@@ -46,6 +46,7 @@ function plainTime(point: unknown): boolean {
   return (
     Object.keys(time).length > 0 &&
     Object.keys(time).every((key) => ['dateTime', 'date', 'timeZone'].includes(key)) &&
+    !(time.date !== undefined && time.dateTime !== undefined) &&
     Object.values(time).every((value) => typeof value === 'string')
   );
 }
@@ -116,6 +117,17 @@ export const calendarApprovalCard: ApprovalCardRenderer = (input) => {
     );
   } else if (event.attendees === undefined)
     lines.push(told ? 'Attendees are told' : 'Attendees are not told');
+  // Attendees in another form are shown below as sent; who is told is said here either way.
+  else
+    lines.push(
+      `Updates: ${
+        value.sendUpdates === 'externalOnly'
+          ? 'invitations go to people outside the domain'
+          : told
+            ? 'invitations are sent'
+            : 'nobody is told'
+      }`
+    );
   if (value.meet === true) lines.push('Meet link: yes');
   // Every other field the event sets is shown as it will be sent: the card is what runs.
   for (const [key, field] of Object.entries(event))

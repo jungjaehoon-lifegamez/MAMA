@@ -130,12 +130,20 @@ export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
    * refuses the edit. The row's outcome stands either way, so one card never stops the rest.
    */
   const deliver = async (proposal: Proposal, line: string) => {
-    try {
-      await ports.editCard(proposal, finished(proposal, line));
-    } catch (error) {
+    const failed = (what: string, error: unknown) =>
       ports.log(
-        `approval ${proposal.id} outcome could not be delivered: ${error instanceof Error ? error.message : String(error)}`
+        `approval ${proposal.id} ${what} failed: ${error instanceof Error ? error.message : String(error)}`
       );
+    // The note and the card are delivered apart: one failing never skips the other.
+    try {
+      ports.record(proposal, line);
+    } catch (error) {
+      failed('outcome note', error);
+    }
+    try {
+      await ports.editCard(proposal, `${ports.cardFor(proposal)}\n\n${escapeTelegramHtml(line)}`);
+    } catch (error) {
+      failed('card edit', error);
     }
   };
 
