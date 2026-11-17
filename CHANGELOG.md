@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.83.0] / core [8.11.0] / server [2.6.4] / plugin [2.5.3] - 2026-11-17
+
+MAMA can book meetings. An owner who asks in a message gets a calendar event with a Google Meet
+link straight away. When a write comes up in a turn no owner started, such as a meeting found in a
+source, the agent posts an approval card to the common group. Anyone with the owner role approves
+or rejects it there. The host runs the write exactly as the card shows it, once, and the card and
+the conversation record who decided and what happened. Each package changelog lists every change.
+
+### Upgrading
+
+- An install on 0.82.x updates with `mama update`, or `/update` in Telegram.
+- Calendar writes need the read-and-write calendar scope. An install signed in to Google before
+  this release signs in again with the line `mama doctor` prints; until then a calendar write is
+  refused with that instruction.
+- The Claude Code plugin moves to 2.5.3 with the MCP server 2.6.4 on mama-core 8.11.0.
+
+### Added
+
+- Approval cards in Telegram for writes the agent may not run in the turn (#585, #586).
+- `google.calendar.write`: create, change or delete an event, with a Meet link, on any backend
+  (#582, #584).
+- The common session on Codex reads through the account's Codex apps (Calendar, Gmail, Drive),
+  read only, each call traced (#581, #583).
+- Core: `ActionContract.approval` and the host-stated approved-proposal fact (#585).
+
 ## mama-os [0.82.0] / core [8.10.0] / server [2.6.3] / plugin [2.5.2] - 2026-11-16
 
 You can now see how much MAMA uses and whether it is healthy. `mama status`, `/status` in

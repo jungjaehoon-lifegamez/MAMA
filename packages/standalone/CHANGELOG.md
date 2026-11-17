@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.83.0] - 2026-11-17
+
 ### Added
 
 - Approvals in Telegram. The agent proposes a write it may not run in the turn with
@@ -20,7 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Cards and the conversation name the person who decided, as registered; the record keeps their
   id.
 
-### Added
 
 - The common session on Codex can read through the account's Codex apps (Google Calendar,
   Gmail, Drive); their write tools are not offered. Each call is
@@ -37,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mama doctor` prints; until then a calendar write is refused with that instruction. With no
   Calendar source on, that line has no calendar scope: add
   `https://www.googleapis.com/auth/calendar` to its `--scopes`.
+
 
 ## [0.82.0] - 2026-11-16
 

@@ -7,13 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.11.0] - 2026-11-17
+
 ### Added
 
 - `ActionContract.approval` (`always` or `outsideOwnerTurn`) and the host-stated
   `ActionSessionFacts.approvedProposalId`. Dispatch refuses an `always` action whose session states
   no approved proposal (`approval_required`); an `outsideOwnerTurn` action checks the turn itself.
 
-### Added
 
 - `apps` option for the Codex app-server, runtime process and managed config: enables Codex apps
   (the account's connectors) and their instructions, read only (write tools are not offered);
@@ -21,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`mcpToolCall` from `codex_apps`) are observed like shell and web items, as `codex_apps:<tool>` (an app write
   makes the turn not replayable),
   with their arguments.
+
 
 ## [8.10.0] - 2026-11-16
 
