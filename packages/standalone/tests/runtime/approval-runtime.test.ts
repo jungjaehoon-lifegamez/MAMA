@@ -71,6 +71,7 @@ async function fixture(
       edits.push({ id: proposal.id, card });
     },
     log: (line) => logged.push(line),
+    nameOf: (principalId) => ({ 'owner-a': 'Owner A' })[principalId] ?? principalId,
     now: () => clock.now,
   });
   const input = { op: 'create', event: { summary: 'Fixture', start: {}, end: {} } };
@@ -274,6 +275,68 @@ describe('approval runtime', () => {
     expect(rejected.card).toContain('Rejected');
     expect(f.logged.join('\n')).toContain('proposal-1 outcome note failed');
     expect(f.logged.join('\n')).toContain('proposal-2 outcome note failed');
+  });
+
+  it('names the decider on the card and in the note, and keeps the id on the row', async () => {
+    const f = await fixture();
+    const approved = await f.press(f.propose(null, 'k1'));
+    expect(approved.card).toContain('Done: approved by Owner A.');
+    const rejected = await f.press(f.propose(null, 'k2'), 'r');
+    expect(rejected.card).toContain('Rejected: by Owner A.');
+    expect(f.recorded.map((entry) => entry.line)).toEqual([
+      expect.stringContaining('approved by Owner A'),
+      'Rejected: by Owner A.',
+    ]);
+    expect(f.store.get('proposal-1')!.decidedBy).toBe('owner-a');
+    // A person with no name is shown by id; a repaired card names the decider too.
+    const again = await f.press(f.propose(null, 'k3'), 'a', 'u2');
+    expect(again.card).toContain('approved by owner-b');
+    expect((await f.press(f.store.get('proposal-1')!, 'a', 'u2')).card).toContain(
+      'approved by Owner A'
+    );
+  });
+
+  it('settles the row before naming the decider', async () => {
+    const f = await fixture();
+    const proposal = f.propose();
+    const names = vi.fn(() => {
+      throw new Error('principal read failed');
+    });
+    const runtime = createApprovalRuntime({
+      store: f.store,
+      dispatch: f.dispatch,
+      accessFor: () => ({ principalId: 'owner', agentId: 'agent', scopes: [], actions: [] }),
+      deciderFor: () => 'owner-a',
+      mayDecide: () => true,
+      cardFor: () => 'card',
+      record: () => {},
+      editCard: async () => {},
+      log: () => {},
+      nameOf: names,
+    });
+    await expect(
+      runtime.press({
+        data: `apv:a:${proposal.id}:nonce-fixture`,
+        chatId: '-100',
+        userId: 'u1',
+        messageId: 7,
+      })
+    ).rejects.toThrow('principal read failed');
+    expect(f.store.get(proposal.id)!.status).toBe('done');
+    expect(f.calls).toHaveLength(1);
+  });
+
+  it('names the decider when it repairs an unknown card', async () => {
+    const f = await fixture({
+      result: {
+        status: 'unknown',
+        error: { code: 'timeout', message: 'no answer' },
+      } as ActionResult,
+    });
+    const proposal = f.propose();
+    await f.press(proposal);
+    const again = await f.press(proposal, 'a', 'u2');
+    expect(again.card).toContain('Unknown: approved by Owner A;');
   });
 
   it('reports unknown, never failed, when the call throws after it may have written', async () => {

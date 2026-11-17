@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   result; a card expires after 24 hours. A write that was running when MAMA stopped is marked
   unknown and never run again. `google.calendar.write` is the first action behind it, so a meeting
   found in a source can be booked once an owner approves.
+  Cards and the conversation name the person who decided, as registered; the record keeps their
+  id.
 
 ### Added
 
