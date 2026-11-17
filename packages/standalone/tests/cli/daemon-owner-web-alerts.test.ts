@@ -21,8 +21,8 @@ const transport = vi.hoisted(() => ({
 vi.mock('grammy', () => ({
   InputFile: vi.fn(),
   Bot: vi.fn(() => ({
-    on: (_event: string, handler: (context: unknown) => Promise<void>) => {
-      transport.handler = handler;
+    on: (event: string, handler: (context: unknown) => Promise<void>) => {
+      if (event === 'message') transport.handler = handler;
     },
     catch: vi.fn(),
     init: async () => {},

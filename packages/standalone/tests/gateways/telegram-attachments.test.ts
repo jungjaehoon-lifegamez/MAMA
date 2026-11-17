@@ -23,8 +23,8 @@ const bot = vi.hoisted(() => ({
 vi.mock('grammy', () => ({
   InputFile: vi.fn(),
   Bot: vi.fn(() => ({
-    on: (_event: string, handler: (ctx: unknown) => Promise<void>) => {
-      bot.handler = handler;
+    on: (event: string, handler: (ctx: unknown) => Promise<void>) => {
+      if (event === 'message') bot.handler = handler;
     },
     catch: vi.fn(),
     init: vi.fn().mockResolvedValue(undefined),
