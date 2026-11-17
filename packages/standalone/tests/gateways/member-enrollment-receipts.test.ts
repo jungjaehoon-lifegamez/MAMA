@@ -293,6 +293,11 @@ describe('enrollment host receipts remain in the requesting DM and the common re
         ensureIsolation: () => {},
         createOwnerRuntime: async () =>
           ({
+            approvals: {
+              recover: async () => {},
+              sweep: async () => {},
+              press: async () => ({ answer: '' }),
+            },
             database,
             intake: { acceptOwnerMessage, recordOwnerReply: () => {} },
             serveMember: () => ({ acceptOwnerMessage, recordOwnerReply: () => {} }),

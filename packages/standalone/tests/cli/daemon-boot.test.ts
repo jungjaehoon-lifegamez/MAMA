@@ -73,6 +73,11 @@ function ownerDouble(order: string[]) {
     acceptOwnerMessage: vi.fn(() => ({ inputId: 'owner-input', state: 'accepted' })),
   };
   return {
+    approvals: {
+      recover: async () => {},
+      sweep: async () => {},
+      press: async () => ({ answer: '' }),
+    },
     database: {
       adapter: {
         prepare: vi.fn(() => ({ get: vi.fn(), all: vi.fn(() => []), run: vi.fn() })),

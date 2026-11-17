@@ -66,3 +66,10 @@ export const calendarApprovalCard: ApprovalCardRenderer = (input) => {
   if (value.meet === true) lines.push('Meet link: yes');
   return lines;
 };
+
+/** Every action that takes approval, with the card the owner reads for it. */
+export const APPROVAL_CARDS: Readonly<
+  Record<string, { title: string; render: ApprovalCardRenderer }>
+> = {
+  'google.calendar.write': { title: 'Google Calendar: write event', render: calendarApprovalCard },
+};

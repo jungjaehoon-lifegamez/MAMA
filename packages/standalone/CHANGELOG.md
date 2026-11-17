@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Approvals in Telegram. The agent proposes a write it may not run in the turn with
+  `approval.propose`; the host stores it and posts a card made from the stored input, with Approve
+  and Reject buttons, to the common group (any owner-role member decides) or to the proposing
+  person's DM (that person decides). An approved card runs the stored write once and shows the
+  result; a card expires after 24 hours. A write that was running when MAMA stopped is marked
+  unknown and never run again. `google.calendar.write` is the first action behind it, so a meeting
+  found in a source can be booked once an owner approves.
+
+### Added
+
 - The common session on Codex can read through the account's Codex apps (Google Calendar,
   Gmail, Drive); their write tools are not offered. Each call is
   recorded in `tool_traces` as `codex_apps:<tool>`. Member sessions keep them off.

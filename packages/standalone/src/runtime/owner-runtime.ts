@@ -99,6 +99,10 @@ import {
   type StimulusIntake,
   type TurnLesson,
 } from './stimulus-delivery.js';
+import type { ApprovalActionPorts } from '../api/approval-actions.js';
+import { createApprovalRuntime, type ApprovalRuntime } from './approval-runtime.js';
+import type { Proposal } from './approval-store.js';
+import { APPROVAL_CARDS, renderApprovalCard } from './approval-cards.js';
 
 /** The session a backend probe runs in; never a conversation's. */
 export const OWNER_PROBE_SESSION_KEY = 'owner:probe';
@@ -106,6 +110,11 @@ const BACKEND_PROBE_PROMPT =
   'This is a setup check of the model connection, not a request. Reply with the single word OK and use no tools.';
 
 export interface OwnerRuntimeOptions {
+  /** Approval cards in Telegram: send one, and edit one no press started (sweep, recovery). */
+  approvalCards?: {
+    sendCard: ApprovalActionPorts['sendCard'];
+    editCard(chatId: string, messageId: number, html: string): Promise<void>;
+  };
   prepareDeferredMemberInput?(id: string, input: OwnerMessageInput): Promise<OwnerMessageInput>;
   onPersonalJobError?: (error: unknown) => void;
   messageLedger?: () => OwnerMessageLedger | undefined;
@@ -210,6 +219,8 @@ export interface OwnerRuntimeOptions {
 
 export interface OwnerRuntime {
   personalJobs: ReturnType<typeof createPersonalJobScheduler>;
+  /** Decides and runs the proposals owners approve on their cards (approvals.md). */
+  readonly approvals: ApprovalRuntime;
   readonly runtime: RuntimeHandle;
   readonly database: CoreDatabase;
   readonly knowledge: Knowledge;
@@ -538,6 +549,9 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       : {};
     const surface = createActionSurface({
       commonChannelId: options.commonChannelId,
+      ...(options.approvalCards === undefined
+        ? {}
+        : { approvalCards: { sendCard: options.approvalCards.sendCard } }),
       runtimeRoot: options.runtimeRoot,
       skillPaths: {
         toolsRoot: options.toolsRoot,
@@ -1054,6 +1068,53 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
             sessionKey,
             commonChannelId: options.commonChannelId,
           });
+    // A proposal's outcome joins the conversation it came from: the common record, or that
+    // person's own (P6), never the other.
+    const recordApproval = (proposal: Proposal, line: string) => {
+      const message = {
+        id: `host:approval:${proposal.id}`,
+        channelKey: 'approval',
+        occurredAt: Date.now(),
+        text: `[approval] ${proposal.action}${proposal.reason ? ` — ${proposal.reason}` : ''}`,
+      };
+      const reply = { text: line, occurredAt: Date.now(), deliveryVerified: true };
+      if (proposal.principalId === null) {
+        chat.saveOwnerMessage(message);
+        chat.saveReply({ ...reply, messageRef: message.id, author: 'host' });
+      } else if (!surface.memberRecords.deferWhileErasing(proposal.principalId, { message, reply }))
+        writeMemberHostExchange(proposal.principalId, { message, reply });
+    };
+    const approvals = createApprovalRuntime({
+      store: surface.approvalStore,
+      dispatch: surface.dispatch,
+      accessFor: (principalId) =>
+        principalId === null ? access : executionAccess(principalId, memberSessionKey(principalId)),
+      deciderFor: (_chatId, userId) => {
+        const person = principals.resolveByExternal('telegram', 'private', userId);
+        return person?.kind === 'member' && person.status === 'active' ? person.principalId : null;
+      },
+      // Common cards: any active owner-role member. A DM's card: that person alone.
+      mayDecide: (proposal, decider) =>
+        proposal.principalId === null
+          ? holdsOwnerRole(principals, decider)
+          : decider === proposal.principalId,
+      cardFor: (proposal) => {
+        const card = APPROVAL_CARDS[proposal.action]!;
+        return renderApprovalCard(
+          card.title,
+          card.render(proposal.input),
+          proposal,
+          options.timeZone.get()
+        );
+      },
+      record: recordApproval,
+      editCard: async (proposal, html) => {
+        if (proposal.chatId === null || proposal.messageId === null || !options.approvalCards)
+          return;
+        await options.approvalCards.editCard(proposal.chatId, proposal.messageId, html);
+      },
+    });
+
     const socketDispatch: ActionDispatcher = Object.assign(
       async (...[call, context]: Parameters<ActionDispatcher>) => {
         context = {
@@ -1420,6 +1481,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         if (stopping) return Promise.reject(new Error('Cannot enroll a member after runtime stop'));
         return surface.completeMemberEnrollment(selection);
       },
+      approvals,
       recordHostExchange: ({ message, reply }) => {
         const person = message.id.startsWith('telegram:')
           ? principals.resolveByExternal('telegram', 'private', message.channelKey)

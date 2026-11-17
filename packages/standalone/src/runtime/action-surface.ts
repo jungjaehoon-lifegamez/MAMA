@@ -91,6 +91,9 @@ import {
   guardMemberSharedRecords,
   memberShareActionRegistrations,
 } from '../api/member-share-actions.js';
+import { approvalActionRegistrations, type ApprovalActionPorts } from '../api/approval-actions.js';
+import { createApprovalStore, type ApprovalStore } from './approval-store.js';
+import { APPROVAL_CARDS } from './approval-cards.js';
 
 const OWNER_ACTIONS = [
   'skill.list',
@@ -111,6 +114,7 @@ const OWNER_ACTIONS = [
   'drive.download',
   'google.read',
   'google.calendar.write',
+  'approval.propose',
   'judge',
   'owner.timezone.set',
   ...MEMBER_MANAGEMENT_ACTIONS,
@@ -220,6 +224,8 @@ export interface ActionSurfaceOptions {
   memberLifecycle?: MemberLifecyclePorts;
   memberNotices?: MemberNoticePorts;
   memberDirectoryChange?: <T>(work: () => Promise<T>) => Promise<T>;
+  /** Where approval cards go (Telegram); absent, approval.propose says no card can be sent. */
+  approvalCards?: Pick<ApprovalActionPorts, 'sendCard'>;
   recordManagementReceipt?(receipt: {
     callerPrincipalId?: string;
     operationId: string;
@@ -246,6 +252,7 @@ export interface ActionSurface {
   catalog: ReturnType<typeof createCatalog>;
   dispatch: ActionDispatcher;
   ownerAccess: JudgmentAccess;
+  approvalStore: ApprovalStore;
   hostToolDefinitions(access?: JudgmentAccess): HostToolDefinition[];
   hostToolCall(
     name: string,
@@ -271,6 +278,7 @@ export function ownerMemoryScopes(
 }
 
 export function createActionSurface(options: ActionSurfaceOptions): ActionSurface {
+  const approvalStore = createApprovalStore(options.adapter);
   // Whether the caller's own source reads (connectors, channels, enrollment floor) reach an
   // observation; any refusal, erased or missing included, is not readable.
   const observationReadable = (id: string, context: ActionContext): boolean => {
@@ -586,6 +594,19 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     ...googleReadActionRegistrations({
       scratchDir: join(options.runtimeRoot, 'runtime', 'google-read'),
     }),
+    // A write the agent may not run alone, proposed for an owner's approval (approvals.md).
+    ...approvalActionRegistrations({
+      store: approvalStore,
+      catalog: { entry: (name) => catalog.entry(name) },
+      ownerPrincipalId: options.ownerPrincipalId,
+      cards: APPROVAL_CARDS,
+      sendCard: (target, html, buttons) => {
+        if (!options.approvalCards)
+          throw new Error('Approval cards need the Telegram messenger, which is not running');
+        return options.approvalCards.sendCard(target, html, buttons);
+      },
+      timeZone: () => options.timeZone.get(),
+    }),
     // Calendar events, written with the same sign-in, for every backend (owner, 2026-11-17).
     ...googleCalendarWriteActionRegistrations({
       scratchDir: join(options.runtimeRoot, 'runtime', 'google-calendar'),
@@ -886,6 +907,7 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     },
     catalog,
     dispatch,
+    approvalStore,
     completeMemberEnrollment: (selection) => enrollment.complete(selection, dispatch),
     ownerAccess,
     // Progressive, as Kagemusha's code_act catalog: every turn carries one line per action with

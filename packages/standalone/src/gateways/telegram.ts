@@ -769,6 +769,14 @@ export class TelegramGateway extends BaseGateway {
     return sent.message_id;
   }
 
+  /** Replace an approval card's text and remove its buttons (expiry, recovery). */
+  async editApprovalCard(chatId: string, messageId: number, html: string): Promise<void> {
+    await this.bot!.api.editMessageText(Number(chatId), messageId, html, {
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: [] },
+    });
+  }
+
   /**
    * A card button. The host decides it (who pressed, the nonce, the expiry); no turn sees it.
    * Every press is answered, so Telegram stops the button's spinner.

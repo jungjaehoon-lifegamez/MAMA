@@ -118,6 +118,8 @@ export interface DaemonGateway {
   cancelMemberEnrollment?(principalId: string): void;
   interruptResponse?(sourceRef: string): Promise<void>;
   recoverPendingResponses(): Promise<void>;
+  sendApprovalCard?: TelegramGateway['sendApprovalCard'];
+  editApprovalCard?: TelegramGateway['editApprovalCard'];
   /** Recover one owner message as startup recovery does, leaving every other one alone. */
   recoverResponse(sourceRef: string): Promise<void>;
   start(): Promise<void>;
@@ -486,6 +488,9 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   let connectors: ConnectorRuntime | undefined;
   let messageLedger: OwnerMessageLedger | undefined;
   let gateway: DaemonGateway | null = null;
+  // Approval cards go through Telegram, which starts after the owner runtime that proposes them.
+  let approvalGateway: DaemonGateway | null = null;
+  let approvalSweep: ReturnType<typeof setInterval> | undefined;
   const gateways = new Map<MessengerName, DaemonGateway>();
   let reportScheduler: ReportScheduler | undefined;
   let releaseCheck: ReleaseCheck | undefined;
@@ -590,6 +595,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
 
   const stopOwned = async (): Promise<void> => {
     const errors: unknown[] = [];
+    if (approvalSweep) clearInterval(approvalSweep);
     owner?.beginStop?.();
     // Quiesce every producer before awaiting any one of them. Transports and the database
     // remain available to completions that already own work.
@@ -833,6 +839,39 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       ownerPrincipalId: OWNER_PRINCIPAL_ID,
       commonChannelId: config.telegram.owner_chat_id,
       roomChannels: config.telegram.allowed_chats,
+      ...(config.telegram.enabled && options.mode !== 'replay'
+        ? {
+            approvalCards: {
+              sendCard: async (target, html, buttons) => {
+                if (!approvalGateway?.sendApprovalCard)
+                  throw new Error(
+                    'Approval cards need the Telegram messenger, which is not running'
+                  );
+                // The common session's card goes to the common channel, a person's to their DM.
+                const chatId =
+                  target.principalId === null
+                    ? config.telegram.owner_chat_id!
+                    : (
+                        owner!.database.adapter
+                          .prepare(
+                            `SELECT external_id FROM external_identities
+                              WHERE principal_id = ? AND connector = 'telegram' AND namespace = 'private'`
+                          )
+                          .get(target.principalId) as { external_id: string }
+                      ).external_id;
+                const messageId = await approvalGateway.sendApprovalCard(chatId, html, buttons);
+                return { chatId, messageId };
+              },
+              editCard: async (chatId, messageId, html) => {
+                if (!approvalGateway?.editApprovalCard)
+                  throw new Error(
+                    'Approval cards need the Telegram messenger, which is not running'
+                  );
+                await approvalGateway.editApprovalCard(chatId, messageId, html);
+              },
+            } satisfies NonNullable<OwnerRuntimeOptions['approvalCards']>,
+          }
+        : {}),
       agentId: OWNER_AGENT_ID,
       ...(config.telegram.enabled && options.mode !== 'replay'
         ? {
@@ -1130,6 +1169,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         principalPaths: (principalId, room) => owner!.principalPaths(principalId, room),
         onMemberSelection: (selection) => owner!.completeMemberEnrollment(selection),
         recordMemberSelection: (exchange) => owner!.recordHostExchange(exchange),
+        approvals: { press: (input) => owner!.approvals.press(input) },
         hostCommands: {
           status: async (target, ownerView) => {
             const report = await statusReport();
@@ -1230,6 +1270,21 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       });
       gateways.set('telegram', gateway);
       await gateway.start();
+      // A replay returned before this point, so this is a live daemon.
+      approvalGateway = gateway;
+      // A write running at the last stop is unknown and never run again; an approved one runs.
+      await owner.approvals.recover();
+      approvalSweep = setInterval(
+        () => {
+          owner!.approvals
+            .sweep()
+            .catch((error: unknown) =>
+              logger.error(`approval sweep failed error=${stimulusFailureReason(error)}`)
+            );
+        },
+        60 * 60 * 1000
+      );
+      approvalSweep.unref();
       stage(logger, 'telegram', options.signal);
     } else stage(logger, 'telegram:disabled', options.signal);
     if (config.discord?.enabled) {
