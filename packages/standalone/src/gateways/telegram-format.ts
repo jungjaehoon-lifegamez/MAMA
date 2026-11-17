@@ -172,6 +172,11 @@ function parseTelegramHtml(text: string): TelegramFormattedText {
 const MENTION_LEAD = /^[\s,.:;!?/>)\]}\u3001\u3002\uFF0C\uFF09\uFF1A\uFF1B\uFF01\uFF1F]/;
 const HAS_WORD = /[\p{L}\p{N}]/u;
 
+/** Text shown literally inside Telegram HTML: `&`, `<` and `>` escaped. */
+export function escapeTelegramHtml(raw: string): string {
+  return escapeTagSource(raw);
+}
+
 function escapeTagSource(raw: string): string {
   // Escape & first: the escaped tag is decoded as text later, so an entity inside a
   // rejected tag (e.g. a URL with &amp;) must stay literal instead of being re-decoded.

@@ -258,6 +258,16 @@ describe('google.calendar.write', () => {
     expect(argvRun()).toBeNull();
   });
 
+  it('runs outside an owner turn when the session states an approved proposal', async () => {
+    fakeGws(`echo '${JSON.stringify(created)}'`);
+    ownerTurn = false;
+    const result = await write({ op: 'delete', eventId: 'fixture-event' }, {
+      approvedProposalId: 'proposal-1',
+    } as ActionContext['session']);
+    expect(result).toMatchObject({ status: 'completed' });
+    expect(argvRun()!.slice(0, 3)).toEqual(['calendar', 'events', 'delete']);
+  });
+
   it('is not available in a replay', async () => {
     fakeGws(`echo '{}'`);
     const result = await write({ op: 'delete', eventId: 'fixture-event' }, {

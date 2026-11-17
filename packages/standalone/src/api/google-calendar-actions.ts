@@ -90,6 +90,7 @@ export function googleCalendarWriteActionRegistrations(
       contract: {
         name: GOOGLE_CALENDAR_WRITE_ACTION,
         readsConnector: { fixed: 'calendar' },
+        approval: 'outsideOwnerTurn',
         summary:
           "Create, change or delete an event in the owner's Google Calendar, live through gws. create takes event (a Calendar API Event: summary, start and end with dateTime and timeZone, attendees [{email}], description, location); meet true adds a Google Meet link. update takes eventId and the fields to change (meet true adds a Meet link to an event without one). delete takes eventId. calendarId defaults to primary (calendarList with google.read names the others). sendUpdates defaults to all: attendees get the invitation, change or cancellation by email; none sends nothing. Returns the event's id, link, Meet link, time and attendees. Only in a turn an owner started with their own message (their DM or the common channel); not in a replay.",
         inputSchema: {
@@ -138,10 +139,12 @@ export function googleCalendarWriteActionRegistrations(
             'google.calendar.write changes the calendar now, and a replay turn re-runs past turns; it is not available in a replay.',
             'denied'
           );
-        if (!ports.ownerMessageTurn(context))
+        // An owner approved this exact call in Telegram (approvals.md, A6), or an owner's own
+        // message started the turn.
+        if (context.session?.approvedProposalId === undefined && !ports.ownerMessageTurn(context))
           throw failure(
             'google_calendar_owner_message_required',
-            'google.calendar.write runs only in a turn an owner started with their own message (their DM or the common channel). In other turns, leave the meeting as a proposal for the owner to confirm.',
+            'google.calendar.write runs only in a turn an owner started with their own message (their DM or the common channel). In other turns, propose it with approval.propose: it runs once an owner approves the card.',
             'denied'
           );
         const values = input as {
