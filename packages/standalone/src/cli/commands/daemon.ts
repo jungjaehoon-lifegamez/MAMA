@@ -491,6 +491,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   // Approval cards go through Telegram, which starts after the owner runtime that proposes them.
   let approvalGateway: DaemonGateway | null = null;
   let approvalSweep: ReturnType<typeof setInterval> | undefined;
+  let approvalSweeping: Promise<void> = Promise.resolve();
+  let approvalsRunning = 0;
   const gateways = new Map<MessengerName, DaemonGateway>();
   let reportScheduler: ReportScheduler | undefined;
   let releaseCheck: ReleaseCheck | undefined;
@@ -541,7 +543,12 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       .get(startedAt) as { claimed: number };
     // A turn either runs a claimed input or is a top-level run without one (a probe); subagent
     // runs belong to their parent's turn.
-    return { running, claimed, turns: claimed + unclaimed };
+    // A press running an approved write is a turn the drain waits for.
+    return {
+      running: running + approvalsRunning,
+      claimed,
+      turns: claimed + unclaimed + approvalsRunning,
+    };
   };
 
   const statusReport = async (): Promise<Record<string, unknown>> => {
@@ -617,6 +624,9 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         stopOne(logger, `${name}_drain`, () => active.drain?.(), errors)
       ),
       ...(owner?.drain ? [stopOne(logger, 'owner_drain', () => owner!.drain(), errors)] : []),
+      // A sweep under way records outcomes and edits cards: it ends before Telegram and the
+      // database close.
+      approvalSweeping,
     ]);
     for (const [name, active] of gateways) await stopOne(logger, name, () => active.stop(), errors);
     if (owner) await stopOne(logger, 'owner_runtime', () => owner!.stop(), errors);
@@ -1169,7 +1179,20 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
         principalPaths: (principalId, room) => owner!.principalPaths(principalId, room),
         onMemberSelection: (selection) => owner!.completeMemberEnrollment(selection),
         recordMemberSelection: (exchange) => owner!.recordHostExchange(exchange),
-        approvals: { press: (input) => owner!.approvals.press(input) },
+        approvals: {
+          // An approved write is work like a turn: refused while an update or a drain holds new
+          // work, and counted by the drain while it runs.
+          press: async (input) => {
+            if (claimsHeld())
+              return { answer: 'MAMA is updating or stopping; press again in a minute.' };
+            approvalsRunning += 1;
+            try {
+              return await owner!.approvals.press(input);
+            } finally {
+              approvalsRunning -= 1;
+            }
+          },
+        },
         hostCommands: {
           status: async (target, ownerView) => {
             const report = await statusReport();
@@ -1278,7 +1301,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       await owner.approvals.sweep();
       approvalSweep = setInterval(
         () => {
-          owner!.approvals
+          approvalSweeping = owner!.approvals
             .sweep()
             .catch((error: unknown) =>
               logger.error(`approval sweep failed error=${stimulusFailureReason(error)}`)

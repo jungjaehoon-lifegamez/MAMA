@@ -103,4 +103,22 @@ describe('approval cards', () => {
       calendarApprovalCard({ op: 'update', eventId: 'e1', event: { attendees: [] } })
     ).toContain('Attendees: all removed');
   });
+
+  it('shows values it has no simple form for as they are sent', () => {
+    const lines = calendarApprovalCard({
+      op: 'update',
+      eventId: 'e1',
+      event: {
+        description: null,
+        attendees: [{ email: 'a@example.com', optional: true }],
+        start: { dateTime: '2026-11-20T10:30:00', timeZone: 'Asia/Seoul' },
+        end: { dateTime: '2026-11-20T11:30:00', timeZone: 'Asia/Tokyo' },
+      },
+    });
+    expect(lines).toContain('description: null');
+    expect(lines).toContain('attendees: [{"email":"a@example.com","optional":true}]');
+    expect(lines).toContain(
+      'When: 2026-11-20T10:30:00 (Asia/Seoul) – 2026-11-20T11:30:00 (Asia/Tokyo)'
+    );
+  });
 });

@@ -17,7 +17,12 @@ afterEach(async () => {
 const DAY = 86_400_000;
 
 async function fixture(
-  options: { result?: ActionResult; slow?: boolean; editFails?: Set<string> } = {}
+  options: {
+    result?: ActionResult;
+    slow?: boolean;
+    editFails?: Set<string>;
+    recordFails?: Set<string>;
+  } = {}
 ) {
   const home = mkdtempSync(join(tmpdir(), 'mama-approval-runtime-'));
   homes.push(home);
@@ -57,7 +62,10 @@ async function fixture(
     mayDecide: (proposal, decider) =>
       proposal.principalId === null ? owners.has(decider) : decider === proposal.principalId,
     cardFor: (proposal) => `card ${proposal.id}`,
-    record: (proposal, line) => recorded.push({ id: proposal.id, line }),
+    record: (proposal, line) => {
+      if (options.recordFails?.has(proposal.id)) throw new Error('database is locked');
+      recorded.push({ id: proposal.id, line });
+    },
     editCard: async (proposal, card) => {
       if (options.editFails?.has(proposal.id)) throw new Error('message to edit not found');
       edits.push({ id: proposal.id, card });
@@ -125,7 +133,7 @@ describe('approval runtime', () => {
     expect([first.answer, second.answer].sort()).toEqual(['Already approved', 'Approved']);
   });
 
-  it('runs an approved row after a restart, but not one that was executing', async () => {
+  it('runs nothing at a restart: an executing row is unknown, an approved one is not run', async () => {
     const f = await fixture();
     const approved = f.propose(null, 'k1');
     const executing = f.propose(null, 'k2');
@@ -139,9 +147,10 @@ describe('approval runtime', () => {
     });
     f.store.beginExecution(executing.id);
     await f.runtime.recover();
-    expect(f.calls.map(({ call }) => call.operationId)).toEqual([approved.id]);
+    expect(f.calls).toEqual([]);
     expect(f.store.get(executing.id)!.status).toBe('unknown');
-    expect(f.edits.find((edit) => edit.id === executing.id)!.card).toContain('not known');
+    expect(f.store.get(approved.id)!.status).toBe('failed');
+    expect(f.edits.find((edit) => edit.id === approved.id)!.card).toMatch(/propose it again/i);
   });
 
   it('refuses a decider who may not decide and leaves the row', async () => {
@@ -228,5 +237,40 @@ describe('approval runtime', () => {
     expect(again.answer).toBe('Already approved');
     expect(again.card).toContain('Done');
     expect(f.calls).toHaveLength(1);
+  });
+
+  it('keeps an unknown outcome unknown, never failed', async () => {
+    const f = await fixture({
+      result: {
+        status: 'unknown',
+        error: { code: 'timeout', message: 'no answer from Google' },
+      } as ActionResult,
+    });
+    const proposal = f.propose();
+    const result = await f.press(proposal);
+    expect(f.store.get(proposal.id)!.status).toBe('unknown');
+    expect(result.card).toContain('Unknown');
+    expect(result.card).toContain('no answer from Google');
+  });
+
+  it('keeps sweeping when recording one outcome fails', async () => {
+    const f = await fixture({ recordFails: new Set(['proposal-1']) });
+    const a = f.propose(null, 'k1');
+    const b = f.propose(null, 'k2');
+    f.clock.now += DAY;
+    await f.runtime.sweep();
+    expect(f.edits.map((edit) => edit.id)).toEqual([b.id]);
+    expect(f.logged.join('\n')).toContain(a.id);
+  });
+
+  it('reports unknown, never failed, when the call throws after it may have written', async () => {
+    const f = await fixture();
+    f.dispatch.mockImplementationOnce(async () => {
+      throw new Error('operation receipt could not be written');
+    });
+    const proposal = f.propose();
+    const result = await f.press(proposal);
+    expect(f.store.get(proposal.id)!.status).toBe('unknown');
+    expect(result.card).toContain('Unknown');
   });
 });

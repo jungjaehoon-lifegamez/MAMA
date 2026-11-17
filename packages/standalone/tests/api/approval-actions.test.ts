@@ -13,6 +13,8 @@ import { createApprovalStore } from '../../src/runtime/approval-store.js';
 import { approvalActionRegistrations } from '../../src/api/approval-actions.js';
 
 const homes: string[] = [];
+let contextReads = 0;
+let contextFails = false;
 const databases: Array<Awaited<ReturnType<typeof openCoreDatabase>>> = [];
 afterEach(async () => {
   for (const database of databases.splice(0).reverse()) await database.close();
@@ -42,7 +44,9 @@ const plain: ActionRegistration = {
   exec: () => ({}),
 };
 
-async function fixture(options: { idLength?: number; failSend?: boolean } = {}) {
+async function fixture(
+  options: { idLength?: number; failSend?: boolean; readsConnector?: string } = {}
+) {
   const home = mkdtempSync(join(tmpdir(), 'mama-propose-'));
   homes.push(home);
   const db = await openCoreDatabase({ path: join(home, 'state.db') });
@@ -53,7 +57,16 @@ async function fixture(options: { idLength?: number; failSend?: boolean } = {}) 
     nonce: () => 'nonce-fixture',
   });
   const sent: Array<{ principalId: string | null; html: string; buttons: unknown }> = [];
-  const registrations: ActionRegistration[] = [target, uncarded, plain];
+  const registrations: ActionRegistration[] = [
+    options.readsConnector === undefined
+      ? target
+      : {
+          ...target,
+          contract: { ...target.contract, readsConnector: { fixed: options.readsConnector } },
+        },
+    uncarded,
+    plain,
+  ];
   const catalog = createCatalog(registrations);
   const own = approvalActionRegistrations({
     store,
@@ -64,7 +77,9 @@ async function fixture(options: { idLength?: number; failSend?: boolean } = {}) 
         title: 'Fixture: write',
         render: (input) => [`Text: ${(input as { text: string }).text}`],
         context: async (input) => {
-          if ((input as { text: string }).text === 'missing') throw new Error('no such event');
+          contextReads += 1;
+          if ((input as { text: string }).text === 'missing' || contextFails)
+            throw new Error('no such event');
           return ['Current: the event as it is now'];
         },
       },
@@ -207,5 +222,26 @@ describe('approval.propose', () => {
       status: 'failed',
       error: { message: expect.stringContaining('request key') },
     });
+  });
+
+  it('refuses a target its connector grant does not cover, before reading it', async () => {
+    const { propose, sent } = await fixture({ readsConnector: 'calendar' });
+    const result = await propose(call, 'owner', { modelRunId: 'run-1' }, undefined, ['slack']);
+    expect(result).toMatchObject({
+      status: 'failed',
+      error: { message: expect.stringContaining('calendar') },
+    });
+    expect(sent).toEqual([]);
+  });
+
+  it('answers an identical repeat from the store even when the target can no longer be read', async () => {
+    const { propose } = await fixture();
+    contextFails = false;
+    await propose(call);
+    const reads = contextReads;
+    contextFails = true;
+    expect(await propose(call)).toMatchObject({ status: 'completed', data: { repeated: true } });
+    expect(contextReads).toBe(reads);
+    contextFails = false;
   });
 });

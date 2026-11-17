@@ -124,6 +124,24 @@ export function approvalActionRegistrations(ports: ApprovalActionPorts): ActionR
             `This session may not propose ${values.action}.`,
             'denied'
           );
+        // The same connector grant a direct call meets, checked before the target is read for the
+        // card: a proposal must not read what the session itself may not.
+        const reads = contract.readsConnector;
+        const connector =
+          reads === undefined
+            ? undefined
+            : 'fixed' in reads
+              ? reads.fixed
+              : (values.input as Record<string, unknown>)[reads.fromInput];
+        if (
+          connector !== undefined &&
+          !(context.access.connectors ?? []).includes(String(connector))
+        )
+          throw failure(
+            'approval_connector_not_granted',
+            `This session may not use the ${String(connector)} connector.`,
+            'denied'
+          );
         const invalid = validateInput(contract.inputSchema, values.input, 'input');
         if (invalid !== null) throw failure('approval_invalid_input', invalid, 'invalid_input');
         const principalId =

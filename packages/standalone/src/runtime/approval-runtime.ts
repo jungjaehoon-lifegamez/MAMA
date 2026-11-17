@@ -72,7 +72,7 @@ function outcomeLine(proposal: Proposal): string | null {
     case 'expired':
       return 'Expired: nobody decided it within 24 hours.';
     case 'unknown':
-      return 'Unknown: the daemon restarted while this ran, so whether it happened is not known. Check before asking again.';
+      return `Unknown: whether it happened is not known (${result?.error ?? 'no answer'}). Check before asking again.`;
     default:
       return null;
   }
@@ -98,8 +98,10 @@ export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
         }
       );
     } catch (error) {
+      // The call threw after it started: the write may have happened (a receipt that failed after
+      // the service answered), so its outcome is unknown, never a failure to retry.
       result = {
-        status: 'failed',
+        status: 'unknown',
         error: {
           code: 'internal_error',
           message: error instanceof Error ? error.message : String(error),
@@ -112,20 +114,27 @@ export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
       return finished(done, `Done: ${by}. ${summary(result.data)}`);
     }
     const message = (result as { error?: { message?: string } }).error?.message ?? 'failed';
-    const failed = store.finish(proposal.id, { ok: false, error: message });
-    return finished(failed, `Failed: ${by}. ${message}`);
+    // An unknown outcome may have written: it is never shown as a failure to retry.
+    const unknown = result.status === 'unknown';
+    const settled = store.finish(proposal.id, { ok: false, error: message, unknown });
+    return finished(
+      settled,
+      unknown
+        ? `Unknown: ${by}; whether it happened is not known (${message}). Check before asking again.`
+        : `Failed: ${by}. ${message}`
+    );
   };
 
   /**
    * A card no press started (sweep, recovery) may be gone: the owner deleted it, or Telegram
    * refuses the edit. The row's outcome stands either way, so one card never stops the rest.
    */
-  const edit = async (proposal: Proposal, card: string) => {
+  const deliver = async (proposal: Proposal, line: string) => {
     try {
-      await ports.editCard(proposal, card);
+      await ports.editCard(proposal, finished(proposal, line));
     } catch (error) {
       ports.log(
-        `approval card ${proposal.id} could not be edited: ${error instanceof Error ? error.message : String(error)}`
+        `approval ${proposal.id} outcome could not be delivered: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   };
@@ -167,26 +176,23 @@ export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
 
     /** Proposals past their expiry: each card says so once. */
     async sweep(): Promise<void> {
-      for (const proposal of store.expireDue()) {
-        await edit(proposal, finished(proposal, 'Expired: nobody decided it within 24 hours.'));
-      }
+      for (const proposal of store.expireDue())
+        await deliver(proposal, 'Expired: nobody decided it within 24 hours.');
     },
 
     /**
-     * At boot: a write that was running when the daemon stopped is unknown and never run again;
-     * an approved one that never started runs now, once.
+     * At boot, nothing runs: a write that was running when the daemon stopped is unknown, and an
+     * approved one that never started is failed and proposed again (a boot may be an update
+     * candidate, which runs nothing until confirmed).
      */
     async recover(): Promise<void> {
-      for (const proposal of store.markInterrupted()) {
-        const card = finished(
+      for (const proposal of store.markInterrupted())
+        await deliver(
           proposal,
           'Unknown: the daemon restarted while this ran, so whether it happened is not known. Check before asking again.'
         );
-        await edit(proposal, card);
-      }
-      for (const proposal of store.approvedNotStarted()) {
-        await edit(proposal, await run(proposal));
-      }
+      for (const proposal of store.failNotStarted())
+        await deliver(proposal, `Failed: ${(proposal.result as { error: string }).error}`);
     },
   };
 }

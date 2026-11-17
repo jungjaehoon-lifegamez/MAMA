@@ -149,12 +149,16 @@ export interface ApprovalStore {
     proof: { nonce: string; deciderPrincipalId: string }
   ): Proposal;
   beginExecution(id: string): Proposal;
+  /** `unknown`: the action could not say whether the write happened. */
   finish(
     id: string,
-    outcome: { ok: true; result: unknown } | { ok: false; error: string }
+    outcome: { ok: true; result: unknown } | { ok: false; error: string; unknown?: boolean }
   ): Proposal;
-  /** Approved rows whose execution never began: run them, once. */
-  approvedNotStarted(): Proposal[];
+  /**
+   * Approved rows whose execution never began, at boot: failed, not run. A boot may be an update
+   * candidate that runs nothing until it is confirmed; the owner proposes again.
+   */
+  failNotStarted(): Proposal[];
   expireDue(): Proposal[];
   markInterrupted(): Proposal[];
 }
@@ -260,16 +264,23 @@ export function createApprovalStore(
     },
     finish(id, outcome) {
       return move(id, 'executing', 'status = ?, result_json = ?', [
-        outcome.ok ? 'done' : 'failed',
+        outcome.ok ? 'done' : outcome.unknown ? 'unknown' : 'failed',
         JSON.stringify(outcome.ok ? outcome.result : { error: outcome.error }),
       ]);
     },
-    approvedNotStarted() {
-      return (
-        adapter
-          .prepare("SELECT * FROM approval_proposals WHERE status = 'approved' ORDER BY created_at")
-          .all() as Row[]
-      ).map(toProposal);
+    failNotStarted() {
+      const approved = adapter
+        .prepare("SELECT id FROM approval_proposals WHERE status = 'approved' ORDER BY created_at")
+        .all() as Array<{ id: string }>;
+      return approved.map(({ id }) =>
+        move(id, 'approved', 'status = ?, result_json = ?', [
+          'failed',
+          JSON.stringify({
+            error:
+              'MAMA restarted after the approval and before it ran; it was not run. Propose it again.',
+          }),
+        ])
+      );
     },
     expireDue() {
       const due = adapter

@@ -284,8 +284,11 @@ export class TelegramGateway extends BaseGateway {
         if (ctx.message) await this.handleMessage(ctx.message);
       });
       this.bot.on('callback_query:data', async (ctx: Context) => {
+        // A press is intake: tracked so a stop drains it, and refused once the gateway stops.
         if (ctx.callbackQuery)
-          await this.handleApprovalPress(ctx.callbackQuery as TelegramCallbackQuery);
+          await this.trackIntake(() =>
+            this.handleApprovalPress(ctx.callbackQuery as TelegramCallbackQuery)
+          );
       });
       this.bot.catch((error) => {
         this.lastError = telegramErrorMessage(error);

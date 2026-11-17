@@ -171,4 +171,12 @@ describe('Telegram approval cards', () => {
     await press(Number(COMMON));
     expect(seams.api.editMessageText).toHaveBeenCalled();
   });
+
+  it('takes no press once the gateway is stopping', async () => {
+    const approvals = { press: vi.fn(async () => ({ answer: 'x' })) };
+    const { gateway: active } = await gateway(approvals);
+    await active.beginStop?.();
+    await press(Number(COMMON)).catch(() => {});
+    expect(approvals.press).not.toHaveBeenCalled();
+  });
 });

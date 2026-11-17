@@ -39,18 +39,32 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function when(event: Record<string, unknown>): string | null {
-  const start = record(event.start);
-  const end = record(event.end);
-  const at = (point: Record<string, unknown>) => String(point.dateTime ?? point.date ?? '?');
-  if (Object.keys(start).length === 0 && Object.keys(end).length === 0) return null;
-  const zone = start.timeZone ?? end.timeZone;
-  return `When: ${at(start)} – ${at(end)}${zone ? ` (${String(zone)})` : ''}`;
+/** A start or end in its plain form: only dateTime, date and timeZone, all text. */
+function plainTime(point: unknown): boolean {
+  if (point === undefined) return true;
+  const time = record(point);
+  return (
+    Object.keys(time).length > 0 &&
+    Object.keys(time).every((key) => ['dateTime', 'date', 'timeZone'].includes(key)) &&
+    Object.values(time).every((value) => typeof value === 'string')
+  );
 }
 
-const CALENDAR_SHOWN = new Set(['summary', 'start', 'end', 'location', 'description', 'attendees']);
+function when(event: Record<string, unknown>): string {
+  const start = record(event.start);
+  const end = record(event.end);
+  const at = (time: Record<string, unknown>) => String(time.dateTime ?? time.date ?? '?');
+  // One zone is named once; two different zones are each named at their own time.
+  if (start.timeZone !== undefined && end.timeZone !== undefined && start.timeZone !== end.timeZone)
+    return `When: ${at(start)} (${String(start.timeZone)}) – ${at(end)} (${String(end.timeZone)})`;
+  const zone = start.timeZone ?? end.timeZone;
+  return `When: ${at(start)} – ${at(end)}${zone === undefined ? '' : ` (${String(zone)})`}`;
+}
 
-/** google.calendar.write: the op, the calendar, and every field the write sets. */
+/**
+ * google.calendar.write: the op, the calendar, and every field the write sets. Fields in their
+ * plain form are shown in words; anything else, and every other field, as it is sent.
+ */
 export const calendarApprovalCard: ApprovalCardRenderer = (input) => {
   const value = record(input);
   const event = record(value.event);
@@ -62,25 +76,50 @@ export const calendarApprovalCard: ApprovalCardRenderer = (input) => {
       : `Action: ${op === 'delete' ? 'delete' : 'change'} event ${String(value.eventId)}`,
     `Calendar: ${String(value.calendarId ?? 'primary')}`,
   ];
-  if (typeof event.summary === 'string') lines.push(`Title: ${event.summary}`);
-  const time = when(event);
-  if (time) lines.push(time);
-  if (typeof event.location === 'string') lines.push(`Where: ${event.location}`);
-  if (typeof event.description === 'string') lines.push(`Description: ${event.description}`);
-  const attendees = Array.isArray(event.attendees)
-    ? event.attendees.map((attendee) => String(record(attendee).email ?? '?'))
-    : [];
-  if (Array.isArray(event.attendees) && attendees.length === 0)
-    lines.push('Attendees: all removed');
-  else if (attendees.length > 0)
+  const shown = new Set<string>();
+  const text = (key: string, label: string) => {
+    if (typeof event[key] !== 'string') return;
+    lines.push(`${label}: ${event[key] as string}`);
+    shown.add(key);
+  };
+  text('summary', 'Title');
+  if (
+    (event.start !== undefined || event.end !== undefined) &&
+    plainTime(event.start) &&
+    plainTime(event.end)
+  ) {
+    lines.push(when(event));
+    shown.add('start').add('end');
+  }
+  text('location', 'Where');
+  text('description', 'Description');
+  const attendeeList = Array.isArray(event.attendees) ? (event.attendees as unknown[]) : null;
+  const plainAttendees =
+    attendeeList !== null &&
+    attendeeList.every((attendee) => {
+      const one = record(attendee);
+      return typeof one.email === 'string' && Object.keys(one).length === 1;
+    });
+  if (plainAttendees) {
+    shown.add('attendees');
+    const emails = attendeeList!.map((attendee) => String(record(attendee).email));
     lines.push(
-      `Attendees: ${attendees.join(', ')} (${told ? 'invitations are sent' : 'nobody is told'})`
+      emails.length === 0
+        ? 'Attendees: all removed'
+        : `Attendees: ${emails.join(', ')} (${
+            value.sendUpdates === 'externalOnly'
+              ? 'invitations go to people outside the domain'
+              : told
+                ? 'invitations are sent'
+                : 'nobody is told'
+          })`
     );
-  else lines.push(told ? 'Attendees are told' : 'Attendees are not told');
+  } else if (event.attendees === undefined)
+    lines.push(told ? 'Attendees are told' : 'Attendees are not told');
   if (value.meet === true) lines.push('Meet link: yes');
   // Every other field the event sets is shown as it will be sent: the card is what runs.
   for (const [key, field] of Object.entries(event))
-    if (!CALENDAR_SHOWN.has(key)) lines.push(`${key}: ${JSON.stringify(field)}`);
+    if (!shown.has(key)) lines.push(`${key}: ${JSON.stringify(field)}`);
   return lines;
 };
 
