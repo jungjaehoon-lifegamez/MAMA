@@ -52,6 +52,8 @@ export interface CodexRuntimeProcessOptions {
   shellTool?: boolean;
   /** Enable live web search; disabled unless the consumer opts in. */
   webSearch?: boolean;
+  /** Enable Codex apps (the account's connectors); off unless the consumer opts in. */
+  apps?: boolean;
   /** Explicit shell environment overrides supplied by the consumer. */
   shellEnvironment?: Record<string, string>;
   /** Complete backend environment; omitted retains normal process inheritance. */
@@ -129,6 +131,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
       effort: options.effort,
       shellTool: options.shellTool,
       webSearch: options.webSearch,
+      apps: options.apps,
       shellEnvironment: options.shellEnvironment,
       processEnv: options.processEnv,
       deniedReadPaths: options.deniedReadPaths,

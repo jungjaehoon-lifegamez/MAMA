@@ -49,8 +49,19 @@ export function isDelegationToolName(name: string): boolean {
 
 const NATIVE_READ_NAMES = new Set(['read', 'glob', 'grep', 'webfetch', 'websearch', 'web_search']);
 
+/**
+ * A Codex app call (the account's connectors), named `codex_apps:<tool>` by the driver. A write
+ * (no `readOnlyHint`) reaches a service outside the host, so its turn is not replayed.
+ */
+export const CODEX_APP_PREFIX = 'codex_apps:';
+
+function isAppToolName(name: string): boolean {
+  return name.startsWith(CODEX_APP_PREFIX);
+}
+
 export function isNativeToolName(name: string): boolean {
   return (
+    isAppToolName(name) ||
     NATIVE_EFFECT_NAMES.has(name.toLowerCase()) ||
     NATIVE_READ_NAMES.has(name.toLowerCase()) ||
     isDelegationToolName(name)
@@ -74,6 +85,7 @@ export class NativeEffectReplayBoundary {
   started(name: string, input: Record<string, unknown>): void {
     if (!isNativeToolName(name)) return;
     if (NATIVE_EFFECT_NAMES.has(name.toLowerCase())) this.observed = true;
+    if (isAppToolName(name) && input.readOnlyHint !== true) this.observed = true;
     this.observe(() => this.observer?.started(name, input));
   }
 

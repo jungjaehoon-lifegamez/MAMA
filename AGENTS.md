@@ -145,6 +145,16 @@ Owner decision 2026-10-05: each WebFetch call raises the same kind of security a
 URL and grouped per host within a minute, because text placed in a URL reaches any host. WebFetch
 stays allowed; WebSearch stays recorded in `tool_traces` only. This is observation, not narrowing.
 
+Owner decision 2026-11-17, a widening: the common session's Codex runtime enables Codex apps (the
+account's connectors: Google Calendar, Gmail, Drive and the rest), as Kagemusha's owner did, so it
+can book a meeting with a Meet link. They had been off since the May 2026 port with no recorded
+reason. App writes (create an event, send mail) run without an approval prompt
+(`[apps._default] default_tools_approval_mode = "approve"`), since `approval_policy = "never"`
+otherwise fails them. Each app call is recorded in `tool_traces` as `codex_apps:<tool>`, and an app write marks its turn
+as not replayable; their results
+reach the model unquoted. Member sessions, owner-role DMs included, keep apps off; the Claude backend has no
+equivalent.
+
 Owner decision 2026-10-15, a narrowing: web fetch needs judgment, so a turn with no person in it
 (source deltas, record orders, reports, notices, personal jobs) fetches only the hosts listed in
 `agent.autonomous_web_fetch` (none by default; `*` is every host). Web search stays in every turn,

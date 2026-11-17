@@ -87,6 +87,8 @@ describe('native tool trace assembly', () => {
           'commandExecution',
           'fileChange',
           'webSearch',
+          // A Codex app call, named by the driver (owner decision 2026-11-17).
+          'codex_apps:google_calendar.create_event',
         ]) {
           observed?.onToolUse?.(name, {
             nativeToolUseId: name,
@@ -137,7 +139,8 @@ describe('native tool trace assembly', () => {
         execution_status: string;
         gateway_call_id: string;
       }>;
-      expect(rows).toHaveLength(11);
+      expect(rows).toHaveLength(12);
+      expect(rows.map((row) => row.tool_name)).toContain('codex_apps:google_calendar.create_event');
       expect(rows.every((row) => row.model_run_id === run.model_run_id)).toBe(true);
       expect(rows.every((row) => row.input_summary.length <= 4000)).toBe(true);
       expect(

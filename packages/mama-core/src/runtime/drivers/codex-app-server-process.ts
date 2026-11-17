@@ -80,6 +80,8 @@ export interface CodexAppServerProcessOptions {
   shellTool?: boolean;
   /** Enable live web search; disabled unless the consumer opts in. */
   webSearch?: boolean;
+  /** Enable Codex apps (the account's connectors); off unless the consumer opts in. */
+  apps?: boolean;
   /** Explicit shell environment overrides; does not replace the app-server's isolated HOME. */
   shellEnvironment?: Record<string, string>;
   /** Complete backend environment; omitted retains normal process inheritance. */
@@ -112,6 +114,7 @@ export interface CodexAppServerProcessOptions {
 
 import type { SubagentBridge, SubagentBridgeRequest } from '../subagent-bridge.js';
 import { codexBackendLimits, type BackendLimitsListener } from '../backend-limits.js';
+import { CODEX_APP_PREFIX } from '../native-effect-observer.js';
 export type { SubagentBridge, SubagentBridgeRequest } from '../subagent-bridge.js';
 
 /**
@@ -581,6 +584,21 @@ function nativeObservationId(threadId: string, itemId: string): string {
   return JSON.stringify([threadId, itemId]);
 }
 
+/**
+ * The trace name of a native item the host observes, or null for one it does not: the shell, file
+ * edits, web search, subagent calls, and Codex app calls as `codex_apps:<tool>`,
+ * which act on the account's connected services outside the host's actions. Calls to the host's
+ * own MCP actions are traced by the host when they run.
+ */
+function nativeItemName(item: JsonObject): string | null {
+  if (typeof item.type !== 'string') return null;
+  if (['commandExecution', 'fileChange', 'webSearch', 'collabAgentToolCall'].includes(item.type))
+    return item.type;
+  if (item.type === 'mcpToolCall' && item.server === 'codex_apps' && typeof item.tool === 'string')
+    return `${CODEX_APP_PREFIX}${item.tool}`;
+  return null;
+}
+
 export class CodexAppServerProcess {
   private readonly options: Required<
     Pick<
@@ -605,6 +623,7 @@ export class CodexAppServerProcess {
     shellTool?: boolean;
     /** Enable live web search; disabled unless the consumer opts in. */
     webSearch?: boolean;
+    apps?: boolean;
     shellEnvironment?: Record<string, string>;
     processEnv?: NodeJS.ProcessEnv;
     deniedReadPaths?: string[];
@@ -1074,6 +1093,7 @@ export class CodexAppServerProcess {
     const config = buildMAMACodexAppServerConfig(this.options.effort, undefined, {
       shellTool: this.options.shellTool,
       webSearch: this.options.webSearch,
+      apps: this.options.apps,
       shellEnvironment: this.options.shellEnvironment,
       deniedReadPaths: this.options.deniedReadPaths,
       allowLoginShell: this.options.allowLoginShell,
@@ -1747,9 +1767,7 @@ export class CodexAppServerProcess {
         this.refreshTurnIdleTimeout(turn);
         return;
       }
-      if (
-        !['commandExecution', 'fileChange', 'webSearch', 'collabAgentToolCall'].includes(item.type)
-      ) {
+      if (nativeItemName(item) === null) {
         return;
       }
       this.refreshTurnIdleTimeout(turn);
@@ -1939,27 +1957,32 @@ export class CodexAppServerProcess {
     threadId: string,
     subagent = false
   ): void {
-    if (
-      typeof item.id !== 'string' ||
-      typeof item.type !== 'string' ||
-      !['commandExecution', 'fileChange', 'webSearch', 'collabAgentToolCall'].includes(item.type)
-    )
-      return;
+    const name = nativeItemName(item);
+    if (typeof item.id !== 'string' || name === null) return;
     const observationId = nativeObservationId(threadId, item.id);
     let observed = target.nativeItems.get(observationId);
     if (!observed) {
-      observed = { name: item.type, completed: false };
+      observed = { name, completed: false };
       target.nativeItems.set(observationId, observed);
       const input: JsonObject = { nativeToolUseId: observationId, providerToolUseId: item.id };
       if (subagent) input.subagentThreadId = threadId;
       // Input only: stdout, results and file diffs are not diagnostic inputs.
-      for (const key of ['command', 'cwd', 'action', 'query', 'queries', 'url']) {
+      for (const key of [
+        'command',
+        'cwd',
+        'action',
+        'query',
+        'queries',
+        'url',
+        'arguments',
+        'readOnlyHint',
+      ]) {
         if (item[key] !== undefined) input[key] = item[key];
       }
       if (Array.isArray(item.changes))
         input.paths = item.changes.map((change) => object(change)?.path);
       try {
-        target.onToolUse?.(item.type, input);
+        target.onToolUse?.(name, input);
       } catch {
         console.warn('[CodexAppServer] native observation failed');
       }

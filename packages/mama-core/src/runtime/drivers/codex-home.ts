@@ -422,6 +422,8 @@ export function buildMAMACodexAppServerConfig(
     shellTool?: boolean;
     /** Enable live web search; disabled unless the consumer opts in. */
     webSearch?: boolean;
+    /** Enable Codex apps (the account's connectors, such as Google Calendar); off unless opted in. */
+    apps?: boolean;
     shellEnvironment?: Record<string, string>;
     deniedReadPaths?: string[];
     allowLoginShell?: boolean;
@@ -438,7 +440,7 @@ export function buildMAMACodexAppServerConfig(
     `model_reasoning_effort = ${tomlString(resolveCodexReasoningEffort(effort))}`,
     'instructions = ""',
     'developer_instructions = ""',
-    'include_apps_instructions = false',
+    `include_apps_instructions = ${options.apps ?? false}`,
     'include_environment_context = false',
     ...(options.allowLoginShell === undefined
       ? []
@@ -467,12 +469,15 @@ export function buildMAMACodexAppServerConfig(
     '[analytics]',
     'enabled = false',
     '',
+    // An app's writes (create_event, send_email) ask for approval, and approval_policy "never"
+    // fails them (measured on Codex CLI 0.160.1); the host has no one to ask, so they run.
+    ...(options.apps ? ['[apps._default]', 'default_tools_approval_mode = "approve"', ''] : []),
     '[features]',
     // The owner agent may create native Codex subagents when it decides a goal
     // needs parallel or specialized work. Channels never create agents.
     'multi_agent = true',
     'plugins = false',
-    'apps = false',
+    `apps = ${options.apps ?? false}`,
     'tool_search = false',
     `shell_tool = ${options.shellTool ?? false}`,
     'unified_exec = false',

@@ -46,6 +46,19 @@ describe('managed Codex shell configuration', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+  it('keeps Codex apps off unless the consumer opts in, with their instructions', () => {
+    const baseline = buildMAMACodexAppServerConfig();
+    expect(baseline).toContain('apps = false');
+    expect(baseline).toContain('include_apps_instructions = false');
+    const enabled = buildMAMACodexAppServerConfig(undefined, undefined, { apps: true });
+    expect(enabled).toContain('apps = true');
+    expect(enabled).toContain('include_apps_instructions = true');
+    // Writes run: approval_policy "never" otherwise fails them.
+    expect(enabled).toContain('[apps._default]\ndefault_tools_approval_mode = "approve"');
+    expect(baseline).not.toContain('[apps._default]');
+    expect(enabled).toContain('plugins = false');
+  });
+
   it('keeps shell and unified execution disabled by default', () => {
     const config = buildMAMACodexAppServerConfig();
     expect(config).toContain('shell_tool = false');
