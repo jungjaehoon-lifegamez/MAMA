@@ -1105,6 +1105,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       cardFor: (proposal) => proposal.cardHtml ?? '',
       record: recordApproval,
       log: (line) => console.warn(`[approvals] ${line}`),
+      // A person registered without a name is shown by id.
+      nameOf: (principalId) => principals.findById(principalId)?.displayName ?? principalId,
       editCard: async (proposal, html) => {
         if (proposal.chatId === null || proposal.messageId === null || !options.approvalCards)
           return;

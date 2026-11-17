@@ -28,6 +28,8 @@ export interface ApprovalRuntimePorts {
   /** Replace the card's text and remove its buttons (sweep and recovery, which no press started). */
   editCard(proposal: Proposal, card: string): Promise<void>;
   log(line: string): void;
+  /** The decider as people read it on the card and in the note; the row keeps the id. */
+  nameOf(principalId: string): string;
   now?: () => number;
 }
 
@@ -59,9 +61,9 @@ function summary(value: unknown): string {
 }
 
 /** What a decided proposal's card says under it, from the stored row; null while undecided. */
-function outcomeLine(proposal: Proposal): string | null {
+function outcomeLine(proposal: Proposal, nameOf: (principalId: string) => string): string | null {
   const result = proposal.result as { error?: string } | null;
-  const by = proposal.decidedBy ?? 'unknown';
+  const by = proposal.decidedBy === null ? 'unknown' : nameOf(proposal.decidedBy);
   switch (proposal.status) {
     case 'done':
       return `Done: approved by ${by}. ${summary(proposal.result)}`;
@@ -118,7 +120,7 @@ export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
         },
       } as ActionResult;
     }
-    const by = `approved by ${proposal.decidedBy ?? 'unknown'}`;
+    const by = `approved by ${proposal.decidedBy === null ? 'unknown' : ports.nameOf(proposal.decidedBy)}`;
     if (result.status === 'completed') {
       const done = store.finish(proposal.id, { ok: true, result: result.data });
       return finished(done, `Done: ${by}. ${summary(result.data)}`);
@@ -173,7 +175,7 @@ export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
         if (error instanceof ApprovalRefusedError) {
           // A decided card whose edit was lost is repaired from the stored outcome; nothing runs.
           const settled = store.get(id);
-          const line = settled ? outcomeLine(settled) : null;
+          const line = settled ? outcomeLine(settled, ports.nameOf) : null;
           return line === null
             ? { answer: refusal(error.reason) }
             : {
@@ -184,7 +186,10 @@ export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
         throw error;
       }
       if (decided.status === 'rejected')
-        return { answer: 'Rejected', card: finished(decided, `Rejected: by ${decider}.`) };
+        return {
+          answer: 'Rejected',
+          card: finished(decided, `Rejected: by ${ports.nameOf(decider)}.`),
+        };
       return { answer: 'Approved', card: await run(decided) };
     },
 

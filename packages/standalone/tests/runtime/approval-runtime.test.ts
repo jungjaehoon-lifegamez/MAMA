@@ -71,6 +71,7 @@ async function fixture(
       edits.push({ id: proposal.id, card });
     },
     log: (line) => logged.push(line),
+    nameOf: (principalId) => ({ 'owner-a': 'Owner A' })[principalId] ?? principalId,
     now: () => clock.now,
   });
   const input = { op: 'create', event: { summary: 'Fixture', start: {}, end: {} } };
@@ -274,6 +275,25 @@ describe('approval runtime', () => {
     expect(rejected.card).toContain('Rejected');
     expect(f.logged.join('\n')).toContain('proposal-1 outcome note failed');
     expect(f.logged.join('\n')).toContain('proposal-2 outcome note failed');
+  });
+
+  it('names the decider on the card and in the note, and keeps the id on the row', async () => {
+    const f = await fixture();
+    const approved = await f.press(f.propose(null, 'k1'));
+    expect(approved.card).toContain('Done: approved by Owner A.');
+    const rejected = await f.press(f.propose(null, 'k2'), 'r');
+    expect(rejected.card).toContain('Rejected: by Owner A.');
+    expect(f.recorded.map((entry) => entry.line)).toEqual([
+      expect.stringContaining('approved by Owner A'),
+      'Rejected: by Owner A.',
+    ]);
+    expect(f.store.get('proposal-1')!.decidedBy).toBe('owner-a');
+    // A person with no name is shown by id; a repaired card names the decider too.
+    const again = await f.press(f.propose(null, 'k3'), 'a', 'u2');
+    expect(again.card).toContain('approved by owner-b');
+    expect((await f.press(f.store.get('proposal-1')!, 'a', 'u2')).card).toContain(
+      'approved by Owner A'
+    );
   });
 
   it('reports unknown, never failed, when the call throws after it may have written', async () => {
