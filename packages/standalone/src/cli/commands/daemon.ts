@@ -1274,6 +1274,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       approvalGateway = gateway;
       // A write running at the last stop is unknown and never run again; an approved one runs.
       await owner.approvals.recover();
+      // Cards that expired while MAMA was stopped say so now, not an hour from now (A8).
+      await owner.approvals.sweep();
       approvalSweep = setInterval(
         () => {
           owner!.approvals

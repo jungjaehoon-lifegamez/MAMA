@@ -81,6 +81,44 @@ function receipt(result: unknown): Record<string, unknown> {
   };
 }
 
+/**
+ * The event a change or delete names, as it is now, for its approval card: an owner deciding on
+ * "delete event 4f9c…" sees which meeting goes. A create names none. An event that cannot be read
+ * fails the proposal.
+ */
+export function calendarEventContext(ports: { scratchDir: string; gws?: GwsCall }) {
+  const gws = ports.gws ?? execGwsAsync;
+  return async (input: unknown): Promise<string[]> => {
+    const value = record(input) ?? {};
+    if (value.op === 'create') return [];
+    const params = { calendarId: value.calendarId ?? 'primary', eventId: value.eventId };
+    mkdirSync(ports.scratchDir, { recursive: true, mode: 0o700 });
+    const dir = mkdtempSync(join(ports.scratchDir, 'call-'));
+    try {
+      let event: unknown;
+      try {
+        event = await gws(['calendar', 'events', 'get', '--params', JSON.stringify(params)], {
+          cwd: dir,
+        });
+      } catch (error) {
+        throw gwsError(error, 'calendar', 'calendar events get');
+      }
+      const now = receipt(event);
+      const at = (point: unknown) => {
+        const time = record(point);
+        return String(time?.dateTime ?? time?.date ?? '?');
+      };
+      const attendees = now.attendees as string[];
+      return [
+        `Current event: ${String(now.summary ?? '(no title)')} · ${at(now.start)} – ${at(now.end)}` +
+          (attendees.length > 0 ? ` · attendees ${attendees.join(', ')}` : ''),
+      ];
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+}
+
 export function googleCalendarWriteActionRegistrations(
   ports: GoogleCalendarWritePorts
 ): ActionRegistration[] {

@@ -11,6 +11,7 @@ import type {
   JudgmentAccess,
 } from '@jungjaehoon/mama-core';
 import { ApprovalRefusedError, type ApprovalStore, type Proposal } from './approval-store.js';
+import { escapeTelegramHtml } from '../gateways/telegram-format.js';
 
 export interface ApprovalRuntimePorts {
   store: ApprovalStore;
@@ -26,6 +27,7 @@ export interface ApprovalRuntimePorts {
   record(proposal: Proposal, line: string): void;
   /** Replace the card's text and remove its buttons (sweep and recovery, which no press started). */
   editCard(proposal: Proposal, card: string): Promise<void>;
+  log(line: string): void;
   now?: () => number;
 }
 
@@ -60,7 +62,8 @@ export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
   const { store } = ports;
   const finished = (proposal: Proposal, line: string): string => {
     ports.record(proposal, line);
-    return `${ports.cardFor(proposal)}\n\n${line}`;
+    // The outcome carries text from the input and the service (a title, an error): shown, never markup.
+    return `${ports.cardFor(proposal)}\n\n${escapeTelegramHtml(line)}`;
   };
 
   const run = async (approved: Proposal): Promise<string> => {
@@ -93,6 +96,20 @@ export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
     return finished(failed, `Failed: ${by}. ${message}`);
   };
 
+  /**
+   * A card no press started (sweep, recovery) may be gone: the owner deleted it, or Telegram
+   * refuses the edit. The row's outcome stands either way, so one card never stops the rest.
+   */
+  const edit = async (proposal: Proposal, card: string) => {
+    try {
+      await ports.editCard(proposal, card);
+    } catch (error) {
+      ports.log(
+        `approval card ${proposal.id} could not be edited: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  };
+
   return {
     async press(input: ApprovalPress): Promise<{ answer: string; card?: string }> {
       const match = /^apv:([ar]):([^:]+):([A-Za-z0-9_-]+)$/.exec(input.data);
@@ -121,8 +138,7 @@ export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
     /** Proposals past their expiry: each card says so once. */
     async sweep(): Promise<void> {
       for (const proposal of store.expireDue()) {
-        const card = finished(proposal, 'Expired: nobody decided it within 24 hours.');
-        await ports.editCard(proposal, card);
+        await edit(proposal, finished(proposal, 'Expired: nobody decided it within 24 hours.'));
       }
     },
 
@@ -136,10 +152,10 @@ export function createApprovalRuntime(ports: ApprovalRuntimePorts) {
           proposal,
           'Unknown: the daemon restarted while this ran, so whether it happened is not known. Check before asking again.'
         );
-        await ports.editCard(proposal, card);
+        await edit(proposal, card);
       }
       for (const proposal of store.approvedNotStarted()) {
-        await ports.editCard(proposal, await run(proposal));
+        await edit(proposal, await run(proposal));
       }
     },
   };

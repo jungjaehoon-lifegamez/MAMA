@@ -74,7 +74,10 @@ import { reportSourceActionRegistrations } from '../api/report-source-actions.js
 import { trelloActionRegistrations } from '../api/trello-actions.js';
 import { driveActionRegistrations } from '../api/drive-actions.js';
 import { googleReadActionRegistrations } from '../api/google-read-actions.js';
-import { googleCalendarWriteActionRegistrations } from '../api/google-calendar-actions.js';
+import {
+  calendarEventContext,
+  googleCalendarWriteActionRegistrations,
+} from '../api/google-calendar-actions.js';
 import {
   driveDeliveryActionRegistrations,
   type DriveDeliveryPorts,
@@ -599,7 +602,15 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
       store: approvalStore,
       catalog: { entry: (name) => catalog.entry(name) },
       ownerPrincipalId: options.ownerPrincipalId,
-      cards: APPROVAL_CARDS,
+      cards: {
+        ...APPROVAL_CARDS,
+        'google.calendar.write': {
+          ...APPROVAL_CARDS['google.calendar.write']!,
+          context: calendarEventContext({
+            scratchDir: join(options.runtimeRoot, 'runtime', 'google-calendar'),
+          }),
+        },
+      },
       sendCard: (target, html, buttons) => {
         if (!options.approvalCards)
           throw new Error('Approval cards need the Telegram messenger, which is not running');

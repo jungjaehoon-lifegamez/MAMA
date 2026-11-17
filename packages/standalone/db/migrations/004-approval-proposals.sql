@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS approval_proposals (
   request_key TEXT NOT NULL,
   reason TEXT,
   source_refs_json TEXT NOT NULL DEFAULT '[]',
+  -- The card exactly as the owner was shown it; outcomes are added under it.
+  card_html TEXT,
   chat_id TEXT,
   message_id INTEGER,
   created_at INTEGER NOT NULL,

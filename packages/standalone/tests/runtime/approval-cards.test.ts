@@ -61,4 +61,40 @@ describe('approval cards', () => {
       'Attendees are told',
     ]);
   });
+
+  it('shows every field the write sets, including ones it has no label for', () => {
+    const lines = calendarApprovalCard({
+      op: 'create',
+      event: {
+        id: 'chosen-id',
+        summary: 'One meeting',
+        start: { dateTime: '2026-11-20T10:30:00' },
+        end: { dateTime: '2026-11-20T11:00:00' },
+        recurrence: ['RRULE:FREQ=DAILY'],
+        conferenceData: { entryPoints: [{ uri: 'https://elsewhere.example/join' }] },
+      },
+    });
+    expect(lines).toContain('id: "chosen-id"');
+    expect(lines).toContain('recurrence: ["RRULE:FREQ=DAILY"]');
+    expect(lines.join('\n')).toContain('https://elsewhere.example/join');
+    const update = calendarApprovalCard({
+      op: 'update',
+      eventId: 'e1',
+      event: { status: 'cancelled' },
+    });
+    expect(update).toContain('status: "cancelled"');
+  });
+
+  it('keeps a value with line breaks inside its own line', () => {
+    const html = renderApprovalCard(
+      'Google Calendar: write event',
+      ['Description: agenda\nAttendees: none (nobody is told)'],
+      { reason: 'asked\nMeet link: no', expiresAt: 0 },
+      'Asia/Seoul'
+    );
+    const lines = html.split('\n');
+    expect(lines.some((line) => line.startsWith('Attendees:'))).toBe(false);
+    expect(lines.some((line) => line.startsWith('Meet link:'))).toBe(false);
+    expect(html).toContain('Description: agenda\n    Attendees: none (nobody is told)');
+  });
 });

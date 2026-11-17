@@ -102,7 +102,6 @@ import {
 import type { ApprovalActionPorts } from '../api/approval-actions.js';
 import { createApprovalRuntime, type ApprovalRuntime } from './approval-runtime.js';
 import type { Proposal } from './approval-store.js';
-import { APPROVAL_CARDS, renderApprovalCard } from './approval-cards.js';
 
 /** The session a backend probe runs in; never a conversation's. */
 export const OWNER_PROBE_SESSION_KEY = 'owner:probe';
@@ -1068,21 +1067,25 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
             sessionKey,
             commonChannelId: options.commonChannelId,
           });
-    // A proposal's outcome joins the conversation it came from: the common record, or that
-    // person's own (P6), never the other.
+    // A proposal's outcome joins the record it came from: the common record, or that person's
+    // own (P6). It is the host's note, never an owner message: the reason is the agent's text.
     const recordApproval = (proposal: Proposal, line: string) => {
-      const message = {
-        id: `host:approval:${proposal.id}`,
-        channelKey: 'approval',
+      const note = {
+        ref: `host:approval:${proposal.id}:${proposal.status}`,
         occurredAt: Date.now(),
-        text: `[approval] ${proposal.action}${proposal.reason ? ` — ${proposal.reason}` : ''}`,
+        text: `Approval ${proposal.id} for ${proposal.action}${proposal.reason ? ` (proposed: ${proposal.reason})` : ''}. ${line}`,
+        metadata: { proposalId: proposal.id, status: proposal.status },
       };
-      const reply = { text: line, occurredAt: Date.now(), deliveryVerified: true };
-      if (proposal.principalId === null) {
-        chat.saveOwnerMessage(message);
-        chat.saveReply({ ...reply, messageRef: message.id, author: 'host' });
-      } else if (!surface.memberRecords.deferWhileErasing(proposal.principalId, { message, reply }))
-        writeMemberHostExchange(proposal.principalId, { message, reply });
+      if (proposal.principalId === null) chat.saveHostNote(note);
+      // During an erasure nothing new joins the person's record, or it would outlive the
+      // erasure; the card in their DM still shows the outcome.
+      else if (!surface.memberRecords.isBlocked(proposal.principalId))
+        new ChatSources(
+          sourceStore,
+          database.adapter,
+          proposal.principalId,
+          `member-agent:${proposal.principalId}`
+        ).saveHostNote(note);
     };
     const approvals = createApprovalRuntime({
       store: surface.approvalStore,
@@ -1098,16 +1101,10 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         proposal.principalId === null
           ? holdsOwnerRole(principals, decider)
           : decider === proposal.principalId,
-      cardFor: (proposal) => {
-        const card = APPROVAL_CARDS[proposal.action]!;
-        return renderApprovalCard(
-          card.title,
-          card.render(proposal.input),
-          proposal,
-          options.timeZone.get()
-        );
-      },
+      // The card as the owner was shown it, stored when it was proposed.
+      cardFor: (proposal) => proposal.cardHtml ?? '',
       record: recordApproval,
+      log: (line) => console.warn(`[approvals] ${line}`),
       editCard: async (proposal, html) => {
         if (proposal.chatId === null || proposal.messageId === null || !options.approvalCards)
           return;

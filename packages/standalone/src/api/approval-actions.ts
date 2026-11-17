@@ -19,7 +19,20 @@ export interface ApprovalActionPorts {
   catalog: Pick<ActionCatalog, 'entry'>;
   /** The common session's principal: its proposals are the common session's (principalId null). */
   ownerPrincipalId: string;
-  cards: Readonly<Record<string, { title: string; render: ApprovalCardRenderer }>>;
+  cards: Readonly<
+    Record<
+      string,
+      {
+        title: string;
+        render: ApprovalCardRenderer;
+        /**
+         * What the write would change, read when it is proposed (a delete's event title and time).
+         * A failure refuses the proposal: a card must not name something that is not there.
+         */
+        context?: (input: unknown) => Promise<string[]>;
+      }
+    >
+  >;
   /** Where the card goes: the common channel for null, else that person's DM. */
   sendCard(
     target: { principalId: string | null },
@@ -109,6 +122,17 @@ export function approvalActionRegistrations(ports: ApprovalActionPorts): ActionR
           );
         const invalid = validateInput(contract.inputSchema, values.input, 'input');
         if (invalid !== null) throw failure('approval_invalid_input', invalid, 'invalid_input');
+        let current: string[] = [];
+        if (card.context)
+          try {
+            current = await card.context(values.input);
+          } catch (error) {
+            throw failure(
+              'approval_target_unreadable',
+              `What ${values.action} would change could not be read: ${error instanceof Error ? error.message : String(error)}`,
+              'invalid_input'
+            );
+          }
 
         const principalId =
           context.access.principalId === ports.ownerPrincipalId ? null : context.access.principalId;
@@ -145,10 +169,11 @@ export function approvalActionRegistrations(ports: ApprovalActionPorts): ActionR
           throw new Error(`proposal ${proposal.id} is too long for a Telegram button`);
         const html = renderApprovalCard(
           card.title,
-          card.render(values.input),
+          [...card.render(values.input), ...current],
           proposal,
           ports.timeZone()
         );
+        ports.store.setCardHtml(proposal.id, html);
         try {
           const sent = await ports.sendCard({ principalId }, html, buttons);
           ports.store.setCard(proposal.id, sent.chatId, sent.messageId);

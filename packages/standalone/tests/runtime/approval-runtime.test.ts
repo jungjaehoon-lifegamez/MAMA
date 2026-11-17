@@ -16,13 +16,17 @@ afterEach(async () => {
 
 const DAY = 86_400_000;
 
-async function fixture(options: { result?: ActionResult; slow?: boolean } = {}) {
+async function fixture(
+  options: { result?: ActionResult; slow?: boolean; editFails?: Set<string> } = {}
+) {
   const home = mkdtempSync(join(tmpdir(), 'mama-approval-runtime-'));
   homes.push(home);
   const db = await openCoreDatabase({ path: join(home, 'state.db') });
   databases.push(db);
   const clock = { now: 1_000_000 };
+  let nextId = 0;
   const store = createApprovalStore(db.adapter, {
+    id: () => `proposal-${++nextId}`,
     now: () => clock.now,
     nonce: () => 'nonce-fixture',
   });
@@ -37,6 +41,7 @@ async function fixture(options: { result?: ActionResult; slow?: boolean } = {}) 
   );
   const recorded: Array<{ id: string; line: string }> = [];
   const edits: Array<{ id: string; card: string }> = [];
+  const logged: string[] = [];
   const owners = new Set(['owner-a', 'owner-b']);
   const runtime = createApprovalRuntime({
     store,
@@ -53,7 +58,11 @@ async function fixture(options: { result?: ActionResult; slow?: boolean } = {}) 
       proposal.principalId === null ? owners.has(decider) : decider === proposal.principalId,
     cardFor: (proposal) => `card ${proposal.id}`,
     record: (proposal, line) => recorded.push({ id: proposal.id, line }),
-    editCard: async (proposal, card) => void edits.push({ id: proposal.id, card }),
+    editCard: async (proposal, card) => {
+      if (options.editFails?.has(proposal.id)) throw new Error('message to edit not found');
+      edits.push({ id: proposal.id, card });
+    },
+    log: (line) => logged.push(line),
     now: () => clock.now,
   });
   const input = { op: 'create', event: { summary: 'Fixture', start: {}, end: {} } };
@@ -76,6 +85,7 @@ async function fixture(options: { result?: ActionResult; slow?: boolean } = {}) 
     store,
     runtime,
     dispatch,
+    logged,
     calls,
     recorded,
     edits,
@@ -184,5 +194,29 @@ describe('approval runtime', () => {
     await f.runtime.sweep();
     expect(f.edits.filter((edit) => edit.id === proposal.id)).toHaveLength(1);
     expect((await f.press(proposal)).answer).toBe('Already expired');
+  });
+
+  it('escapes the result and the failure it shows on the card', async () => {
+    const f = await fixture({
+      result: { status: 'completed', data: { summary: 'Review <draft> & Q' } },
+    });
+    const done = await f.press(f.propose(null, 'k1'));
+    expect(done.card).toContain('Review &lt;draft&gt; &amp; Q');
+    expect(done.card).not.toContain('<draft>');
+    const g = await fixture({
+      result: { status: 'failed', error: { code: 'x', message: 'bad <tag>' } } as ActionResult,
+    });
+    const failed = await g.press(g.propose(null, 'k1'));
+    expect(failed.card).toContain('bad &lt;tag&gt;');
+  });
+
+  it('keeps recovering and sweeping when one card cannot be edited', async () => {
+    const g = await fixture({ editFails: new Set(['proposal-1']) });
+    const a = g.propose(null, 'k1');
+    const b = g.propose(null, 'k2');
+    g.clock.now += DAY;
+    await g.runtime.sweep();
+    expect(g.edits.map((edit) => edit.id)).toEqual([b.id]);
+    expect(g.logged.join('\n')).toContain(a.id);
   });
 });

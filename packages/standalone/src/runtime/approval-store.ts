@@ -31,6 +31,8 @@ export interface Proposal {
   requestKey: string;
   reason: string | null;
   sourceRefs: string[];
+  /** The card as the owner was shown it. */
+  cardHtml: string | null;
   chatId: string | null;
   messageId: number | null;
   createdAt: number;
@@ -101,6 +103,7 @@ interface Row {
   request_key: string;
   reason: string | null;
   source_refs_json: string;
+  card_html: string | null;
   chat_id: string | null;
   message_id: number | null;
   created_at: number;
@@ -122,6 +125,7 @@ function toProposal(row: Row): Proposal {
     requestKey: row.request_key,
     reason: row.reason,
     sourceRefs: JSON.parse(row.source_refs_json) as string[],
+    cardHtml: row.card_html,
     chatId: row.chat_id,
     messageId: row.message_id,
     createdAt: row.created_at,
@@ -134,6 +138,7 @@ function toProposal(row: Row): Proposal {
 
 export interface ApprovalStore {
   propose(input: ProposalInput): { proposal: Proposal; nonce: string; repeated: boolean };
+  setCardHtml(id: string, html: string): void;
   setCard(id: string, chatId: string, messageId: number): void;
   get(id: string): Proposal | null;
   decide(
@@ -211,6 +216,9 @@ export function createApprovalStore(
           at + APPROVAL_EXPIRY_MS
         );
       return { proposal: must(id), nonce, repeated: false };
+    },
+    setCardHtml(id, html) {
+      adapter.prepare('UPDATE approval_proposals SET card_html = ? WHERE id = ?').run(html, id);
     },
     setCard(id, chatId, messageId) {
       adapter

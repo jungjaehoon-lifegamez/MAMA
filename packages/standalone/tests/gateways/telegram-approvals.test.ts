@@ -163,4 +163,12 @@ describe('Telegram approval cards', () => {
       text: 'Approvals are not available.',
     });
   });
+
+  it('edits the card even when Telegram refuses to answer the press', async () => {
+    seams.api.answerCallbackQuery.mockRejectedValueOnce(new Error('query is too old'));
+    const approvals = { press: vi.fn(async () => ({ answer: 'Done', card: '<b>done</b>' })) };
+    await gateway(approvals);
+    await press(Number(COMMON));
+    expect(seams.api.editMessageText).toHaveBeenCalled();
+  });
 });

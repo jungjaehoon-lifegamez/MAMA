@@ -63,6 +63,10 @@ async function fixture(options: { idLength?: number; failSend?: boolean } = {}) 
       'fixture.write': {
         title: 'Fixture: write',
         render: (input) => [`Text: ${(input as { text: string }).text}`],
+        context: async (input) => {
+          if ((input as { text: string }).text === 'missing') throw new Error('no such event');
+          return ['Current: the event as it is now'];
+        },
       },
     },
     sendCard: async (targetSession, html, buttons) => {
@@ -174,5 +178,17 @@ describe('approval.propose', () => {
     const { propose, sent } = await fixture({ idLength: 60 });
     expect(await propose(call)).toMatchObject({ status: 'failed' });
     expect(sent).toEqual([]);
+  });
+
+  it('adds what the write would change, read when proposed, and stores the card as sent', async () => {
+    const { propose, sent, store } = await fixture();
+    await propose(call);
+    expect(sent[0]!.html).toContain('Current: the event as it is now');
+    expect(store.get('p1')!.cardHtml).toBe(sent[0]!.html);
+    expect(await propose({ ...call, requestKey: 'k2', input: { text: 'missing' } })).toMatchObject({
+      status: 'failed',
+      error: { message: expect.stringContaining('no such event') },
+    });
+    expect(sent).toHaveLength(1);
   });
 });

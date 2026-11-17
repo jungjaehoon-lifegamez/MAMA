@@ -805,7 +805,13 @@ export class TelegramGateway extends BaseGateway {
       this.log(`telegram approval press failed error=${telegramErrorMessage(error)}`);
       return void (await answer('The approval could not be handled; the log has the error.'));
     }
-    await answer(result.answer);
+    // The outcome on the card matters more than the toast: a press answered too late (Telegram
+    // refuses old queries) still gets its card edited.
+    try {
+      await answer(result.answer);
+    } catch (error) {
+      this.log(`telegram approval answer failed error=${telegramErrorMessage(error)}`);
+    }
     if (result.card !== undefined)
       await this.bot!.api.editMessageText(Number(chatId), query.message!.message_id, result.card, {
         parse_mode: 'HTML',

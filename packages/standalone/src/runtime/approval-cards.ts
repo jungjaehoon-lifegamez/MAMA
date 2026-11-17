@@ -9,6 +9,14 @@ import type { Proposal } from './approval-store.js';
 
 export type ApprovalCardRenderer = (input: unknown) => string[];
 
+/**
+ * A value's line breaks stay inside its line: each further line is indented, so text in the input
+ * cannot print a line that looks like the host's own.
+ */
+function contained(line: string): string {
+  return line.replace(/\r?\n/g, '\n    ');
+}
+
 export function renderApprovalCard(
   title: string,
   lines: readonly string[],
@@ -17,8 +25,10 @@ export function renderApprovalCard(
 ): string {
   return [
     `<b>${escapeTelegramHtml(`Approval request · ${title}`)}</b>`,
-    ...lines.map(escapeTelegramHtml),
-    ...(proposal.reason ? [`Proposed from: ${escapeTelegramHtml(proposal.reason)}`] : []),
+    ...lines.map((line) => escapeTelegramHtml(contained(line))),
+    ...(proposal.reason
+      ? [`Proposed from: ${escapeTelegramHtml(contained(proposal.reason))}`]
+      : []),
     `Expires: ${escapeTelegramHtml(localNow(proposal.expiresAt, timeZone))}`,
   ].join('\n');
 }
@@ -37,6 +47,8 @@ function when(event: Record<string, unknown>): string | null {
   const zone = start.timeZone ?? end.timeZone;
   return `When: ${at(start)} – ${at(end)}${zone ? ` (${String(zone)})` : ''}`;
 }
+
+const CALENDAR_SHOWN = new Set(['summary', 'start', 'end', 'location', 'description', 'attendees']);
 
 /** google.calendar.write: the op, the calendar, and every field the write sets. */
 export const calendarApprovalCard: ApprovalCardRenderer = (input) => {
@@ -64,6 +76,9 @@ export const calendarApprovalCard: ApprovalCardRenderer = (input) => {
     );
   else lines.push(told ? 'Attendees are told' : 'Attendees are not told');
   if (value.meet === true) lines.push('Meet link: yes');
+  // Every other field the event sets is shown as it will be sent: the card is what runs.
+  for (const [key, field] of Object.entries(event))
+    if (!CALENDAR_SHOWN.has(key)) lines.push(`${key}: ${JSON.stringify(field)}`);
   return lines;
 };
 
