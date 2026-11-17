@@ -215,7 +215,10 @@ describe('google.calendar.write', () => {
     });
     expect(JSON.parse(argvRun()![6]!)).toEqual({ summary: 'Moved' });
 
-    fakeGws('');
+    // What gws prints for a delete (measured): the empty response saved as a file.
+    fakeGws(
+      `: > download.html\necho '{"bytes":0,"mimeType":"text/html","saved_file":"download.html","status":"success"}'`
+    );
     expect(await write({ op: 'delete', eventId: 'fixture-event' })).toMatchObject({
       status: 'completed',
       data: { id: 'fixture-event', deleted: true },

@@ -59,8 +59,6 @@ export interface GwsCallOptions {
   timeoutMs?: number;
   /** Where gws runs; a response gws writes to a file (not JSON) lands here. */
   cwd?: string;
-  /** A method whose success has no body (a delete answers 204): no output is a success, as null. */
-  emptyBody?: boolean;
 }
 
 /** Where the JSON gws prints starts: the first line opening an object or an array. */
@@ -238,6 +236,5 @@ export function execGwsTextAsync(args: string[]): Promise<string> {
 /** Keep upstream page tokens in argv, never in a shell command; do not block the daemon. */
 export async function execGwsAsync(args: string[], options?: GwsCallOptions): Promise<unknown> {
   const stdout = await execGwsStdoutAsync(args, options);
-  if (options?.emptyBody && stdout.trim() === '') return null;
   return parseGwsOutput(stdout);
 }
