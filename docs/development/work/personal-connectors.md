@@ -110,6 +110,8 @@ turn shows it.
 
 - Personal sources shared to the common session or another person (team work, later).
 - Members without the owner role.
+- Attachments of personal sources: messages are collected, their files are not listed or downloaded
+  yet (`source.attachment.*` needs a provider built from the person's credential; #590 review).
 - Discord DMs and group DMs: a bot cannot read them.
 - Google kinds until G1; machine-file kinds (`imessage`, `obsidian`, `kagemusha`).
 
