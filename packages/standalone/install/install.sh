@@ -306,7 +306,8 @@ mama_install() {
     say "MAMA OS $MAMA_OS_VERSION is in place: $prefix"
   else
     say "Installing @jungjaehoon/mama-os@$MAMA_OS_VERSION into $prefix"
-    PATH="$node_dir/bin:$PATH" "$node_dir/bin/npm" install -g --prefix "$prefix" \
+    # MAMA embeds on the CPU; onnxruntime-node's CUDA download (Linux x64) answers 404.
+    PATH="$node_dir/bin:$PATH" ONNXRUNTIME_NODE_INSTALL_CUDA=skip "$node_dir/bin/npm" install -g --prefix "$prefix" \
       --no-audit --no-fund "@jungjaehoon/mama-os@$MAMA_OS_VERSION" </dev/null ||
       fail "npm could not install @jungjaehoon/mama-os@$MAMA_OS_VERSION (its error is above). $prefix is left for the next run of this installer, which installs it again."
   fi
