@@ -32,6 +32,7 @@ import {
 import { ownerMemoryScopes } from '../../runtime/action-surface.js';
 import {
   startConnectorRuntime,
+  coreIndexSink,
   type ConnectorRuntime,
   type ConnectorRuntimeOptions,
 } from '../../runtime/connectors.js';
@@ -99,6 +100,13 @@ import { backendLimits } from '../../runtime/backend-limits.js';
 import { createAccountConnect, type AccountConnect } from '../../runtime/account-connect.js';
 import { holdsOwnerRole } from '../../runtime/owner-authority.js';
 import { createAccountStore, personalAccountsDir } from '../../runtime/account-store.js';
+import { createPersonalSourceStore } from '../../runtime/personal-source-store.js';
+import {
+  startPersonalSources,
+  type PersonalSources,
+} from '../../runtime/personal-source-runtime.js';
+import { createPersonalKinds } from '../../connectors/personal/kinds.js';
+import { RawStore } from '../../storage/source-archive.js';
 import { ChatworkConnector } from '../../connectors/chatwork/index.js';
 import { SlackConnector } from '../../connectors/slack/index.js';
 
@@ -495,6 +503,9 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   let owner: OwnerRuntime | undefined;
   let viewer: ViewerServer | null = null;
   let connectors: ConnectorRuntime | undefined;
+  // Each person's own sources, collected under their scope (personal-connectors.md, C3).
+  let personalSources: PersonalSources | undefined;
+  let personalRaw: RawStore | undefined;
   let messageLedger: OwnerMessageLedger | undefined;
   let gateway: DaemonGateway | null = null;
   // Approval cards go through Telegram, which starts after the owner runtime that proposes them.
@@ -626,6 +637,18 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       producerStops.push(stopOne(logger, 'release_check', () => releaseCheck!.stop(), errors));
     if (connectors)
       producerStops.push(stopOne(logger, 'connectors', () => connectors!.stop(), errors));
+    if (personalSources)
+      producerStops.push(
+        stopOne(
+          logger,
+          'personal_sources',
+          async () => {
+            await personalSources!.stopAll();
+            personalRaw?.close();
+          },
+          errors
+        )
+      );
     if (viewer) producerStops.push(stopOne(logger, 'viewer', () => viewer!.stop(), errors));
     await Promise.all(producerStops);
     await Promise.all([
@@ -1207,6 +1230,26 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       coreAdapter: owner.database?.adapter,
       acceptSourceDelta,
     });
+    personalRaw = new RawStore(paths.connectorsRoot);
+    personalSources = startPersonalSources({
+      store: createPersonalSourceStore(owner.database.adapter),
+      accounts: createAccountStore(personalAccountsDir(paths.mamaRoot)),
+      kinds: createPersonalKinds({ timeZone }),
+      rawStore: personalRaw,
+      indexSink: coreIndexSink(owner.database.adapter),
+      root: join(paths.connectorsRoot, 'personal'),
+      log: (line) => logger.error(`[personal sources] ${line}`),
+    });
+    // Each source's first poll is network work: boot does not wait for it, and each failure is
+    // the source's own row and log line.
+    void personalSources
+      .startAll()
+      .then(() => logger.info(`personal sources: ${personalSources!.count()}`))
+      .catch((error) =>
+        logger.error(
+          `[personal sources] start failed: ${error instanceof Error ? error.message : String(error)}`
+        )
+      );
     stage(logger, 'connectors', options.signal);
 
     currentStage = 'messengers';
