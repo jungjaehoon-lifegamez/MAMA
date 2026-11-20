@@ -673,6 +673,9 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     ...accountActionRegistrations({
       ownerPrincipalId: options.ownerPrincipalId,
       accounts: messagePorts.accounts,
+      stopCollecting: async (principalId, kind) => {
+        await options.personalSources?.sources()?.stop(principalId, kind);
+      },
       ask: (principalId, service) => {
         if (!options.accountConnect)
           throw new Error(

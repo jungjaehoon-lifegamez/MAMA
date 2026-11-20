@@ -566,7 +566,13 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
       const store = createPersonalSourceStore(database.adapter);
       for (const source of store.list(principalId)) {
         await options.personalSources?.sources()?.stop(principalId, source.kind);
-        deletePersonalSourceData(database.adapter, sourceStore, principalId, source.kind);
+        deletePersonalSourceData(
+          database.adapter,
+          sourceStore,
+          join(options.rawPath, 'personal'),
+          principalId,
+          source.kind
+        );
         store.remove(principalId, source.kind);
       }
     };

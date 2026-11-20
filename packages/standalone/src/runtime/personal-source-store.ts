@@ -33,13 +33,22 @@ export interface PersonalSource {
   lastError: string | null;
 }
 
-export function personalConnectorName(kind: PersonalSourceKind): string {
-  return `personal-${kind}`;
+/** The 16 hex digits that name a person in storage, never the principal id itself. */
+export function personHash(principalId: string): string {
+  return createHash('sha256').update(principalId).digest('hex').slice(0, 16);
+}
+
+/**
+ * One connector name, and so one raw store and one pending-projection queue, per person and kind:
+ * one person's stuck item never holds another's polls (#final review I6).
+ */
+export function personalConnectorName(principalId: string, kind: PersonalSourceKind): string {
+  return `personal-${kind}-${personHash(principalId)}`;
 }
 
 /** Two people binding the same upstream channel each keep their own copy. */
 export function personalChannelKey(principalId: string, channelId: string): string {
-  return `${createHash('sha256').update(principalId).digest('hex').slice(0, 16)}:${channelId}`;
+  return `${personHash(principalId)}:${channelId}`;
 }
 
 interface Row {

@@ -81,7 +81,13 @@ describe('personal source store (personal-connectors.md, C1)', () => {
   });
 
   it('names personal storage apart from the install’s connectors, one key per person', () => {
-    expect(personalConnectorName('chatwork')).toBe('personal-chatwork');
+    // One connector name, and so one raw store, per person and kind (#final review I6).
+    expect(personalConnectorName('person-a', 'chatwork')).toMatch(
+      /^personal-chatwork-[0-9a-f]{16}$/
+    );
+    expect(personalConnectorName('person-a', 'chatwork')).not.toBe(
+      personalConnectorName('person-b', 'chatwork')
+    );
     const a = personalChannelKey('person-a', '111');
     const b = personalChannelKey('person-b', '111');
     expect(a).not.toBe(b);

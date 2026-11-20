@@ -14,6 +14,7 @@ import {
 import {
   createPersonalSourceStore,
   personalChannelKey,
+  personalConnectorName,
 } from '../../src/runtime/personal-source-store.js';
 
 const COMMON = 'common-fixture';
@@ -101,16 +102,28 @@ describe('personal source access', () => {
 
   it('an owner-role person reads only their own personal channels, and manages them', () => {
     const mine = access(ownerRole);
-    expect(mine.connectors).toContain('personal-chatwork');
-    expect(mine.channels?.['personal-chatwork']).toEqual([personalChannelKey(ownerRole, '111')]);
-    expect(mine.connectorWideRead ?? []).not.toContain('personal-chatwork');
+    const own = personalConnectorName(ownerRole, 'chatwork');
+    expect(mine.connectors).toContain(own);
+    expect(mine.channels?.[own]).toEqual([personalChannelKey(ownerRole, '111')]);
+    expect(mine.connectorWideRead ?? []).not.toContain(own);
+    expect(mine.connectors).not.toContain(personalConnectorName(otherOwner, 'chatwork'));
     for (const action of SOURCE_ACTIONS) expect(mine.actions).toContain(action);
     const theirs = access(otherOwner);
-    expect(theirs.channels?.['personal-chatwork']).toEqual([personalChannelKey(otherOwner, '111')]);
+    expect(theirs.channels?.[personalConnectorName(otherOwner, 'chatwork')]).toEqual([
+      personalChannelKey(otherOwner, '111'),
+    ]);
   });
 
   it('the common session, rooms and members without the role read none', () => {
     const common = surface.ownerAccess;
+    const personal = (connectors: readonly string[] | undefined) =>
+      (connectors ?? []).filter((name) => name.startsWith('personal-'));
+    expect(personal(common.connectors)).toEqual([]);
+    expect(personal(common.connectorWideRead)).toEqual([]);
+    expect(personal(access(plain).connectors)).toEqual([]);
+    expect(
+      personal(access(ownerRole, memberRoomSessionKey(ownerRole, 'fixture-room')).connectors)
+    ).toEqual([]);
     expect(common.connectors ?? []).not.toContain('personal-chatwork');
     expect(common.connectorWideRead ?? []).not.toContain('personal-chatwork');
     for (const action of SOURCE_ACTIONS) expect(common.actions).not.toContain(action);

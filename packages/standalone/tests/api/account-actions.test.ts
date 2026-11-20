@@ -10,6 +10,7 @@ import { createAccountStore, type AccountStore } from '../../src/runtime/account
 let root: string;
 let accounts: AccountStore;
 const ask = vi.fn();
+const stopCollecting = vi.fn();
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'mama-account-actions-'));
@@ -27,7 +28,9 @@ function call(action: string, input: Record<string, unknown>, principalId = 'per
     actions: ['account.connect', 'account.disconnect', 'account.list'],
   };
   return createDispatcher(
-    createCatalog(accountActionRegistrations({ ownerPrincipalId: 'owner', accounts, ask }))
+    createCatalog(
+      accountActionRegistrations({ ownerPrincipalId: 'owner', accounts, ask, stopCollecting })
+    )
   )({ action, input }, { access });
 }
 
@@ -58,5 +61,14 @@ describe('account.connect, account.disconnect, account.list (approvals.md, P1, P
     });
     expect(accounts.get('person-a', 'chatwork')).toBeNull();
     expect(await call('account.list', {}, 'person-b')).toMatchObject({ data: { accounts: [] } });
+  });
+
+  it('removes any kind’s credential and stops what it was collecting (#final review I1)', async () => {
+    accounts.set('person-a', 'discord', { token: 'fixture-bot', accountId: 'B1', name: 'b' });
+    expect(await call('account.disconnect', { service: 'discord' })).toMatchObject({
+      data: { removed: true },
+    });
+    expect(accounts.get('person-a', 'discord')).toBeNull();
+    expect(stopCollecting).toHaveBeenCalledWith('person-a', 'discord');
   });
 });

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -9,6 +9,7 @@ import { createAccountStore } from '../../src/runtime/account-store.js';
 import {
   createPersonalSourceStore,
   personalChannelKey,
+  personalConnectorName,
 } from '../../src/runtime/personal-source-store.js';
 import { startPersonalSources } from '../../src/runtime/personal-source-runtime.js';
 import type { PersonalKindAdapter } from '../../src/connectors/personal/kinds.js';
@@ -125,9 +126,9 @@ describe('personal source runtime (personal-connectors.md, C3)', () => {
     expect(polls[0]!.since.getTime()).toBe(Date.UTC(2026, 10, 20, 12) - 7 * DAY);
     expect(indexed).toHaveLength(1);
     expect(indexed[0]).toMatchObject({
-      connector: 'personal-chatwork',
+      connector: personalConnectorName('person-a', 'chatwork'),
       item: {
-        source: 'personal-chatwork',
+        source: personalConnectorName('person-a', 'chatwork'),
         channel: personalChannelKey('person-a', '111'),
         memoryScopeKind: 'user',
         memoryScopeId: 'person-a',
@@ -147,7 +148,8 @@ describe('personal source runtime (personal-connectors.md, C3)', () => {
     await r.personal.start('person-a', 'chatwork');
     await r.personal.start('person-b', 'chatwork');
     expect(new Set(indexed.map(({ item }) => item.sourceId)).size).toBe(2);
-    expect(raw.count('personal-chatwork')).toBe(2);
+    expect(raw.count(personalConnectorName('person-a', 'chatwork'))).toBe(1);
+    expect(raw.count(personalConnectorName('person-b', 'chatwork'))).toBe(1);
     await r.personal.stopAll();
   });
 
@@ -226,16 +228,73 @@ describe('deleting a personal source (personal-connectors.md, C5)', () => {
     const rows = (id: string) =>
       database.adapter
         .prepare(
-          "SELECT count(*) AS n FROM connector_event_index WHERE source_connector='personal-chatwork' AND memory_scope_id=?"
+          'SELECT count(*) AS n FROM connector_event_index WHERE source_connector=? AND memory_scope_id=?'
         )
-        .get(id) as { n: number };
+        .get(personalConnectorName(id, 'chatwork'), id) as { n: number };
+    const observations = (id: string) =>
+      database.adapter
+        .prepare(
+          'SELECT count(*) AS n FROM observation_versions WHERE source=? AND erased_at IS NULL'
+        )
+        .get(personalConnectorName(id, 'chatwork')) as { n: number };
     expect(rows('person-a').n).toBe(1);
     await personal.stop('person-a', 'chatwork');
-    const deleted = deletePersonalSourceData(database.adapter, raw, 'person-a', 'chatwork');
-    expect(deleted).toMatchObject({ index: 1, raw: { raw_items: 1 } });
+    expect(observations('person-a').n).toBe(1);
+    const stateDir = join(
+      root,
+      'personal-real',
+      personalConnectorName('person-a', 'chatwork').slice(-16),
+      'chatwork'
+    );
+    expect(existsSync(join(stateDir, 'poll-state.json'))).toBe(true);
+    const deleted = deletePersonalSourceData(
+      database.adapter,
+      raw,
+      join(root, 'personal-real'),
+      'person-a',
+      'chatwork'
+    );
+    expect(deleted).toMatchObject({ index: 1, raw: { raw_items: 1 }, observations: 1 });
     expect(rows('person-a').n).toBe(0);
+    expect(observations('person-a').n).toBe(0);
     expect(rows('person-b').n).toBe(1);
-    expect(raw.count('personal-chatwork')).toBe(1);
+    expect(observations('person-b').n).toBe(1);
+    expect(raw.count(personalConnectorName('person-a', 'chatwork'))).toBe(0);
+    expect(raw.count(personalConnectorName('person-b', 'chatwork'))).toBe(1);
+    // The cursor goes too: a later bind reads 7 days back again (#final review I7).
+    expect(existsSync(stateDir)).toBe(false);
     await personal.stopAll();
+  });
+});
+
+describe('starts and stops in order (#final review I2)', () => {
+  it('a stop during a start leaves nothing running and nothing collected after it', async () => {
+    const r = await runtime();
+    bind(r, 'person-a', 'a-token');
+    let release!: () => void;
+    gate = new Promise((resolve) => (release = resolve));
+    const starting = r.personal.start('person-a', 'chatwork');
+    const stopping = r.personal.stop('person-a', 'chatwork');
+    release();
+    await Promise.all([starting, stopping]);
+    expect(r.personal.count()).toBe(0);
+    const after = indexed.length;
+    await r.personal.pollNow('person-a', 'chatwork');
+    expect(indexed.length).toBe(after);
+  });
+
+  it('two starts at once leave one collector, which stopAll stops', async () => {
+    const r = await runtime();
+    bind(r, 'person-a', 'a-token');
+    await Promise.all([
+      r.personal.start('person-a', 'chatwork'),
+      r.personal.start('person-a', 'chatwork'),
+    ]);
+    expect(r.personal.count()).toBe(1);
+    await r.personal.stopAll();
+    expect(r.personal.count()).toBe(0);
+    // Nothing starts once stopped (a boot start still running at shutdown).
+    await r.personal.start('person-a', 'chatwork');
+    expect(r.personal.count()).toBe(0);
   });
 });

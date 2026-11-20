@@ -61,7 +61,7 @@ export interface MemberRecordsPorts {
 function personalRaw(rawStore: RawStore, id: string): Record<string, Record<string, unknown>[]> {
   const stores: Record<string, Record<string, unknown>[]> = {};
   for (const kind of PERSONAL_SOURCE_KINDS) {
-    const name = personalConnectorName(kind);
+    const name = personalConnectorName(id, kind);
     if (!rawStore.hasConnector(name)) continue;
     for (const [table, rows] of Object.entries(rawStore.exportScope(name, 'user', id)))
       stores[`personal_${kind}_${table}`] = rows;
@@ -470,6 +470,13 @@ export function createMemberRecords(options: {
         if (p.isStopping()) return;
         await p.retire(id);
         if (p.isStopping()) return;
+        step = 'personal_sources';
+        // Before every other store: a collector stopped here cannot land a poll after the core
+        // erase (#final review I3). Counted first, as the other stores are.
+        for (const [name, rows] of Object.entries(personalRaw(p.rawStore, id)))
+          state.product[name] ??= rows.length;
+        checkpoint(job, state);
+        await p.stopPersonalSources(id);
         if (state.archive) rmSync(state.archive.path, { force: true });
         step = 'file_check';
         const inventory = memberFileInventory(p.root, id);
@@ -545,12 +552,6 @@ export function createMemberRecords(options: {
           ).length;
         checkpoint(job, state);
         p.rawStore.eraseScope('chat', 'user', id);
-        step = 'personal_sources';
-        for (const [name, rows] of Object.entries(personalRaw(p.rawStore, id)))
-          state.product[name] ??= rows.length;
-        checkpoint(job, state);
-        // Collectors stop before their data goes, so no poll lands after the erasure.
-        await p.stopPersonalSources(id);
         step = 'message_ledger';
         ledger.eraseTelegramDm(dm(p.access(id)), [
           `file:${job.commandId}:export`,

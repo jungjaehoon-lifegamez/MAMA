@@ -228,6 +228,8 @@ export function readReplaySourceEvents(
         WHERE COALESCE(e.event_datetime, e.source_timestamp_ms) >= ?
           AND COALESCE(e.event_datetime, e.source_timestamp_ms) < ?
           AND e.source_connector != 'chat'
+          -- A person's own sources are theirs alone; a replay feeds the common session.
+          AND e.source_connector NOT LIKE 'personal-%'
         ORDER BY source_at_ms ASC, connector ASC, channel_key ASC, e.source_id ASC, raw_row_id ASC`
     )
     .all(fromMs, untilMs) as ReplayIndexRow[];

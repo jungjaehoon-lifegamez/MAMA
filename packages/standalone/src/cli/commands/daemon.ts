@@ -100,19 +100,14 @@ import { backendLimits } from '../../runtime/backend-limits.js';
 import { createAccountConnect, type AccountConnect } from '../../runtime/account-connect.js';
 import { holdsOwnerRole } from '../../runtime/owner-authority.js';
 import { createAccountStore, personalAccountsDir } from '../../runtime/account-store.js';
-import {
-  createPersonalSourceStore,
-  type PersonalSourceKind,
-} from '../../runtime/personal-source-store.js';
+import { createPersonalSourceStore } from '../../runtime/personal-source-store.js';
 import {
   deletePersonalSourceData,
   startPersonalSources,
   type PersonalSources,
 } from '../../runtime/personal-source-runtime.js';
-import { createPersonalKinds } from '../../connectors/personal/kinds.js';
+import { createPersonalKinds, personalKindRouter } from '../../connectors/personal/kinds.js';
 import { RawStore } from '../../storage/source-archive.js';
-import { ChatworkConnector } from '../../connectors/chatwork/index.js';
-import { SlackConnector } from '../../connectors/slack/index.js';
 
 export const OWNER_PRINCIPAL_ID = 'owner';
 const OWNER_AGENT_ID = 'owner-agent';
@@ -511,12 +506,7 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   let personalSources: PersonalSources | undefined;
   let personalRaw: RawStore | undefined;
   let personalKindAdapters: ReturnType<typeof createPersonalKinds> | undefined;
-  const personalKinds = {
-    channels: (kind: PersonalSourceKind, secrets: Record<string, string>) => {
-      if (!personalKindAdapters) throw new Error('Personal sources are not running yet');
-      return personalKindAdapters[kind].channels(secrets);
-    },
-  };
+  const personalKinds = personalKindRouter(() => personalKindAdapters);
   let messageLedger: OwnerMessageLedger | undefined;
   let gateway: DaemonGateway | null = null;
   // Approval cards go through Telegram, which starts after the owner runtime that proposes them.
@@ -886,14 +876,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
     // the running source's API, as the person, and stored under runtime/.
     accountConnect = createAccountConnect({
       accounts: createAccountStore(personalAccountsDir(paths.mamaRoot)),
-      identify: async (service, secrets) => {
-        const connector = connectors?.registry.get(service);
-        if (service === 'chatwork' && connector instanceof ChatworkConnector)
-          return connector.account(secrets.token);
-        if (service === 'slack' && connector instanceof SlackConnector)
-          return connector.account(secrets.token);
-        throw new Error(`the ${service} source is not running`);
-      },
+      // Every kind is checked with its own adapter, as the person (#final review C1).
+      identify: (service, secrets) => personalKinds.identify(service, secrets),
       dmChatOf,
       prompt: (chatId, text) => telegramFor('An account prompt').sendAccountPrompt!(chatId, text),
       deleteMessage: (chatId, messageId) =>
@@ -917,13 +901,25 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       socketPath: paths.socketPath,
       credentialPath: paths.credentialPath,
       runtimeRoot: paths.mamaRoot,
-      accountConnect: { ask: (principalId, service) => accountConnect!.ask(principalId, service) },
+      // A credential stored again restarts a source already collecting on it (#final review I1).
+      accountConnect: {
+        ask: (principalId, service) =>
+          accountConnect!.ask(principalId, service, () =>
+            personalSources ? personalSources.start(principalId, service) : Promise.resolve()
+          ),
+      },
       // Personal sources start after the connectors stage; until then their actions say so.
       personalSources: {
         channels: (kind, secrets) => personalKinds.channels(kind, secrets),
         sources: () => personalSources ?? null,
         deleteData: (principalId, kind) =>
-          deletePersonalSourceData(owner!.database.adapter, personalRaw!, principalId, kind),
+          deletePersonalSourceData(
+            owner!.database.adapter,
+            personalRaw!,
+            join(paths.connectorsRoot, 'personal'),
+            principalId,
+            kind
+          ),
       },
       ...(config.member_root === undefined ? {} : { memberRoot: config.member_root }),
       ...(config.tools_root === undefined ? {} : { toolsRoot: config.tools_root }),
@@ -1249,7 +1245,14 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       acceptSourceDelta,
     });
     personalRaw = new RawStore(paths.connectorsRoot);
-    personalKindAdapters = createPersonalKinds({ timeZone });
+    personalKindAdapters = createPersonalKinds({
+      timeZone,
+      // The messenger's and the install's source bot, by the id a bot token starts with.
+      reservedTelegramBots: () =>
+        [process.env.MAMA_TELEGRAM_TOKEN, process.env.MAMA_TELEGRAM_SOURCE_TOKEN].flatMap(
+          (token) => (token?.includes(':') ? [token.split(':')[0]!] : [])
+        ),
+    });
     personalSources = startPersonalSources({
       store: createPersonalSourceStore(owner.database.adapter),
       accounts: createAccountStore(personalAccountsDir(paths.mamaRoot)),

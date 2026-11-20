@@ -177,7 +177,7 @@ export function resolvePrincipalAccess(
   // channel keys, which no other access names.
   if (ownerRole)
     for (const source of createPersonalSourceStore(adapter).list(principalId)) {
-      const name = personalConnectorName(source.kind);
+      const name = personalConnectorName(principalId, source.kind);
       connectors.add(name);
       channels[name] = source.channels.map((channel) =>
         personalChannelKey(principalId, channel.id)

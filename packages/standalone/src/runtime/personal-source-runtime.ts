@@ -6,7 +6,7 @@
  * read of the install's connectors reaches them. A batch starts no turn (owner decision 1): reports
  * are the person's own personal jobs.
  */
-import { createHash } from 'node:crypto';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { PersonalKindAdapter } from '../connectors/personal/kinds.js';
@@ -21,6 +21,7 @@ import type { AccountStore } from './account-store.js';
 import {
   personalChannelKey,
   personalConnectorName,
+  personHash,
   type PersonalSourceKind,
   type PersonalSourceStore,
 } from './personal-source-store.js';
@@ -42,9 +43,6 @@ export interface PersonalSourceRuntimeOptions {
   log(line: string): void;
 }
 
-const personHash = (principalId: string) =>
-  createHash('sha256').update(principalId).digest('hex').slice(0, 16);
-
 /** The kind's connector, its items re-keyed to the person. */
 function personalConnector(
   inner: IConnector,
@@ -52,7 +50,7 @@ function personalConnector(
   kind: PersonalSourceKind,
   config: ConnectorConfig
 ): IConnector {
-  const name = personalConnectorName(kind);
+  const name = personalConnectorName(principalId, kind);
   const own = { [inner.name]: config.channels };
   const prefix = personHash(principalId);
   return {
@@ -107,7 +105,23 @@ export function startPersonalSources(options: PersonalSourceRuntimeOptions) {
   // A batch starts no turn (owner decision 1); the poll's outcome is the source's row.
   const noTurn = () => {};
 
-  const stop = async (principalId: string, kind: PersonalSourceKind) => {
+  /**
+   * Starts and stops of one source run one after another (#final review I2): a stop during a start
+   * waits for it and then stops what it started; two starts leave one collector.
+   */
+  const chains = new Map<string, Promise<void>>();
+  let stopped = false;
+  const inOrder = (key: string, work: () => Promise<void>): Promise<void> => {
+    const next = (chains.get(key) ?? Promise.resolve()).then(work);
+    const settled = next.catch(() => {});
+    chains.set(key, settled);
+    void settled.then(() => {
+      if (chains.get(key) === settled) chains.delete(key);
+    });
+    return next;
+  };
+
+  const stopNow = async (principalId: string, kind: PersonalSourceKind) => {
     const entry = running.get(id(principalId, kind));
     if (!entry) return;
     running.delete(id(principalId, kind));
@@ -117,8 +131,10 @@ export function startPersonalSources(options: PersonalSourceRuntimeOptions) {
     await entry.registry.disposeAll();
   };
 
-  const start = async (principalId: string, kind: PersonalSourceKind) => {
-    await stop(principalId, kind);
+  const startNow = async (principalId: string, kind: PersonalSourceKind) => {
+    await stopNow(principalId, kind);
+    // Nothing starts once the daemon is stopping (a boot start still running at shutdown).
+    if (stopped) return;
     const source = options.store.get(principalId, kind);
     if (!source) return;
     const account = options.accounts.get(principalId, kind);
@@ -135,7 +151,7 @@ export function startPersonalSources(options: PersonalSourceRuntimeOptions) {
       source.channels
     );
     const dir = join(options.root, personHash(principalId), kind);
-    const name = personalConnectorName(kind);
+    const name = personalConnectorName(principalId, kind);
     const registry = new ConnectorRegistry();
     const scheduler = new PollingScheduler(options.rawStore, dir, {
       rawIndexSink: options.indexSink,
@@ -181,6 +197,11 @@ export function startPersonalSources(options: PersonalSourceRuntimeOptions) {
     await scheduler.pollConnector(name, registry, channels, noTurn);
   };
 
+  const start = (principalId: string, kind: PersonalSourceKind) =>
+    inOrder(id(principalId, kind), () => startNow(principalId, kind));
+  const stop = (principalId: string, kind: PersonalSourceKind) =>
+    inOrder(id(principalId, kind), () => stopNow(principalId, kind));
+
   return {
     start,
     stop,
@@ -188,7 +209,10 @@ export function startPersonalSources(options: PersonalSourceRuntimeOptions) {
       for (const source of options.store.listAll()) await start(source.principalId, source.kind);
     },
     async stopAll(): Promise<void> {
-      for (const key of [...running.keys()]) {
+      stopped = true;
+      // Every source's queue is drained: a start in flight finishes, then it is stopped.
+      const keys = new Set([...chains.keys(), ...running.keys()]);
+      for (const key of keys) {
         const [principalId, kind] = key.split('\0') as [string, PersonalSourceKind];
         await stop(principalId, kind);
       }
@@ -197,7 +221,7 @@ export function startPersonalSources(options: PersonalSourceRuntimeOptions) {
       const entry = running.get(id(principalId, kind));
       if (!entry) return;
       await entry.scheduler.pollConnector(
-        personalConnectorName(kind),
+        personalConnectorName(principalId, kind),
         entry.registry,
         entry.channels,
         noTurn
@@ -210,22 +234,33 @@ export function startPersonalSources(options: PersonalSourceRuntimeOptions) {
 export type PersonalSources = ReturnType<typeof startPersonalSources>;
 
 /**
- * Deletes what a person's source collected: its raw items and index rows (C5). Run after the
- * source's collector has stopped, so no poll lands after it.
+ * Deletes what a person's source collected (C5): its raw items, index rows and observation
+ * contents, and its poll and connector state, so a later bind reads 7 days back again. Run after the
+ * source's collector has stopped, so no poll lands after it. Observations are tombstoned as core
+ * erasure tombstones them: a row id another record may cite stays, its content and scope go.
  */
 export function deletePersonalSourceData(
   adapter: { prepare(sql: string): { run(...params: unknown[]): { changes: number } } },
   rawStore: Pick<RawStore, 'eraseScope'>,
+  stateRoot: string,
   principalId: string,
   kind: PersonalSourceKind
-): { raw: Record<string, number>; index: number } {
-  const name = personalConnectorName(kind);
+): { raw: Record<string, number>; index: number; observations: number } {
+  const name = personalConnectorName(principalId, kind);
   const raw = rawStore.eraseScope(name, 'user', principalId);
   const index = adapter
+    .prepare('DELETE FROM connector_event_index WHERE source_connector = ?')
+    .run(name).changes;
+  const observations = adapter
     .prepare(
-      `DELETE FROM connector_event_index
-        WHERE source_connector = ? AND memory_scope_kind = 'user' AND memory_scope_id = ?`
+      `UPDATE observation_versions SET erased_at=?, source=NULL, source_id=NULL,
+         producer_version_id=NULL, body=NULL, body_location_json=NULL, author=NULL, source_at=NULL,
+         content_hash=NULL, metadata_json='{}', scope_json='{"scopes":[]}', source_type=NULL,
+         source_locator=NULL, title=NULL, artifact_locator=NULL, artifact_title=NULL,
+         event_date=NULL, source_entity_id=NULL, channel=NULL, project_id=NULL, tenant_id=NULL
+       WHERE source = ?`
     )
-    .run(name, principalId).changes;
-  return { raw, index };
+    .run(Date.now(), name).changes;
+  rmSync(join(stateRoot, personHash(principalId), kind), { recursive: true, force: true });
+  return { raw, index, observations };
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { WebClient } from '@slack/web-api';
 
-import { createPersonalKinds } from '../../src/connectors/personal/kinds.js';
+import { createPersonalKinds, personalKindRouter } from '../../src/connectors/personal/kinds.js';
 import { createTimeZoneSetting } from '../../src/runtime/timezone.js';
 
 type Route = (url: URL, request: RequestInit) => unknown;
@@ -188,5 +188,47 @@ describe('personal source kinds (personal-connectors.md, C7)', () => {
       expect(String(error)).toMatch(/401/);
       expect(String(error)).not.toContain('zz-secret');
     }
+  });
+
+  it('the connect flow checks every kind through its adapter, on the daemon too (#final review C1)', async () => {
+    const http = fakeFetch({
+      'https://discord.com/api/v10/users/@me': () => ({ id: 'B1', username: 'my-bot', bot: true }),
+    });
+    const daemon: { adapters?: ReturnType<typeof createPersonalKinds> } = {};
+    const router = personalKindRouter(() => daemon.adapters);
+    await expect(router.identify('discord', { token: 'd' })).rejects.toThrow(/not running yet/);
+    daemon.adapters = createPersonalKinds({ fetch: http as unknown as typeof fetch, timeZone });
+    await expect(router.identify('discord', { token: 'd' })).resolves.toEqual({
+      id: 'B1',
+      name: 'my-bot',
+      bot: true,
+    });
+  });
+
+  it("refuses MAMA's own Telegram bot as a personal source (#final review I5)", async () => {
+    const http = fakeFetch({
+      'https://api.telegram.org/bot111:own/getMe': () => ({
+        ok: true,
+        result: { id: 111, username: 'mama_bot', is_bot: true },
+      }),
+    });
+    const kinds = createPersonalKinds({
+      fetch: http as unknown as typeof fetch,
+      timeZone,
+      reservedTelegramBots: () => ['111'],
+    });
+    await expect(kinds.telegram.identify({ token: '111:own' })).rejects.toThrow(/MAMA's own bot/);
+  });
+
+  it('a credential that cannot be reached names no address (iCal)', async () => {
+    const http = vi.fn(async () => {
+      throw new TypeError('Failed to parse URL from https://calendar.example/zz-secret.ics');
+    });
+    const kinds = createPersonalKinds({ fetch: http as unknown as typeof fetch, timeZone });
+    const error = await kinds.ical
+      .identify({ token: 'https://calendar.example/zz-secret.ics' })
+      .catch((e: Error) => e);
+    expect(String(error)).toMatch(/could not be reached/);
+    expect(String(error)).not.toContain('zz-secret');
   });
 });

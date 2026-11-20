@@ -15,7 +15,10 @@ import {
 } from '@jungjaehoon/mama-core';
 import { fixture, roots } from '../helpers/member-runtime.js';
 import { createApprovalStore } from '../../src/runtime/approval-store.js';
-import { createPersonalSourceStore } from '../../src/runtime/personal-source-store.js';
+import {
+  createPersonalSourceStore,
+  personalConnectorName,
+} from '../../src/runtime/personal-source-store.js';
 import { memberPaths, memberClaudeTmpDir } from '../../src/runtime/member-paths.js';
 import { memberFileInventory } from '../../src/api/member-export.js';
 import { resolvePrincipalAccess } from '../../src/runtime/principal-access.js';
@@ -658,9 +661,9 @@ it('erases after settlement, preserves owner and shared rows, receipts counts an
       );
     // A personal source the member and another person both collect (personal-connectors.md, C5).
     for (const principal of [f.member, 'other-person'])
-      rawStore.save('personal-chatwork', [
+      rawStore.save(personalConnectorName(principal, 'chatwork'), [
         {
-          source: 'personal-chatwork',
+          source: personalConnectorName(principal, 'chatwork'),
           sourceId: `fixture-personal-${principal}`,
           channel: 'fixture-key:111',
           author: 'someone',
@@ -749,7 +752,8 @@ it('erases after settlement, preserves owner and shared rows, receipts counts an
   expect(receipt.product.personal_chatwork_raw_items).toBe(1);
   const personalAfter = new RawStore(join(f.home, 'raw'));
   try {
-    expect(personalAfter.count('personal-chatwork')).toBe(1);
+    expect(personalAfter.count(personalConnectorName(f.member, 'chatwork'))).toBe(0);
+    expect(personalAfter.count(personalConnectorName('other-person', 'chatwork'))).toBe(1);
   } finally {
     personalAfter.close();
   }

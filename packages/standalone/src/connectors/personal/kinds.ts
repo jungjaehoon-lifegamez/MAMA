@@ -28,6 +28,31 @@ export interface PersonalKindDeps {
   fetch?: typeof fetch;
   slackClient?: (token: string) => WebClient | Promise<WebClient>;
   timeZone: TimeZoneSetting;
+  /**
+   * MAMA's own Telegram bots (the messenger and the install's source), by bot id: a second
+   * getUpdates poller on one of them takes its updates (#final review I5).
+   */
+  reservedTelegramBots?: () => readonly string[];
+}
+
+/**
+ * The kinds as the daemon reaches them: built after the owner runtime, used by the connect flow
+ * and the actions only once they exist.
+ */
+export function personalKindRouter(
+  get: () => Record<PersonalSourceKind, PersonalKindAdapter> | undefined
+) {
+  const adapters = () => {
+    const found = get();
+    if (!found) throw new Error('Personal sources are not running yet; try again in a minute.');
+    return found;
+  };
+  return {
+    identify: async (kind: PersonalSourceKind, secrets: Secrets) =>
+      adapters()[kind].identify(secrets),
+    channels: async (kind: PersonalSourceKind, secrets: Secrets) =>
+      adapters()[kind].channels(secrets),
+  };
 }
 
 const TIMEOUT_MS = 30_000;
@@ -64,7 +89,15 @@ export function createPersonalKinds(
 ): Record<PersonalSourceKind, PersonalKindAdapter> {
   const http = deps.fetch ?? fetch;
   const call = async (service: string, url: string, init: RequestInit = {}): Promise<Response> => {
-    const res = await http(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    let res: Response;
+    try {
+      res = await http(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    } catch (error) {
+      // A fetch error can repeat the address, and an address can be the secret (iCal, Trello).
+      throw new Error(
+        `${service} could not be reached (${error instanceof Error ? error.name : 'error'})`
+      );
+    }
     if (!res.ok) throw new Error(`${service} answered ${res.status}`);
     return res;
   };
@@ -235,6 +268,10 @@ export function createPersonalKinds(
           'Telegram',
           telegram(s, 'getMe')
         );
+        if ((deps.reservedTelegramBots?.() ?? []).includes(String(me.result.id)))
+          throw new Error(
+            "That is MAMA's own bot: create a bot of your own with BotFather for your source"
+          );
         return {
           id: String(me.result.id),
           name: me.result.username ?? String(me.result.id),
