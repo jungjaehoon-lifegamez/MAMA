@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Personal sources. An owner-role person connects their own Chatwork, Slack, Discord, Notion,
+  Trello, Telegram bot or iCal source from their DM with `source.connect`: the credential is a reply
+  to the host's prompt, taken before anything records it. `source.channels` lists what it can read,
+  `source.bind` picks what to collect, and MAMA collects it for that person only (first poll 7 days
+  back), stored as `personal-<kind>` with their scope; the common session and other people never
+  read it. A new batch starts no turn: the agent agrees a report cadence with the person and creates
+  a personal job. `source.list` and `source.disconnect` manage them; disconnecting, offboarding and
+  erasure delete what was collected, and the personal export includes it. Migration 006.
+
+### Added
+
 - Personal accounts. An owner-role person connects their own Chatwork or Slack account from their
   DM: the agent calls `account.connect`, the host asks for the token as a reply in that DM, takes
   the reply before anything records it, deletes it from the chat and checks it with the service.
