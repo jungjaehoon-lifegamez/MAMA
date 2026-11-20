@@ -197,7 +197,7 @@ channel) keeps the owner runtime's tools.
   prompt before any turn records it (late ones too), and the host deletes it from the chat. They are read at each use, never put in the environment, removed on offboarding,
   and not in backups (a restored install reconnects them).
 - Each person's own sources (personal-connectors.md, owner decision 2026-11-20) use the same
-  account store for their credentials. What they collect is stored as connector `personal-<kind>`
+  account store for their credentials. What they collect is stored as connector `personal-<kind>-<person hash>`
   with a channel key and source id carrying the person and their `user:` scope, so only that person's
   access names it. Disconnecting, offboarding and erasure delete it.
 - Owner decision 2026-10-31: gws's credential store (its config directory and a configured
