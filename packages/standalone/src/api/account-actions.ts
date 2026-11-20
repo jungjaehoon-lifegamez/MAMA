@@ -8,6 +8,7 @@ import type { ActionContext, ActionRegistration } from '@jungjaehoon/mama-core';
 
 import {
   PERSONAL_ACCOUNT_SERVICES,
+  SEND_SERVICES,
   type AccountService,
   type AccountStore,
 } from '../runtime/account-store.js';
@@ -17,6 +18,8 @@ export interface AccountActionPorts {
   accounts: AccountStore;
   /** Prompts for the token in the person's own DM. */
   ask(principalId: string, service: AccountService): Promise<{ expiresAt: number }>;
+  /** Stops a source collecting on a credential being removed (#final review I1). */
+  stopCollecting(principalId: string, service: AccountService): Promise<void>;
 }
 
 function person(context: ActionContext, ports: AccountActionPorts): string {
@@ -29,12 +32,13 @@ function person(context: ActionContext, ports: AccountActionPorts): string {
   );
 }
 
-const service = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['service'],
-  properties: { service: { type: 'string', enum: [...PERSONAL_ACCOUNT_SERVICES] } },
-} as const;
+const service = (kinds: readonly string[]) =>
+  ({
+    type: 'object',
+    additionalProperties: false,
+    required: ['service'],
+    properties: { service: { type: 'string', enum: [...kinds] } },
+  }) as const;
 
 export function accountActionRegistrations(ports: AccountActionPorts): ActionRegistration[] {
   return [
@@ -43,7 +47,7 @@ export function accountActionRegistrations(ports: AccountActionPorts): ActionReg
         name: 'account.connect',
         summary:
           'Connect your own Chatwork or Slack account, so messages you approve from your DM post as you. The host asks you in this DM for the token as a reply; it is taken before the conversation and never reaches the agent. Never ask for the token in the conversation.',
-        inputSchema: service,
+        inputSchema: service(SEND_SERVICES),
         examples: [{ title: 'Connect Chatwork', input: { service: 'chatwork' } }],
       },
       exec: async (input, context) => {
@@ -61,15 +65,17 @@ export function accountActionRegistrations(ports: AccountActionPorts): ActionReg
     {
       contract: {
         name: 'account.disconnect',
-        summary: 'Remove your own connected Chatwork or Slack account from MAMA.',
-        inputSchema: service,
+        summary:
+          'Remove one of your own credentials from MAMA (any kind you connected, for sending or as a source). A source collecting on it stops; source.disconnect also deletes what it collected.',
+        inputSchema: service(PERSONAL_ACCOUNT_SERVICES),
       },
-      exec: (input, context) => ({
-        removed: ports.accounts.remove(
-          person(context, ports),
-          (input as { service: AccountService }).service
-        ),
-      }),
+      exec: async (input, context) => {
+        const principalId = person(context, ports);
+        const kind = (input as { service: AccountService }).service;
+        // The collector holds a copy of the credential: it stops before the credential goes.
+        await ports.stopCollecting(principalId, kind);
+        return { removed: ports.accounts.remove(principalId, kind) };
+      },
     },
     {
       contract: {

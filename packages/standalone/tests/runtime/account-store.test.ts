@@ -70,4 +70,18 @@ describe('personal account store (approvals.md, P1)', () => {
     expect(dir.startsWith(join(root, 'runtime'))).toBe(true);
     expect(credentialReadPaths(root).some((denied) => dir.startsWith(denied))).toBe(true);
   });
+
+  it('lists no secret of a multi-field kind (#590 review)', () => {
+    const { accounts } = store();
+    accounts.set('person-a', 'trello', {
+      token: 'fixture-trello-token',
+      fields: { key: 'fixture-trello-key' },
+      accountId: 'm1',
+      name: 'a',
+    });
+    const listed = JSON.stringify(accounts.list('person-a'));
+    expect(listed).not.toContain('fixture-trello-key');
+    expect(listed).not.toContain('fixture-trello-token');
+    expect(listed).not.toContain('fields');
+  });
 });

@@ -10,6 +10,7 @@ import type {
   IConnector,
   NormalizedItem,
 } from '../framework/types.js';
+import { connectorSecret } from '../framework/types.js';
 import {
   type AttachmentDescriptor,
   type AttachmentListRequest,
@@ -126,7 +127,7 @@ export class ChatworkConnector implements IConnector {
   }
 
   async init(): Promise<void> {
-    const token = process.env.MAMA_CHATWORK_TOKEN;
+    const token = connectorSecret(this.config, 'MAMA_CHATWORK_TOKEN');
     if (!token) {
       throw new Error(
         'Chatwork API token not found in the daemon environment (MAMA_CHATWORK_TOKEN).'

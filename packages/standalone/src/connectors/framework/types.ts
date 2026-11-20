@@ -68,6 +68,19 @@ export interface ConnectorConfig {
   pollIntervalMinutes: number;
   channels: Record<string, ChannelConfig>;
   auth: AuthConfig;
+  /**
+   * A person's own credential, by secret name (personal-connectors.md, C7). Set only by the
+   * personal source runtime; connectors.json never carries it (the loader keeps no such key).
+   */
+  secrets?: Readonly<Record<string, string>>;
+}
+
+/**
+ * A connector's secret: from a personal source's own secrets when it carries them, and then never
+ * from the environment, so a person's source can never run on the install's credential.
+ */
+export function connectorSecret(config: ConnectorConfig, name: string): string | undefined {
+  return config.secrets !== undefined ? config.secrets[name] : process.env[name];
 }
 
 export interface ConnectorHealth {

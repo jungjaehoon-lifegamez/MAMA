@@ -15,11 +15,68 @@ export const CONNECT_WINDOW_MS = 15 * 60_000;
 /** Every account prompt starts so: a reply to one is the host's, whatever the host remembers. */
 export const ACCOUNT_PROMPT_PREFIX = 'Reply to this message with your ';
 
-const SERVICE_NAMES: Record<AccountService, string> = { chatwork: 'Chatwork', slack: 'Slack' };
+/**
+ * What each kind asks for, one reply prompt per field, `token` last. `identity` says whose
+ * credential it must be: a person's own (sends post as them) or a bot the person runs.
+ */
+export interface KindPrompt {
+  name: string;
+  fields: Array<{ name: string; ask: string }>;
+  identity?: 'person' | 'bot';
+}
 
-const HOW_TO: Record<AccountService, string> = {
-  chatwork: 'your Chatwork API token (Chatwork: Service connection → API token)',
-  slack: 'your Slack user token (xoxp-…, from a Slack app installed for you with chat:write)',
+export const KIND_PROMPTS: Record<AccountService, KindPrompt> = {
+  chatwork: {
+    name: 'Chatwork',
+    identity: 'person',
+    fields: [
+      { name: 'token', ask: 'your Chatwork API token (Chatwork: Service connection → API token)' },
+    ],
+  },
+  slack: {
+    name: 'Slack',
+    identity: 'person',
+    fields: [
+      { name: 'token', ask: 'your Slack user token (xoxp-…, from a Slack app installed for you)' },
+    ],
+  },
+  discord: {
+    name: 'Discord',
+    identity: 'bot',
+    fields: [
+      {
+        name: 'token',
+        ask: 'your Discord bot token (your own Discord application, Message Content intent on, invited to your server)',
+      },
+    ],
+  },
+  notion: {
+    name: 'Notion',
+    fields: [
+      { name: 'token', ask: 'your Notion integration secret (shared with the pages to read)' },
+    ],
+  },
+  trello: {
+    name: 'Trello',
+    fields: [
+      { name: 'key', ask: 'your Trello API key (trello.com/power-ups/admin)' },
+      { name: 'token', ask: 'your Trello token for that key' },
+    ],
+  },
+  telegram: {
+    name: 'Telegram',
+    identity: 'bot',
+    fields: [
+      {
+        name: 'token',
+        ask: 'your Telegram source bot token (from BotFather, added to the chats to read)',
+      },
+    ],
+  },
+  ical: {
+    name: 'iCal',
+    fields: [{ name: 'token', ask: 'the secret iCal address of your calendar' }],
+  },
 };
 
 export interface AccountConnectPorts {
@@ -27,7 +84,7 @@ export interface AccountConnectPorts {
   /** The account a token belongs to; rejects when the service refuses the token. */
   identify(
     service: AccountService,
-    token: string
+    secrets: Record<string, string>
   ): Promise<{ id: string; name: string; bot?: boolean }>;
   /** The person's own Telegram DM. */
   dmChatOf(principalId: string): string;
@@ -60,7 +117,15 @@ export function createAccountConnect(ports: AccountConnectPorts) {
   /** Waiting prompts, by DM and prompt message: each reply answers its own prompt. */
   const waiting = new Map<
     string,
-    { principalId: string; service: AccountService; expiresAt: number }
+    {
+      principalId: string;
+      service: AccountService;
+      /** The field this prompt asks for, and the secrets taken before it. */
+      field: number;
+      taken: Record<string, string>;
+      expiresAt: number;
+      then?: () => Promise<void>;
+    }
   >();
   const key = (chatId: string, messageId: number) => `${chatId}:${messageId}`;
 
@@ -79,8 +144,26 @@ export function createAccountConnect(ports: AccountConnectPorts) {
     );
   };
 
-  const complete = async (reply: AccountReply, service: AccountService) => {
-    const name = SERVICE_NAMES[service];
+  const promptFor = async (
+    chatId: string,
+    entry: Omit<NonNullable<ReturnType<typeof waiting.get>>, 'expiresAt'>
+  ) => {
+    const { ask } = KIND_PROMPTS[entry.service].fields[entry.field]!;
+    const expiresAt = now() + CONNECT_WINDOW_MS;
+    const promptId = await ports.prompt(
+      chatId,
+      `${ACCOUNT_PROMPT_PREFIX}${ask}, within 15 minutes. The host reads your reply, deletes it from this chat and stores it; it never reaches the agent or the conversation.`
+    );
+    waiting.set(key(chatId, promptId), { ...entry, expiresAt });
+    return expiresAt;
+  };
+
+  const complete = async (
+    reply: AccountReply,
+    entry: NonNullable<ReturnType<typeof waiting.get>>
+  ) => {
+    const { service } = entry;
+    const kind = KIND_PROMPTS[service];
     let note = '';
     try {
       await ports.deleteMessage(reply.chatId, reply.messageId);
@@ -88,21 +171,34 @@ export function createAccountConnect(ports: AccountConnectPorts) {
       ports.log(`account ${service} token message delete failed: ${reason(error)}`);
       note = ' I could not delete your message: delete it yourself.';
     }
-    const token = (reply.text ?? '').trim();
+    const taken = { ...entry.taken, [kind.fields[entry.field]!.name]: (reply.text ?? '').trim() };
+    // More to ask: nothing is checked or stored until the last field is in.
+    if (entry.field + 1 < kind.fields.length) {
+      await promptFor(reply.chatId, { ...entry, field: entry.field + 1, taken });
+      if (note) await ports.say(reply.chatId, note.trim());
+      return;
+    }
     let account: { id: string; name: string; bot?: boolean };
     try {
-      account = await ports.identify(service, token);
+      account = await ports.identify(service, taken);
     } catch (error) {
       await ports.say(
         reply.chatId,
-        `That ${name} token did not work (${reason(error)}). Nothing was saved; ask again to retry.${note}`
+        `That ${kind.name} credential did not work (${reason(error)}). Nothing was saved; ask again to retry.${note}`
       );
       return;
     }
-    if (account.bot) {
+    if (kind.identity === 'person' && account.bot) {
       await ports.say(
         reply.chatId,
         `That is a bot token. A message from your DM posts as you: send your own user token instead. Nothing was saved; ask again to retry.${note}`
+      );
+      return;
+    }
+    if (kind.identity === 'bot' && !account.bot) {
+      await ports.say(
+        reply.chatId,
+        `${kind.name} needs a bot token here (your own bot, added where it should read). Nothing was saved; ask again to retry.${note}`
       );
       return;
     }
@@ -114,26 +210,38 @@ export function createAccountConnect(ports: AccountConnectPorts) {
       );
       return;
     }
+    const { token, ...fields } = taken;
     ports.accounts.set(reply.principalId, service, {
-      token,
+      token: token!,
+      ...(Object.keys(fields).length === 0 ? {} : { fields }),
       accountId: account.id,
       name: account.name,
     });
-    await ports.say(
-      reply.chatId,
-      `Connected ${name} as ${account.name} (${account.id}). Messages you approve from this DM now post as this account.${note}`
-    );
+    try {
+      await ports.say(
+        reply.chatId,
+        `Connected ${kind.name} as ${account.name} (${account.id}).${note}`
+      );
+    } finally {
+      // The credential is stored: a source collecting on it restarts whether or not the note went.
+      await entry.then?.();
+    }
   };
 
   return {
-    async ask(principalId: string, service: AccountService): Promise<{ expiresAt: number }> {
-      const chatId = ports.dmChatOf(principalId);
-      const expiresAt = now() + CONNECT_WINDOW_MS;
-      const promptId = await ports.prompt(
-        chatId,
-        `${ACCOUNT_PROMPT_PREFIX}${HOW_TO[service]}, within 15 minutes. The host reads your reply, deletes it from this chat and stores it; it never reaches the agent or the conversation.`
-      );
-      waiting.set(key(chatId, promptId), { principalId, service, expiresAt });
+    /** Prompts for the kind's first field; `then` runs once the credential is stored. */
+    async ask(
+      principalId: string,
+      service: AccountService,
+      then?: () => Promise<void>
+    ): Promise<{ expiresAt: number }> {
+      const expiresAt = await promptFor(ports.dmChatOf(principalId), {
+        principalId,
+        service,
+        field: 0,
+        taken: {},
+        ...(then === undefined ? {} : { then }),
+      });
       return { expiresAt };
     },
 
@@ -153,7 +261,7 @@ export function createAccountConnect(ports: AccountConnectPorts) {
         reply.text === undefined
       )
         return () => stale(reply);
-      return () => complete(reply, pending.service);
+      return () => complete(reply, pending);
     },
   };
 }

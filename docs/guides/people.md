@@ -58,6 +58,17 @@ person with the owner role it searches the web but opens pages only from the sit
 want a page read; the Codex backend searches the web but does not open pages. Other members have no
 web tools.
 
+## Your own sources
+
+A person with the owner role can connect their own Chatwork, Slack, Discord, Notion, Trello,
+Telegram bot or iCal calendar from their DM, for example "connect my Discord". MAMA asks for the
+credential as a reply to its own message; that reply never reaches the agent or the conversation,
+and MAMA deletes it from the chat. It then lists what the credential can read, you pick the channels,
+and MAMA collects them for you only, reading the last 7 days first. Neither the common group nor any
+other person sees them. The agent then agrees with you how often and when to report on them and sets
+up that scheduled job. Discord and Telegram need your own bot, added where it should read. Ask to
+list or disconnect your sources at any time; disconnecting deletes what was collected.
+
 ## Notices
 
 When a source change concerns a member, the common session can name that member. The member's own

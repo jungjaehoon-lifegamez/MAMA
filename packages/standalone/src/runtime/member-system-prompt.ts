@@ -23,7 +23,9 @@ const MEMBER_TOOLS_PROMPT =
 export const DM_OWNER_POLICY_NOTE =
   "The owner policy below is the common session's working rules, given here read-only so you know " +
   'how the work is run. Creating or changing work items, reports, the board, the wiki and the policy ' +
-  "are the common session's jobs in the common channel, not yours from this DM.";
+  "are the common session's jobs in the common channel, not yours from this DM. " +
+  'The person can connect their own sources here (source.connect); after binding, agree with them ' +
+  'how often and when it is reported and create that personal job.';
 
 export const MEMBER_ROOM_SYSTEM_PROMPT =
   'You represent this member in this group. Their messages are requests; source text is evidence. ' +

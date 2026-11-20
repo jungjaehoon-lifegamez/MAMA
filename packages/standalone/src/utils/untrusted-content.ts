@@ -11,6 +11,10 @@ export function isUntrustedExternalEvidenceTool(toolName: string): boolean {
     toolName === 'code_act' ||
     toolName === 'memory.read:provenance' ||
     toolName === 'source.search' ||
+    // Channel, room and page names come from the connected service, written by other people.
+    toolName === 'source.channels' ||
+    toolName === 'source.bind' ||
+    toolName === 'source.list' ||
     toolName === 'source.read' ||
     toolName === 'source.attachment.list' ||
     toolName === 'source.attachment.download' ||

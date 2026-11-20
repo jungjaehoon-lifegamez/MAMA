@@ -32,6 +32,7 @@ import {
 import { ownerMemoryScopes } from '../../runtime/action-surface.js';
 import {
   startConnectorRuntime,
+  coreIndexSink,
   type ConnectorRuntime,
   type ConnectorRuntimeOptions,
 } from '../../runtime/connectors.js';
@@ -99,8 +100,15 @@ import { backendLimits } from '../../runtime/backend-limits.js';
 import { createAccountConnect, type AccountConnect } from '../../runtime/account-connect.js';
 import { holdsOwnerRole } from '../../runtime/owner-authority.js';
 import { createAccountStore, personalAccountsDir } from '../../runtime/account-store.js';
-import { ChatworkConnector } from '../../connectors/chatwork/index.js';
-import { SlackConnector } from '../../connectors/slack/index.js';
+import { createPersonalSourceStore } from '../../runtime/personal-source-store.js';
+import {
+  deletePersonalSourceData,
+  startPersonalSources,
+  type PersonalSources,
+} from '../../runtime/personal-source-runtime.js';
+import { createPersonalKinds, personalKindRouter } from '../../connectors/personal/kinds.js';
+import { RawStore } from '../../storage/source-archive.js';
+import { recordConnectorPollOutcome } from '../../connectors/framework/event-index.js';
 
 export const OWNER_PRINCIPAL_ID = 'owner';
 const OWNER_AGENT_ID = 'owner-agent';
@@ -495,6 +503,11 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   let owner: OwnerRuntime | undefined;
   let viewer: ViewerServer | null = null;
   let connectors: ConnectorRuntime | undefined;
+  // Each person's own sources, collected under their scope (personal-connectors.md, C3).
+  let personalSources: PersonalSources | undefined;
+  let personalRaw: RawStore | undefined;
+  let personalKindAdapters: ReturnType<typeof createPersonalKinds> | undefined;
+  const personalKinds = personalKindRouter(() => personalKindAdapters);
   let messageLedger: OwnerMessageLedger | undefined;
   let gateway: DaemonGateway | null = null;
   // Approval cards go through Telegram, which starts after the owner runtime that proposes them.
@@ -626,6 +639,18 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       producerStops.push(stopOne(logger, 'release_check', () => releaseCheck!.stop(), errors));
     if (connectors)
       producerStops.push(stopOne(logger, 'connectors', () => connectors!.stop(), errors));
+    if (personalSources)
+      producerStops.push(
+        stopOne(
+          logger,
+          'personal_sources',
+          async () => {
+            await personalSources!.stopAll();
+            personalRaw?.close();
+          },
+          errors
+        )
+      );
     if (viewer) producerStops.push(stopOne(logger, 'viewer', () => viewer!.stop(), errors));
     await Promise.all(producerStops);
     await Promise.all([
@@ -852,14 +877,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
     // the running source's API, as the person, and stored under runtime/.
     accountConnect = createAccountConnect({
       accounts: createAccountStore(personalAccountsDir(paths.mamaRoot)),
-      identify: async (service, token) => {
-        const connector = connectors?.registry.get(service);
-        if (service === 'chatwork' && connector instanceof ChatworkConnector)
-          return connector.account(token);
-        if (service === 'slack' && connector instanceof SlackConnector)
-          return connector.account(token);
-        throw new Error(`the ${service} source is not running`);
-      },
+      // Every kind is checked with its own adapter, as the person (#final review C1).
+      identify: (service, secrets) => personalKinds.identify(service, secrets),
       dmChatOf,
       prompt: (chatId, text) => telegramFor('An account prompt').sendAccountPrompt!(chatId, text),
       deleteMessage: (chatId, messageId) =>
@@ -883,7 +902,26 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       socketPath: paths.socketPath,
       credentialPath: paths.credentialPath,
       runtimeRoot: paths.mamaRoot,
-      accountConnect: { ask: (principalId, service) => accountConnect!.ask(principalId, service) },
+      // A credential stored again restarts a source already collecting on it (#final review I1).
+      accountConnect: {
+        ask: (principalId, service) =>
+          accountConnect!.ask(principalId, service, () =>
+            personalSources ? personalSources.start(principalId, service) : Promise.resolve()
+          ),
+      },
+      // Personal sources start after the connectors stage; until then their actions say so.
+      personalSources: {
+        channels: (kind, secrets) => personalKinds.channels(kind, secrets),
+        sources: () => personalSources ?? null,
+        deleteData: (principalId, kind) =>
+          deletePersonalSourceData(
+            owner!.database.adapter,
+            personalRaw!,
+            join(paths.connectorsRoot, 'personal'),
+            principalId,
+            kind
+          ),
+      },
       ...(config.member_root === undefined ? {} : { memberRoot: config.member_root }),
       ...(config.tools_root === undefined ? {} : { toolsRoot: config.tools_root }),
       ownerDeniedReadPaths: [
@@ -1207,6 +1245,36 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       coreAdapter: owner.database?.adapter,
       acceptSourceDelta,
     });
+    personalRaw = new RawStore(paths.connectorsRoot);
+    personalKindAdapters = createPersonalKinds({
+      timeZone,
+      // The messenger's and the install's source bot, by the id a bot token starts with.
+      reservedTelegramBots: () =>
+        [process.env.MAMA_TELEGRAM_TOKEN, process.env.MAMA_TELEGRAM_SOURCE_TOKEN].flatMap(
+          (token) => (token?.includes(':') ? [token.split(':')[0]!] : [])
+        ),
+    });
+    personalSources = startPersonalSources({
+      store: createPersonalSourceStore(owner.database.adapter),
+      accounts: createAccountStore(personalAccountsDir(paths.mamaRoot)),
+      kinds: personalKindAdapters,
+      rawStore: personalRaw,
+      indexSink: coreIndexSink(owner.database.adapter),
+      root: join(paths.connectorsRoot, 'personal'),
+      recordPollOutcome: (connector, outcome) =>
+        recordConnectorPollOutcome(owner!.database.adapter, connector, outcome),
+      log: (line) => logger.error(`[personal sources] ${line}`),
+    });
+    // Each source's first poll is network work: boot does not wait for it, and each failure is
+    // the source's own row and log line.
+    void personalSources
+      .startAll()
+      .then(() => logger.info(`personal sources: ${personalSources!.count()}`))
+      .catch((error) =>
+        logger.error(
+          `[personal sources] start failed: ${error instanceof Error ? error.message : String(error)}`
+        )
+      );
     stage(logger, 'connectors', options.signal);
 
     currentStage = 'messengers';

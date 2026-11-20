@@ -105,6 +105,8 @@ import {
 } from './stimulus-delivery.js';
 import type { ApprovalActionPorts } from '../api/approval-actions.js';
 import { createAccountStore, personalAccountsDir } from './account-store.js';
+import { createPersonalSourceStore } from './personal-source-store.js';
+import { deletePersonalSourceData } from './personal-source-runtime.js';
 import { createApprovalRuntime, type ApprovalRuntime } from './approval-runtime.js';
 import type { Proposal } from './approval-store.js';
 
@@ -116,6 +118,8 @@ const BACKEND_PROBE_PROMPT =
 export interface OwnerRuntimeOptions {
   /** Prompts for a person's account token in their own DM (approvals.md, P2). */
   accountConnect?: ActionSurfaceOptions['accountConnect'];
+  /** A person's own sources (personal-connectors.md, C2). */
+  personalSources?: ActionSurfaceOptions['personalSources'];
   /** Approval cards in Telegram: send one, and edit one no press started (sweep, recovery). */
   approvalCards?: {
     sendCard: ApprovalActionPorts['sendCard'];
@@ -553,12 +557,38 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
           };
         })()
       : {};
+    /**
+     * A person's own sources (C5): stopping waits for a poll in flight; deleting removes what they
+     * collected and their rows. Offboarding does both; erasure stops before its export snapshot and
+     * deletes only after the export was delivered and the files checked. A daemon without collectors
+     * running (a replay) has nothing to stop; the data goes either way.
+     */
+    const stopPersonalSources = async (principalId: string): Promise<void> => {
+      for (const source of createPersonalSourceStore(database.adapter).list(principalId))
+        await options.personalSources?.sources()?.stop(principalId, source.kind);
+    };
+    const deletePersonalSources = (principalId: string): void => {
+      const store = createPersonalSourceStore(database.adapter);
+      for (const source of store.list(principalId)) {
+        deletePersonalSourceData(
+          database.adapter,
+          sourceStore,
+          join(options.rawPath, 'personal'),
+          principalId,
+          source.kind
+        );
+        store.remove(principalId, source.kind);
+      }
+    };
     const surface = createActionSurface({
       commonChannelId: options.commonChannelId,
       ...(options.approvalCards === undefined
         ? {}
         : { approvalCards: { sendCard: options.approvalCards.sendCard } }),
       ...(options.accountConnect === undefined ? {} : { accountConnect: options.accountConnect }),
+      ...(options.personalSources === undefined
+        ? {}
+        : { personalSources: options.personalSources }),
       runtimeRoot: options.runtimeRoot,
       skillPaths: {
         toolsRoot: options.toolsRoot,
@@ -650,6 +680,8 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
                   );
               },
               rawStore: sourceStore,
+              stopPersonalSources,
+              deletePersonalSources,
               mailbox: () => ownerMailbox!,
               ledger: () => options.messageLedger?.(),
               telegram: () => options.memberRecordsTelegram?.(),
@@ -711,8 +743,11 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
                 return ownerMailbox!.cancelQueued(id, reason);
               },
               retire: (id) => retireMember(id),
-              removeAccounts: (id) =>
-                createAccountStore(personalAccountsDir(options.runtimeRoot)).removeAll(id),
+              removePersonalData: async (id) => {
+                createAccountStore(personalAccountsDir(options.runtimeRoot)).removeAll(id);
+                await stopPersonalSources(id);
+                deletePersonalSources(id);
+              },
               resume: async (id) => {
                 // A suspended member may retain a session after an earlier stop/move failure.
                 await retireMember(id);

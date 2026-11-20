@@ -115,7 +115,7 @@ export function setLiveConnectorPollCursors(options: {
   }
 }
 
-function coreIndexSink(adapter: DatabaseInstance): RawIndexSink {
+export function coreIndexSink(adapter: DatabaseInstance): RawIndexSink {
   return (connectorName, items) => {
     return mapNormalizedItemsToConnectorEventIndexInputs(connectorName, items).map((input) => {
       const record = upsertConnectorEventIndex(adapter, input);

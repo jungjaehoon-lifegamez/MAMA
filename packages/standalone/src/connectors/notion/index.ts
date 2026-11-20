@@ -10,6 +10,7 @@ import type {
   IConnector,
   NormalizedItem,
 } from '../framework/types.js';
+import { connectorSecret } from '../framework/types.js';
 
 interface NotionRichText {
   plain_text: string;
@@ -71,7 +72,7 @@ export class NotionConnector implements IConnector {
 
   async init(): Promise<void> {
     const tokenName = this.config.auth.tokenName!;
-    const token = process.env[tokenName];
+    const token = connectorSecret(this.config, tokenName);
     if (!token) {
       throw new Error('Notion token not found. Run mama secret set MAMA_NOTION_TOKEN.');
     }

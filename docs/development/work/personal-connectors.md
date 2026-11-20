@@ -1,6 +1,6 @@
 # Personal connectors — a person connects their own source from their DM
 
-Status: design, not built. Owner request, 2026-11-20: from a personal DM, connect any of the person's
+Status: C1–C7 built (feat/personal-sources); C8, the live check, waits for deploy. Owner request, 2026-11-20: from a personal DM, connect any of the person's
 own channels and sources (not only Discord: every kind MAMA can collect), collect them, and report on
 them in that DM. The owner picked option B of the research below: collected (ingested) personal
 sources, not live reads. One mechanism serves every connector kind; each kind only says how its
@@ -110,6 +110,8 @@ turn shows it.
 
 - Personal sources shared to the common session or another person (team work, later).
 - Members without the owner role.
+- Attachments of personal sources: messages are collected, their files are not listed or downloaded
+  yet (`source.attachment.*` needs a provider built from the person's credential; #590 review).
 - Discord DMs and group DMs: a bot cannot read them.
 - Google kinds until G1; machine-file kinds (`imessage`, `obsidian`, `kagemusha`).
 
