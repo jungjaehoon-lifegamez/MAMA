@@ -198,10 +198,15 @@ async function defaultNpm(
   return stdout;
 }
 
-/** npm's environment: already scrubbed, with the pinned Node's folder first on PATH. */
+/**
+ * npm's environment: already scrubbed, with the pinned Node's folder first on PATH. onnxruntime-node
+ * skips its CUDA download: MAMA embeds on the CPU, and on Linux x64 that download's release asset
+ * answers 404, which failed the whole install (install.sh does the same).
+ */
 export function npmEnvironment(env: NodeJS.ProcessEnv, nodePath: string): NodeJS.ProcessEnv {
   return {
     ...env,
+    ONNXRUNTIME_NODE_INSTALL_CUDA: 'skip',
     PATH: [dirname(nodePath), ...(env.PATH ?? '').split(delimiter).filter(Boolean)].join(delimiter),
   };
 }

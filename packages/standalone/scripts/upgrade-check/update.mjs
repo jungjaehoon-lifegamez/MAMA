@@ -68,8 +68,9 @@ export async function updateLeg({ root, home, env }) {
       npm_config_update_notifier: 'false',
     };
     const prefix = join(leg, 'prefix');
+    // As install.sh installs it: without onnxruntime's CUDA download, which answers 404 on Linux.
     run('npm', ['install', '-g', '--prefix', prefix, `${NAME}@${N}`, '--no-audit', '--no-fund'], {
-      env: { ...env, ...npmSettings },
+      env: { ...env, ...npmSettings, ONNXRUNTIME_NODE_INSTALL_CUDA: 'skip' },
       stdio: 'inherit',
     });
 

@@ -114,9 +114,11 @@ try {
       overrides: { '@jungjaehoon/mama-core': core },
     })
   );
+  // The previous release's install.sh skips onnxruntime's CUDA download only from this fix on.
   run('npm', ['install', '--no-audit', '--no-fund', '--loglevel=error'], {
     cwd: install,
     stdio: 'inherit',
+    env: { ...process.env, ONNXRUNTIME_NODE_INSTALL_CUDA: 'skip' },
   });
   // The core mama-os loads is the one resolved from its own folder, not necessarily the top one.
   const os = join(install, 'node_modules', '@jungjaehoon', 'mama-os', 'package.json');

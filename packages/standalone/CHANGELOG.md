@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Installing on Linux x64 works again. The embedding library (onnxruntime-node 1.21.0) tried to
+  download GPU files from a release that now answers 404, and the whole install failed. MAMA
+  embeds on the CPU, so the install command and `mama update` now skip that download. The owner
+  setup guide shows the same setting for installs with your own Node.js.
+
 ### Added
 
 - Personal accounts. An owner-role person connects their own Chatwork or Slack account from their
