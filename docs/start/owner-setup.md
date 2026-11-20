@@ -305,6 +305,12 @@ If you keep your own Node.js (22.13 or newer), install MAMA OS with npm instead:
 npm install -g @jungjaehoon/mama-os
 ```
 
+On Linux x64, set `ONNXRUNTIME_NODE_INSTALL_CUDA=skip` for that command
+(`ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm install -g @jungjaehoon/mama-os`). Otherwise the embedding
+library tries to download GPU files that are no longer published, and the install fails. MAMA runs
+its embeddings on the CPU, so it does not need them. The install command and `mama update` already
+set this.
+
 Then you or your agent run setup with its variables, and setup goes on as above from the setup
 page:
 
