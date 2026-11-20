@@ -173,13 +173,16 @@ export function createPersonalKinds(
       },
       config: (s, channels) =>
         config(5, 'MAMA_SLACK_TOKEN', hubs(channels), { MAMA_SLACK_TOKEN: s.token! }),
-      build: async (c) =>
-        new (await import('../slack/index.js')).SlackConnector(c, {
-          ...(deps.slackClient
-            ? { clientFactory: (token: string) => deps.slackClient!(token) as WebClient }
-            : {}),
-          fetch: http,
-        }),
+      // The client is resolved first: the connector takes a client, not a promise of one.
+      build: async (c) => {
+        const { SlackConnector } = await import('../slack/index.js');
+        return deps.slackClient
+          ? new SlackConnector(c, {
+              client: await deps.slackClient(c.secrets!.MAMA_SLACK_TOKEN!),
+              fetch: http,
+            })
+          : new SlackConnector(c, { fetch: http });
+      },
     },
     discord: {
       kind: 'discord',

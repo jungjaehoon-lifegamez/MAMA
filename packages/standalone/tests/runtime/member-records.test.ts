@@ -983,6 +983,22 @@ it.each(['created', 'rewritten', 'omitted_rewritten'] as const)(
         }
         return sent;
       });
+      // A personal source survives an erasure that stops at the file check (#590 review).
+      createPersonalSourceStore(db).bind(f.member, 'chatwork', [{ id: '111', name: 'room' }]);
+      const personalName = personalConnectorName(f.member, 'chatwork');
+      rawStore.save(personalName, [
+        {
+          source: personalName,
+          sourceId: 'fixture-personal-kept',
+          channel: 'fixture-key:111',
+          author: 'someone',
+          content: 'fixture personal source',
+          timestamp: new Date(),
+          type: 'message',
+          memoryScopeKind: 'user',
+          memoryScopeId: f.member,
+        },
+      ]);
       try {
         await f.confirm(preview.confirmationToken);
         const queued = f.message(f.member);
@@ -997,6 +1013,8 @@ it.each(['created', 'rewritten', 'omitted_rewritten'] as const)(
         expect(receipt.text).toContain('Your files changed while the export was being sent.');
         expect(receipt.text).toContain('Nothing was erased.');
         expect(receipt.text).toContain('Ask again');
+        expect(createPersonalSourceStore(db).list(f.member)).toHaveLength(1);
+        expect(rawStore.count(personalName)).toBe(1);
         expect(receipt.text).toContain('0 messages');
         const remaining = exportPrincipalRecords(db, f.member);
         for (const [store, rows] of Object.entries(core.stores))

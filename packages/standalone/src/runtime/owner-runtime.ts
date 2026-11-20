@@ -558,14 +558,18 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         })()
       : {};
     /**
-     * Stops a person's own sources, deletes what they collected and removes them (C5): offboarding
-     * and erasure. A daemon without collectors running (a replay) has nothing to stop; the rows and
-     * the data go either way.
+     * A person's own sources (C5): stopping waits for a poll in flight; deleting removes what they
+     * collected and their rows. Offboarding does both; erasure stops before its export snapshot and
+     * deletes only after the export was delivered and the files checked. A daemon without collectors
+     * running (a replay) has nothing to stop; the data goes either way.
      */
     const stopPersonalSources = async (principalId: string): Promise<void> => {
+      for (const source of createPersonalSourceStore(database.adapter).list(principalId))
+        await options.personalSources?.sources()?.stop(principalId, source.kind);
+    };
+    const deletePersonalSources = (principalId: string): void => {
       const store = createPersonalSourceStore(database.adapter);
       for (const source of store.list(principalId)) {
-        await options.personalSources?.sources()?.stop(principalId, source.kind);
         deletePersonalSourceData(
           database.adapter,
           sourceStore,
@@ -677,6 +681,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
               },
               rawStore: sourceStore,
               stopPersonalSources,
+              deletePersonalSources,
               mailbox: () => ownerMailbox!,
               ledger: () => options.messageLedger?.(),
               telegram: () => options.memberRecordsTelegram?.(),
@@ -741,6 +746,7 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
               removePersonalData: async (id) => {
                 createAccountStore(personalAccountsDir(options.runtimeRoot)).removeAll(id);
                 await stopPersonalSources(id);
+                deletePersonalSources(id);
               },
               resume: async (id) => {
                 // A suspended member may retain a session after an earlier stop/move failure.

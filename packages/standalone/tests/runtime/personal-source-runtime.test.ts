@@ -23,6 +23,7 @@ let indexed: Array<{ connector: string; item: NormalizedItem }>;
 let polls: Array<{ since: Date; token: string }>;
 let fail: boolean;
 let gate: Promise<void> | null;
+let outcomes: Array<{ connector: string; error?: string }>;
 
 function fakeConnector(token: string): IConnector {
   return {
@@ -86,6 +87,7 @@ async function runtime(now = Date.UTC(2026, 10, 20, 12)) {
       }));
     },
     root: join(root, 'personal'),
+    recordPollOutcome: (connector, outcome) => outcomes.push({ connector, error: outcome.error }),
     now: () => now,
     setInterval: ((fn: () => void) => {
       timers.push(fn);
@@ -105,6 +107,7 @@ beforeEach(async () => {
   polls = [];
   fail = false;
   gate = null;
+  outcomes = [];
 });
 afterEach(async () => {
   raw.close();
@@ -218,6 +221,7 @@ describe('deleting a personal source (personal-connectors.md, C5)', () => {
       rawStore: raw,
       indexSink: sink,
       root: join(root, 'personal-real'),
+      recordPollOutcome: () => {},
       now: () => Date.UTC(2026, 10, 20, 12),
       setInterval: (() => 0) as never,
       clearInterval: () => {},
@@ -296,5 +300,27 @@ describe('starts and stops in order (#final review I2)', () => {
     // Nothing starts once stopped (a boot start still running at shutdown).
     await r.personal.start('person-a', 'chatwork');
     expect(r.personal.count()).toBe(0);
+  });
+});
+
+describe('report failures and added channels (#590 review)', () => {
+  it('records each poll outcome under the personal connector name, for source.recent', async () => {
+    const r = await runtime();
+    bind(r, 'person-a', 'a-token');
+    fail = true;
+    await r.personal.start('person-a', 'chatwork');
+    expect(outcomes).toEqual([
+      { connector: personalConnectorName('person-a', 'chatwork'), error: 'Chatwork answered 401' },
+    ]);
+    await r.personal.stopAll();
+  });
+
+  it('a start from the start reads 7 days back again', async () => {
+    const first = await runtime(Date.UTC(2026, 10, 20, 12));
+    bind(first, 'person-a', 'a-token');
+    await first.personal.start('person-a', 'chatwork');
+    await first.personal.start('person-a', 'chatwork', { fromStart: true });
+    expect(polls[1]!.since.getTime()).toBe(Date.UTC(2026, 10, 20, 12) - 7 * DAY);
+    await first.personal.stopAll();
   });
 });

@@ -108,6 +108,7 @@ import {
 } from '../../runtime/personal-source-runtime.js';
 import { createPersonalKinds, personalKindRouter } from '../../connectors/personal/kinds.js';
 import { RawStore } from '../../storage/source-archive.js';
+import { recordConnectorPollOutcome } from '../../connectors/framework/event-index.js';
 
 export const OWNER_PRINCIPAL_ID = 'owner';
 const OWNER_AGENT_ID = 'owner-agent';
@@ -1260,6 +1261,8 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       rawStore: personalRaw,
       indexSink: coreIndexSink(owner.database.adapter),
       root: join(paths.connectorsRoot, 'personal'),
+      recordPollOutcome: (connector, outcome) =>
+        recordConnectorPollOutcome(owner!.database.adapter, connector, outcome),
       log: (line) => logger.error(`[personal sources] ${line}`),
     });
     // Each source's first poll is network work: boot does not wait for it, and each failure is

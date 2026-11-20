@@ -24,7 +24,11 @@ export interface PersonalSourceActionPorts {
   ask(principalId: string, kind: PersonalSourceKind): Promise<{ expiresAt: number }>;
   /** The running collectors; null until the daemon has started them. */
   sources(): {
-    start(principalId: string, kind: PersonalSourceKind): Promise<void>;
+    start(
+      principalId: string,
+      kind: PersonalSourceKind,
+      options?: { fromStart?: boolean }
+    ): Promise<void>;
     stop(principalId: string, kind: PersonalSourceKind): Promise<void>;
   } | null;
   /** Deletes what a source collected: its raw items and index rows. */
@@ -129,7 +133,14 @@ export function personalSourceActionRegistrations(
       exec: async (input, context) => {
         const values = input as { connector: PersonalSourceKind; channels: string[] };
         const principalId = person(context, ports);
-        const available = await readable(ports, principalId, values.connector);
+        const earlier = ports.store.get(principalId, values.connector)?.channels ?? [];
+        // What the credential reads now, and what is already bound: a Telegram bot lists only chats
+        // with pending updates, so a bound chat whose updates were read is still readable.
+        const listed = await readable(ports, principalId, values.connector);
+        const available = [
+          ...listed,
+          ...earlier.filter((channel) => !listed.some((c) => c.id === channel.id)),
+        ];
         const unknown = values.channels.filter((id) => !available.some((c) => c.id === id));
         if (unknown.length > 0)
           throw failure(
@@ -137,9 +148,14 @@ export function personalSourceActionRegistrations(
             `${unknown.join(', ')} ${unknown.length === 1 ? 'is' : 'are'} not readable with this credential; list them with source.channels.`,
             'invalid_input'
           );
-        const bound = available.filter((channel) => values.channels.includes(channel.id));
+        // In the order the person picked them.
+        const bound = values.channels.map((id) => available.find((channel) => channel.id === id)!);
         ports.store.bind(principalId, values.connector, bound);
-        await running(ports).start(principalId, values.connector);
+        // A channel bound for the first time reads its 7 days too (#590 review).
+        const added = bound.some((channel) => !earlier.some((c) => c.id === channel.id));
+        await running(ports).start(principalId, values.connector, {
+          fromStart: added && earlier.length > 0,
+        });
         return {
           bound,
           next: 'Agree with the person how often and when they want this source reported, then create that personal job (schedule.job.create).',

@@ -268,4 +268,25 @@ describe('connecting a person’s account in their Telegram DM (approvals.md, P2
     expect(accounts.get('person-a', 'discord')).toBeNull();
     expect(said.at(-1)![1]).toMatch(/needs a bot token/);
   });
+
+  it('restarts a bound source even when the confirmation cannot be sent (#590 review)', async () => {
+    identify.mockResolvedValue({ id: '8', name: 'person-a' });
+    const then = vi.fn(async () => {});
+    const flow = createAccountConnect({
+      accounts,
+      identify,
+      dmChatOf: (principalId) => `dm-${principalId}`,
+      prompt: async () => 500,
+      deleteMessage: async () => {},
+      say: async () => {
+        throw new Error('telegram down');
+      },
+      log: () => {},
+      mayConnect: () => true,
+      now: () => clock,
+    });
+    await flow.ask('person-a', 'chatwork', then);
+    await expect(flow.claim(reply('person-a', 'token'))!()).rejects.toThrow(/telegram down/);
+    expect(then).toHaveBeenCalledTimes(1);
+  });
 });

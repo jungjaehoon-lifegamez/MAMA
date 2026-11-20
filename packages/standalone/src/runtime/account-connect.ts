@@ -217,11 +217,15 @@ export function createAccountConnect(ports: AccountConnectPorts) {
       accountId: account.id,
       name: account.name,
     });
-    await ports.say(
-      reply.chatId,
-      `Connected ${kind.name} as ${account.name} (${account.id}).${note}`
-    );
-    await entry.then?.();
+    try {
+      await ports.say(
+        reply.chatId,
+        `Connected ${kind.name} as ${account.name} (${account.id}).${note}`
+      );
+    } finally {
+      // The credential is stored: a source collecting on it restarts whether or not the note went.
+      await entry.then?.();
+    }
   };
 
   return {

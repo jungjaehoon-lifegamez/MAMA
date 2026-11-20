@@ -50,11 +50,10 @@ export interface MemberRecordsPorts {
   ): void;
   /** Write a member's personal copy of a host exchange (a management or enrollment receipt). */
   writeHostExchange(id: string, exchange: OwnerHostExchangeInput): void;
-  /**
-   * Stops the person's own sources, deletes what they collected and removes them
-   * (personal-connectors.md, C5).
-   */
+  /** Stops the person's own collectors and waits for a poll in flight (personal-connectors.md, C5). */
   stopPersonalSources(id: string): Promise<void>;
+  /** Deletes what the person's own sources collected and removes them; collectors are stopped. */
+  deletePersonalSources(id: string): void;
 }
 
 /** The raw stores a person's own sources write, each only where it exists. */
@@ -405,6 +404,10 @@ export function createMemberRecords(options: {
         if (p.isStopping()) return;
         await p.retire(id);
         if (p.isStopping()) return;
+        // The person's collectors stop before the snapshot: nothing is collected that the export
+        // would not hold and the erasure would delete (#590 review). They stay stopped.
+        step = 'personal_sources';
+        await p.stopPersonalSources(id);
         step = 'export';
         const product = productExport(id);
         const ledger = p.ledger()!;
@@ -470,12 +473,9 @@ export function createMemberRecords(options: {
         if (p.isStopping()) return;
         await p.retire(id);
         if (p.isStopping()) return;
+        // A restart may have started the collectors again since the export: stopped again, and the
+        // file check below still runs before anything is deleted.
         step = 'personal_sources';
-        // Before every other store: a collector stopped here cannot land a poll after the core
-        // erase (#final review I3). Counted first, as the other stores are.
-        for (const [name, rows] of Object.entries(personalRaw(p.rawStore, id)))
-          state.product[name] ??= rows.length;
-        checkpoint(job, state);
         await p.stopPersonalSources(id);
         if (state.archive) rmSync(state.archive.path, { force: true });
         step = 'file_check';
@@ -552,6 +552,12 @@ export function createMemberRecords(options: {
           ).length;
         checkpoint(job, state);
         p.rawStore.eraseScope('chat', 'user', id);
+        step = 'personal_sources';
+        // Deleted only once the export was delivered and the files checked (#590 review).
+        for (const [name, rows] of Object.entries(personalRaw(p.rawStore, id)))
+          state.product[name] ??= rows.length;
+        checkpoint(job, state);
+        p.deletePersonalSources(id);
         step = 'message_ledger';
         ledger.eraseTelegramDm(dm(p.access(id)), [
           `file:${job.commandId}:export`,

@@ -114,7 +114,7 @@ describe('personal source actions (personal-connectors.md, C2)', () => {
       },
     });
     expect(store.get('person-a', 'chatwork')!.channels).toEqual([{ id: '111', name: 'room-one' }]);
-    expect(start).toHaveBeenCalledWith('person-a', 'chatwork');
+    expect(start).toHaveBeenCalledWith('person-a', 'chatwork', { fromStart: false });
   });
 
   it('lists and disconnects only the caller’s sources, deleting what was collected', async () => {
@@ -148,5 +148,19 @@ describe('personal source actions (personal-connectors.md, C2)', () => {
       expect(result.error?.message).toMatch(/install’s sources/);
     }
     expect(ask).not.toHaveBeenCalled();
+  });
+
+  it('keeps channels already bound when the service no longer lists them, and reads added ones from the start (#590 review)', async () => {
+    accounts.set('person-a', 'telegram', { token: 'bot', accountId: 'B', name: 'b' });
+    store.bind('person-a', 'telegram', [{ id: '-100', name: 'group' }]);
+    // A bot lists only chats with pending updates; the bound group's were already read.
+    channels.mockResolvedValue([{ id: '-200', name: 'other' }]);
+    const bound = await call('source.bind', { connector: 'telegram', channels: ['-100', '-200'] });
+    expect(bound).toMatchObject({ status: 'completed' });
+    expect(store.get('person-a', 'telegram')!.channels.map((c) => c.id)).toEqual(['-100', '-200']);
+    expect(start).toHaveBeenLastCalledWith('person-a', 'telegram', { fromStart: true });
+    // Rebinding the same channels keeps the cursor.
+    await call('source.bind', { connector: 'telegram', channels: ['-100', '-200'] });
+    expect(start).toHaveBeenLastCalledWith('person-a', 'telegram', { fromStart: false });
   });
 });

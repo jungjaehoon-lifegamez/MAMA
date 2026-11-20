@@ -13,6 +13,7 @@ import type { PersonalKindAdapter } from '../connectors/personal/kinds.js';
 import {
   canonicalChannelKey,
   PollingScheduler,
+  type PollingSchedulerOptions,
 } from '../connectors/framework/polling-scheduler.js';
 import { ConnectorRegistry } from '../connectors/framework/connector-registry.js';
 import type { ConnectorConfig, IConnector } from '../connectors/framework/types.js';
@@ -37,6 +38,8 @@ export interface PersonalSourceRuntimeOptions {
   indexSink: RawIndexSink;
   /** Where each person's poll state lives: <root>/<person hash>/<kind>/. */
   root: string;
+  /** Each poll's outcome under the personal connector name: source.recent names a failure. */
+  recordPollOutcome: NonNullable<PollingSchedulerOptions['recordPollOutcome']>;
   now?: () => number;
   setInterval?: typeof setInterval;
   clearInterval?: typeof clearInterval;
@@ -131,7 +134,7 @@ export function startPersonalSources(options: PersonalSourceRuntimeOptions) {
     await entry.registry.disposeAll();
   };
 
-  const startNow = async (principalId: string, kind: PersonalSourceKind) => {
+  const startNow = async (principalId: string, kind: PersonalSourceKind, fromStart: boolean) => {
     await stopNow(principalId, kind);
     // Nothing starts once the daemon is stopping (a boot start still running at shutdown).
     if (stopped) return;
@@ -151,13 +154,17 @@ export function startPersonalSources(options: PersonalSourceRuntimeOptions) {
       source.channels
     );
     const dir = join(options.root, personHash(principalId), kind);
+    // Channels added to a source read their 7 days too: the source reads from the start again,
+    // and what is read twice is one version in the raw store (#590 review).
+    if (fromStart) rmSync(join(dir, 'poll-state.json'), { force: true });
     const name = personalConnectorName(principalId, kind);
     const registry = new ConnectorRegistry();
     const scheduler = new PollingScheduler(options.rawStore, dir, {
       rawIndexSink: options.indexSink,
       initialLookbackMs: PERSONAL_FIRST_LOOKBACK_MS,
       now,
-      recordPollOutcome: (_connector, outcome) => {
+      recordPollOutcome: (connector, outcome) => {
+        options.recordPollOutcome(connector, outcome);
         options.store.recordPoll(principalId, kind, {
           at: outcome.at,
           error: outcome.error ?? null,
@@ -197,8 +204,12 @@ export function startPersonalSources(options: PersonalSourceRuntimeOptions) {
     await scheduler.pollConnector(name, registry, channels, noTurn);
   };
 
-  const start = (principalId: string, kind: PersonalSourceKind) =>
-    inOrder(id(principalId, kind), () => startNow(principalId, kind));
+  const start = (
+    principalId: string,
+    kind: PersonalSourceKind,
+    options: { fromStart?: boolean } = {}
+  ) =>
+    inOrder(id(principalId, kind), () => startNow(principalId, kind, options.fromStart === true));
   const stop = (principalId: string, kind: PersonalSourceKind) =>
     inOrder(id(principalId, kind), () => stopNow(principalId, kind));
 
@@ -251,6 +262,7 @@ export function deletePersonalSourceData(
   const index = adapter
     .prepare('DELETE FROM connector_event_index WHERE source_connector = ?')
     .run(name).changes;
+  adapter.prepare('DELETE FROM connector_event_index_cursors WHERE connector_name = ?').run(name);
   const observations = adapter
     .prepare(
       `UPDATE observation_versions SET erased_at=?, source=NULL, source_id=NULL,

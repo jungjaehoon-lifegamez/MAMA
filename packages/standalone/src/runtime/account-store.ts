@@ -29,7 +29,8 @@ export interface StoredAccount {
   connectedAt?: number;
 }
 
-export type AccountSummary = Omit<StoredAccount, 'token'> & { service: AccountService };
+/** What the agent may see of an account: never a secret, the primary or any further one. */
+export type AccountSummary = Omit<StoredAccount, 'token' | 'fields'> & { service: AccountService };
 
 export function personalAccountsDir(mamaRoot: string): string {
   return join(mamaRoot, 'runtime', 'accounts');
@@ -83,7 +84,7 @@ export function createAccountStore(dir: string): AccountStore {
       return PERSONAL_ACCOUNT_SERVICES.flatMap((service) => {
         const stored = accounts[service];
         if (!stored) return [];
-        const { token: _token, ...summary } = stored;
+        const { token: _token, fields: _fields, ...summary } = stored;
         return [{ service, ...summary }];
       });
     },
