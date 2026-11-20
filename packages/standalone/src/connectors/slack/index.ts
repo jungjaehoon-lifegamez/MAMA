@@ -13,6 +13,7 @@ import type {
   IConnector,
   NormalizedItem,
 } from '../framework/types.js';
+import { connectorSecret } from '../framework/types.js';
 import {
   type AttachmentDescriptor,
   type AttachmentListRequest,
@@ -141,7 +142,7 @@ export class SlackConnector implements IConnector {
   }
 
   async init(): Promise<void> {
-    const token = process.env.MAMA_SLACK_TOKEN;
+    const token = connectorSecret(this.config, 'MAMA_SLACK_TOKEN');
     if (!token) {
       throw new Error('Slack bot token not found in the daemon environment (MAMA_SLACK_TOKEN).');
     }

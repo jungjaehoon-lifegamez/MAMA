@@ -10,6 +10,7 @@ import type {
   IConnector,
   NormalizedItem,
 } from '../framework/types.js';
+import { connectorSecret } from '../framework/types.js';
 import { readConnectorState, writeConnectorState } from '../framework/connector-state.js';
 
 interface DiscordMessage {
@@ -51,7 +52,7 @@ export class DiscordConnector implements IConnector {
   }
 
   async init(): Promise<void> {
-    const token = process.env[this.config.auth.tokenName!];
+    const token = connectorSecret(this.config, this.config.auth.tokenName!);
     if (!token) {
       throw new Error('Discord bot token not found. Run mama secret set MAMA_DISCORD_TOKEN.');
     }

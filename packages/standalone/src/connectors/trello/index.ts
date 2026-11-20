@@ -12,6 +12,7 @@ import type {
   IConnector,
   NormalizedItem,
 } from '../framework/types.js';
+import { connectorSecret } from '../framework/types.js';
 import { messageWithCauses } from '../../utils/error-message.js';
 import { TrelloApi } from './api.js';
 import { trelloActionItem, type TrelloAction, type TrelloBoardChannel } from './actions.js';
@@ -104,8 +105,8 @@ export class TrelloConnector implements IConnector {
   }
 
   async init(): Promise<void> {
-    const apiKey = process.env.MAMA_TRELLO_KEY;
-    const token = process.env.MAMA_TRELLO_TOKEN;
+    const apiKey = connectorSecret(this.config, 'MAMA_TRELLO_KEY');
+    const token = connectorSecret(this.config, 'MAMA_TRELLO_TOKEN');
     if (!apiKey?.trim() || !token?.trim()) {
       throw new Error(
         'Trello credentials missing. Run mama secret set MAMA_TRELLO_KEY and mama secret set MAMA_TRELLO_TOKEN, then restart through ~/.mama/start.sh.'
@@ -144,8 +145,8 @@ export class TrelloConnector implements IConnector {
 
   async authenticate(): Promise<boolean> {
     try {
-      const apiKey = process.env.MAMA_TRELLO_KEY;
-      const token = process.env.MAMA_TRELLO_TOKEN;
+      const apiKey = connectorSecret(this.config, 'MAMA_TRELLO_KEY');
+      const token = connectorSecret(this.config, 'MAMA_TRELLO_TOKEN');
       if (!apiKey || !token) return false;
       const res = await fetch(`https://api.trello.com/1/members/me?key=${apiKey}&token=${token}`);
       return res.ok;

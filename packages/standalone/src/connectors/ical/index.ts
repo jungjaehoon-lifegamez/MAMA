@@ -5,6 +5,7 @@ import type {
   IConnector,
   NormalizedItem,
 } from '../framework/types.js';
+import { connectorSecret } from '../framework/types.js';
 import { readConnectorState, writeConnectorState } from '../framework/connector-state.js';
 import { parseICalendar } from './parser.js';
 import type { TimeZoneSetting } from '../../runtime/timezone.js';
@@ -42,7 +43,7 @@ export class ICalConnector implements IConnector {
   private pendingSynced: Set<string> | null = null;
 
   constructor(
-    config: ConnectorConfig,
+    private readonly config: ConnectorConfig,
     private readonly statePath: string,
     private readonly timeZone: TimeZoneSetting
   ) {
@@ -80,7 +81,7 @@ export class ICalConnector implements IConnector {
   }
   async init(): Promise<void> {
     for (const feed of this.feeds) {
-      if (!process.env[feed.envName])
+      if (!connectorSecret(this.config, feed.envName))
         throw new Error(`iCal feed ${feed.name} has no ${feed.envName} secret`);
     }
   }
@@ -101,14 +102,14 @@ export class ICalConnector implements IConnector {
     }));
   }
   async authenticate(): Promise<boolean> {
-    return this.feeds.every((feed) => Boolean(process.env[feed.envName]));
+    return this.feeds.every((feed) => Boolean(connectorSecret(this.config, feed.envName)));
   }
   async poll(_since: Date): Promise<NormalizedItem[]> {
     const output: NormalizedItem[] = [];
     try {
       const pendingSynced = new Set<string>();
       for (const feed of this.feeds) {
-        const url = process.env[feed.envName];
+        const url = connectorSecret(this.config, feed.envName);
         if (!url) throw new Error(`iCal feed ${feed.name} has no configured secret`);
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 20_000);
