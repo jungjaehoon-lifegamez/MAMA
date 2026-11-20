@@ -2,12 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import {
-  createKnowledge,
-  createPrincipalRepository,
-  type ActionContext,
-  type ActionResult,
-} from '@jungjaehoon/mama-core';
+import { createKnowledge, createPrincipalRepository } from '@jungjaehoon/mama-core';
 
 import { createActionSurface } from '../../src/runtime/action-surface.js';
 import { openCoreDatabase } from '../../src/runtime/core-db.js';
