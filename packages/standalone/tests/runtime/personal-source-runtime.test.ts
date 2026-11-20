@@ -198,3 +198,44 @@ describe('personal source runtime (personal-connectors.md, C3)', () => {
     expect(r.store.get('person-a', 'chatwork')!.lastError).toMatch(/not connected/);
   });
 });
+
+describe('deleting a personal source (personal-connectors.md, C5)', () => {
+  it("leaves no raw or index row of that person's source, and keeps another's copy", async () => {
+    const { deletePersonalSourceData } =
+      await import('../../src/runtime/personal-source-runtime.js');
+    const { coreIndexSink } = await import('../../src/runtime/connectors.js');
+    const r = await runtime();
+    const sink = coreIndexSink(database.adapter);
+    const store = r.store;
+    bind(r, 'person-a', 'a-token');
+    bind(r, 'person-b', 'b-token');
+    const personal = startPersonalSources({
+      store,
+      accounts: r.accounts,
+      kinds: { chatwork } as never,
+      rawStore: raw,
+      indexSink: sink,
+      root: join(root, 'personal-real'),
+      now: () => Date.UTC(2026, 10, 20, 12),
+      setInterval: (() => 0) as never,
+      clearInterval: () => {},
+      log: () => {},
+    });
+    await personal.start('person-a', 'chatwork');
+    await personal.start('person-b', 'chatwork');
+    const rows = (id: string) =>
+      database.adapter
+        .prepare(
+          "SELECT count(*) AS n FROM connector_event_index WHERE source_connector='personal-chatwork' AND memory_scope_id=?"
+        )
+        .get(id) as { n: number };
+    expect(rows('person-a').n).toBe(1);
+    await personal.stop('person-a', 'chatwork');
+    const deleted = deletePersonalSourceData(database.adapter, raw, 'person-a', 'chatwork');
+    expect(deleted).toMatchObject({ index: 1, raw: { raw_items: 1 } });
+    expect(rows('person-a').n).toBe(0);
+    expect(rows('person-b').n).toBe(1);
+    expect(raw.count('personal-chatwork')).toBe(1);
+    await personal.stopAll();
+  });
+});

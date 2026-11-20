@@ -12,6 +12,7 @@ import {
 import type { DatabaseInstance } from '@jungjaehoon/mama-core/db-manager';
 import type { Mailbox, MailboxRow } from '@jungjaehoon/mama-core/runtime/mailbox';
 import type { RawStore } from '../storage/source-archive.js';
+import { PERSONAL_SOURCE_KINDS, personalConnectorName } from '../runtime/personal-source-store.js';
 import { outboundLedgerKey, type OwnerMessageLedger } from '../gateways/telegram-message-ledger.js';
 import type { OwnerHostExchangeInput } from '../gateways/turn-contract.js';
 import type { createSerialTurnChain } from '../runtime/principal-sessions.js';
@@ -49,6 +50,23 @@ export interface MemberRecordsPorts {
   ): void;
   /** Write a member's personal copy of a host exchange (a management or enrollment receipt). */
   writeHostExchange(id: string, exchange: OwnerHostExchangeInput): void;
+  /**
+   * Stops the person's own sources, deletes what they collected and removes them
+   * (personal-connectors.md, C5).
+   */
+  stopPersonalSources(id: string): Promise<void>;
+}
+
+/** The raw stores a person's own sources write, each only where it exists. */
+function personalRaw(rawStore: RawStore, id: string): Record<string, Record<string, unknown>[]> {
+  const stores: Record<string, Record<string, unknown>[]> = {};
+  for (const kind of PERSONAL_SOURCE_KINDS) {
+    const name = personalConnectorName(kind);
+    if (!rawStore.hasConnector(name)) continue;
+    for (const [table, rows] of Object.entries(rawStore.exportScope(name, 'user', id)))
+      stores[`personal_${kind}_${table}`] = rows;
+  }
+  return stores;
 }
 
 const denied = () =>
@@ -181,6 +199,13 @@ export function createMemberRecords(options: {
         .all(id),
       ...p.rawStore.exportScope('chat', 'user', id),
       message_ledger: ledger.listForTelegramDm(dm(p.access(id))),
+      // What the person's own sources collected (personal-connectors.md, C5).
+      ...personalRaw(p.rawStore, id),
+      personal_source_index: options.adapter
+        .prepare(
+          "SELECT * FROM connector_event_index WHERE source_connector LIKE 'personal-%' AND memory_scope_kind='user' AND memory_scope_id=? ORDER BY rowid"
+        )
+        .all(id),
       // The writes this person proposed from their DM (approvals.md, P1): their drafts and cards.
       approval_proposals: options.adapter
         .prepare(
@@ -520,6 +545,12 @@ export function createMemberRecords(options: {
           ).length;
         checkpoint(job, state);
         p.rawStore.eraseScope('chat', 'user', id);
+        step = 'personal_sources';
+        for (const [name, rows] of Object.entries(personalRaw(p.rawStore, id)))
+          state.product[name] ??= rows.length;
+        checkpoint(job, state);
+        // Collectors stop before their data goes, so no poll lands after the erasure.
+        await p.stopPersonalSources(id);
         step = 'message_ledger';
         ledger.eraseTelegramDm(dm(p.access(id)), [
           `file:${job.commandId}:export`,

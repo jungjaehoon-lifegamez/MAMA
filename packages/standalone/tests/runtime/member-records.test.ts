@@ -15,6 +15,7 @@ import {
 } from '@jungjaehoon/mama-core';
 import { fixture, roots } from '../helpers/member-runtime.js';
 import { createApprovalStore } from '../../src/runtime/approval-store.js';
+import { createPersonalSourceStore } from '../../src/runtime/personal-source-store.js';
 import { memberPaths, memberClaudeTmpDir } from '../../src/runtime/member-paths.js';
 import { memberFileInventory } from '../../src/api/member-export.js';
 import { resolvePrincipalAccess } from '../../src/runtime/principal-access.js';
@@ -655,6 +656,22 @@ it('erases after settlement, preserves owner and shared rows, receipts counts an
         ],
         { collectOnly: true }
       );
+    // A personal source the member and another person both collect (personal-connectors.md, C5).
+    for (const principal of [f.member, 'other-person'])
+      rawStore.save('personal-chatwork', [
+        {
+          source: 'personal-chatwork',
+          sourceId: `fixture-personal-${principal}`,
+          channel: 'fixture-key:111',
+          author: 'someone',
+          content: 'fixture personal source',
+          timestamp: new Date(),
+          type: 'message',
+          memoryScopeKind: 'user',
+          memoryScopeId: principal,
+        },
+      ]);
+    createPersonalSourceStore(db).bind(f.member, 'chatwork', [{ id: '111', name: 'room' }]);
   } finally {
     rawStore.close();
   }
@@ -728,6 +745,15 @@ it('erases after settlement, preserves owner and shared rows, receipts counts an
   expect(db.prepare('SELECT principal_id, request_key FROM approval_proposals').all()).toEqual([
     { principal_id: null, request_key: 'common-draft' },
   ]);
+  expect(exportedProduct.counts.personal_chatwork_raw_items).toBe(1);
+  expect(receipt.product.personal_chatwork_raw_items).toBe(1);
+  const personalAfter = new RawStore(join(f.home, 'raw'));
+  try {
+    expect(personalAfter.count('personal-chatwork')).toBe(1);
+  } finally {
+    personalAfter.close();
+  }
+  expect(createPersonalSourceStore(db).list(f.member)).toEqual([]);
   expect(f.ledger.get('member-entry')).toBeNull();
   expect(f.ledger.get(`telegram:${f.memberDm}:123`)).toBeNull();
   expect(f.ledger.get('owner-entry')).toEqual(ledgerOwner);

@@ -10,6 +10,7 @@ import {
 } from '../../src/runtime/member-paths.js';
 import { fixture, roots } from '../helpers/member-runtime.js';
 import { createAccountStore, personalAccountsDir } from '../../src/runtime/account-store.js';
+import { createPersonalSourceStore } from '../../src/runtime/personal-source-store.js';
 import { upsertConnectorEventIndex } from '../../src/connectors/framework/event-index.js';
 
 const partition = (principalId: string, scopeId = 'fixture-partition') => ({
@@ -182,8 +183,12 @@ it('suspends and resumes with preserved grants in fresh directories, then offboa
   // A person's own accounts go with them (approvals.md, P1).
   const accounts = createAccountStore(personalAccountsDir(f.home));
   accounts.set(f.member, 'chatwork', { token: 'fixture-token', accountId: '7', name: 'm' });
+  // And their personal sources (personal-connectors.md, C5).
+  const sources = createPersonalSourceStore(f.runtime.database.adapter);
+  sources.bind(f.member, 'chatwork', [{ id: '111', name: 'room' }]);
   data(await f.manage('offboard'));
   expect(accounts.list(f.member)).toEqual([]);
+  expect(sources.list(f.member)).toEqual([]);
   expect(repo.findById(f.member)?.status).toBe('offboarded');
   expect(
     f.runtime.database.adapter
