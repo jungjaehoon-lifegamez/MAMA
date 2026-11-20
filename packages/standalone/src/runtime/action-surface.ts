@@ -104,6 +104,11 @@ import {
 } from '../api/message-send-actions.js';
 import { createAccountStore, personalAccountsDir } from './account-store.js';
 import { accountActionRegistrations, type AccountActionPorts } from '../api/account-actions.js';
+import {
+  personalSourceActionRegistrations,
+  type PersonalSourceActionPorts,
+} from '../api/personal-source-actions.js';
+import { createPersonalSourceStore } from './personal-source-store.js';
 
 const OWNER_ACTIONS = [
   'skill.list',
@@ -240,6 +245,8 @@ export interface ActionSurfaceOptions {
   approvalCards?: Pick<ApprovalActionPorts, 'sendCard'>;
   /** Prompts for a person's account token in their DM (P2); absent without Telegram. */
   accountConnect?: Pick<AccountActionPorts, 'ask'>;
+  /** A person's own sources (personal-connectors.md, C2): the daemon's collectors and kinds. */
+  personalSources?: Pick<PersonalSourceActionPorts, 'channels' | 'sources' | 'deleteData'>;
   recordManagementReceipt?(receipt: {
     callerPrincipalId?: string;
     operationId: string;
@@ -642,6 +649,26 @@ export function createActionSurface(options: ActionSurfaceOptions): ActionSurfac
     }),
     // Messages posted in a source's own rooms, each after an owner approves it (approvals.md, S1, S2).
     ...messageSendActionRegistrations(messagePorts),
+    // Each person's own sources, connected from their DM (personal-connectors.md, C2).
+    ...personalSourceActionRegistrations({
+      ownerPrincipalId: options.ownerPrincipalId,
+      store: createPersonalSourceStore(options.adapter),
+      accounts: messagePorts.accounts,
+      ask: (principalId, kind) => {
+        if (!options.accountConnect)
+          throw new Error('Connecting a source needs the Telegram messenger, which is not running');
+        return options.accountConnect.ask(principalId, kind);
+      },
+      channels: (kind, secrets) => {
+        if (!options.personalSources) throw new Error('Personal sources are not running');
+        return options.personalSources.channels(kind, secrets);
+      },
+      sources: () => options.personalSources?.sources() ?? null,
+      deleteData: (principalId, kind) => {
+        if (!options.personalSources) throw new Error('Personal sources are not running');
+        options.personalSources.deleteData(principalId, kind);
+      },
+    }),
     // Each person's own send accounts, connected from their DM (approvals.md, P1, P2).
     ...accountActionRegistrations({
       ownerPrincipalId: options.ownerPrincipalId,

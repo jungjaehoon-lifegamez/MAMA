@@ -208,3 +208,24 @@ export function startPersonalSources(options: PersonalSourceRuntimeOptions) {
 }
 
 export type PersonalSources = ReturnType<typeof startPersonalSources>;
+
+/**
+ * Deletes what a person's source collected: its raw items and index rows (C5). Run after the
+ * source's collector has stopped, so no poll lands after it.
+ */
+export function deletePersonalSourceData(
+  adapter: { prepare(sql: string): { run(...params: unknown[]): { changes: number } } },
+  rawStore: Pick<RawStore, 'eraseScope'>,
+  principalId: string,
+  kind: PersonalSourceKind
+): { raw: Record<string, number>; index: number } {
+  const name = personalConnectorName(kind);
+  const raw = rawStore.eraseScope(name, 'user', principalId);
+  const index = adapter
+    .prepare(
+      `DELETE FROM connector_event_index
+        WHERE source_connector = ? AND memory_scope_kind = 'user' AND memory_scope_id = ?`
+    )
+    .run(name, principalId).changes;
+  return { raw, index };
+}

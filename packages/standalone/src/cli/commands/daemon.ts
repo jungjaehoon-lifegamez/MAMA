@@ -100,8 +100,12 @@ import { backendLimits } from '../../runtime/backend-limits.js';
 import { createAccountConnect, type AccountConnect } from '../../runtime/account-connect.js';
 import { holdsOwnerRole } from '../../runtime/owner-authority.js';
 import { createAccountStore, personalAccountsDir } from '../../runtime/account-store.js';
-import { createPersonalSourceStore } from '../../runtime/personal-source-store.js';
 import {
+  createPersonalSourceStore,
+  type PersonalSourceKind,
+} from '../../runtime/personal-source-store.js';
+import {
+  deletePersonalSourceData,
   startPersonalSources,
   type PersonalSources,
 } from '../../runtime/personal-source-runtime.js';
@@ -506,6 +510,13 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
   // Each person's own sources, collected under their scope (personal-connectors.md, C3).
   let personalSources: PersonalSources | undefined;
   let personalRaw: RawStore | undefined;
+  let personalKindAdapters: ReturnType<typeof createPersonalKinds> | undefined;
+  const personalKinds = {
+    channels: (kind: PersonalSourceKind, secrets: Record<string, string>) => {
+      if (!personalKindAdapters) throw new Error('Personal sources are not running yet');
+      return personalKindAdapters[kind].channels(secrets);
+    },
+  };
   let messageLedger: OwnerMessageLedger | undefined;
   let gateway: DaemonGateway | null = null;
   // Approval cards go through Telegram, which starts after the owner runtime that proposes them.
@@ -907,6 +918,13 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       credentialPath: paths.credentialPath,
       runtimeRoot: paths.mamaRoot,
       accountConnect: { ask: (principalId, service) => accountConnect!.ask(principalId, service) },
+      // Personal sources start after the connectors stage; until then their actions say so.
+      personalSources: {
+        channels: (kind, secrets) => personalKinds.channels(kind, secrets),
+        sources: () => personalSources ?? null,
+        deleteData: (principalId, kind) =>
+          deletePersonalSourceData(owner!.database.adapter, personalRaw!, principalId, kind),
+      },
       ...(config.member_root === undefined ? {} : { memberRoot: config.member_root }),
       ...(config.tools_root === undefined ? {} : { toolsRoot: config.tools_root }),
       ownerDeniedReadPaths: [
@@ -1231,10 +1249,11 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
       acceptSourceDelta,
     });
     personalRaw = new RawStore(paths.connectorsRoot);
+    personalKindAdapters = createPersonalKinds({ timeZone });
     personalSources = startPersonalSources({
       store: createPersonalSourceStore(owner.database.adapter),
       accounts: createAccountStore(personalAccountsDir(paths.mamaRoot)),
-      kinds: createPersonalKinds({ timeZone }),
+      kinds: personalKindAdapters,
       rawStore: personalRaw,
       indexSink: coreIndexSink(owner.database.adapter),
       root: join(paths.connectorsRoot, 'personal'),

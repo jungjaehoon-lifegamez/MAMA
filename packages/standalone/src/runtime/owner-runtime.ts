@@ -116,6 +116,8 @@ const BACKEND_PROBE_PROMPT =
 export interface OwnerRuntimeOptions {
   /** Prompts for a person's account token in their own DM (approvals.md, P2). */
   accountConnect?: ActionSurfaceOptions['accountConnect'];
+  /** A person's own sources (personal-connectors.md, C2). */
+  personalSources?: ActionSurfaceOptions['personalSources'];
   /** Approval cards in Telegram: send one, and edit one no press started (sweep, recovery). */
   approvalCards?: {
     sendCard: ApprovalActionPorts['sendCard'];
@@ -559,6 +561,9 @@ export async function createOwnerRuntime(options: OwnerRuntimeOptions): Promise<
         ? {}
         : { approvalCards: { sendCard: options.approvalCards.sendCard } }),
       ...(options.accountConnect === undefined ? {} : { accountConnect: options.accountConnect }),
+      ...(options.personalSources === undefined
+        ? {}
+        : { personalSources: options.personalSources }),
       runtimeRoot: options.runtimeRoot,
       skillPaths: {
         toolsRoot: options.toolsRoot,

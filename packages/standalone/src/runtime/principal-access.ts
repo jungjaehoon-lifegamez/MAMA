@@ -5,6 +5,11 @@ import type { MemoryScopeRef } from '@jungjaehoon/mama-core/memory/types';
 import { MEMBER_ACTIONS } from './action-surface.js';
 import { MEMBER_MANAGEMENT_ACTIONS } from '../api/member-lifecycle.js';
 import { holdsOwnerRole } from './owner-authority.js';
+import {
+  createPersonalSourceStore,
+  personalChannelKey,
+  personalConnectorName,
+} from './personal-source-store.js';
 
 /** A member grant must not expose the owner's default records or make boot/turn access fail. */
 export function validateMemberMemoryGrant(
@@ -168,6 +173,16 @@ export function resolvePrincipalAccess(
       ];
     }
   }
+  // An owner-role person's own sources (personal-connectors.md, C4): their connector names and
+  // channel keys, which no other access names.
+  if (ownerRole)
+    for (const source of createPersonalSourceStore(adapter).list(principalId)) {
+      const name = personalConnectorName(source.kind);
+      connectors.add(name);
+      channels[name] = source.channels.map((channel) =>
+        personalChannelKey(principalId, channel.id)
+      );
+    }
   const personalScope = { kind: 'user' as const, id: principalId };
   return {
     principalId,
@@ -203,6 +218,11 @@ export function resolvePrincipalAccess(
           'account.connect',
           'account.disconnect',
           'account.list',
+          'source.connect',
+          'source.channels',
+          'source.bind',
+          'source.disconnect',
+          'source.list',
           'report.read',
           ...MEMBER_MANAGEMENT_ACTIONS,
           'manage.member.enroll',
