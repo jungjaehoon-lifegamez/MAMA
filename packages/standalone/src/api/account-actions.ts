@@ -6,11 +6,7 @@
  */
 import type { ActionContext, ActionRegistration } from '@jungjaehoon/mama-core';
 
-import {
-  PERSONAL_ACCOUNT_SERVICES,
-  type AccountService,
-  type AccountStore,
-} from '../runtime/account-store.js';
+import { SEND_SERVICES, type AccountService, type AccountStore } from '../runtime/account-store.js';
 
 export interface AccountActionPorts {
   ownerPrincipalId: string;
@@ -33,7 +29,7 @@ const service = {
   type: 'object',
   additionalProperties: false,
   required: ['service'],
-  properties: { service: { type: 'string', enum: [...PERSONAL_ACCOUNT_SERVICES] } },
+  properties: { service: { type: 'string', enum: [...SEND_SERVICES] } },
 } as const;
 
 export function accountActionRegistrations(ports: AccountActionPorts): ActionRegistration[] {

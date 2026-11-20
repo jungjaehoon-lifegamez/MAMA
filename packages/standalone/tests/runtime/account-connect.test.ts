@@ -90,7 +90,7 @@ describe('connecting a person’s account in their Telegram DM (approvals.md, P2
     const completion = flow.claim(reply('person-a', '  fixture-person-token \n'));
     expect(completion).not.toBeNull();
     await completion!();
-    expect(identify).toHaveBeenCalledWith('chatwork', 'fixture-person-token');
+    expect(identify).toHaveBeenCalledWith('chatwork', { token: 'fixture-person-token' });
     expect(accounts.get('person-a', 'chatwork')).toMatchObject({
       token: 'fixture-person-token',
       accountId: '8',
@@ -157,9 +157,9 @@ describe('connecting a person’s account in their Telegram DM (approvals.md, P2
     await flow.ask('person-a', 'chatwork');
     await flow.ask('person-a', 'slack');
     await flow.claim(reply('person-a', 'chatwork-token', undefined, 500))!();
-    expect(identify).toHaveBeenLastCalledWith('chatwork', 'chatwork-token');
+    expect(identify).toHaveBeenLastCalledWith('chatwork', { token: 'chatwork-token' });
     await flow.claim(reply('person-a', 'xoxp-token', undefined, 501))!();
-    expect(identify).toHaveBeenLastCalledWith('slack', 'xoxp-token');
+    expect(identify).toHaveBeenLastCalledWith('slack', { token: 'xoxp-token' });
   });
 
   it('keeps nothing for someone offboarded while the service answered', async () => {
@@ -220,5 +220,52 @@ describe('connecting a person’s account in their Telegram DM (approvals.md, P2
     await flow.claim(reply('person-a', 'token'))!();
     expect(accounts.get('person-a', 'chatwork')).not.toBeNull();
     expect(said[0]![1]).toMatch(/could not delete your message: delete it yourself/);
+  });
+
+  it('a two-field kind asks twice and stores both only after identify (C1)', async () => {
+    identify.mockResolvedValue({ id: 'm1', name: 'person-a' });
+    const then = vi.fn(async () => {});
+    const flow = connect();
+    await flow.ask('person-a', 'trello', then);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]![1]).toMatch(/Trello API key/);
+    await flow.claim(reply('person-a', 'fixture-key', undefined, 500))!();
+    expect(identify).not.toHaveBeenCalled();
+    expect(accounts.get('person-a', 'trello')).toBeNull();
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]![1]).toMatch(/Trello token/);
+    await flow.claim(reply('person-a', 'fixture-trello-token', undefined, 501))!();
+    expect(identify).toHaveBeenCalledWith('trello', {
+      key: 'fixture-key',
+      token: 'fixture-trello-token',
+    });
+    expect(accounts.get('person-a', 'trello')).toMatchObject({
+      token: 'fixture-trello-token',
+      fields: { key: 'fixture-key' },
+      accountId: 'm1',
+    });
+    expect(then).toHaveBeenCalledTimes(1);
+    expect(deleted).toHaveLength(2);
+    expect(JSON.stringify([said, prompts, logged])).not.toMatch(/fixture-key|fixture-trello-token/);
+  });
+
+  it('a stale reply to the second prompt is deleted and nothing is stored', async () => {
+    const flow = connect();
+    await flow.ask('person-a', 'trello');
+    await flow.claim(reply('person-a', 'fixture-key', undefined, 500))!();
+    clock += CONNECT_WINDOW_MS + 1;
+    await flow.claim(reply('person-a', 'fixture-trello-token', undefined, 501))!();
+    expect(identify).not.toHaveBeenCalled();
+    expect(accounts.get('person-a', 'trello')).toBeNull();
+    expect(said.at(-1)![1]).toMatch(/no longer waiting/);
+  });
+
+  it('a bot kind refuses a person’s token, a person kind refuses a bot’s', async () => {
+    identify.mockResolvedValue({ id: 'U1', name: 'person-a' });
+    const flow = connect();
+    await flow.ask('person-a', 'discord');
+    await flow.claim(reply('person-a', 'not-a-bot'))!();
+    expect(accounts.get('person-a', 'discord')).toBeNull();
+    expect(said.at(-1)![1]).toMatch(/needs a bot token/);
   });
 });

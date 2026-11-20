@@ -27,7 +27,10 @@ export interface MessageSendPorts {
   proposalAccount(proposalId: string): string | null;
 }
 
-const SERVICE_NAMES: Record<AccountService, string> = { chatwork: 'Chatwork', slack: 'Slack' };
+const SERVICE_NAMES: Partial<Record<AccountService, string>> = {
+  chatwork: 'Chatwork',
+  slack: 'Slack',
+};
 
 /**
  * The token a principal posts with: undefined for the common session (the connector's own), the

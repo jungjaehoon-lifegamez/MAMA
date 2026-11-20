@@ -10,11 +10,19 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-export const PERSONAL_ACCOUNT_SERVICES = ['chatwork', 'slack'] as const;
-export type AccountService = (typeof PERSONAL_ACCOUNT_SERVICES)[number];
+import { PERSONAL_SOURCE_KINDS, type PersonalSourceKind } from './personal-source-store.js';
+
+/** One account per kind serves both a person's sends (P1) and their personal source (C1). */
+export const PERSONAL_ACCOUNT_SERVICES = PERSONAL_SOURCE_KINDS;
+export type AccountService = PersonalSourceKind;
+/** The kinds a person's approved messages post with (approvals.md, S1, S2). */
+export const SEND_SERVICES = ['chatwork', 'slack'] as const;
 
 export interface StoredAccount {
+  /** The primary secret (an API token, a bot token, iCal's secret URL). */
   token: string;
+  /** Further secrets of a kind that takes more than one (Trello's key). */
+  fields?: Record<string, string>;
   /** The service's own id for the account (Chatwork account_id, Slack user id). */
   accountId: string;
   name: string;

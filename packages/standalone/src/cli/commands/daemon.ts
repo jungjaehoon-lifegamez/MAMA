@@ -852,12 +852,12 @@ export async function bootDaemon(options: DaemonBootOptions = {}): Promise<Daemo
     // the running source's API, as the person, and stored under runtime/.
     accountConnect = createAccountConnect({
       accounts: createAccountStore(personalAccountsDir(paths.mamaRoot)),
-      identify: async (service, token) => {
+      identify: async (service, secrets) => {
         const connector = connectors?.registry.get(service);
         if (service === 'chatwork' && connector instanceof ChatworkConnector)
-          return connector.account(token);
+          return connector.account(secrets.token);
         if (service === 'slack' && connector instanceof SlackConnector)
-          return connector.account(token);
+          return connector.account(secrets.token);
         throw new Error(`the ${service} source is not running`);
       },
       dmChatOf,
