@@ -94,10 +94,10 @@ scripts/                    build support
 tests/                      package tests
 ```
 
-The highest migration is **106**, `106-host-job-checkpoints.sql`.
-Migration files cover **001–042** and **061–106**; there is no 043 file.
+The highest migration is **107**, `107-checkpoint-conversation-column.sql`.
+Migration files cover **001–042** and **061–107**; there is no 043 file.
 **044–060 are reserved** by the retired chain's `schema_version` entries and must never be
-reused. Add schema changes after 106, not into a gap. See the [latest migration](db/migrations/106-host-job-checkpoints.sql).
+reused. Add schema changes after 107, not into a gap. See the [latest migration](db/migrations/107-checkpoint-conversation-column.sql).
 
 ## Development
 
