@@ -969,6 +969,21 @@ export class NodeSQLiteAdapter implements DatabaseInstance {
         continue;
       }
 
+      // A checkpoints table made before recent_conversation existed kept the old shape: 012 only
+      // creates the table when it is missing. A fresh database already has the column.
+      if (isCore && version === 107) {
+        if (
+          this.tableExists('checkpoints') &&
+          !this.tableColumns('checkpoints').has('recent_conversation')
+        ) {
+          this.exec("ALTER TABLE checkpoints ADD COLUMN recent_conversation TEXT DEFAULT '[]'");
+        }
+        this.exec(fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
+        this.stampMigration(sourceName, version);
+        info(`[node-sqlite-adapter] Migration ${file} applied successfully`);
+        continue;
+      }
+
       if (isCore && version === 103) {
         // Legacy high-version stores can still need the post-loop structural repairs.
         if (!this.principalErasurePrerequisitesPresent()) {

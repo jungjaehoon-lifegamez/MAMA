@@ -37,6 +37,16 @@ function hasTable(path: string, name: string): boolean {
   }
 }
 
+function hasColumn(path: string, table: string, column: string): boolean {
+  const db = new Database(path, { readonly: true });
+  try {
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    return columns.some((row) => row.name === column);
+  } finally {
+    db.close();
+  }
+}
+
 function journalMode(path: string): string {
   const db = new Database(path, { readonly: true });
   try {
@@ -59,11 +69,11 @@ describe('a database newer than the code', () => {
     const first = await openDatabase({ path, migrations: sources });
     first.adapter.disconnect();
 
-    // Core is one migration behind (106 undone), and the fixture source is ahead.
+    // Core is one migration behind (107 undone), and the fixture source is ahead.
     const highest = highestMigrationVersion(MIGRATIONS_DIR);
     const db = new Database(path);
     db.prepare("DELETE FROM schema_version WHERE source = 'core' AND version = ?").run(highest);
-    db.exec('DROP TABLE mailbox_host_checkpoints');
+    db.exec('ALTER TABLE checkpoints DROP COLUMN recent_conversation');
     db.prepare("INSERT INTO schema_version (source, version) VALUES ('fixture', 2)").run();
     // Connecting switches a database to WAL; a rollback journal shows nothing connected first.
     db.pragma('journal_mode = DELETE');
@@ -75,13 +85,13 @@ describe('a database newer than the code', () => {
       openDatabase({ path, migrations: sources, refuseNewerSchema: true })
     ).rejects.toThrow(/fixture schema is at 2, newer than this version knows \(1\)/);
     // Core's pending migration did not run, and nothing connected, before the refusal.
-    expect(hasTable(path, 'mailbox_host_checkpoints')).toBe(false);
+    expect(hasColumn(path, 'checkpoints', 'recent_conversation')).toBe(false);
     expect(journalMode(path)).toBe('delete');
 
     // A consumer that does not ask keeps today's behaviour.
     const opened = await openDatabase({ path, migrations: sources });
     opened.adapter.disconnect();
-    expect(hasTable(path, 'mailbox_host_checkpoints')).toBe(true);
+    expect(hasColumn(path, 'checkpoints', 'recent_conversation')).toBe(true);
   });
 
   it('reads a table from before per-source versions as the core alone', async () => {

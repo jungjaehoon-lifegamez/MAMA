@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Migration 107 adds `recent_conversation` to a `checkpoints` table made before the column
+  existed. Migration 012 only creates the table when it is missing, so such a database kept the
+  old shape and every checkpoint save failed. The runner adds the column only where it is
+  missing; a database that already has it only records 107.
+
 ## [8.11.0] - 2026-11-17
 
 ### Added
@@ -15,14 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ActionSessionFacts.approvedProposalId`. Dispatch refuses an `always` action whose session states
   no approved proposal (`approval_required`); an `outsideOwnerTurn` action checks the turn itself.
 
-
 - `apps` option for the Codex app-server, runtime process and managed config: enables Codex apps
   (the account's connectors) and their instructions, read only (write tools are not offered);
   off by default. App calls
   (`mcpToolCall` from `codex_apps`) are observed like shell and web items, as `codex_apps:<tool>` (an app write
   makes the turn not replayable),
   with their arguments.
-
 
 ## [8.10.0] - 2026-11-16
 
