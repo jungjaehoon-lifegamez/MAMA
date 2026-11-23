@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## mama-os [0.84.0] / core [8.11.1] / server [2.6.5] / plugin [2.5.4] - 2026-11-23
+
+Each owner-role person can connect their own accounts and sources from their DM. A Chatwork or
+Slack account connected there posts that person's approved messages as them, and a personal source
+(Chatwork, Slack, Discord, Notion, Trello, a Telegram bot or iCal) is collected for that person
+only, for reports they agree with the agent. Chatwork and Slack sends go through approval cards.
+Each package changelog lists every change.
+
+### Upgrading
+
+- An install on 0.83.x updates with `mama update`, or `/update` in Telegram.
+- A Linux install that ran `npm install -g` by hand before this release sets
+  `ONNXRUNTIME_NODE_INSTALL_CUDA=skip` once; the install command and `mama update` set it.
+- The Claude Code plugin moves to 2.5.4 with the MCP server 2.6.5 on mama-core 8.11.1. A
+  development memory whose checkpoints table predates `recent_conversation` gains the column.
+
+### Added
+
+- Chatwork and Slack sends through approval cards (#588).
+- Personal Chatwork and Slack accounts connected from a person's DM (#589).
+- Personal sources connected from a person's DM (#590).
+
+### Fixed
+
+- Linux x64 installs no longer fail on onnxruntime's GPU download (#591).
+- Core: migration 107 adds `recent_conversation` to old checkpoints tables (#592).
+
 ## mama-os [0.83.0] / core [8.11.0] / server [2.6.4] / plugin [2.5.3] - 2026-11-17
 
 MAMA can book meetings. An owner who asks in a message gets a calendar event with a Google Meet

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.84.0] - 2026-11-23
+
 ### Fixed
 
 - Installing on Linux x64 works again. The embedding library (onnxruntime-node 1.21.0) tried to
