@@ -16,7 +16,10 @@ Rules: [AGENTS.md](../../AGENTS.md). Keep this plan under 200 lines and each che
 - Standing owner rules are written into the owner policy in owner chat turns (W37.1, #430; [check](checks.md#how-corrections-reach-each-turn-kind-w37-decided-2026-10-06)).
 
 - Ledger upkeep (closing summaries, write-back after a source answer, daily board reconcile) came before 1.0 W2.3 (owner, 2026-10-17): [design](work/ledger-upkeep.md), [measured](checks.md#ledger-upkeep-measured-2026-10-17). U1–U3 are deployed (#529, #530, #531), and their "Done when" counts passed on 2026-11-06 ([check](checks.md#ledger-upkeep-u1u3-done-when-measured-2026-11-06)); U2's repeated-question condition is not measured yet.
-- 1.0 W2.3 and W2.4 are proven on the clean macOS account (2026-11-14): update from the CLI and from `/update` with the backend signed out, rollback from a candidate that fails to boot, the drain during a running turn, and the managed Node moved and a cut-off move undone ([step 4](checks.md#w24-step-4-update-signed-out-backend-and-rollback-on-the-clean-account-2026-11-14), [step 5](checks.md#w24-step-5-moving-the-managed-node-on-the-clean-account-2026-11-14)); step 3 found that members' shells could not run MAMA's Node, fixed in #563. Step 6 (Gmail from the conversation) waits for Q3, and legs B and C are G1 runs (owner, 2026-11-14; [install.md](work/install.md#live-proof)). Next: the wave 2 release.
+- 1.0 W2.3 and W2.4 are proven on the clean macOS account (2026-11-14): update from the CLI and from `/update` with the backend signed out, rollback from a candidate that fails to boot, the drain during a running turn, and the managed Node moved and a cut-off move undone ([step 4](checks.md#w24-step-4-update-signed-out-backend-and-rollback-on-the-clean-account-2026-11-14), [step 5](checks.md#w24-step-5-moving-the-managed-node-on-the-clean-account-2026-11-14)); step 3 found that members' shells could not run MAMA's Node, fixed in #563. Step 6 (Gmail from the conversation) waits for Q3, and legs B and C are G1 runs (owner, 2026-11-14; [install.md](work/install.md#live-proof)).
+- 1.0 closed 47 of 47 on 2026-11-16 with mama-os 0.82.0 ([check](checks.md#e2-e3-t5-s2-x4-and-release-0820-579-580-2026-11-16)). Docker is out of 1.0 and the parts never used live are marked experimental (owner, 2026-11-16). G2 is still open: `mama update` on the WSL install.
+- Approvals: any turn proposes a write, an owner decides it on a card in the common group, and the host runs it once ([design](work/approvals.md), [check](checks.md#approvals-a1a9-585-2026-11-17)). Released in mama-os 0.83.0 on 2026-11-17 with `google.calendar.write` ([check](checks.md#decider-names-and-release-0830-586-587-2026-11-17)).
+- Deployed from main since 0.83.0 and not released: Chatwork and Slack sends through cards (#588), personal accounts (#589), personal sources ([design](work/personal-connectors.md), #590) and the Linux install fix (#591). Next: the owner's live checks, then the release. They are C8 (a personal source connected from a DM, collected and named in a personal report), a personal account connected and one DM send approved on it, and the first real Chatwork or Slack send (Slack's bot needs `chat:write`).
 
 ## Owner checks
 
@@ -65,116 +68,20 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
 4. iCal: done on 2026-10-07 (#434). An event without `LAST-MODIFIED` that returns to an earlier
    version is recorded as a new observation; the live poll saves again, and the returned event reads
    as current instead of cancelled.
-5. Team flow: the whole member flow is analysed in [team-flow.md](work/team-flow.md) (2026-10-07;
-   two reviews merged, then the plan reviewed again by Codex and Opus and the changing points
-   checked in code, [check](checks.md#team-plan-review-codex-and-opus-2026-10-07)). The product
-   wires every principal path to the owner; in core, work and graph reads ignore read grants, a
-   revision rebinds its item to the writer's scopes, and nothing exports or erases a member's
-   records. A1–A3 are done and live on 2026-10-07 (mama-core 7.1.0, mama-os 0.68.0–0.68.1,
-   [check](checks.md#team-slice-a1a3-live-2026-10-07)): the owner is a registered principal that
-   can grant, read grants reach work and graph reads, and a revision keeps its item's scopes. The
-   owner took all eight recommendations on 2026-10-08 (team-flow.md, "Decided"). P1 (access
-   resolver and member role) merged on 2026-10-08 (#448,
-   [check](checks.md#p1-member-access-and-role-448-2026-10-08)); it ships with the next core
-   release. B1 (member export and erasure, [work list](work/member-erasure.md)) merged (#449) and
-   both ship in mama-core 8.0.0 and mama-os 0.69.0, live from 2026-10-08 15:28 KST
-   ([check](checks.md#b1-member-export-and-erasure-449-and-release-800--0690-2026-10-08)). P2a,
-   the owner binds common work to a partition, merged (#451,
-   [check](checks.md#p2a-the-owner-binds-common-work-to-a-partition-451-2026-10-08)); it ships
-   with the next release. P2b, a member shares a personal record, merged (#452); P2a and P2b ship
-   in mama-core 8.1.0 and mama-os 0.70.0, live from 2026-10-08 17:22 KST
-   ([check](checks.md#p2b-member-share-452-and-release-810--0700-2026-10-08)). P3a, owner rules
-   recognised by principal, merged (#454,
-   [check](checks.md#p3a-owner-rules-by-principal-454-2026-10-08)); it ships with the next
-   release. P3b, a session per principal, merged (#455,
-   [check](checks.md#p3b-a-session-per-principal-455-2026-10-08)). P4, the member native
-   boundary, merged (#456, [check](checks.md#p4-the-member-native-boundary-456-2026-10-09));
-   P3a, P3b and P4 ship with the next release. A member's own chat changes only its own records
-   (#457, [check](checks.md#shared-records-change-in-a-group-room-457-2026-10-09)). P5, a member's
-   files go to the member's own DM, merged (#458,
-   [check](checks.md#p5-a-members-files-go-to-the-members-own-dm-458-2026-10-09)); #457 and P5
-   ship with the next release too. P6a, the owner's action reads stop at member records, merged
-   (#459, [check](checks.md#p6a-the-owners-action-reads-stop-at-member-records-459-2026-10-09));
-   the product needs its new core option, so core is published first. P6b, the owner's native
-   reads stop at the DB, raw stores and member directories, merged (#460,
-   [check](checks.md#p6b-the-owners-native-reads-stop-at-the-db-raw-stores-and-member-directories-460-2026-10-09)).
-   P6c, a member's refused connection alerts the owner with principal, host and time, merged
-   (#461, [check](checks.md#p6c-a-members-refused-connection-alerts-the-owner-with-principal-host-and-time-461-2026-10-09)).
-   P6 is done. P3a–P6c ship in mama-core 8.2.0 and mama-os 0.71.0, live from 2026-10-09 22:15 KST
-   ([check](checks.md#release-mama-core-820--mama-os-0710-2026-10-09)); both are on npm (the
-   renewed `NPM_TOKEN` expires around 2027-01-07). P7, enrollment, merged (#463,
-   [check](checks.md#p7-the-owner-enrolls-a-member-by-picking-them-in-the-owners-dm-463-2026-10-10));
-   the first member stays a co-owner (team-flow decision 11, revised 2026-10-10). Released as
-   mama-core 8.3.0 and mama-os 0.72.0, live from 2026-10-10 11:51 KST; the owner's enrollment of
-   the co-owner was refused on real Telegram
-   ([check](checks.md#release-mama-core-830--mama-os-0720-and-the-live-enrollment-check-2026-10-10)).
-   P8, the owner grants, revokes, suspends, resumes and offboards a member (team-flow decision
-   12), merged (#466,
-   [check](checks.md#p8-the-owner-grants-revokes-suspends-resumes-and-offboards-a-member-466-2026-10-10));
-   restart recovery for member messages moved to P10. Released as mama-core 8.4.0 and mama-os
-   0.73.0, live from 2026-10-10 14:35 KST; the owner's member list answered live
-   ([check](checks.md#release-mama-core-840--mama-os-0730-and-the-live-member-list-2026-10-10)).
-   Enrollment receipts reach the owner's record and the member list (#468, #469, live from main;
-   [check](checks.md#enrollment-receipts-reach-the-owners-record-and-the-member-list-468-469-2026-10-10)).
-   The owner's live check stored and listed the receipt, but the agent misread its UTC time; the
-   list gives owner-local time (#470, live from main), and the owner's 23:59 list answer was right.
-   P9 (member export and erase) designed with the owner's decision 13
-   ([work list](work/member-erasure.md#product-p9-owner-decision-13-2026-10-11)), merged (#471,
-   [check](checks.md#p9-a-member-exports-and-erases-its-personal-records-471-2026-10-11)).
-   Released as mama-core 8.5.0 and mama-os 0.74.0, live from 2026-10-11 13:49 KST
-   ([check](checks.md#release-mama-core-850--mama-os-0740-2026-10-11)); the owner's turn on the new
-   build answered right. On 2026-10-12 the owner revised team-flow decision 11: owners are members,
-   each with its own chat and personal records, and owner authority is a role; decision 14 adds the
-   room rule, the common session, reports per member and owner suspend/resume. P10 designed as six
-   slices ([work list](work/owners-are-members.md),
-   [check](checks.md#p10-plan-pass-2026-10-12)); reviewed by Opus, and the owner answered its three
-   questions. P10.1 merged (#473, [check](checks.md#p101-owners-are-members-each-person-answers-in-its-own-dm-473-2026-10-12));
-   a dry run on a copy of the live data moved the first owner's 233 DM chat items. Released as
-   mama-core 8.6.0 and mama-os 0.75.0; the live cutover ran at 20:49 KST
-   ([check](checks.md#release-mama-core-860--mama-os-0750-and-the-live-cutover-2026-10-12)). Next: the
-   owner's live turns: both DMs, the group and a DM image ran in the right sessions
-   ([check](checks.md#p101-live-the-first-owners-dm-turns-2026-10-12)); their gaps (owner rules,
-   who is who, web in an owner's DM) were fixed in #475, live from 23:14 KST
-   ([check](checks.md#p101-follow-ups-owner-rules-who-is-who-and-web-in-an-owners-dm-475-2026-10-12)).
-   The owner added personal schedules and notices (P10.4) and skills (P10.5). On #475 the owner's DM
-   answered in plain sentences and searched the web; it also quoted the owner's account email,
-   which personal sessions no longer see (#476, live from 2026-10-13 10:49 KST,
-   [check](checks.md#a-personal-session-does-not-give-the-model-the-owners-account-email-476-2026-10-13)).
-   P10.2, restart recovery per person, merged (#477) and live from 2026-10-13 11:18 KST
-   ([check](checks.md#p102-restart-recovery-per-person-477-2026-10-13)). P10.3, owners manage from their
-   DMs and suspend each other, merged (#478) and live from 13:08 KST
-   ([check](checks.md#p103-owners-manage-from-their-dms-and-suspend-each-other-478-2026-10-13)).
-   Sessions no longer wait for each other: one turn chain per principal (#480), live from 19:01 KST
-   ([check](checks.md#one-turn-chain-per-principal-480-2026-10-13)). P10.4 is designed as personal
-   jobs (P10.4a: cron and heartbeat) and event notices (P10.4b)
-   ([check](checks.md#p104-plan-pass-2026-10-13)); P10.4a merged (#481, #482) and live from
-   2026-10-14 01:58 KST ([check](checks.md#p104a-personal-jobs-cron-and-heartbeat-481-482-2026-10-14));
-   P10.4b, event notices, merged (#483) and live from 05:22 KST
-   ([check](checks.md#p104b-event-notices-483-2026-10-14)); P10.4c, the document toolkit with a host
-   renderer, merged (#484) and live from 08:10 KST
-   ([check](checks.md#p104c-a-managed-document-toolkit-and-a-host-renderer-484-2026-10-14)); P10.5, skills
-   per person, merged (#485) and live from 10:33 KST
-   ([check](checks.md#p105-skills-per-person-485-2026-10-14)). P10.6, durable erasure and a two-step stop,
-   merged (#486) and live from 14:39 KST
-   ([check](checks.md#p106-durable-erasure-per-member-waiting-receipt-recovery-and-a-two-step-stop-486-2026-10-14));
-   P10.7, members in the common channel, merged (#489) and live from 18:48 KST
-   ([check](checks.md#p107-members-in-the-common-channel-489-2026-10-14)). The owner's DM failed a Kakao
-   question because a DM was never told where sources live; fixed in #487 and #488
-   ([check](checks.md#live-a-kakao-question-in-the-owners-dm-and-the-estimate-board-2026-10-14)). P10 is
-   built. Next: release mama-core 8.7.0 and mama-os 0.76.0 with the user guide for people and DMs; still to
-   check live (the DM now reads Kakao chats, owner-confirmed): a personal job, a notice to the co-owner, a PPTX rendered and
-   checked in a DM, an enrollment from an owner's DM and a rule change asked in a DM. On 2026-10-15 the
-   owner's DM answered the man-hours and price question from chats, Trello and the Drive sheet (#492), the
-   owner accepted the estimates, and C1 was answered from the ledger; `document.render` works under the
-   daemon from #494. Members without the owner role are not planned for now (owner, 2026-10-15), so their
-   group check waits. Later the same day: a DM's PPTX was rendered, checked and sent, a personal job ran, C1
-   was answered from the ledger, and #493–#499 went live (code_act errors, renders, delivery paths, autonomous
-   web fetch limited to configured hosts by owner decision, DM self-facts, numpy/pandas/matplotlib in the
-   toolkit, docs); release PR #500 (mama-os 0.77.0) waits for the owner's go-ahead to publish. Open owner decision: web tools in owner-role notice turns (Codex security
-   advisory on #483), decided 2026-10-15: autonomous turns fetch only configured hosts (#496). Owner actions that change common state (management, enrollment, the time zone,
-   common skills) now need the common channel or the person's DM, as owner policy did (#491, live from
-   2026-10-15 00:47 KST, [check](checks.md#owner-actions-change-common-state-only-from-the-common-channel-491-2026-10-15)).
-   The room enrollment floor in core observation visibility waits with them.
+5. Team flow: built and live, 2026-10-07 to 2026-10-15 ([team-flow.md](work/team-flow.md),
+   [owners-are-members.md](work/owners-are-members.md); each slice has its entry in
+   [checks.md](checks.md) under its name). A1–A3: the owner is a registered principal, read grants
+   reach work and graph reads, a revision keeps its item's scopes. P1–P9: member access and role,
+   export and erasure, partitions and sharing, owner rules by principal, a session per principal,
+   the member native boundary, files to the member's own DM, owner reads stopping at member
+   records (P6), enrollment, and grant/revoke/suspend/resume/offboard. P10 (owner, 2026-10-12:
+   owners are members and owner authority is a role): each person answers in its own DM, restart
+   recovery and one turn chain per principal, personal jobs and notices, the document toolkit,
+   skills per person, durable erasure, members in the common channel. Owner actions that change
+   common state need the common channel or the person's DM (#491). Autonomous turns fetch only
+   configured hosts (#496). Released through mama-core 8.7.0 and mama-os 0.77.0. Members without
+   the owner role are experimental (owner, 2026-10-15 and 2026-11-16); the room enrollment floor
+   in core observation visibility waits with them.
 6. Paraphrase search: closed on 2026-10-07 without a host change
    ([check](checks.md#fusion-variants-with-both-embeddings-2026-10-07)). Three paraphrases sit
    outside the vector candidates; four fusions on e5 and on EmbeddingGemma 2 either move nothing
@@ -209,7 +116,11 @@ decided to link. The agent reads them through `graph.query`. Jev, when the owner
 10. 1.0: owner decision 2026-10-15, judged on a fresh install that anyone can use, on macOS, Linux
     and Docker. The gate and every weakness with its done condition: [v1.md](work/v1.md); the
     research behind it: [agent-products-1.0.md](research/agent-products-1.0.md). How each row is built:
-    [v1-plan.md](work/v1-plan.md).
+    [v1-plan.md](work/v1-plan.md). Closed 47 of 47 on 2026-11-16 (mama-os 0.82.0); G2's WSL update is left.
+11. Approvals and personal connectors (owner, 2026-11-17 and 2026-11-20): A1–A9, S1, S2, P1, P2 and
+    C1–C7 are built and deployed ([approvals.md](work/approvals.md),
+    [personal-connectors.md](work/personal-connectors.md)). Left: the owner's live checks above (C8
+    among them), attachments in personal sources, and Google writes from a DM (G1 in approvals.md).
 
 ## Waiting
 
