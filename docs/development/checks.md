@@ -3221,3 +3221,9 @@ The implementation writes raw/index data during import only. Replay is the owner
 - Result: onnxruntime-node 1.21.0's postinstall on Linux x64 downloads GPU binaries whose release asset answers 404, so every Linux install failed. MAMA embeds on the CPU, so install.sh, `mama update`'s npm environment and both upgrade-check installs set `ONNXRUNTIME_NODE_INSTALL_CUDA=skip`, and owner-setup.md shows it for installs with your own Node.js.
 - Evidence: the asset URL returns 404 (curl). A new `npmEnvironment` test failed first and then passed. On #591, `install-check (ubuntu-latest)` and `upgrade-check` pass; both had failed on main.
 - Still open: Linux installs that ran `npm install -g` by hand before this fix need the setting once. Not checked on a real Linux machine outside CI.
+
+### Release 0.84.0 and migration 107 (#592, #593, 2026-11-26)
+
+- Result: mama-core 8.11.1, mama-server 2.6.5, plugin 2.5.4 and mama-os 0.84.0 published, carrying #588–#592. Migration 107 adds `recent_conversation` to checkpoints tables made before the column existed, the cause of failed checkpoint saves on an older install.
+- Evidence: release run 45748565437 published all four packages (npm latest: core 8.11.1, server 2.6.5, mama-os 0.84.0). Its Pages job failed on a GitHub artifact API error and was rerun. Deployed 12:28 KST: daemon 0.84.0, all eight boot stages, `Migration 107-checkpoint-conversation-column.sql applied successfully`, schema version 107, six connectors ok.
+- Still open: the owner live checks for C8, P1/P2, S1/S2 and the approver's name on a card. The plugin (2.1.5) and global mama-server (2.4.0) on this Mac are not updated.
