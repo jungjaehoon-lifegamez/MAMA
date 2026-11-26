@@ -7,12 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.5] - 2026-11-23
+
+### Fixed
+
+- Published with mama-core 8.11.1: a development memory whose `checkpoints` table predates
+  `recent_conversation` gains the column, so checkpoints save again.
+
 ## [2.6.4] - 2026-11-17
 
 ### Changed
 
 - Published with mama-core 8.11.0, the core the plugin hooks install.
-
 
 ## [2.6.3] - 2026-11-16
 

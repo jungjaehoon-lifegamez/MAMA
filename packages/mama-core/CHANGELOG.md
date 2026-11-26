@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.11.1] - 2026-11-23
+
 ### Fixed
 
 - Migration 107 adds `recent_conversation` to a `checkpoints` table made before the column
